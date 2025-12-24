@@ -29,6 +29,10 @@ jobs:
         env:
           OPIN_PARTICIPANTS_URL: "https://data.directory.opinbrasil.com.br/participants"
 
+      - name: Prune old snapshots (keep last 60)
+        run: |
+          ls -1t data/snapshots/opin_participants_*.json | tail -n +61 | xargs -r rm --
+
       - name: Commit changes (if any)
         run: |
           git config user.name "github-actions[bot]"
