@@ -29,14 +29,17 @@ jobs:
 
       - name: Commit changes (if any)
         run: |
-          if git diff --quiet; then
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # 1) stage primeiro (inclui arquivos novos)
+          git add api/v1 data/raw data/snapshots
+
+          # 2) agora sim verifica se tem algo staged
+          if git diff --cached --quiet; then
             echo "No changes to commit."
             exit 0
           fi
 
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
-          git add api/v1 data/raw data/snapshots
           git commit -m "chore(data): refresh participants"
           git push
