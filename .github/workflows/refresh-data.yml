@@ -3,10 +3,14 @@ name: refresh data
 on:
   workflow_dispatch:
   schedule:
-    - cron: "17 6 * * *"
+    - cron: "17 6 * * 0"  # semanal (domingo 06:17 UTC)
 
 permissions:
   contents: write
+
+concurrency:
+  group: refresh-data
+  cancel-in-progress: false
 
 jobs:
   refresh:
@@ -29,7 +33,7 @@ jobs:
         env:
           OPIN_PARTICIPANTS_URL: "https://data.directory.opinbrasil.com.br/participants"
 
-            - name: Validate participants.json (non-empty + meta.count > 0)
+      - name: Validate participants.json (non-empty + meta.count > 0)
         run: |
           python - <<'PY'
           import json
@@ -46,20 +50,21 @@ jobs:
 
           print("OK: participants.json válido. meta.count =", count)
           PY
-      
+
       - name: Prune old snapshots (keep last 60)
         run: |
-          ls -1t data/snapshots/opin_participants_*.json | tail -n +61 | xargs -r rm --
+          find data/snapshots -maxdepth 1 -name 'opin_participants_*.json' -printf '%T@ %p\n' \
+            | sort -nr \
+            | awk 'NR>60 {print $2}' \
+            | xargs -r rm --
 
       - name: Commit changes (if any)
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          # 1) stage primeiro (inclui arquivos novos)
           git add api/v1 data/raw data/snapshots
 
-          # 2) agora sim verifica se tem algo staged
           if git diff --cached --quiet; then
             echo "No changes to commit."
             exit 0
