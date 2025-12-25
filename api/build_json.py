@@ -5,22 +5,22 @@ import json
 import os
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import requests
 
 DEFAULT_PARTICIPANTS_URL = "https://data.directory.opinbrasil.com.br/participants"
 USER_AGENT = "widget-confiabilidade-seguradoras/0.1 (+https://github.com/Rafael-Tinelli/widget-confiabilidade-seguradoras)"
 
+# Raiz do repositório = pasta que contém README.md (build_json.py fica em /api)
 ROOT = Path(__file__).resolve().parents[1]
+
 DATA_RAW = ROOT / "data" / "raw"
 DATA_SNAPSHOTS = ROOT / "data" / "snapshots"
 API_V1 = ROOT / "api" / "v1"
 
-# Saídas
-API_PARTICIPANTS = API_V1 / "participants.json"              # SLIM (público)
-FULL_RAW = DATA_RAW / "opin_participants_full.json.gz"       # FULL (auditoria)
-# FULL snapshot diário: data/snapshots/opin_participants_full_YYYY-MM-DD.json.gz
+API_PARTICIPANTS = API_V1 / "participants.json"
+FULL_RAW_GZ = DATA_RAW / "opin_participants_full.json.gz"
 
 
 def _now_iso() -> str:
@@ -43,14 +43,19 @@ def _as_list(value: Any) -> List[Any]:
 
 
 def _as_strings(values: Iterable[Any]) -> List[str]:
-    return [str(v) for v in values if v not in (None, "")]
+    out: List[str] = []
+    for v in values:
+        if v in (None, ""):
+            continue
+        out.append(str(v))
+    return out
 
 
 def _extract_participants(payload: Any) -> List[Dict[str, Any]]:
     """
-    Tenta suportar variações comuns:
+    Suporta variações comuns:
     - lista direta de participantes
-    - dicionário com chaves 'data', 'participants', etc.
+    - dicionário com chaves 'participants', 'data', 'result', 'items'
     """
     if isinstance(payload, list):
         return [p for p in payload if isinstance(p, dict)]
@@ -66,11 +71,11 @@ def _extract_participants(payload: Any) -> List[Dict[str, Any]]:
 
 def _normalize_authorization_servers(auth_servers: List[Any]) -> List[Dict[str, Any]]:
     """
-    Produz uma versão SLIM dos Authorization Servers.
+    Normaliza o mínimo necessário, evitando carregar estruturas enormes (ApiResources completo).
     Mantém:
       - id, issuer, openid, status
-      - apiResourcesCount (quantidade de ApiResources)
-      - apiFamiliesCount e apiFamilies (derivados de ApiFamilyType / ApiFamily / etc)
+      - apiResourcesCount (qtde de resources)
+      - apiFamiliesCount e apiFamilies (derivado dos resources, sem endpoints)
     """
     normalized: List[Dict[str, Any]] = []
 
@@ -82,26 +87,30 @@ def _normalize_authorization_servers(auth_servers: List[Any]) -> List[Dict[str, 
         issuer = _pick(raw_as, ["Issuer", "issuer"])
         openid = _pick(
             raw_as,
-            ["OpenIDDiscoveryDocument", "openIDDiscoveryDocument", "openidConfigurationUri", "openId"],
+            [
+                "OpenIDDiscoveryDocument",
+                "openIDDiscoveryDocument",
+                "openidConfigurationUri",
+                "openId",
+                "openid",
+            ],
         )
         status = _pick(raw_as, ["Status", "status"])
 
         api_resources = _as_list(raw_as.get("ApiResources") or raw_as.get("apiResources"))
         api_resources_count = len([r for r in api_resources if isinstance(r, dict)])
 
-        # “Famílias” podem vir como string única ou lista; e em chaves diferentes.
-        api_families = {
-            str(fam)
-            for res in api_resources
-            if isinstance(res, dict)
-            for fam in _as_list(
-                _pick(
-                    res,
-                    ["ApiFamilyType", "ApiFamily", "FamilyType", "ApiFamilyTypes"],
-                )
+        api_families_set = set()
+        for res in api_resources:
+            if not isinstance(res, dict):
+                continue
+            fam_value = _pick(
+                res,
+                ["ApiFamilyType", "ApiFamily", "FamilyType", "ApiFamilyTypes", "apiFamilyType", "apiFamily"],
             )
-            if fam not in (None, "")
-        }
+            for fam in _as_list(fam_value):
+                if fam not in (None, ""):
+                    api_families_set.add(str(fam))
 
         as_payload: Dict[str, Any] = {
             "id": str(as_id) if as_id is not None else None,
@@ -109,11 +118,11 @@ def _normalize_authorization_servers(auth_servers: List[Any]) -> List[Dict[str, 
             "openid": str(openid) if openid is not None else None,
             "status": str(status) if status is not None else None,
             "apiResourcesCount": api_resources_count,
-            "apiFamiliesCount": len(api_families),
+            "apiFamiliesCount": len(api_families_set),
         }
 
-        if api_families:
-            as_payload["apiFamilies"] = sorted(api_families)
+        if api_families_set:
+            as_payload["apiFamilies"] = sorted(api_families_set)
 
         normalized.append(as_payload)
 
@@ -121,7 +130,6 @@ def _normalize_authorization_servers(auth_servers: List[Any]) -> List[Dict[str, 
 
 
 def _normalize_participant(p: Dict[str, Any]) -> Dict[str, Any]:
-    # Campos mais comuns (tolerante a variações de nome)
     pid = _pick(p, ["OrganisationId", "organizationId", "organisationId", "organisation_id", "id"])
     name = _pick(p, ["OrganisationName", "organizationName", "organisationName", "legalName", "name"])
     reg = _pick(p, ["RegistrationNumber", "registrationNumber", "registration_number", "cnpj", "CNPJ"])
@@ -143,49 +151,75 @@ def _normalize_participant(p: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def fetch_payload(url: str) -> Any:
+def _load_json_from_path(path: Path) -> Any:
+    obj = json.loads(path.read_text(encoding="utf-8"))
+    # Se for um FULL já empacotado em JSON (não gz) com {"payload": ...}, extrai o payload bruto
+    if isinstance(obj, dict) and "payload" in obj:
+        return obj["payload"]
+    return obj
+
+
+def _resolve_payload(source: str) -> Tuple[Any, str]:
+    """
+    Retorna (payload_bruto, source_url_string).
+
+    Aceita:
+      - URL https://...
+      - caminho relativo/absoluto (ex: data/raw/opin_participants.json)
+      - file:///.../arquivo.json
+    """
+    src = (source or "").strip()
+    if not src:
+        src = DEFAULT_PARTICIPANTS_URL
+
+    # file://
+    if src.startswith("file://"):
+        # file:///home/... -> /home/...
+        local_path = Path(src.replace("file://", "", 1))
+        return _load_json_from_path(local_path), src
+
+    # caminho local direto
+    p = Path(src)
+    if p.exists() and p.is_file():
+        return _load_json_from_path(p), src
+
+    # caso contrário, trata como URL remota
     r = requests.get(
-        url,
+        src,
         timeout=30,
-        headers={
-            "User-Agent": USER_AGENT,
-            "Accept": "application/json",
-        },
+        headers={"User-Agent": USER_AGENT, "Accept": "application/json"},
     )
     r.raise_for_status()
-    return r.json()
+    return r.json(), src
 
 
-def build_slim(payload: Any, url: str, fetched_at: str) -> Dict[str, Any]:
+def build_slim(payload: Any, source_url: str, fetched_at: str) -> Dict[str, Any]:
     participants = _extract_participants(payload)
     normalized = [_normalize_participant(p) for p in participants]
 
     return {
-        "source": {"url": url, "fetchedAt": fetched_at},
+        "source": {"url": source_url, "fetchedAt": fetched_at},
         "participants": normalized,
         "meta": {"count": len(normalized)},
     }
 
 
-def write_outputs(url: str) -> None:
+def write_outputs(source: str) -> None:
     DATA_RAW.mkdir(parents=True, exist_ok=True)
     DATA_SNAPSHOTS.mkdir(parents=True, exist_ok=True)
     API_V1.mkdir(parents=True, exist_ok=True)
 
     fetched_at = _now_iso()
-    payload = fetch_payload(url)
+    payload, resolved_source = _resolve_payload(source)
 
-    slim = build_slim(payload, url, fetched_at)
-    full_payload = {
-        "source": {"url": url, "fetchedAt": fetched_at},
-        "payload": payload,
-    }
+    slim = build_slim(payload, resolved_source, fetched_at)
+    full_payload = {"source": {"url": resolved_source, "fetchedAt": fetched_at}, "payload": payload}
 
-    # FULL raw compactado (auditoria)
-    with gzip.open(FULL_RAW, "wt", encoding="utf-8") as f:
+    # FULL raw compactado
+    with gzip.open(FULL_RAW_GZ, "wt", encoding="utf-8") as f:
         f.write(json.dumps(full_payload, ensure_ascii=False, sort_keys=True))
 
-    # FULL snapshot diário compactado
+    # snapshot FULL compactado (1 por dia)
     day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     snap_path = DATA_SNAPSHOTS / f"opin_participants_full_{day}.json.gz"
     with gzip.open(snap_path, "wt", encoding="utf-8") as f:
@@ -199,6 +233,6 @@ def write_outputs(url: str) -> None:
 
 
 if __name__ == "__main__":
-    url = os.getenv("OPIN_PARTICIPANTS_URL", DEFAULT_PARTICIPANTS_URL)
-    write_outputs(url)
-    print("OK: generated api/v1/participants.json")
+    src = os.getenv("OPIN_PARTICIPANTS_URL", DEFAULT_PARTICIPANTS_URL)
+    write_outputs(src)
+    print("OK: generated api/v1/participants.json (SLIM) and FULL archives (.json.gz)")
