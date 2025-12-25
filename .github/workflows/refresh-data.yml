@@ -29,6 +29,24 @@ jobs:
         env:
           OPIN_PARTICIPANTS_URL: "https://data.directory.opinbrasil.com.br/participants"
 
+            - name: Validate participants.json (non-empty + meta.count > 0)
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          p = Path("api/v1/participants.json")
+          if (not p.exists()) or p.stat().st_size < 10:
+            raise SystemExit("ERRO: api/v1/participants.json ausente ou vazio. Abortando para não commitar lixo.")
+
+          data = json.loads(p.read_text(encoding="utf-8"))
+          count = int(data.get("meta", {}).get("count", 0))
+          if count <= 0:
+            raise SystemExit(f"ERRO: meta.count inválido ({count}). Abortando para não commitar.")
+
+          print("OK: participants.json válido. meta.count =", count)
+          PY
+      
       - name: Prune old snapshots (keep last 60)
         run: |
           ls -1t data/snapshots/opin_participants_*.json | tail -n +61 | xargs -r rm --
