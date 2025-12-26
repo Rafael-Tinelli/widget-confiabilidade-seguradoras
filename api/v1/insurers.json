@@ -1,0 +1,146 @@
+{
+  "schemaVersion": "1.0.0",
+  "generatedAt": "2025-12-26T12:00:00Z",
+
+  "period": {
+    "type": "rolling_12m",
+    "from": "2024-11-01",
+    "to": "2025-10-31",
+    "currency": "BRL",
+    "notes": "Acumulado dos últimos 12 meses disponíveis nas bases."
+  },
+
+  "sources": {
+    "ses": {
+      "publisher": "SUSEP",
+      "dataset": "SES - Base Completa (Download)",
+      "asOf": "2025-12-20",
+      "download": {
+        "landingPage": "https://www2.susep.gov.br/menuestatistica/ses/principal.aspx",
+        "artifact": "Base Completa (ZIP)",
+        "retrievedAt": "2025-12-26T12:00:00Z"
+      },
+      "files": {
+        "masterCompanies": "Ses_cias.csv",
+        "insuranceProductionDetected": "Ses_seguros.csv",
+        "provisionsDetected": "Ses_prov.csv",
+        "notes": "Os nomes podem variar no ZIP; o extrator deve detectar automaticamente o(s) CSV(s) de produção (prêmios/sinistros) por padrão de cabeçalhos."
+      }
+    },
+
+    "consumidorGov": {
+      "publisher": "Consumidor.gov.br / Dados Abertos",
+      "dataset": "Reclamações (CSVs mensais)",
+      "asOf": "2025-12-01",
+      "policy": "Circular SUSEP nº 643/2021 (registro obrigatório para supervisionados)",
+      "notes": "Usar CSVs mensais sem autenticação; filtrar segmento de Seguros/Capitalização/Previdência."
+    },
+
+    "opin": {
+      "publisher": "Open Insurance Brasil",
+      "dataset": "Participants",
+      "asOf": "2025-12-25",
+      "path": "api/v1/participants.json",
+      "notes": "Fonte para sinalização de presença em Open Insurance (quando aplicável)."
+    }
+  },
+
+  "taxonomy": {
+    "segments": {
+      "S1": "Grande porte (ex.: conglomerados bancários)",
+      "S2": "Médio porte",
+      "S3": "Pequeno porte",
+      "S4": "Insurtechs/Sandbox"
+    },
+    "products": {
+      "auto": "Automóvel",
+      "vida": "Pessoas e Vida",
+      "patrimonial": "Residencial e Patrimonial",
+      "rural": "Rural",
+      "transportes": "Transportes",
+      "rc": "Responsabilidade Civil",
+      "saude": "Saúde",
+      "odonto": "Odonto"
+    }
+  },
+
+  "methodology": {
+    "matching": {
+      "masterTable": "Ses_cias.csv",
+      "strategy": [
+        "Match por CNPJ quando existir na base Consumidor.gov",
+        "Fallback por Razão Social / Nome Fantasia via fuzzy matching",
+        "Aplicar tabela de aliases versionada"
+      ]
+    },
+
+    "score": {
+      "range": [0, 100],
+      "weights": {
+        "complaintsIndex": 0.40,
+        "resolutionRate": 0.25,
+        "satisfactionAvg": 0.20,
+        "avgResponseTime": 0.15
+      },
+      "definitions": {
+        "complaintsIndex": "Índice normalizado de reclamações por porte: Reclamações / (Prêmios em milhões). Invertido e normalizado para 0..100.",
+        "resolutionRate": "Percentual de reclamações finalizadas como resolvidas.",
+        "satisfactionAvg": "Média da nota do consumidor (1..5), reescalada para 0..100.",
+        "avgResponseTime": "Tempo médio de resposta em dias, invertido e normalizado."
+      },
+      "notes": [
+        "O objetivo é comparar de forma justa empresas de portes diferentes.",
+        "Além do score geral, o JSON mantém as métricas brutas para transparência."
+      ]
+    }
+  },
+
+  "insurers": [
+    {
+      "id": "ses:1234",
+      "name": "SEGURADORA EXEMPLO S.A.",
+      "cnpj": "00.000.000/0001-00",
+      "segment": "S2",
+
+      "products": ["auto", "vida"],
+
+      "metrics": {
+        "ses": {
+          "premiums": 150000000.0,
+          "claimsPaid": 70000000.0,
+          "lossRatio": 0.4667
+        },
+
+        "reputation": {
+          "complaints": 45,
+          "resolutionRate": 0.82,
+          "satisfactionAvg": 4.2,
+          "avgResponseTimeDays": 6.4
+        },
+
+        "normalized": {
+          "complaintsPerPremiumMillion": 0.30
+        }
+      },
+
+      "score": {
+        "overall": 85.5,
+        "components": {
+          "complaintsIndex": 88.0,
+          "resolutionRate": 82.0,
+          "satisfactionAvg": 84.0,
+          "avgResponseTime": 78.0
+        }
+      },
+
+      "flags": {
+        "openInsuranceParticipant": true
+      }
+    }
+  ],
+
+  "meta": {
+    "count": 1,
+    "disclaimer": "Dados públicos e critérios estatísticos. Não constitui recomendação, oferta ou consultoria individual."
+  }
+}
