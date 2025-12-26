@@ -2,22 +2,25 @@ from __future__ import annotations
 
 import csv
 import io
-import os
 import re
-import time
+import tempfile
+import unicodedata
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
-from playwright.sync_api import sync_playwright
+import requests
+import urllib3
 
-# URL Principal da SUSEP
-SES_URL = "https://www2.susep.gov.br/menuestatistica/ses/principal.aspx"
+# Desabilita avisos SSL (padrão em gov.br)
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# Diretório para salvar evidências de falha
-DEBUG_DIR = Path("ses_debug")
-DEBUG_DIR.mkdir(parents=True, exist_ok=True)
+# Portal de Dados Abertos da SUSEP (CKAN)
+CKAN_API_URL = "https://dados.susep.gov.br/api/3/action/package_search"
+CKAN_QUERY = "ses"
+
+USER_AGENT = "widget-confiabilidade-seguradoras/0.1 (GitHub Actions ETL)"
 
 
 @dataclass(frozen=True)
@@ -32,7 +35,6 @@ class SesExtractionMeta:
 def _norm(s: str) -> str:
     s = (s or "").strip().strip('"').strip("'")
     s = s.replace("\ufeff", "")
-    import unicodedata
     s = unicodedata.normalize("NFKD", s)
     s = "".join(ch for ch in s if not unicodedata.combining(ch))
     s = s.lower()
@@ -62,19 +64,8 @@ def _parse_brl_number(raw: Any) -> float:
         return 0.0
 
 
-def _ym_add(ym: int, delta_months: int) -> int:
-    y = ym // 100
-    m = ym % 100
-    total = y * 12 + (m - 1) + delta_months
-    y2 = total // 12
-    m2 = total % 12 + 1
-    return y2 * 100 + m2
-
-
 def _ym_to_iso_01(ym: int) -> str:
-    y = ym // 100
-    m = ym % 100
-    return f"{y:04d}-{m:02d}-01"
+    return f"{ym // 100:04d}-{ym % 100:02d}-01"
 
 
 def _parse_ym(value: Any) -> Optional[int]:
@@ -91,115 +82,88 @@ def _parse_ym(value: Any) -> Optional[int]:
     return v2 * 100 + v1
 
 
-def _validate_downloaded_file(path: Path) -> None:
-    """
-    Verifica se o arquivo baixado é um ZIP válido.
-    Se não for, levanta erro com diagnóstico.
-    """
-    if not path.exists():
-        raise FileNotFoundError(f"Arquivo não encontrado: {path}")
-
-    size = path.stat().st_size
-    if size == 0:
-        raise RuntimeError("Download resultou em arquivo vazio (0 bytes).")
-
-    with open(path, "rb") as f:
-        header = f.read(4)
-
-    # Assinatura ZIP: PK..
-    if header == b"\x50\x4b\x03\x04":
-        print(f"Sucesso: Assinatura ZIP válida. Tamanho: {size / 1024 / 1024:.2f} MB")
-        return
-
-    # Diagnóstico de erro
+def _find_ckan_resource_url() -> str:
+    """Busca a URL do ZIP no portal de dados abertos (CKAN)."""
+    print(f"Querying CKAN API: {CKAN_API_URL}?q={CKAN_QUERY}")
     try:
-        with open(path, "r", encoding="utf-8", errors="ignore") as f:
-            content = f.read(1000)
-    except Exception:
-        content = "Conteúdo binário desconhecido"
-
-    # Salva o arquivo inválido para debug
-    debug_file = DEBUG_DIR / f"invalid_download_{int(time.time())}.txt"
-    with open(debug_file, "w", encoding="utf-8") as f:
-        f.write(content)
-    
-    msg = f"Arquivo inválido (Header: {header.hex()}). Conteúdo salvo em {debug_file}."
-    if "<html" in content.lower():
-        msg += f" Parece HTML. Snippet: {content[:200]}"
-    
-    raise ValueError(msg)
-
-
-def _download_via_browser() -> Path:
-    print(f"Browser: Navigating to {SES_URL}...")
-
-    with sync_playwright() as p:
-        browser = p.chromium.launch(
-            headless=True,
-            args=[
-                "--disable-blink-features=AutomationControlled",
-                "--no-sandbox",
-            ],
+        r = requests.get(
+            CKAN_API_URL,
+            params={"q": CKAN_QUERY, "rows": 20},
+            headers={"User-Agent": USER_AGENT},
+            verify=False,
+            timeout=30,
         )
+        r.raise_for_status()
+        data = r.json()
 
-        context = browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            accept_downloads=True,
-        )
-        
-        # Evasão simples
-        context.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+        if not data.get("success"):
+            raise RuntimeError("CKAN API retornou erro.")
 
-        page = context.new_page()
+        results = data.get("result", {}).get("results", [])
 
-        try:
-            page.goto(SES_URL, timeout=90000, wait_until="domcontentloaded")
-            
-            # Tenta encontrar link de download
-            print("Browser: Searching for download link...")
-            with page.expect_download(timeout=120000) as download_info:
-                # Prioriza texto visível
-                link = page.get_by_role("link", name=re.compile(r"Base\s*(do)?\s*SES", re.IGNORECASE))
-                
-                if link.count() > 0:
-                    print("Browser: Found link by text. Clicking...")
-                    link.first.click()
-                else:
-                    print("Browser: Text failed. Trying generic ZIP href...")
-                    page.click("a[href$='.zip']")
+        # Procura dataset que parece ser o SES completo
+        candidates = []
+        for pkg in results:
+            title = pkg.get("title", "").lower()
+            if "ses" in title and ("base" in title or "completa" in title or "estatistica" in title):
+                # Procura recurso ZIP dentro do pacote
+                for res in pkg.get("resources", []):
+                    fmt = res.get("format", "").upper()
+                    url = res.get("url", "").lower()
+                    if fmt == "ZIP" or url.endswith(".zip"):
+                        candidates.append(res["url"])
 
-            download = download_info.value
-            tmp_path = Path(f"temp_ses_{int(time.time())}.zip")
-            print(f"Browser: Download started. Saving to {tmp_path}...")
-            download.save_as(tmp_path)
+        if candidates:
+            print(f"Found CKAN candidate: {candidates[0]}")
+            return candidates[0]
 
-            _validate_downloaded_file(tmp_path)
-            
-            browser.close()
-            return tmp_path
+        # Fallback Hardcoded
+        print("CKAN search empty. Trying direct Open Data URL fallback...")
+        return "https://dados.susep.gov.br/dataset/sistema-de-estatisticas-da-susep-ses/resource/base-completa-zip"
 
-        except Exception as e:
-            # Salva screenshot em caso de erro
-            try:
-                page.screenshot(path=str(DEBUG_DIR / "error_screenshot.png"))
-                with open(DEBUG_DIR / "error_page.html", "w", encoding="utf-8") as f:
-                    f.write(page.content())
-            except Exception:
-                pass
-            
-            browser.close()
-            raise RuntimeError(f"Playwright error: {e}") from e
+    except Exception as e:
+        print(f"CKAN Discovery failed: {e}")
+        # Último recurso: tenta o link antigo, vai que...
+        return "https://www2.susep.gov.br/menuestatistica/ses/download/BaseCompleta.zip"
+
+
+def _download_zip_to_tempfile(url: Optional[str] = None) -> Path:
+    if not url:
+        url = _find_ckan_resource_url()
+
+    print(f"Downloading from: {url}")
+    r = requests.get(
+        url,
+        headers={"User-Agent": USER_AGENT},
+        stream=True,
+        verify=False,
+        timeout=300,
+    )
+    r.raise_for_status()
+
+    # Verifica se é HTML de erro antes de salvar
+    content_type = r.headers.get("Content-Type", "").lower()
+    if "text/html" in content_type:
+        sample = r.content[:500].decode("utf-8", errors="ignore")
+        raise RuntimeError(f"URL retornou HTML em vez de ZIP. Content-Type: {content_type}. Snippet: {sample}")
+
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
+    for chunk in r.iter_content(chunk_size=1024 * 1024):
+        tmp.write(chunk)
+    tmp.close()
+    return Path(tmp.name)
 
 
 def extract_ses_master_and_financials(
     zip_url: Optional[str] = None,
 ) -> Tuple[SesExtractionMeta, Dict[str, Dict[str, Any]]]:
-    zip_path = _download_via_browser()
-    used_url = "browser_downloaded_artifact"
+    zip_path = _download_zip_to_tempfile(zip_url)
+    used_url = zip_url or "ckan_auto_discovery"
 
     try:
         with zipfile.ZipFile(zip_path) as z:
-            def find(names: List[str]) -> Optional[str]:
+
+            def find(names: list[str]) -> Optional[str]:
                 for n in z.namelist():
                     if any(x.lower() in n.lower() for x in names) and n.lower().endswith(".csv"):
                         return n
@@ -209,9 +173,9 @@ def extract_ses_master_and_financials(
             seguros = find(["ses_seguros", "seguros"])
 
             if not cias or not seguros:
-                raise RuntimeError(f"CSVs não encontrados. ZIP content: {z.namelist()}")
+                raise RuntimeError(f"ZIP baixado, mas CSVs não encontrados. Conteúdo: {z.namelist()}")
 
-            def read_csv(fname: str) -> List[List[str]]:
+            def read_csv(fname: str) -> list[list[str]]:
                 with z.open(fname) as f:
                     content = io.TextIOWrapper(f, encoding="latin-1", errors="replace", newline="")
                     return list(csv.reader(content, delimiter=";"))
@@ -222,7 +186,7 @@ def extract_ses_master_and_financials(
             h_cias = [_norm(x) for x in rows_cias[0]]
             h_seg = [_norm(x) for x in rows_seguros[0]]
 
-            def g_idx(h: List[str], keys: List[str]) -> Optional[int]:
+            def g_idx(h: list[str], keys: list[str]) -> Optional[int]:
                 for k in keys:
                     if _norm(k) in h:
                         return h.index(_norm(k))
@@ -245,20 +209,20 @@ def extract_ses_master_and_financials(
                     sid = _digits(row[id_i])
                     if not sid:
                         continue
+                    cn = None
+                    if cn_i is not None and len(row) > cn_i:
+                        cn = _digits(row[cn_i])
                     companies[sid.zfill(6)] = {
                         "name": row[nm_i].strip(),
-                        "cnpj": _digits(row[cn_i]) if cn_i is not None and len(row) > cn_i else None,
+                        "cnpj": cn,
                     }
 
             agg: Dict[str, Dict[str, float]] = {}
             max_ym = 0
 
             for row in rows_seguros[1:]:
-                if sid_i is None or ym_i is None or pr_i is None:
-                    break
                 if len(row) <= max(sid_i, ym_i, pr_i):
                     continue
-                
                 ym = _parse_ym(row[ym_i])
                 if not ym:
                     continue
@@ -271,14 +235,18 @@ def extract_ses_master_and_financials(
                 sid = sid.zfill(6)
 
                 prem = _parse_brl_number(row[pr_i])
-                sin = _parse_brl_number(row[sn_i]) if sn_i is not None and len(row) > sn_i else 0.0
+                sin = 0.0
+                if sn_i is not None and len(row) > sn_i:
+                    sin = _parse_brl_number(row[sn_i])
 
                 if sid not in agg:
                     agg[sid] = {"p": 0.0, "c": 0.0}
                 agg[sid]["p"] += prem
                 agg[sid]["c"] += sin
 
-            start_ym = _ym_add(max_ym, -11)
+            # Recalcula janela de 12 meses
+            start_ym = (max_ym // 100 * 12 + max_ym % 100 - 1 - 11)
+            start_ym = (start_ym // 12) * 100 + (start_ym % 12 + 1)
 
             out: Dict[str, Dict[str, Any]] = {}
             for sid, val in agg.items():
@@ -292,10 +260,7 @@ def extract_ses_master_and_financials(
                     "claims": round(val["c"], 2),
                 }
 
-            return (
-                SesExtractionMeta(used_url, cias, seguros, _ym_to_iso_01(start_ym), _ym_to_iso_01(max_ym)),
-                out,
-            )
+            return SesExtractionMeta(used_url, cias, seguros, _ym_to_iso_01(start_ym), _ym_to_iso_01(max_ym)), out
 
     finally:
         try:
