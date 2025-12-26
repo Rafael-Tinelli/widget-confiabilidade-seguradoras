@@ -70,6 +70,9 @@ def _classify_payload(head: bytes) -> str:
         return f"HTML (provável bloqueio/erro). markers={hit[:5]}"
     if txt.startswith("{") or txt.startswith("["):
         return "JSON (provável erro)"
+    # Detecta CSV (como no erro anterior)
+    if b";" in head or b"," in head:
+        return "Provável CSV/Texto"
     return "Binário desconhecido (não-ZIP)"
 
 
@@ -87,14 +90,13 @@ def _validate_zip_or_raise(zip_path: Path, url_hint: str) -> None:
         return
 
     _ensure_debug_dir()
-    (DEBUG_DIR / "download_head.bin").write_bytes(head)
-    snippet = head[:1200].decode("utf-8", errors="ignore")
-    kind = _classify_payload(head)
-
     try:
-        (DEBUG_DIR / f"download_{int(time.time())}.bin").write_bytes(zip_path.read_bytes())
+        (DEBUG_DIR / "download_head.bin").write_bytes(head)
     except Exception:
         pass
+    
+    snippet = head[:1200].decode("utf-8", errors="ignore")
+    kind = _classify_payload(head)
 
     raise RuntimeError(
         "Arquivo baixado não é ZIP válido. "
@@ -117,6 +119,7 @@ def _save_page_evidence(page, label: str) -> None:
 
 
 def _download_zip_via_browser() -> Tuple[Path, str]:
+    print(f"Browser: Navigating to {SES_URL}...")
     with sync_playwright() as p:
         browser = p.chromium.launch(
             headless=True,
@@ -131,11 +134,6 @@ def _download_zip_via_browser() -> Tuple[Path, str]:
                 "AppleWebKit/537.36 (KHTML, like Gecko) "
                 "Chrome/120.0.0.0 Safari/537.36"
             ),
-            extra_http_headers={
-                "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8",
-                "Upgrade-Insecure-Requests": "1",
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            },
         )
         context.add_init_script("Object.defineProperty(navigator,'webdriver',{get:()=>undefined});")
         page = context.new_page()
@@ -143,18 +141,35 @@ def _download_zip_via_browser() -> Tuple[Path, str]:
         try:
             page.goto(SES_URL, timeout=90_000, wait_until="domcontentloaded")
 
-            link = page.get_by_role("link").filter(
-                has_text=re.compile(r"(Base\s*do\s*SES|Base\s*Completa|Base.*Download)", re.IGNORECASE)
+            # CORREÇÃO: Força seleção apenas de links que terminam em .zip
+            # Isso evita clicar no "LISTAEMPRESAS.csv"
+            print("Browser: Searching for .zip link...")
+            
+            # Tenta ser específico: Texto + Href ZIP
+            zip_link = page.locator("a[href$='.zip']").filter(
+                has_text=re.compile(r"(Base\s*do\s*SES|Completa|Download)", re.IGNORECASE)
             )
 
+            # Se não achar específico, pega qualquer ZIP (é melhor pegar um zip errado que um csv)
+            if zip_link.count() == 0:
+                print("Browser: Specific ZIP link not found. Trying generic ZIP locator...")
+                zip_link = page.locator("a[href$='.zip']")
+
+            if zip_link.count() == 0:
+                # Debug: Lista links encontrados para ajudar no diagnóstico
+                links_found = page.locator("a").all_inner_texts()
+                raise RuntimeError(f"Nenhum link .zip encontrado na página. Links visíveis: {links_found[:10]}...")
+
+            print(f"Browser: Found {zip_link.count()} ZIP candidates. Clicking the first one...")
+
             with page.expect_download(timeout=180_000) as dlinfo:
-                if link.count() > 0:
-                    link.first.click(timeout=30_000)
-                else:
-                    page.locator("a[href$='.zip']").first.click(timeout=30_000)
+                # Clica no primeiro .zip encontrado
+                zip_link.first.click(timeout=30_000)
 
             download = dlinfo.value
             dl_url = getattr(download, "url", "") or "playwright_download"
+            
+            print(f"Browser: Download started from {dl_url}")
 
             tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
             tmp_path = Path(tmp.name)
