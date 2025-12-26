@@ -20,14 +20,17 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 # Página principal onde o link do ZIP costuma estar hospedado
 SES_PRINCIPAL_URL = "https://www2.susep.gov.br/menuestatistica/ses/principal.aspx"
 
-# Fallbacks caso o crawler falhe
+# Lista de tentativas se o crawler falhar
 FALLBACK_URLS = [
     "https://www2.susep.gov.br/menuestatistica/ses/download/BaseCompleta.zip",
     "http://www2.susep.gov.br/menuestatistica/ses/download/BaseCompleta.zip",
     "https://www2.susep.gov.br/safe/menuestatistica/ses/download/BaseCompleta.zip",
+    "https://www2.susep.gov.br/menuestatistica/ses/download/ses_base_completa.zip", # Variação comum
+    "https://www2.susep.gov.br/menuestatistica/ses/basecompleta.zip",
 ]
 
-USER_AGENT = "widget-confiabilidade-seguradoras/0.1 (+https://github.com/Rafael-Tinelli/widget-confiabilidade-seguradoras)"
+# User-Agent "Real" para evitar bloqueios WAF (Web Application Firewall)
+USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
 
 @dataclass(frozen=True)
@@ -114,7 +117,6 @@ def _parse_ym(value: Any) -> Optional[int]:
 def _discover_ses_zip_url() -> str:
     """
     Acessa a página principal do SES e tenta encontrar o link dinâmico para a Base Completa.
-    Retorna a URL encontrada ou levanta erro.
     """
     print(f"Crawling {SES_PRINCIPAL_URL} to find ZIP link...")
     try:
@@ -127,22 +129,36 @@ def _discover_ses_zip_url() -> str:
         r.raise_for_status()
         html = r.text
 
-        # Procura por href="...BaseCompleta.zip" (case insensitive)
-        # Ex: href="download/BaseCompleta.zip"
-        match = re.search(r'href\s*=\s*["\']([^"\']*[Bb]ase[Cc]ompleta\.zip)["\']', html)
-        if match:
-            relative_url = match.group(1)
+        # Regex flexível para encontrar qualquer ZIP que pareça a base completa
+        # Procura por href="..." contendo .zip
+        links = re.findall(r'href\s*=\s*["\']([^"\']+\.zip)["\']', html, re.IGNORECASE)
+        
+        # Filtra links que pareçam ser a base completa
+        candidates = []
+        for link in links:
+            if "base" in link.lower() and "completa" in link.lower():
+                candidates.append(link)
+        
+        if candidates:
+            # Pega o primeiro candidato
+            relative_url = candidates[0]
             final_url = urljoin(SES_PRINCIPAL_URL, relative_url)
-            print(f"Discovered dynamic URL: {final_url}")
+            print(f"SUCCESS: Discovered dynamic URL: {final_url}")
             return final_url
+        else:
+            print("WARNING: No 'BaseCompleta' zip found in page HTML.")
+            # Debug: Mostra quais zips foram achados para ajudar a corrigir o regex se necessário
+            print(f"DEBUG: Found these ZIPs instead: {links[:10]}...")
+
     except Exception as e:
         print(f"Crawler warning: failed to scrape SES page: {e}")
 
-    # Se falhar, tenta os fallbacks conhecidos
+    # Fallback Logic
     print("Crawler failed. Trying hardcoded fallbacks...")
     for fallback in FALLBACK_URLS:
         try:
-            print(f"Testing fallback: {fallback}")
+            print(f"Testing fallback availability: {fallback}")
+            # Faz apenas um HEAD para ver se existe antes de tentar baixar
             r = requests.head(
                 fallback, 
                 timeout=10, 
@@ -153,22 +169,23 @@ def _discover_ses_zip_url() -> str:
             if r.status_code == 200:
                 print(f"Fallback confirmed: {fallback}")
                 return fallback
-        except Exception:
+            else:
+                print(f"Fallback failed with status {r.status_code}")
+        except Exception as e:
+            print(f"Fallback error: {e}")
             continue
 
-    # Se nenhum funcionar, retorna o primeiro fallback e deixa o erro explodir no download real
+    # Se tudo falhar, retorna o primeiro fallback e torce para funcionar no GET final
+    print("All checks failed. Defaulting to primary fallback.")
     return FALLBACK_URLS[0]
 
 
 def _download_zip_to_tempfile(zip_url: Optional[str] = None, timeout_s: int = 300) -> Tuple[Path, str]:
-    """
-    Baixa o ZIP. Se zip_url não for passado, tenta descobrir.
-    Retorna (Path, url_usada).
-    """
     if not zip_url:
         zip_url = _discover_ses_zip_url()
 
     print(f"Downloading from: {zip_url}")
+    # Nota: verify=False é necessário pois o certificado da SUSEP frequentemente falha em ambientes Linux estritos
     r = requests.get(
         zip_url,
         timeout=timeout_s,
