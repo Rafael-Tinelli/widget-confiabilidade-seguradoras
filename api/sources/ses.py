@@ -141,30 +141,30 @@ def _download_zip_via_browser() -> Tuple[Path, str]:
         try:
             page.goto(SES_URL, timeout=90_000, wait_until="domcontentloaded")
 
-            # CORREÇÃO: Força seleção apenas de links que terminam em .zip
-            # Isso evita clicar no "LISTAEMPRESAS.csv"
-            print("Browser: Searching for .zip link...")
+            print("Browser: Searching for download link via Text Match...")
             
-            # Tenta ser específico: Texto + Href ZIP
-            zip_link = page.locator("a[href$='.zip']").filter(
-                has_text=re.compile(r"(Base\s*do\s*SES|Completa|Download)", re.IGNORECASE)
-            )
+            # CRITICAL FIX: Look for the specific text we saw in the logs.
+            # Do not filter by href ending in .zip because it's likely a JS PostBack.
+            target_text = re.compile(r"Base\s*de\s*Dados\s*do\s*SES", re.IGNORECASE)
+            
+            # Try to find the link/button
+            link = page.get_by_role("link").filter(has_text=target_text)
+            
+            # If not found as a link, try as a generic locator (sometimes it's a span/div with onclick)
+            if link.count() == 0:
+                print("Browser: standard link not found, trying generic text locator...")
+                link = page.locator("text=" + target_text.pattern)
 
-            # Se não achar específico, pega qualquer ZIP (é melhor pegar um zip errado que um csv)
-            if zip_link.count() == 0:
-                print("Browser: Specific ZIP link not found. Trying generic ZIP locator...")
-                zip_link = page.locator("a[href$='.zip']")
+            if link.count() == 0:
+                # Debug info
+                visible_text = page.locator("body").inner_text()
+                raise RuntimeError(f"Link 'Base de Dados do SES' NOT found. Page text excerpt: {visible_text[:200]}")
 
-            if zip_link.count() == 0:
-                # Debug: Lista links encontrados para ajudar no diagnóstico
-                links_found = page.locator("a").all_inner_texts()
-                raise RuntimeError(f"Nenhum link .zip encontrado na página. Links visíveis: {links_found[:10]}...")
+            print("Browser: Found target element. Clicking...")
 
-            print(f"Browser: Found {zip_link.count()} ZIP candidates. Clicking the first one...")
-
+            # Start waiting for download BEFORE clicking
             with page.expect_download(timeout=180_000) as dlinfo:
-                # Clica no primeiro .zip encontrado
-                zip_link.first.click(timeout=30_000)
+                link.first.click(timeout=30_000)
 
             download = dlinfo.value
             dl_url = getattr(download, "url", "") or "playwright_download"
@@ -186,7 +186,6 @@ def _download_zip_via_browser() -> Tuple[Path, str]:
             _save_page_evidence(page, "ses_failure")
             browser.close()
             raise RuntimeError(f"Playwright SES download failed: {e}") from e
-
 
 def _parse_brl_number(raw: Any) -> float:
     if raw is None:
