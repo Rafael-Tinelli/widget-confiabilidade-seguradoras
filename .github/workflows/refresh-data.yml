@@ -55,24 +55,6 @@ jobs:
           print("OK: participants.json válido. meta.count =", count)
           PY
 
-      - name: Validate participants.json (non-empty + meta.count > 0)
-        run: |
-          python - <<'PY'
-          import json
-          from pathlib import Path
-
-          p = Path("api/v1/participants.json")
-          if (not p.exists()) or p.stat().st_size < 10:
-              raise SystemExit("ERRO: api/v1/participants.json ausente ou vazio. Abortando para não commitar lixo.")
-
-          data = json.loads(p.read_text(encoding="utf-8"))
-          count = int(data.get("meta", {}).get("count", 0))
-          if count <= 0:
-              raise SystemExit(f"ERRO: meta.count inválido ({count}). Abortando para não commitar.")
-
-          print("OK: participants.json válido. meta.count =", count)
-          PY
-
       - name: Validate FULL archives exist (raw + snapshot)
         run: |
           set -e
