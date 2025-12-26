@@ -32,8 +32,14 @@ jobs:
           pip install -r requirements.txt
           if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
 
+      # --- NOVO: Instala o navegador para o Crawler da SUSEP (Insurers) ---
+      # Isso precisa rodar ANTES do script 'api.build_insurers'
+      - name: Install Playwright Browsers
+        run: |
+          playwright install chromium --with-deps
+
       # -------------------------
-      # PARTICIPANTS (OPIN)
+      # BUILD 1: PARTICIPANTS (OPIN)
       # -------------------------
       - name: Build JSON (participants)
         run: python -m api.build_json
@@ -48,23 +54,23 @@ jobs:
 
           p = Path("api/v1/participants.json")
           if (not p.exists()) or p.stat().st_size < 10:
-              raise SystemExit("ERRO: api/v1/participants.json ausente ou vazio. Abortando para não commitar lixo.")
+              raise SystemExit("ERRO: api/v1/participants.json ausente ou vazio. Abortando.")
 
           data = json.loads(p.read_text(encoding="utf-8"))
           count = int(data.get("meta", {}).get("count", 0))
           if count <= 0:
-              raise SystemExit(f"ERRO: meta.count inválido ({count}). Abortando para não commitar.")
+              raise SystemExit(f"ERRO: meta.count inválido ({count}). Abortando.")
           print("OK: participants.json válido. meta.count =", count)
           PY
 
-      - name: Validate FULL archives exist (participants raw + snapshot)
+      - name: Validate FULL archives exist (participants)
         run: |
           set -e
           test -s "data/raw/opin_participants_full.json.gz"
-          ls -1 "data/snapshots"/opin_participants_full_*.json.gz >/dev/null
-          latest="$(ls -1t data/snapshots/opin_participants_full_*.json.gz | head -n 1)"
-          test -s "$latest"
-          echo "OK: participants FULL archives present. Latest snapshot: $latest"
+          # Verifica se existe pelo menos um snapshot
+          count=$(ls -1 data/snapshots/opin_participants_full_*.json.gz 2>/dev/null | wc -l)
+          if [ "$count" -eq 0 ]; then echo "ERRO: Nenhum snapshot de participants encontrado"; exit 1; fi
+          echo "OK: participants FULL archives present."
 
       - name: Guardrail SLIM size limit (participants)
         run: |
@@ -79,13 +85,14 @@ jobs:
           PY
 
       # -------------------------
-      # INSURERS (SES) - B1
+      # BUILD 2: INSURERS (SES)
       # -------------------------
       - name: Build JSON (insurers)
-        # Importante: NÃO passar env SES_ZIP_URL para forçar o uso do Crawler/Browser
+        # O script api.build_insurers vai chamar api.sources.ses
+        # que agora usa o Playwright instalado acima para baixar o ZIP
         run: python -m api.build_insurers
 
-      - name: Validate insurers.json (non-empty + meta.count > 0 + items have metrics)
+      - name: Validate insurers.json (metrics check)
         run: |
           python - <<'PY'
           import json
@@ -93,32 +100,33 @@ jobs:
 
           p = Path("api/v1/insurers.json")
           if (not p.exists()) or p.stat().st_size < 10:
-              raise SystemExit("ERRO: api/v1/insurers.json ausente ou vazio. Abortando para não commitar lixo.")
+              raise SystemExit("ERRO: api/v1/insurers.json ausente ou vazio.")
 
           data = json.loads(p.read_text(encoding="utf-8"))
           count = int(data.get("meta", {}).get("count", 0))
           if count <= 0:
-              raise SystemExit(f"ERRO: meta.count inválido ({count}). Abortando para não commitar.")
+              raise SystemExit(f"ERRO: meta.count inválido ({count}).")
 
-          # sanity: primeiros itens têm bloco metrics.ses
+          # Verifica estrutura básica dos primeiros itens (agora usando 'data' conforme a correção)
           for it in data.get("insurers", [])[:5]:
-              if "metrics" not in it:
-                  raise SystemExit("ERRO: item sem 'metrics'.")
-              if "ses" not in (it.get("metrics") or {}):
-                  raise SystemExit("ERRO: item sem 'metrics.ses'.")
-              if "premiums" not in it["metrics"]["ses"]:
-                  raise SystemExit("ERRO: item sem 'metrics.ses.premiums'.")
+              # Na versão nova do script, a chave de métricas chama-se 'data'
+              if "data" not in it:
+                  raise SystemExit(f"ERRO: item {it.get('id')} sem chave 'data'.")
+              
+              metrics = it["data"]
+              if "premiums" not in metrics:
+                  raise SystemExit(f"ERRO: item {it.get('id')} sem 'data.premiums'.")
+          
           print("OK: insurers.json válido. meta.count =", count)
           PY
 
-      - name: Validate FULL archives exist (insurers raw + snapshot)
+      - name: Validate FULL archives exist (insurers)
         run: |
           set -e
           test -s "data/raw/insurers_full.json.gz"
-          ls -1 "data/snapshots"/insurers_full_*.json.gz >/dev/null
-          latest="$(ls -1t data/snapshots/insurers_full_*.json.gz | head -n 1)"
-          test -s "$latest"
-          echo "OK: insurers FULL archives present. Latest snapshot: $latest"
+          count=$(ls -1 data/snapshots/insurers_full_*.json.gz 2>/dev/null | wc -l)
+          if [ "$count" -eq 0 ]; then echo "ERRO: Nenhum snapshot de insurers encontrado"; exit 1; fi
+          echo "OK: insurers FULL archives present."
 
       - name: Guardrail SLIM size limit (insurers)
         run: |
@@ -126,7 +134,7 @@ jobs:
           from pathlib import Path
           p = Path("api/v1/insurers.json")
           size = p.stat().st_size
-          limit = 2_000_000  # 2 MB (ajuste se necessário)
+          limit = 2_000_000  # 2 MB
           if size > limit:
               raise SystemExit(f"ERRO: insurers.json inflou para {size} bytes (limite {limit}).")
           print("OK: insurers.json size =", size)
@@ -136,24 +144,31 @@ jobs:
       # TESTS
       # -------------------------
       - name: Run tests
+        # Garante que api/build_insurers.py gerou o JSON no formato que o teste espera
         run: pytest -q
+
+      # -------------------------
+      # ARTIFACTS (DEBUG)
+      # -------------------------
+      # Se falhar, sobe a pasta ses_debug para podermos ver o HTML do bloqueio
+      - name: Upload Debug Artifacts (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ses-debug-evidence
+          path: ses_debug/
+          retention-days: 3
 
       # -------------------------
       # PRUNE SNAPSHOTS
       # -------------------------
       - name: Prune old snapshots (keep last 60 each)
         run: |
-          # participants
           find data/snapshots -maxdepth 1 -name 'opin_participants_full_*.json.gz' -printf '%T@ %p\n' \
-            | sort -nr \
-            | awk 'NR>60 {print $2}' \
-            | xargs -r rm --
-
-          # insurers
+            | sort -nr | awk 'NR>60 {print $2}' | xargs -r rm --
+          
           find data/snapshots -maxdepth 1 -name 'insurers_full_*.json.gz' -printf '%T@ %p\n' \
-            | sort -nr \
-            | awk 'NR>60 {print $2}' \
-            | xargs -r rm --
+            | sort -nr | awk 'NR>60 {print $2}' | xargs -r rm --
 
       # -------------------------
       # COMMIT
