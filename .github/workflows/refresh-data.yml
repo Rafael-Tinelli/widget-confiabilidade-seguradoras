@@ -3,7 +3,7 @@ name: refresh data
 on:
   workflow_dispatch:
   schedule:
-    - cron: "17 6 * * 0" # semanal (domingo 06:17 UTC)
+    - cron: "17 6 * * 0"  # semanal (domingo 06:17 UTC)
 
 permissions:
   contents: write
