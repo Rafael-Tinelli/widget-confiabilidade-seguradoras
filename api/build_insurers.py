@@ -67,7 +67,7 @@ def _infer_segment_fallback(val: float) -> str:
 
 
 def build_payload() -> Dict[str, Any]:
-    # Sem argumento de URL, usa o discovery do CKAN
+    # Sem argumento de URL, usa o discovery (Browser/CKAN)
     meta, companies = extract_ses_master_and_financials()
 
     insurers = []
@@ -111,7 +111,7 @@ def build_payload() -> Dict[str, Any]:
         },
         "sources": {
             "ses": {
-                "dataset": "SUSEP SES Base Completa (Dados Abertos)",
+                "dataset": "SUSEP SES Base Completa",
                 "url": meta.zip_url,
                 "files": [meta.cias_file, meta.seguros_file],
             },
