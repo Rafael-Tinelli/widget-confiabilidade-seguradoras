@@ -65,7 +65,14 @@ def _is_zip_signature(head8: bytes) -> bool:
 def _classify_payload(head: bytes) -> str:
     txt = head.decode("utf-8", errors="ignore").lower().strip()
     if txt.startswith("<!doctype html") or txt.startswith("<html") or txt.startswith("<"):
-        markers = ["cloudflare", "access denied", "forbidden", "attention required", "captcha", "turnstile"]
+        markers = [
+            "cloudflare",
+            "access denied",
+            "forbidden",
+            "attention required",
+            "captcha",
+            "turnstile",
+        ]
         hit = [m for m in markers if m in txt]
         return f"HTML (provável bloqueio/erro). markers={hit[:5]}"
     if txt.startswith("{") or txt.startswith("["):
@@ -97,6 +104,12 @@ def _validate_zip_or_raise(zip_path: Path, url_hint: str) -> None:
     snippet = head[:1200].decode("utf-8", errors="ignore")
     kind = _classify_payload(head)
 
+    # Tenta salvar o conteúdo para debug se for pequeno
+    try:
+        (DEBUG_DIR / f"invalid_download_{int(time.time())}.txt").write_bytes(head)
+    except Exception:
+        pass
+
     raise RuntimeError(
         "Arquivo baixado não é ZIP válido. "
         f"kind={kind} size={size} url={url_hint}\n"
@@ -117,6 +130,65 @@ def _save_page_evidence(page, label: str) -> None:
         pass
 
 
+def _first_visible(locator):
+    # Retorna o primeiro item visível do locator (ou None)
+    n = locator.count()
+    for i in range(n):
+        it = locator.nth(i)
+        try:
+            if it.is_visible():
+                return it
+        except Exception:
+            continue
+    return None
+
+
+def _find_ses_download_trigger(page):
+    # Regex tolerante a NBSP e quebras de linha/espaços múltiplos
+    # Procura por "Base de Dados do SES" ou variações comuns
+    target = re.compile(
+        r"Base[\s\u00A0]*d[eo][\s\u00A0]*(Dados)?[\s\u00A0]*do[\s\u00A0]*SES", re.IGNORECASE
+    )
+
+    # 1) Espera renderização mais estável (Aumentado para 30s conforme sugestão)
+    try:
+        page.wait_for_load_state("networkidle", timeout=30_000)
+    except Exception:
+        pass
+
+    # 2) Procura em todos os frames (ASP.NET às vezes usa iframe)
+    frames = page.frames  # inclui main_frame
+    for fr in frames:
+        # 2.1) Procura diretamente por gatilhos clicáveis com esse texto
+        clickables = fr.locator(
+            "a, button, input[type=submit], input[type=button], [role=link], "
+            "[onclick*='__doPostBack'], a[href*='__doPostBack']"
+        ).filter(has_text=target)
+
+        cand = _first_visible(clickables)
+        if cand:
+            print("Browser: Found direct clickable element.")
+            return cand
+
+        # 2.2) Se não achou clicável direto, acha o texto e sobe pro ancestral
+        text_hit = fr.get_by_text(target)
+        th = _first_visible(text_hit)
+        if th:
+            # “sobe” até um ancestral clicável comum em WebForms
+            ancestor = th.locator(
+                "xpath=ancestor-or-self::a[1] | "
+                "ancestor-or-self::button[1] | "
+                "ancestor-or-self::input[1] | "
+                "ancestor-or-self::*[contains(@onclick,'__doPostBack')][1]"
+            )
+            anc = _first_visible(ancestor)
+            if anc:
+                print("Browser: Found clickable ancestor via text.")
+                return anc
+
+    return None
+
+
 def _download_zip_via_browser() -> Tuple[Path, str]:
     print(f"Browser: Navigating to {SES_URL}...")
     with sync_playwright() as p:
@@ -133,42 +205,42 @@ def _download_zip_via_browser() -> Tuple[Path, str]:
                 "AppleWebKit/537.36 (KHTML, like Gecko) "
                 "Chrome/120.0.0.0 Safari/537.36"
             ),
+            extra_http_headers={
+                "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8",
+                "Upgrade-Insecure-Requests": "1",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            },
         )
         context.add_init_script("Object.defineProperty(navigator,'webdriver',{get:()=>undefined});")
         page = context.new_page()
 
         try:
+            # Timeout generoso para carga inicial
             page.goto(SES_URL, timeout=90_000, wait_until="domcontentloaded")
 
-            print("Browser: Searching for download link via Text Match...")
+            print("Browser: Locating ASP.NET download trigger...")
+            trigger = _find_ses_download_trigger(page)
 
-            # CORREÇÃO: Usar regex flexível para pegar o texto que vimos no log.
-            # O texto real é 'Base de Dados do SES, atualizada até YYYYMM'
-            # Usamos get_by_text para pegar spans/divs clicáveis, não só links.
-            target_text = re.compile(r"Base\s*de\s*Dados\s*do\s*SES", re.IGNORECASE)
-            
-            # Tenta encontrar qualquer elemento com esse texto visível
-            link = page.get_by_text(target_text)
-
-            if link.count() == 0:
-                # Fallback: Tenta achar qualquer link que contenha "Download" ou ".zip"
-                print("Browser: Exact text not found. Trying generic 'Download' locator...")
-                link = page.get_by_role("link").filter(has_text="Download")
-
-            if link.count() == 0:
+            if not trigger:
                 visible_text = page.locator("body").inner_text()
-                raise RuntimeError(f"Link 'Base de Dados do SES' NÃO encontrado. Texto visível: {visible_text[:300]}")
+                raise RuntimeError(
+                    "Trigger 'Base de Dados do SES' NÃO encontrado. "
+                    f"Texto visível (head 500chars): {visible_text[:500]}"
+                )
 
-            print("Browser: Found target element. Clicking...")
+            print("Browser: Found trigger. Clicking...")
+            try:
+                trigger.scroll_into_view_if_needed()
+            except Exception:
+                pass
 
-            # Timeout alto para o download começar (ASP.NET é lento)
+            # Timeout alto para o servidor gerar o arquivo após o PostBack
             with page.expect_download(timeout=180_000) as dlinfo:
-                # Clica no primeiro elemento encontrado
-                link.first.click(timeout=30_000)
+                trigger.click(timeout=30_000, force=True)
 
             download = dlinfo.value
             dl_url = getattr(download, "url", "") or "playwright_download"
-            
+
             print(f"Browser: Download started from {dl_url}")
 
             tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
@@ -223,6 +295,9 @@ def _parse_ym(value: Any) -> Optional[int]:
 def extract_ses_master_and_financials(
     zip_url: Optional[str] = None,
 ) -> Tuple[SesExtractionMeta, Dict[str, Dict[str, Any]]]:
+    if zip_url:
+        print(f"SES: zip_url={zip_url} informado, mas ignorado em favor do crawler Playwright.")
+
     zip_path, used_url = _download_zip_via_browser()
 
     try:
