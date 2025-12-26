@@ -142,14 +142,17 @@ def _download_zip_via_browser() -> Tuple[Path, str]:
 
             print("Browser: Searching for download link via Text Match...")
 
-            # Regex corrigida para bater com o texto exato observado nos logs
-            target_text = re.compile(r"Base\s*(de|do)\s*(Dados)?\s*(do)?\s*SES", re.IGNORECASE)
-
-            # Usa get_by_text em vez de role=link, pois o ASP.NET pode usar spans/divs com onClick
+            # CORREÇÃO: Usar regex flexível para pegar o texto que vimos no log.
+            # O texto real é 'Base de Dados do SES, atualizada até YYYYMM'
+            # Usamos get_by_text para pegar spans/divs clicáveis, não só links.
+            target_text = re.compile(r"Base\s*de\s*Dados\s*do\s*SES", re.IGNORECASE)
+            
+            # Tenta encontrar qualquer elemento com esse texto visível
             link = page.get_by_text(target_text)
 
             if link.count() == 0:
-                # Fallback: Tenta achar qualquer link que contenha "Download"
+                # Fallback: Tenta achar qualquer link que contenha "Download" ou ".zip"
+                print("Browser: Exact text not found. Trying generic 'Download' locator...")
                 link = page.get_by_role("link").filter(has_text="Download")
 
             if link.count() == 0:
@@ -158,13 +161,14 @@ def _download_zip_via_browser() -> Tuple[Path, str]:
 
             print("Browser: Found target element. Clicking...")
 
+            # Timeout alto para o download começar (ASP.NET é lento)
             with page.expect_download(timeout=180_000) as dlinfo:
                 # Clica no primeiro elemento encontrado
                 link.first.click(timeout=30_000)
 
             download = dlinfo.value
             dl_url = getattr(download, "url", "") or "playwright_download"
-
+            
             print(f"Browser: Download started from {dl_url}")
 
             tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
