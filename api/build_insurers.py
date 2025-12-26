@@ -60,9 +60,12 @@ def _methodology_stub() -> Dict[str, Any]:
 
 def _infer_segment_fallback(premiums_rolling_12m: float) -> str:
     p = float(premiums_rolling_12m or 0.0)
-    if p >= 2_000_000_000: return "S1"
-    if p >= 500_000_000: return "S2"
-    if p >= 50_000_000: return "S3"
+    if p >= 2_000_000_000:
+        return "S1"
+    if p >= 500_000_000:
+        return "S2"
+    if p >= 50_000_000:
+        return "S3"
     return "S4"
 
 
@@ -154,8 +157,9 @@ def write_outputs(zip_url: str | None) -> None:
 
 if __name__ == "__main__":
     # CORREÇÃO: Tenta pegar do ENV, se não tiver, passa None para ativar o crawler
-    zip_url = os.getenv("SES_ZIP_URL")
-    if zip_url == "": zip_url = None
+    zip_url_env = os.getenv("SES_ZIP_URL")
+    if zip_url_env == "":
+        zip_url_env = None
     
-    write_outputs(zip_url)
+    write_outputs(zip_url_env)
     print("OK: generated api/v1/insurers.json (SLIM) and FULL archives")
