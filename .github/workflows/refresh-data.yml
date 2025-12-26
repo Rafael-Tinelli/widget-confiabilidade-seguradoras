@@ -83,8 +83,6 @@ jobs:
       # -------------------------
       - name: Build JSON (insurers)
         run: python -m api.build_insurers
-        env:
-          SES_ZIP_URL: "https://www2.susep.gov.br/safe/menuestatistica/ses/download/BaseCompleta.zip"
 
       - name: Validate insurers.json (non-empty + meta.count > 0 + items have metrics)
         run: |
