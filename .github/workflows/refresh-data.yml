@@ -121,7 +121,7 @@ jobs:
           test -s "$latest"
           echo "OK: insurers FULL archives present. Latest snapshot: $latest"
 
-      - name: Guardrail: SLIM size limit (insurers)
+      - name: Guardrail SLIM size limit (insurers)
         run: |
           python - <<'PY'
           from pathlib import Path
