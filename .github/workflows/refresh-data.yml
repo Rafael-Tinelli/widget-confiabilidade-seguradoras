@@ -66,7 +66,7 @@ jobs:
           test -s "$latest"
           echo "OK: participants FULL archives present. Latest snapshot: $latest"
 
-      - name: Guardrail: SLIM size limit (participants)
+      - name: Guardrail SLIM size limit (participants)
         run: |
           python - <<'PY'
           from pathlib import Path
