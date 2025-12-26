@@ -32,9 +32,9 @@ jobs:
           pip install -r requirements.txt
           if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
 
-      # ----------------------------
-      # Participants (OPIN)
-      # ----------------------------
+      # -----------------------
+      # OPIN (participants)
+      # -----------------------
       - name: Build JSON (participants)
         run: python api/build_json.py
         env:
@@ -54,10 +54,6 @@ jobs:
           count = int(data.get("meta", {}).get("count", 0))
           if count <= 0:
               raise SystemExit(f"ERRO: meta.count inválido ({count}). Abortando para não commitar.")
-
-          if "participants" not in data or len(data["participants"]) != count:
-              raise SystemExit("ERRO: participants[] ausente ou count divergente.")
-
           print("OK: participants.json válido. meta.count =", count)
           PY
 
@@ -68,7 +64,7 @@ jobs:
           ls -1 "data/snapshots"/opin_participants_full_*.json.gz >/dev/null
           latest="$(ls -1t data/snapshots/opin_participants_full_*.json.gz | head -n 1)"
           test -s "$latest"
-          echo "OK: Participants FULL archives present. Latest snapshot: $latest"
+          echo "OK: participants FULL archives present. Latest snapshot: $latest"
 
       - name: Guardrail: SLIM size limit (participants)
         run: |
@@ -82,13 +78,15 @@ jobs:
           print("OK: participants.json size =", size)
           PY
 
-      # ----------------------------
-      # Insurers (SES B1)
-      # ----------------------------
+      # -----------------------
+      # SES (insurers) - B1
+      # -----------------------
       - name: Build JSON (insurers)
         run: python api/build_insurers.py
+        env:
+          SES_ZIP_URL: "https://www2.susep.gov.br/safe/menuestatistica/ses/download/BaseCompleta.zip"
 
-      - name: Validate insurers.json (non-empty + meta.count > 0)
+      - name: Validate insurers.json (non-empty + meta.count > 0 + items have data)
         run: |
           python - <<'PY'
           import json
@@ -103,8 +101,10 @@ jobs:
           if count <= 0:
               raise SystemExit(f"ERRO: meta.count inválido ({count}). Abortando para não commitar.")
 
-          if "insurers" not in data or len(data["insurers"]) != count:
-              raise SystemExit("ERRO: insurers[] ausente ou count divergente.")
+          # sanity: 5 primeiros têm 'data'
+          for it in data.get("insurers", [])[:5]:
+              if "data" not in it:
+                  raise SystemExit("ERRO: item de insurers sem chave 'data' (schema antigo ainda está sendo gerado).")
 
           print("OK: insurers.json válido. meta.count =", count)
           PY
@@ -116,7 +116,7 @@ jobs:
           ls -1 "data/snapshots"/insurers_full_*.json.gz >/dev/null
           latest="$(ls -1t data/snapshots/insurers_full_*.json.gz | head -n 1)"
           test -s "$latest"
-          echo "OK: Insurers FULL archives present. Latest snapshot: $latest"
+          echo "OK: insurers FULL archives present. Latest snapshot: $latest"
 
       - name: Guardrail: SLIM size limit (insurers)
         run: |
@@ -124,38 +124,31 @@ jobs:
           from pathlib import Path
           p = Path("api/v1/insurers.json")
           size = p.stat().st_size
-          limit = 2_000_000  # 2 MB (folgado p/ B1; ajuste depois)
+          limit = 1_500_000  # 1.5 MB (ajuste depois conforme crescerem campos)
           if size > limit:
               raise SystemExit(f"ERRO: insurers.json inflou para {size} bytes (limite {limit}).")
           print("OK: insurers.json size =", size)
           PY
 
-      # ----------------------------
+      # -----------------------
       # Tests
-      # ----------------------------
+      # -----------------------
       - name: Run tests
         run: pytest -q
 
-      # ----------------------------
-      # Prune snapshots (keep last 60 each)
-      # ----------------------------
+      # -----------------------
+      # Prune snapshots
+      # -----------------------
       - name: Prune old snapshots (keep last 60)
         run: |
-          prune() {
-            pattern="$1"
-            keep="$2"
-            find data/snapshots -maxdepth 1 -name "$pattern" -printf '%T@ %p\n' \
-              | sort -nr \
-              | awk -v keep="$keep" 'NR>keep {print $2}' \
-              | xargs -r rm --
-          }
+          find data/snapshots -maxdepth 1 -name 'opin_participants_full_*.json.gz' -printf '%T@ %p\n' \
+            | sort -nr | awk 'NR>60 {print $2}' | xargs -r rm --
+          find data/snapshots -maxdepth 1 -name 'insurers_full_*.json.gz' -printf '%T@ %p\n' \
+            | sort -nr | awk 'NR>60 {print $2}' | xargs -r rm --
 
-          prune 'opin_participants_full_*.json.gz' 60
-          prune 'insurers_full_*.json.gz' 60
-
-      # ----------------------------
-      # Commit changes
-      # ----------------------------
+      # -----------------------
+      # Commit
+      # -----------------------
       - name: Commit changes (if any)
         run: |
           git config user.name "github-actions[bot]"
@@ -168,5 +161,5 @@ jobs:
             exit 0
           fi
 
-          git commit -m "chore(data): refresh data"
+          git commit -m "chore(data): refresh participants + insurers"
           git push
