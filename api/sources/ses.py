@@ -8,25 +8,28 @@ import unicodedata
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Tuple
 from urllib.parse import urljoin
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import requests
 import urllib3
 
-# Desabilita avisos de certificado inseguro (necessário para SUSEP em Linux/Actions)
+# Desabilita avisos de certificado inseguro
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# Página principal onde o link do ZIP costuma estar hospedado
-SES_PRINCIPAL_URL = "https://www2.susep.gov.br/menuestatistica/ses/principal.aspx"
+# Páginas onde o link costuma aparecer
+SES_PAGES = [
+    "https://www2.susep.gov.br/menuestatistica/ses/principal.aspx",
+    "http://www2.susep.gov.br/menuestatistica/ses/principal.aspx", # Tenta HTTP se HTTPS falhar
+]
 
-# Lista de tentativas se o crawler falhar
+# Fallbacks explícitos se o crawler falhar (tentativa e erro histórica)
 FALLBACK_URLS = [
-    "https://www2.susep.gov.br/menuestatistica/ses/download/BaseCompleta.zip",
-    "http://www2.susep.gov.br/menuestatistica/ses/download/BaseCompleta.zip",
     "https://www2.susep.gov.br/safe/menuestatistica/ses/download/BaseCompleta.zip",
+    "http://www2.susep.gov.br/menuestatistica/ses/download/BaseCompleta.zip",
+    "https://www2.susep.gov.br/menuestatistica/ses/download/basecompleta.zip",
     "https://www2.susep.gov.br/menuestatistica/ses/download/ses_base_completa.zip",
-    "https://www2.susep.gov.br/menuestatistica/ses/basecompleta.zip",
+    "http://www2.susep.gov.br/safe/menuestatistica/ses/download/BaseCompleta.zip",
 ]
 
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -37,14 +40,13 @@ class SesExtractionMeta:
     zip_url: str
     cias_file: str
     seguros_file: str
-    period_from: str  # YYYY-MM-01
-    period_to: str    # YYYY-MM-01
+    period_from: str
+    period_to: str
 
 
 def _norm(s: str) -> str:
-    """Normaliza header/campos para matching robusto."""
     s = (s or "").strip().strip('"').strip("'")
-    s = s.replace("\ufeff", "")  # BOM
+    s = s.replace("\ufeff", "")
     s = unicodedata.normalize("NFKD", s)
     s = "".join(ch for ch in s if not unicodedata.combining(ch))
     s = s.lower()
@@ -95,62 +97,77 @@ def _parse_ym(value: Any) -> Optional[int]:
     s = str(value).strip()
     if not s:
         return None
-
     m = re.search(r"\b(\d{4})\D?(\d{2})\b", s)
     if m:
         y = int(m.group(1))
         mo = int(m.group(2))
         if 1 <= mo <= 12:
             return y * 100 + mo
-
     m = re.search(r"\b(\d{2})\D+(\d{4})\b", s)
     if m:
         mo = int(m.group(1))
         y = int(m.group(2))
         if 1 <= mo <= 12:
             return y * 100 + mo
-
     return None
+
+
+def _score_zip_link(link: str) -> int:
+    """Pontua links para decidir qual é a Base Completa."""
+    l = link.lower()
+    score = 0
+    if "base" in l: score += 10
+    if "completa" in l: score += 10
+    if "ses" in l: score += 5
+    if "download" in l: score += 2
+    if "dados" in l: score += 2
+    return score
 
 
 def _discover_ses_zip_url() -> str:
     """
-    Acessa a página principal do SES e tenta encontrar o link dinâmico para a Base Completa.
+    Crawler robusto: varre as páginas conhecidas, extrai TODOS os zips
+    e escolhe o melhor candidato via pontuação.
     """
-    print(f"Crawling {SES_PRINCIPAL_URL} to find ZIP link...")
-    try:
-        r = requests.get(
-            SES_PRINCIPAL_URL,
-            timeout=30,
-            headers={"User-Agent": USER_AGENT},
-            verify=False
-        )
-        r.raise_for_status()
-        html = r.text
+    candidates = []
 
-        links = re.findall(r'href\s*=\s*["\']([^"\']+\.zip)["\']', html, re.IGNORECASE)
-        
-        candidates = []
-        for link in links:
-            if "base" in link.lower() and "completa" in link.lower():
-                candidates.append(link)
-        
-        if candidates:
-            relative_url = candidates[0]
-            final_url = urljoin(SES_PRINCIPAL_URL, relative_url)
-            print(f"SUCCESS: Discovered dynamic URL: {final_url}")
-            return final_url
-        else:
-            print("WARNING: No 'BaseCompleta' zip found in page HTML.")
+    for page in SES_PAGES:
+        print(f"Crawling {page}...")
+        try:
+            r = requests.get(
+                page,
+                timeout=30,
+                headers={"User-Agent": USER_AGENT},
+                verify=False
+            )
+            if r.status_code != 200:
+                print(f"  Status {r.status_code}, skipping.")
+                continue
+                
+            html = r.text
+            # Regex pega qualquer href que termine em .zip (com ou sem aspas)
+            links = re.findall(r'href=["\']?([^"\'>\s]+\.zip)["\']?', html, re.IGNORECASE)
+            
+            for link in links:
+                full_url = urljoin(page, link)
+                candidates.append(full_url)
+                
+        except Exception as e:
+            print(f"  Error crawling {page}: {e}")
 
-    except Exception as e:
-        print(f"Crawler warning: failed to scrape SES page: {e}")
+    if candidates:
+        # Ordena pelo score (maior primeiro)
+        candidates.sort(key=_score_zip_link, reverse=True)
+        best = candidates[0]
+        print(f"Crawler found {len(candidates)} ZIPs. Best match: {best} (Score: {_score_zip_link(best)})")
+        return best
 
-    # Fallback Logic
-    print("Crawler failed. Trying hardcoded fallbacks...")
+    print("Crawler failed to find any ZIP links. Trying hardcoded fallbacks...")
+    
+    # Fallback Logic: Tenta HEAD em todos os fallbacks
     for fallback in FALLBACK_URLS:
         try:
-            print(f"Testing fallback availability: {fallback}")
+            print(f"Testing fallback: {fallback}")
             r = requests.head(
                 fallback, 
                 timeout=10, 
@@ -161,13 +178,10 @@ def _discover_ses_zip_url() -> str:
             if r.status_code == 200:
                 print(f"Fallback confirmed: {fallback}")
                 return fallback
-            else:
-                print(f"Fallback failed with status {r.status_code}")
-        except Exception as e:
-            print(f"Fallback error: {e}")
-            continue
+        except Exception:
+            pass
 
-    print("All checks failed. Defaulting to primary fallback.")
+    # Último recurso: retorna o primeiro fallback e deixa explodir
     return FALLBACK_URLS[0]
 
 
