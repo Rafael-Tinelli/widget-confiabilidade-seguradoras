@@ -8,15 +8,25 @@ import unicodedata
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urljoin
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import requests
-import urllib3  # Import necessário
+import urllib3
 
 # Desabilita avisos de certificado inseguro (necessário para SUSEP em Linux/Actions)
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-DEFAULT_SES_ZIP_URL = "https://www2.susep.gov.br/safe/menuestatistica/ses/download/BaseCompleta.zip"
+# Página principal onde o link do ZIP costuma estar hospedado
+SES_PRINCIPAL_URL = "https://www2.susep.gov.br/menuestatistica/ses/principal.aspx"
+
+# Fallbacks caso o crawler falhe
+FALLBACK_URLS = [
+    "https://www2.susep.gov.br/menuestatistica/ses/download/BaseCompleta.zip",
+    "http://www2.susep.gov.br/menuestatistica/ses/download/BaseCompleta.zip",
+    "https://www2.susep.gov.br/safe/menuestatistica/ses/download/BaseCompleta.zip",
+]
+
 USER_AGENT = "widget-confiabilidade-seguradoras/0.1 (+https://github.com/Rafael-Tinelli/widget-confiabilidade-seguradoras)"
 
 
@@ -78,13 +88,6 @@ def _ym_to_iso_01(ym: int) -> str:
 
 
 def _parse_ym(value: Any) -> Optional[int]:
-    """
-    Tenta extrair AAAAMM de valores como:
-      - 202510
-      - 2025-10
-      - 10/2025
-      - 2025/10
-    """
     if value is None:
         return None
     s = str(value).strip()
@@ -108,16 +111,70 @@ def _parse_ym(value: Any) -> Optional[int]:
     return None
 
 
-def _download_zip_to_tempfile(zip_url: str, timeout_s: int = 300) -> Path:
+def _discover_ses_zip_url() -> str:
     """
-    Baixa o ZIP em streaming para evitar carregar tudo em memória (mais robusto no GitHub Actions).
+    Acessa a página principal do SES e tenta encontrar o link dinâmico para a Base Completa.
+    Retorna a URL encontrada ou levanta erro.
     """
+    print(f"Crawling {SES_PRINCIPAL_URL} to find ZIP link...")
+    try:
+        r = requests.get(
+            SES_PRINCIPAL_URL,
+            timeout=30,
+            headers={"User-Agent": USER_AGENT},
+            verify=False
+        )
+        r.raise_for_status()
+        html = r.text
+
+        # Procura por href="...BaseCompleta.zip" (case insensitive)
+        # Ex: href="download/BaseCompleta.zip"
+        match = re.search(r'href\s*=\s*["\']([^"\']*[Bb]ase[Cc]ompleta\.zip)["\']', html)
+        if match:
+            relative_url = match.group(1)
+            final_url = urljoin(SES_PRINCIPAL_URL, relative_url)
+            print(f"Discovered dynamic URL: {final_url}")
+            return final_url
+    except Exception as e:
+        print(f"Crawler warning: failed to scrape SES page: {e}")
+
+    # Se falhar, tenta os fallbacks conhecidos
+    print("Crawler failed. Trying hardcoded fallbacks...")
+    for fallback in FALLBACK_URLS:
+        try:
+            print(f"Testing fallback: {fallback}")
+            r = requests.head(
+                fallback, 
+                timeout=10, 
+                headers={"User-Agent": USER_AGENT}, 
+                verify=False,
+                allow_redirects=True
+            )
+            if r.status_code == 200:
+                print(f"Fallback confirmed: {fallback}")
+                return fallback
+        except Exception:
+            continue
+
+    # Se nenhum funcionar, retorna o primeiro fallback e deixa o erro explodir no download real
+    return FALLBACK_URLS[0]
+
+
+def _download_zip_to_tempfile(zip_url: Optional[str] = None, timeout_s: int = 300) -> Tuple[Path, str]:
+    """
+    Baixa o ZIP. Se zip_url não for passado, tenta descobrir.
+    Retorna (Path, url_usada).
+    """
+    if not zip_url:
+        zip_url = _discover_ses_zip_url()
+
+    print(f"Downloading from: {zip_url}")
     r = requests.get(
         zip_url,
         timeout=timeout_s,
         headers={"User-Agent": USER_AGENT, "Accept": "*/*"},
         stream=True,
-        verify=False,  # CORREÇÃO: Ignora verificação SSL para SUSEP
+        verify=False,
     )
     r.raise_for_status()
 
@@ -127,19 +184,15 @@ def _download_zip_to_tempfile(zip_url: str, timeout_s: int = 300) -> Path:
             if chunk:
                 tmp.write(chunk)
         tmp.flush()
-        return Path(tmp.name)
+        return Path(tmp.name), zip_url
     finally:
         tmp.close()
 
 
 def _detect_encoding_in_zip(z: zipfile.ZipFile, member: str) -> str:
-    """
-    Detecta encoding por amostra (sem varrer arquivo todo).
-    Prioriza utf-8-sig, depois cp1252/latin-1.
-    """
     candidates = ("utf-8-sig", "cp1252", "latin-1", "utf-8")
     with z.open(member) as bf:
-        sample = bf.read(8192)  # amostra pequena
+        sample = bf.read(8192)
     for enc in candidates:
         try:
             sample.decode(enc)
@@ -150,26 +203,18 @@ def _detect_encoding_in_zip(z: zipfile.ZipFile, member: str) -> str:
 
 
 def _read_csv_rows_from_zip(z: zipfile.ZipFile, member: str) -> Tuple[List[str], Iterable[List[str]]]:
-    """
-    Retorna (headers_norm, rows_iter) com parsing tolerante:
-    - separador ';' (padrão governo)
-    - encoding detectado por amostra
-    """
     enc = _detect_encoding_in_zip(z, member)
-
-    # Lê headers (abre uma vez)
     with z.open(member) as bf:
         text = io.TextIOWrapper(bf, encoding=enc, errors="replace", newline="")
         reader = csv.reader(text, delimiter=";")
         headers = next(reader, [])
         headers_norm = [_norm(h) for h in headers]
 
-    # Iterador de linhas (abre novamente; mantém o arquivo aberto durante a iteração)
     def _rows_iter() -> Iterable[List[str]]:
         with z.open(member) as bf2:
             text2 = io.TextIOWrapper(bf2, encoding=enc, errors="replace", newline="")
             reader2 = csv.reader(text2, delimiter=";")
-            _ = next(reader2, None)  # consome header
+            _ = next(reader2, None)
             for row in reader2:
                 yield row
 
@@ -196,10 +241,6 @@ def _find_member_by_contains(z: zipfile.ZipFile, needles: List[str]) -> Optional
 
 
 def _find_member_by_header(z: zipfile.ZipFile, required_any: List[List[str]], required_all: List[str]) -> Optional[str]:
-    """
-    required_all: headers que devem existir.
-    required_any: lista de grupos, onde pelo menos 1 header de cada grupo deve existir.
-    """
     required_all_n = [_norm(x) for x in required_all]
     required_any_n = [[_norm(x) for x in group] for group in required_any]
 
@@ -210,12 +251,9 @@ def _find_member_by_header(z: zipfile.ZipFile, required_any: List[List[str]], re
             headers_norm, _ = _read_csv_rows_from_zip(z, name)
         except Exception:
             continue
-
         hs = set(headers_norm)
-
         if any(h not in hs for h in required_all_n):
             continue
-
         ok = True
         for group in required_any_n:
             if not any(h in hs for h in group):
@@ -223,35 +261,23 @@ def _find_member_by_header(z: zipfile.ZipFile, required_any: List[List[str]], re
                 break
         if ok:
             return name
-
     return None
 
 
 def extract_ses_master_and_financials(
-    zip_url: str = DEFAULT_SES_ZIP_URL,
+    zip_url: Optional[str] = None,
 ) -> Tuple[SesExtractionMeta, Dict[str, Dict[str, Any]]]:
-    """
-    B1:
-      - lista mestre (id, nome, cnpj quando houver)
-      - prêmios e sinistros (rolling_12m)
-    Retorna:
-      - meta
-      - dict por ses_id (string) com {name, cnpj, premiums, claims}
-    """
-    tmp_zip = _download_zip_to_tempfile(zip_url)
+    
+    tmp_zip, used_url = _download_zip_to_tempfile(zip_url)
+    
     try:
         with zipfile.ZipFile(tmp_zip) as z:
-            # Preferência: nomes “clássicos”
             cias = _find_member_case_insensitive(z, "Ses_cias.csv") or _find_member_case_insensitive(z, "SES_cias.csv")
             seguros = _find_member_case_insensitive(z, "Ses_seguros.csv") or _find_member_case_insensitive(z, "SES_seguros.csv")
 
-            # Fallback por nome “contém”
-            if not cias:
-                cias = _find_member_by_contains(z, ["ses", "cias"])
-            if not seguros:
-                seguros = _find_member_by_contains(z, ["ses", "seguros"])
+            if not cias: cias = _find_member_by_contains(z, ["ses", "cias"])
+            if not seguros: seguros = _find_member_by_contains(z, ["ses", "seguros"])
 
-            # Fallback por header (mais evergreen)
             if not cias:
                 cias = _find_member_by_header(
                     z,
@@ -273,57 +299,41 @@ def extract_ses_master_and_financials(
                 )
 
             if not cias or not seguros:
-                raise RuntimeError(
-                    f"Não foi possível localizar Ses_cias/Ses_seguros no ZIP. Encontrados? cias={cias} seguros={seguros}"
-                )
+                raise RuntimeError(f"ZIP baixado de {used_url}, mas não contém CSVs esperados. Cias={cias}, Seguros={seguros}")
 
-            # --- Lê CIAS (mestre) ---
+            # --- Lê CIAS ---
             h_cias, rows_cias = _read_csv_rows_from_zip(z, cias)
             idx_cias = {h: i for i, h in enumerate(h_cias)}
 
             def pick_idx(possibles: List[str]) -> Optional[int]:
                 for p in possibles:
                     pn = _norm(p)
-                    if pn in idx_cias:
-                        return idx_cias[pn]
+                    if pn in idx_cias: return idx_cias[pn]
                 return None
 
             id_i = pick_idx(["coenti", "cod_enti", "codcia", "cod_cia", "codigo_cia", "cd_entidade"])
             name_i = pick_idx(["noenti", "nome", "razao_social", "nome_cia", "nome_entidade"])
             cnpj_i = pick_idx(["cnpj", "numcnpj", "nr_cnpj", "cpf_cnpj", "cnpj_cia"])
 
-            if id_i is None or name_i is None:
-                raise RuntimeError(f"Ses_cias encontrado ({cias}), mas não consegui mapear colunas de id/nome: {h_cias[:30]}")
-
             companies: Dict[str, Dict[str, Any]] = {}
             for row in rows_cias:
-                if not row or len(row) <= max(id_i, name_i):
-                    continue
-                ses_id = (row[id_i] or "").strip()
-                ses_id = _digits(ses_id) or ses_id.strip()
-                if not ses_id:
-                    continue
+                if not row or len(row) <= max(id_i, name_i): continue
+                ses_id = _digits((row[id_i] or "").strip())
+                if not ses_id: continue
                 ses_id = ses_id.zfill(6)
-
                 nm = (row[name_i] or "").strip()
-                if not nm:
-                    continue
-
-                cnpj = None
-                if cnpj_i is not None and len(row) > cnpj_i:
-                    cnpj = _digits(row[cnpj_i])
-
+                if not nm: continue
+                cnpj = _digits(row[cnpj_i]) if cnpj_i is not None and len(row) > cnpj_i else None
                 companies[ses_id] = {"name": nm, "cnpj": cnpj}
 
-            # --- Lê SEGUROS (financeiro) ---
+            # --- Lê SEGUROS ---
             h_seg, _ = _read_csv_rows_from_zip(z, seguros)
             idx_seg = {h: i for i, h in enumerate(h_seg)}
 
             def pick_idx_seg(possibles: List[str]) -> Optional[int]:
                 for p in possibles:
                     pn = _norm(p)
-                    if pn in idx_seg:
-                        return idx_seg[pn]
+                    if pn in idx_seg: return idx_seg[pn]
                 return None
 
             seg_id_i = pick_idx_seg(["coenti", "cod_enti", "codcia", "cod_cia", "codigo_cia", "cd_entidade"])
@@ -331,50 +341,30 @@ def extract_ses_master_and_financials(
             premio_i = pick_idx_seg(["premio_emitido", "premio", "vl_premio_emitido", "vl_premio", "premio_total"])
             sin_i = pick_idx_seg(["sinistros", "sinistro", "sinistro_ocorrido", "vl_sinistro", "sinistro_total", "vl_sinistros"])
 
-            if seg_id_i is None or seg_ym_i is None or premio_i is None:
-                raise RuntimeError(f"Ses_seguros encontrado ({seguros}), mas não consegui mapear id/competência/prêmio: {h_seg[:40]}")
-
             def iter_seguros_rows():
                 _, rows = _read_csv_rows_from_zip(z, seguros)
                 return rows
 
-            # Passo 1: descobrir max_ym
             max_ym: Optional[int] = None
             for row in iter_seguros_rows():
-                if not row or len(row) <= seg_ym_i:
-                    continue
+                if not row or len(row) <= seg_ym_i: continue
                 ym = _parse_ym(row[seg_ym_i])
-                if ym is None:
-                    continue
-                if (max_ym is None) or (ym > max_ym):
-                    max_ym = ym
+                if ym and (max_ym is None or ym > max_ym): max_ym = ym
 
             if max_ym is None:
-                raise RuntimeError(f"Não consegui identificar competência (AAAAMM) em {seguros}.")
+                raise RuntimeError(f"Sem competência (AAAAMM) em {seguros}.")
 
             start_ym = _ym_add(max_ym, -11)
-
-            # Passo 2: agrega rolling_12m
             agg: Dict[str, Dict[str, float]] = {}
             for row in iter_seguros_rows():
-                if not row or len(row) <= max(seg_id_i, seg_ym_i, premio_i):
-                    continue
-
+                if not row or len(row) <= max(seg_id_i, seg_ym_i, premio_i): continue
                 ym = _parse_ym(row[seg_ym_i])
-                if ym is None or ym < start_ym or ym > max_ym:
-                    continue
-
-                ses_id = (row[seg_id_i] or "").strip()
-                ses_id = _digits(ses_id) or ses_id.strip()
-                if not ses_id:
-                    continue
+                if ym is None or ym < start_ym or ym > max_ym: continue
+                ses_id = _digits((row[seg_id_i] or "").strip())
+                if not ses_id: continue
                 ses_id = ses_id.zfill(6)
-
                 premio = _parse_brl_number(row[premio_i])
-                sin = 0.0
-                if sin_i is not None and len(row) > sin_i:
-                    sin = _parse_brl_number(row[sin_i])
-
+                sin = _parse_brl_number(row[sin_i]) if sin_i is not None and len(row) > sin_i else 0.0
                 cur = agg.setdefault(ses_id, {"premiums": 0.0, "claims": 0.0})
                 cur["premiums"] += premio
                 cur["claims"] += sin
@@ -382,15 +372,10 @@ def extract_ses_master_and_financials(
             period_from = _ym_to_iso_01(start_ym)
             period_to = _ym_to_iso_01(max_ym)
 
-            # Merge: só quem tem prêmio > 0
             out: Dict[str, Dict[str, Any]] = {}
             for ses_id, fin in agg.items():
-                if fin.get("premiums", 0.0) <= 0:
-                    continue
-                base = companies.get(ses_id)
-                if not base:
-                    base = {"name": f"SES_ENTIDADE_{ses_id}", "cnpj": None}
-
+                if fin.get("premiums", 0.0) <= 0: continue
+                base = companies.get(ses_id) or {"name": f"SES_ENTIDADE_{ses_id}", "cnpj": None}
                 out[ses_id] = {
                     "sesId": ses_id,
                     "name": base.get("name"),
@@ -400,7 +385,7 @@ def extract_ses_master_and_financials(
                 }
 
             meta = SesExtractionMeta(
-                zip_url=zip_url,
+                zip_url=used_url,
                 cias_file=cias,
                 seguros_file=seguros,
                 period_from=period_from,
