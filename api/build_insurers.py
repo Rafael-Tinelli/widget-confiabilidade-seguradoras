@@ -5,9 +5,8 @@ import json
 import os
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
-# CORREÇÃO: Removemos DEFAULT_SES_ZIP_URL da importação
 from api.sources.ses import extract_ses_master_and_financials
 
 
@@ -69,7 +68,7 @@ def _infer_segment_fallback(premiums_rolling_12m: float) -> str:
     return "S4"
 
 
-def build_payload(zip_url: str | None) -> Dict[str, Any]:
+def build_payload(zip_url: Optional[str]) -> Dict[str, Any]:
     # Se zip_url for None, extract_ses... vai acionar o Crawler
     meta, companies = extract_ses_master_and_financials(zip_url=zip_url)
 
@@ -131,7 +130,7 @@ def build_payload(zip_url: str | None) -> Dict[str, Any]:
     }
 
 
-def write_outputs(zip_url: str | None) -> None:
+def write_outputs(zip_url: Optional[str]) -> None:
     DATA_RAW.mkdir(parents=True, exist_ok=True)
     DATA_SNAPSHOTS.mkdir(parents=True, exist_ok=True)
     API_V1.mkdir(parents=True, exist_ok=True)
