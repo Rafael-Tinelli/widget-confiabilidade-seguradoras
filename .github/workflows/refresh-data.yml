@@ -32,10 +32,11 @@ jobs:
           pip install -r requirements.txt
           if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
 
+      # --- NOVO: Instala o navegador para o Crawler da SUSEP ---
       - name: Install Playwright Browsers
         run: |
           playwright install chromium --with-deps
-          
+
       # -------------------------
       # PARTICIPANTS (OPIN)
       # -------------------------
@@ -86,6 +87,7 @@ jobs:
       # INSURERS (SES) - B1
       # -------------------------
       - name: Build JSON (insurers)
+        # Importante: NÃO passar env SES_ZIP_URL para forçar o uso do Crawler/Browser
         run: python -m api.build_insurers
 
       - name: Validate insurers.json (non-empty + meta.count > 0 + items have metrics)
@@ -123,7 +125,7 @@ jobs:
           test -s "$latest"
           echo "OK: insurers FULL archives present. Latest snapshot: $latest"
 
-      - name: Guardrail SLIM size limit (insurers)
+      - name: Guardrail: SLIM size limit (insurers)
         run: |
           python - <<'PY'
           from pathlib import Path
