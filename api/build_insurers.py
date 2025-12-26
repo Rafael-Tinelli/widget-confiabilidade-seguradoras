@@ -67,7 +67,7 @@ def _infer_segment_fallback(val: float) -> str:
 
 
 def build_payload() -> Dict[str, Any]:
-    # Sem argumento de URL, usa o discovery (Browser/CKAN)
+    # Sem argumento de URL, usa o discovery do Browser
     meta, companies = extract_ses_master_and_financials()
 
     insurers = []
