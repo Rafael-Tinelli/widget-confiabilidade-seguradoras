@@ -11,7 +11,10 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import requests
+import urllib3  # Import necessário
 
+# Desabilita avisos de certificado inseguro (necessário para SUSEP em Linux/Actions)
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 DEFAULT_SES_ZIP_URL = "https://www2.susep.gov.br/safe/menuestatistica/ses/download/BaseCompleta.zip"
 USER_AGENT = "widget-confiabilidade-seguradoras/0.1 (+https://github.com/Rafael-Tinelli/widget-confiabilidade-seguradoras)"
@@ -114,6 +117,7 @@ def _download_zip_to_tempfile(zip_url: str, timeout_s: int = 300) -> Path:
         timeout=timeout_s,
         headers={"User-Agent": USER_AGENT, "Accept": "*/*"},
         stream=True,
+        verify=False,  # CORREÇÃO: Ignora verificação SSL para SUSEP
     )
     r.raise_for_status()
 
