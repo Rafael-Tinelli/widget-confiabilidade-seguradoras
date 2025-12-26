@@ -36,7 +36,7 @@ jobs:
       # PARTICIPANTS (OPIN)
       # -------------------------
       - name: Build JSON (participants)
-        run: python api/build_json.py
+        run: python -m api.build_json
         env:
           OPIN_PARTICIPANTS_URL: "https://data.directory.opinbrasil.com.br/participants"
 
