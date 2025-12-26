@@ -13,23 +13,24 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import requests
 import urllib3
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 # Desabilita avisos de certificado inseguro
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# Páginas onde o link costuma aparecer
+# Páginas para varredura
 SES_PAGES = [
     "https://www2.susep.gov.br/menuestatistica/ses/principal.aspx",
-    "http://www2.susep.gov.br/menuestatistica/ses/principal.aspx", # Tenta HTTP se HTTPS falhar
+    "http://www2.susep.gov.br/menuestatistica/ses/principal.aspx",
 ]
 
-# Fallbacks explícitos se o crawler falhar (tentativa e erro histórica)
+# Fallbacks explícitos
 FALLBACK_URLS = [
-    "https://www2.susep.gov.br/safe/menuestatistica/ses/download/BaseCompleta.zip",
+    "https://www2.susep.gov.br/menuestatistica/ses/download/BaseCompleta.zip",
     "http://www2.susep.gov.br/menuestatistica/ses/download/BaseCompleta.zip",
-    "https://www2.susep.gov.br/menuestatistica/ses/download/basecompleta.zip",
+    "https://www2.susep.gov.br/safe/menuestatistica/ses/download/BaseCompleta.zip",
     "https://www2.susep.gov.br/menuestatistica/ses/download/ses_base_completa.zip",
-    "http://www2.susep.gov.br/safe/menuestatistica/ses/download/BaseCompleta.zip",
 ]
 
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -42,6 +43,21 @@ class SesExtractionMeta:
     seguros_file: str
     period_from: str
     period_to: str
+
+
+def _session() -> requests.Session:
+    """Cria sessão com retry automático para lidar com instabilidade da SUSEP."""
+    s = requests.Session()
+    retries = Retry(
+        total=3,
+        backoff_factor=1,
+        status_forcelist=[500, 502, 503, 504],
+        allowed_methods=["GET", "HEAD"]
+    )
+    s.mount("https://", HTTPAdapter(max_retries=retries))
+    s.mount("http://", HTTPAdapter(max_retries=retries))
+    s.headers.update({"User-Agent": USER_AGENT})
+    return s
 
 
 def _norm(s: str) -> str:
@@ -114,38 +130,34 @@ def _parse_ym(value: Any) -> Optional[int]:
 
 def _score_zip_link(link: str) -> int:
     """Pontua links para decidir qual é a Base Completa."""
-    l = link.lower()
+    link_lower = link.lower()
     score = 0
-    if "base" in l: score += 10
-    if "completa" in l: score += 10
-    if "ses" in l: score += 5
-    if "download" in l: score += 2
-    if "dados" in l: score += 2
+    if "base" in link_lower:
+        score += 10
+    if "completa" in link_lower:
+        score += 10
+    if "ses" in link_lower:
+        score += 5
+    if "download" in link_lower:
+        score += 2
+    if "dados" in link_lower:
+        score += 2
     return score
 
 
 def _discover_ses_zip_url() -> str:
-    """
-    Crawler robusto: varre as páginas conhecidas, extrai TODOS os zips
-    e escolhe o melhor candidato via pontuação.
-    """
+    session = _session()
     candidates = []
 
     for page in SES_PAGES:
         print(f"Crawling {page}...")
         try:
-            r = requests.get(
-                page,
-                timeout=30,
-                headers={"User-Agent": USER_AGENT},
-                verify=False
-            )
+            r = session.get(page, timeout=30, verify=False)
             if r.status_code != 200:
                 print(f"  Status {r.status_code}, skipping.")
                 continue
                 
             html = r.text
-            # Regex pega qualquer href que termine em .zip (com ou sem aspas)
             links = re.findall(r'href=["\']?([^"\'>\s]+\.zip)["\']?', html, re.IGNORECASE)
             
             for link in links:
@@ -156,32 +168,23 @@ def _discover_ses_zip_url() -> str:
             print(f"  Error crawling {page}: {e}")
 
     if candidates:
-        # Ordena pelo score (maior primeiro)
         candidates.sort(key=_score_zip_link, reverse=True)
         best = candidates[0]
-        print(f"Crawler found {len(candidates)} ZIPs. Best match: {best} (Score: {_score_zip_link(best)})")
+        print(f"Crawler found {len(candidates)} ZIPs. Best match: {best}")
         return best
 
     print("Crawler failed to find any ZIP links. Trying hardcoded fallbacks...")
     
-    # Fallback Logic: Tenta HEAD em todos os fallbacks
     for fallback in FALLBACK_URLS:
         try:
             print(f"Testing fallback: {fallback}")
-            r = requests.head(
-                fallback, 
-                timeout=10, 
-                headers={"User-Agent": USER_AGENT}, 
-                verify=False,
-                allow_redirects=True
-            )
+            r = session.head(fallback, timeout=15, verify=False, allow_redirects=True)
             if r.status_code == 200:
                 print(f"Fallback confirmed: {fallback}")
                 return fallback
         except Exception:
             pass
 
-    # Último recurso: retorna o primeiro fallback e deixa explodir
     return FALLBACK_URLS[0]
 
 
@@ -190,13 +193,10 @@ def _download_zip_to_tempfile(zip_url: Optional[str] = None, timeout_s: int = 30
         zip_url = _discover_ses_zip_url()
 
     print(f"Downloading from: {zip_url}")
-    r = requests.get(
-        zip_url,
-        timeout=timeout_s,
-        headers={"User-Agent": USER_AGENT, "Accept": "*/*"},
-        stream=True,
-        verify=False,
-    )
+    session = _session()
+    
+    # Tenta baixar com stream
+    r = session.get(zip_url, timeout=timeout_s, stream=True, verify=False)
     r.raise_for_status()
 
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
