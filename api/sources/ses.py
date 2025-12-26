@@ -70,7 +70,6 @@ def _classify_payload(head: bytes) -> str:
         return f"HTML (provável bloqueio/erro). markers={hit[:5]}"
     if txt.startswith("{") or txt.startswith("["):
         return "JSON (provável erro)"
-    # Detecta CSV (como no erro anterior)
     if b";" in head or b"," in head:
         return "Provável CSV/Texto"
     return "Binário desconhecido (não-ZIP)"
@@ -94,7 +93,7 @@ def _validate_zip_or_raise(zip_path: Path, url_hint: str) -> None:
         (DEBUG_DIR / "download_head.bin").write_bytes(head)
     except Exception:
         pass
-    
+
     snippet = head[:1200].decode("utf-8", errors="ignore")
     kind = _classify_payload(head)
 
@@ -142,33 +141,30 @@ def _download_zip_via_browser() -> Tuple[Path, str]:
             page.goto(SES_URL, timeout=90_000, wait_until="domcontentloaded")
 
             print("Browser: Searching for download link via Text Match...")
-            
-            # CRITICAL FIX: Look for the specific text we saw in the logs.
-            # Do not filter by href ending in .zip because it's likely a JS PostBack.
-            target_text = re.compile(r"Base\s*de\s*Dados\s*do\s*SES", re.IGNORECASE)
-            
-            # Try to find the link/button
-            link = page.get_by_role("link").filter(has_text=target_text)
-            
-            # If not found as a link, try as a generic locator (sometimes it's a span/div with onclick)
-            if link.count() == 0:
-                print("Browser: standard link not found, trying generic text locator...")
-                link = page.locator("text=" + target_text.pattern)
+
+            # Regex corrigida para bater com o texto exato observado nos logs
+            target_text = re.compile(r"Base\s*(de|do)\s*(Dados)?\s*(do)?\s*SES", re.IGNORECASE)
+
+            # Usa get_by_text em vez de role=link, pois o ASP.NET pode usar spans/divs com onClick
+            link = page.get_by_text(target_text)
 
             if link.count() == 0:
-                # Debug info
+                # Fallback: Tenta achar qualquer link que contenha "Download"
+                link = page.get_by_role("link").filter(has_text="Download")
+
+            if link.count() == 0:
                 visible_text = page.locator("body").inner_text()
-                raise RuntimeError(f"Link 'Base de Dados do SES' NOT found. Page text excerpt: {visible_text[:200]}")
+                raise RuntimeError(f"Link 'Base de Dados do SES' NÃO encontrado. Texto visível: {visible_text[:300]}")
 
             print("Browser: Found target element. Clicking...")
 
-            # Start waiting for download BEFORE clicking
             with page.expect_download(timeout=180_000) as dlinfo:
+                # Clica no primeiro elemento encontrado
                 link.first.click(timeout=30_000)
 
             download = dlinfo.value
             dl_url = getattr(download, "url", "") or "playwright_download"
-            
+
             print(f"Browser: Download started from {dl_url}")
 
             tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
@@ -186,6 +182,7 @@ def _download_zip_via_browser() -> Tuple[Path, str]:
             _save_page_evidence(page, "ses_failure")
             browser.close()
             raise RuntimeError(f"Playwright SES download failed: {e}") from e
+
 
 def _parse_brl_number(raw: Any) -> float:
     if raw is None:
