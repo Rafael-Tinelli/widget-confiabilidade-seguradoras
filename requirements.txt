@@ -1,1 +1,6 @@
 requests~=2.32.0
+requests
+urllib3
+pandas
+playwright
+pytest
