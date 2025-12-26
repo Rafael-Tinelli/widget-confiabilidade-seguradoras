@@ -3,7 +3,7 @@ name: refresh data
 on:
   workflow_dispatch:
   schedule:
-    - cron: "17 6 * * 0"  # semanal (domingo 06:17 UTC)
+    - cron: "17 6 * * 0" # semanal (domingo 06:17 UTC)
 
 permissions:
   contents: write
@@ -32,9 +32,9 @@ jobs:
           pip install -r requirements.txt
           if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
 
-      # -----------------------
-      # OPIN (participants)
-      # -----------------------
+      # -------------------------
+      # PARTICIPANTS (OPIN)
+      # -------------------------
       - name: Build JSON (participants)
         run: python api/build_json.py
         env:
@@ -66,7 +66,7 @@ jobs:
           test -s "$latest"
           echo "OK: participants FULL archives present. Latest snapshot: $latest"
 
-      - name: Guardrail SLIM size limit (participants)
+      - name: Guardrail: SLIM size limit (participants)
         run: |
           python - <<'PY'
           from pathlib import Path
@@ -78,15 +78,15 @@ jobs:
           print("OK: participants.json size =", size)
           PY
 
-      # -----------------------
-      # SES (insurers) - B1
-      # -----------------------
+      # -------------------------
+      # INSURERS (SES) - B1
+      # -------------------------
       - name: Build JSON (insurers)
         run: python api/build_insurers.py
         env:
           SES_ZIP_URL: "https://www2.susep.gov.br/safe/menuestatistica/ses/download/BaseCompleta.zip"
 
-      - name: Validate insurers.json (non-empty + meta.count > 0 + items have data)
+      - name: Validate insurers.json (non-empty + meta.count > 0 + items have metrics)
         run: |
           python - <<'PY'
           import json
@@ -101,11 +101,14 @@ jobs:
           if count <= 0:
               raise SystemExit(f"ERRO: meta.count inválido ({count}). Abortando para não commitar.")
 
-          # sanity: 5 primeiros têm 'data'
+          # sanity: primeiros itens têm bloco metrics.ses
           for it in data.get("insurers", [])[:5]:
-              if "data" not in it:
-                  raise SystemExit("ERRO: item de insurers sem chave 'data' (schema antigo ainda está sendo gerado).")
-
+              if "metrics" not in it:
+                  raise SystemExit("ERRO: item sem 'metrics'.")
+              if "ses" not in (it.get("metrics") or {}):
+                  raise SystemExit("ERRO: item sem 'metrics.ses'.")
+              if "premiums" not in it["metrics"]["ses"]:
+                  raise SystemExit("ERRO: item sem 'metrics.ses.premiums'.")
           print("OK: insurers.json válido. meta.count =", count)
           PY
 
@@ -124,31 +127,38 @@ jobs:
           from pathlib import Path
           p = Path("api/v1/insurers.json")
           size = p.stat().st_size
-          limit = 1_500_000  # 1.5 MB (ajuste depois conforme crescerem campos)
+          limit = 2_000_000  # 2 MB (ajuste se necessário)
           if size > limit:
               raise SystemExit(f"ERRO: insurers.json inflou para {size} bytes (limite {limit}).")
           print("OK: insurers.json size =", size)
           PY
 
-      # -----------------------
-      # Tests
-      # -----------------------
+      # -------------------------
+      # TESTS
+      # -------------------------
       - name: Run tests
         run: pytest -q
 
-      # -----------------------
-      # Prune snapshots
-      # -----------------------
-      - name: Prune old snapshots (keep last 60)
+      # -------------------------
+      # PRUNE SNAPSHOTS
+      # -------------------------
+      - name: Prune old snapshots (keep last 60 each)
         run: |
+          # participants
           find data/snapshots -maxdepth 1 -name 'opin_participants_full_*.json.gz' -printf '%T@ %p\n' \
-            | sort -nr | awk 'NR>60 {print $2}' | xargs -r rm --
-          find data/snapshots -maxdepth 1 -name 'insurers_full_*.json.gz' -printf '%T@ %p\n' \
-            | sort -nr | awk 'NR>60 {print $2}' | xargs -r rm --
+            | sort -nr \
+            | awk 'NR>60 {print $2}' \
+            | xargs -r rm --
 
-      # -----------------------
-      # Commit
-      # -----------------------
+          # insurers
+          find data/snapshots -maxdepth 1 -name 'insurers_full_*.json.gz' -printf '%T@ %p\n' \
+            | sort -nr \
+            | awk 'NR>60 {print $2}' \
+            | xargs -r rm --
+
+      # -------------------------
+      # COMMIT
+      # -------------------------
       - name: Commit changes (if any)
         run: |
           git config user.name "github-actions[bot]"
