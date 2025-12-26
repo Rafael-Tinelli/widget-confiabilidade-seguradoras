@@ -82,7 +82,7 @@ jobs:
       # INSURERS (SES) - B1
       # -------------------------
       - name: Build JSON (insurers)
-        run: python api/build_insurers.py
+        run: python -m api.build_insurers
         env:
           SES_ZIP_URL: "https://www2.susep.gov.br/safe/menuestatistica/ses/download/BaseCompleta.zip"
 
