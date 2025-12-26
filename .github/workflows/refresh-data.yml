@@ -32,11 +32,6 @@ jobs:
           pip install -r requirements.txt
           if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
 
-      # --- NOVO: Instala o navegador para o Crawler da SUSEP ---
-      - name: Install Playwright Browsers
-        run: |
-          playwright install chromium --with-deps
-
       # -------------------------
       # PARTICIPANTS (OPIN)
       # -------------------------
