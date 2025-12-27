@@ -9,13 +9,14 @@ import unicodedata
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from playwright.sync_api import TimeoutError as PwTimeoutError
 from playwright.sync_api import sync_playwright
 
 SES_URL = "https://www2.susep.gov.br/menuestatistica/ses/principal.aspx"
 DEBUG_DIR = Path("ses_debug")
+_DELIMS = [";", ",", "\t", "|"]
 
 
 @dataclass(frozen=True)
@@ -131,7 +132,6 @@ def _save_page_evidence(page, label: str) -> None:
 
 
 def _first_visible(locator):
-    # Retorna o primeiro item visível do locator (ou None)
     n = locator.count()
     for i in range(n):
         it = locator.nth(i)
@@ -144,22 +144,18 @@ def _first_visible(locator):
 
 
 def _find_ses_download_trigger(page):
-    # Regex tolerante a NBSP e quebras de linha/espaços múltiplos
-    # Procura por "Base de Dados do SES" ou variações comuns
+    # Regex tolerante a NBSP e quebras
     target = re.compile(
         r"Base[\s\u00A0]*d[eo][\s\u00A0]*(Dados)?[\s\u00A0]*do[\s\u00A0]*SES", re.IGNORECASE
     )
 
-    # 1) Espera renderização mais estável (Aumentado para 30s conforme sugestão)
     try:
         page.wait_for_load_state("networkidle", timeout=30_000)
     except Exception:
         pass
 
-    # 2) Procura em todos os frames (ASP.NET às vezes usa iframe)
-    frames = page.frames  # inclui main_frame
+    frames = page.frames
     for fr in frames:
-        # 2.1) Procura diretamente por gatilhos clicáveis com esse texto
         clickables = fr.locator(
             "a, button, input[type=submit], input[type=button], [role=link], "
             "[onclick*='__doPostBack'], a[href*='__doPostBack']"
@@ -170,11 +166,9 @@ def _find_ses_download_trigger(page):
             print("Browser: Found direct clickable element.")
             return cand
 
-        # 2.2) Se não achou clicável direto, acha o texto e sobe pro ancestral
         text_hit = fr.get_by_text(target)
         th = _first_visible(text_hit)
         if th:
-            # “sobe” até um ancestral clicável comum em WebForms
             ancestor = th.locator(
                 "xpath=ancestor-or-self::a[1] | "
                 "ancestor-or-self::button[1] | "
@@ -215,7 +209,6 @@ def _download_zip_via_browser() -> Tuple[Path, str]:
         page = context.new_page()
 
         try:
-            # Timeout generoso para carga inicial
             page.goto(SES_URL, timeout=90_000, wait_until="domcontentloaded")
 
             print("Browser: Locating ASP.NET download trigger...")
@@ -234,7 +227,6 @@ def _download_zip_via_browser() -> Tuple[Path, str]:
             except Exception:
                 pass
 
-            # Timeout alto para o servidor gerar o arquivo após o PostBack
             with page.expect_download(timeout=180_000) as dlinfo:
                 trigger.click(timeout=30_000, force=True)
 
@@ -292,6 +284,66 @@ def _parse_ym(value: Any) -> Optional[int]:
     return v2 * 100 + v1
 
 
+def _detect_csv_dialect(z: zipfile.ZipFile, fname: str) -> Tuple[str, str]:
+    with z.open(fname) as f:
+        head = f.read(65536)
+
+    encoding = "utf-8-sig" if head.startswith(b"\xef\xbb\xbf") else "latin-1"
+    try:
+        txt = head.decode(encoding, errors="ignore")
+    except Exception:
+        txt = head.decode("latin-1", errors="ignore")
+        
+    first_line = (txt.splitlines()[:1] or [""])[0]
+
+    delim = max(_DELIMS, key=lambda d: first_line.count(d))
+    if first_line.count(delim) == 0:
+        delim = ";"  # fallback conservador
+
+    return encoding, delim
+
+
+def _read_csv(z: zipfile.ZipFile, fname: str) -> List[List[str]]:
+    enc, delim = _detect_csv_dialect(z, fname)
+    print(f"Reading {fname} | Enc: {enc} | Delim: '{delim}'")
+    with z.open(fname) as f:
+        content = io.TextIOWrapper(f, encoding=enc, errors="replace", newline="")
+        return list(csv.reader(content, delimiter=delim))
+
+
+def _pick_best_csv(z: zipfile.ZipFile, candidates: List[str], required_groups: List[List[str]]) -> str:
+    best = None
+    best_score = -1
+    best_hdr = None
+
+    for fname in candidates:
+        rows = _read_csv(z, fname)
+        if not rows:
+            continue
+        h = [_norm(x) for x in rows[0]]
+
+        score = 0
+        for group in required_groups:
+            if any(_norm(k) in h for k in group):
+                score += 1
+
+        if score > best_score:
+            best = fname
+            best_score = score
+            best_hdr = rows[0][:50] if rows else []
+
+    if not best or best_score < len(required_groups):
+        msg = (
+            "Não foi possível identificar o CSV correto no ZIP. "
+            f"Candidatos={candidates}. MelhorScore={best_score}. "
+            f"Requisitos={required_groups}. HeaderExemplo={best_hdr}"
+        )
+        print(f"ERROR: {msg}")
+        return None  # Retorna None para tratar no chamador
+
+    return best
+
+
 def extract_ses_master_and_financials(
     zip_url: Optional[str] = None,
 ) -> Tuple[SesExtractionMeta, Dict[str, Dict[str, Any]]]:
@@ -302,29 +354,54 @@ def extract_ses_master_and_financials(
 
     try:
         with zipfile.ZipFile(zip_path) as z:
+            all_files = z.namelist()
+            print(f"DEBUG: ZIP Contents: {all_files}")
+            
+            csvs = [n for n in all_files if n.lower().endswith(".csv")]
 
-            def find(names: list[str]) -> Optional[str]:
-                for n in z.namelist():
-                    if any(x.lower() in n.lower() for x in names) and n.lower().endswith(".csv"):
-                        return n
-                return None
+            cias_candidates = [n for n in csvs if "cias" in n.lower() or "cadast" in n.lower()]
+            seg_candidates = [n for n in csvs if "seguros" in n.lower() or "finan" in n.lower()]
 
-            cias = find(["ses_cias", "cias"])
-            seguros = find(["ses_seguros", "seguros"])
+            if not cias_candidates or not seg_candidates:
+                # Fallback: se nomes não baterem, tenta todos os CSVs
+                print("WARNING: Nomes de arquivo padrão não encontrados. Testando todos os CSVs.")
+                cias_candidates = csvs
+                seg_candidates = csvs
+
+            # Seleção inteligente baseada no header
+            cias = _pick_best_csv(
+                z,
+                cias_candidates,
+                required_groups=[
+                    ["cod_enti", "coenti", "cod_cia", "co_enti", "codigo"],
+                    ["noenti", "nome", "nome_cia", "razao_social"],
+                ],
+            )
+
+            seguros = _pick_best_csv(
+                z,
+                seg_candidates,
+                required_groups=[
+                    ["cod_enti", "coenti", "cod_cia", "co_enti"],
+                    ["damesano", "anomes", "competencia", "damesaano"],
+                    ["premio", "premio_emitido", "premios"],
+                ],
+            )
 
             if not cias or not seguros:
-                raise RuntimeError(f"ZIP baixado, mas CSVs não encontrados. Conteúdo: {z.namelist()}")
+                raise RuntimeError(f"CSVs válidos não identificados. Conteúdo: {all_files}")
 
-            def read_csv(fname: str) -> list[list[str]]:
-                with z.open(fname) as f:
-                    content = io.TextIOWrapper(f, encoding="latin-1", errors="replace", newline="")
-                    return list(csv.reader(content, delimiter=";"))
+            print(f"SELECTED CIAS: {cias}")
+            print(f"SELECTED SEGUROS: {seguros}")
 
-            rows_cias = read_csv(cias)
-            rows_seguros = read_csv(seguros)
+            rows_cias = _read_csv(z, cias)
+            rows_seguros = _read_csv(z, seguros)
 
             h_cias = [_norm(x) for x in rows_cias[0]]
             h_seg = [_norm(x) for x in rows_seguros[0]]
+
+            print(f"DEBUG HEADERS CIAS: {h_cias}")
+            print(f"DEBUG HEADERS SEGUROS: {h_seg}")
 
             def g_idx(h: list[str], keys: list[str]) -> Optional[int]:
                 for k in keys:
@@ -333,14 +410,22 @@ def extract_ses_master_and_financials(
                         return h.index(nk)
                 return None
 
-            id_i = g_idx(h_cias, ["cod_enti", "coenti", "cod_cia"])
-            nm_i = g_idx(h_cias, ["noenti", "nome", "nome_cia"])
-            cn_i = g_idx(h_cias, ["cnpj", "numcnpj"])
+            id_i = g_idx(h_cias, ["cod_enti", "coenti", "cod_cia", "co_enti", "codigo"])
+            nm_i = g_idx(h_cias, ["noenti", "nome", "nome_cia", "no_enti", "razao_social"])
+            cn_i = g_idx(h_cias, ["cnpj", "numcnpj", "nu_cnpj"])
 
-            sid_i = g_idx(h_seg, ["cod_enti", "coenti", "cod_cia"])
-            ym_i = g_idx(h_seg, ["damesano", "anomes", "competencia"])
-            pr_i = g_idx(h_seg, ["premio", "premio_emitido"])
-            sn_i = g_idx(h_seg, ["sinistros", "sinistro"])
+            sid_i = g_idx(h_seg, ["cod_enti", "coenti", "cod_cia", "co_enti", "codigo"])
+            ym_i = g_idx(h_seg, ["damesano", "anomes", "competencia", "damesaano"])
+            pr_i = g_idx(h_seg, ["premio", "premio_emitido", "premios", "premio_direto"])
+            sn_i = g_idx(h_seg, ["sinistros", "sinistro", "sinistros_ocorridos"])
+            
+            # Validação crítica para não retornar 0 silenciosamente
+            if sid_i is None or ym_i is None or pr_i is None:
+                raise RuntimeError(
+                    f"Colunas obrigatórias ausentes em '{seguros}'. "
+                    f"Indices encontrados: id={sid_i}, date={ym_i}, prem={pr_i}. "
+                    f"Headers disponíveis: {h_seg}"
+                )
 
             companies: Dict[str, Dict[str, Any]] = {}
             if id_i is not None and nm_i is not None:
@@ -359,8 +444,7 @@ def extract_ses_master_and_financials(
             max_ym = 0
 
             for row in rows_seguros[1:]:
-                if None in (sid_i, ym_i, pr_i):
-                    break
+                # Check de segurança por linha
                 if len(row) <= max(sid_i, ym_i, pr_i):
                     continue
 
