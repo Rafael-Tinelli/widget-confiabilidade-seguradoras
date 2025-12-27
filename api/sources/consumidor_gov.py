@@ -2,130 +2,237 @@ from __future__ import annotations
 
 import csv
 import gzip
-import hashlib
 import io
-import os
 import re
+import time
 import unicodedata
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Dict, Iterable, Optional
+from pathlib import Path
+from typing import Any, Dict, Iterator, Optional
 
 import requests
 
-DATASET_URL = "https://dados.mj.gov.br/dataset/reclamacoes-do-consumidor-gov-br"
-CKAN_PACKAGE_ID = "reclamacoes-do-consumidor-gov-br"
-CKAN_PACKAGE_SHOW = "https://dados.mj.gov.br/api/3/action/package_show"
+CKAN_API = "https://dados.mj.gov.br/api/3/action/package_show"
+PACKAGE_ID = "reclamacoes-do-consumidor-gov-br"
 
-# Captura "basecompletaYYYY-MM.csv" em URLs
-BASECOMPLETA_URL_RE = re.compile(r"basecompleta(?P<ym>\d{4}-\d{2})\.csv", re.IGNORECASE)
+# Timeouts (connect, read)
+_TIMEOUT = (10, 60)
 
-DEFAULT_HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/120.0.0.0 Safari/537.36"
-    ),
-    "Accept": "*/*",
-    "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
-    "Connection": "keep-alive",
-}
-
-
-def _build_session(*, trust_env: bool) -> requests.Session:
-    s = requests.Session()
-    # Se True: respeita HTTP(S)_PROXY do ambiente; se False: ignora proxy/env.
-    s.trust_env = trust_env
-    s.headers.update(DEFAULT_HEADERS)
-    return s
-
-
-def _http_get(
-    url: str,
-    *,
-    stream: bool,
-    timeout: int,
-    params: Optional[dict] = None,
-) -> requests.Response:
-    """
-    GET robusto:
-    1) tenta com trust_env=True (respeita proxy do runner)
-    2) se retornar 403, tenta novamente com trust_env=False (bypass de proxy)
-    """
-    last_exc: Optional[Exception] = None
-
-    for trust_env in (True, False):
-        try:
-            s = _build_session(trust_env=trust_env)
-            resp = s.get(
-                url,
-                params=params,
-                stream=stream,
-                timeout=timeout,
-                allow_redirects=True,
-            )
-
-            # Proxy negando (403) é o caso clássico do seu log: retry sem proxy resolve.
-            if resp.status_code == 403 and trust_env is True:
-                resp.close()
-                continue
-
-            resp.raise_for_status()
-            return resp
-        except Exception as e:
-            last_exc = e
-
-    raise RuntimeError(f"Falha ao acessar {url}: {last_exc}") from last_exc
-
-
-# --- Normalização robusta ---
+_MONTH_RE = re.compile(r"(20\d{2})[-_](0[1-9]|1[0-2])")
 
 
 def _norm_text(s: str) -> str:
-    s = (s or "").strip().lower()
+    s = (s or "").strip()
     s = unicodedata.normalize("NFKD", s)
     s = "".join(ch for ch in s if not unicodedata.combining(ch))
-    s = re.sub(r"[^a-z0-9]+", " ", s).strip()
-    return re.sub(r"\s+", " ", s)
+    return s.lower()
 
 
 def _norm_header(h: str) -> str:
-    return _norm_text(h).replace(" ", "")
+    s = _norm_text(h)
+    return re.sub(r"[^a-z0-9]+", "", s)
 
 
-HEADER_ALIASES = {
+# Aliases para colunas (variações históricas e/ou alternativas)
+_HEADER_ALIASES: Dict[str, str] = {
+    # Nome / Identificação
     "nomefantasia": "nome_fantasia",
-    "respondida": "respondida",
+    "nomefantasiaconsumidor": "nome_fantasia",
+    "nomefantasiaprestador": "nome_fantasia",
+    "nomefantasiafornecedor": "nome_fantasia",
+    "fornecedor": "nome_fantasia",
+    "empresa": "nome_fantasia",
+    # Situação
     "situacao": "situacao",
+    "situacaoreclamacao": "situacao",
+    "status": "situacao",
+    "statusreclamacao": "situacao",
+    "statusdareclamacao": "situacao",
+    # Respondida
+    "respondida": "respondida",
+    "reclamacaorespondida": "respondida",
+    "respondida?": "respondida",
+    "respondeu": "respondida",
+    # Avaliação / Resolução
     "avaliacaoreclamacao": "avaliacao",
+    "avaliacaodareclamacao": "avaliacao",
+    "avaliacao": "avaliacao",
+    "resolvida": "avaliacao",
+    "indicadoresolucao": "avaliacao",
+    # Nota
     "notadoconsumidor": "nota",
-    "notaconsumidor": "nota",
+    "nota": "nota",
+    "notadocliente": "nota",
+    "avaliacaodoconsumidor": "nota",
+    # Tempo de resposta
     "temporesposta": "tempo_resposta",
+    "tempoderesposta": "tempo_resposta",
+    "tempomedioresposta": "tempo_resposta",
+    "tempomedioderesposta": "tempo_resposta",
 }
 
+_FINAL_PREFIX = "finalizada"
+_TRUE_SET = {"s", "sim", "1", "true", "t", "y", "yes"}
 
-def _get_field(row: dict, canonical: str) -> str:
-    return (row.get(canonical) or "").strip()
+
+def _utc_now() -> str:
+    return datetime.utcnow().isoformat(timespec="seconds") + "Z"
 
 
-def _safe_int(s: str) -> Optional[int]:
-    s = (s or "").strip()
-    if not s:
+def _extract_ym(name_or_url: str) -> Optional[str]:
+    m = _MONTH_RE.search(name_or_url or "")
+    if not m:
         return None
+    return f"{m.group(1)}-{m.group(2)}"
+
+
+def _session() -> requests.Session:
+    s = requests.Session()
+    s.headers.update(
+        {
+            "User-Agent": "Mozilla/5.0 (compatible; QSeguradorasBot/1.0; +https://github.com/)",
+            "Accept": "*/*",
+        }
+    )
+    return s
+
+
+def discover_basecompleta_urls(months: int = 12) -> Dict[str, str]:
+    """
+    Descobre URLs de recursos "Base Completa" do dataset do Consumidor.gov via CKAN.
+
+    Returns: dict { 'YYYY-MM': url }
+    """
+    resp = _session().get(CKAN_API, params={"id": PACKAGE_ID}, timeout=_TIMEOUT)
+    resp.raise_for_status()
+    data = resp.json()
+    if not data.get("success"):
+        raise RuntimeError("CKAN API returned success=False")
+
+    resources = data.get("result", {}).get("resources") or []
+    out: Dict[str, str] = {}
+
+    for r in resources:
+        fmt = str(r.get("format") or "").lower()
+        if fmt != "csv":
+            continue
+
+        name = str(r.get("name") or "")
+        url = str(r.get("url") or "")
+        hint = f"{name} {url}".lower()
+
+        if ("basecompleta" not in hint) and ("base completa" not in hint):
+            continue
+
+        ym = _extract_ym(hint)
+        if not ym:
+            created = str(r.get("created") or "")
+            ym = _extract_ym(created)
+        if not ym:
+            continue
+
+        out[ym] = url
+
+    if not out:
+        return {}
+
+    yms_sorted = sorted(out.keys())
+    return {ym: out[ym] for ym in yms_sorted[-months:]}
+
+
+def download_csv_to_gz(url: str, out_gz_path: str, *, retries: int = 5) -> Dict[str, Any]:
+    """
+    Baixa um CSV (HTTP) e salva como .csv.gz, streaming, com retries.
+    """
+    out_path = Path(out_gz_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    sess = _session()
+    last_err: Optional[Exception] = None
+    started = time.time()
+
+    for attempt in range(1, retries + 1):
+        try:
+            with sess.get(url, stream=True, timeout=_TIMEOUT) as r:
+                r.raise_for_status()
+                etag = r.headers.get("ETag")
+                lm = r.headers.get("Last-Modified")
+
+                nbytes = 0
+                with gzip.open(out_path, "wb") as gz:
+                    for chunk in r.iter_content(chunk_size=1024 * 256):
+                        if not chunk:
+                            continue
+                        gz.write(chunk)
+                        nbytes += len(chunk)
+
+            secs = round(time.time() - started, 3)
+            return {
+                "url": url,
+                "path": str(out_path),
+                "bytes": nbytes,
+                "seconds": secs,
+                "etag": etag,
+                "last_modified": lm,
+                "downloaded_at": _utc_now(),
+            }
+
+        except Exception as e:
+            last_err = e
+            if attempt >= retries:
+                break
+            time.sleep(min(30.0, 2.0**attempt))
+
+    raise RuntimeError(f"download failed after {retries} attempts: {last_err}")
+
+
+def _detect_encoding_gz(path: str) -> str:
+    p = Path(path)
+    with gzip.open(p, "rb") as f:
+        head = f.read(16_384)
+
+    if head.startswith(b"\xef\xbb\xbf"):
+        return "utf-8-sig"
+
     try:
-        return int(s)
-    except ValueError:
+        head.decode("utf-8")
+        return "utf-8"
+    except UnicodeDecodeError:
+        return "latin-1"
+
+
+def _detect_delimiter(header_line: str) -> str:
+    sc = header_line.count(";")
+    cc = header_line.count(",")
+    return ";" if sc >= cc else ","
+
+
+def _mk_key(name: str) -> str:
+    s = _norm_text(name)
+    s = re.sub(r"\([^)]*\)", " ", s)
+    s = re.sub(r"[^a-z0-9]+", " ", s).strip()
+    s = re.sub(r"\s+", " ", s)
+    return s
+
+
+def _parse_float(value: Any) -> Optional[float]:
+    if value is None:
         return None
-
-
-def _safe_float(s: str) -> Optional[float]:
-    s = (s or "").strip().replace(",", ".")
+    s = str(value).strip()
     if not s:
         return None
+    s = s.replace(",", ".")
     try:
         return float(s)
     except ValueError:
         return None
+
+
+def _truthy(value: Any) -> bool:
+    if value is None:
+        return False
+    return _norm_text(str(value)) in _TRUE_SET
 
 
 @dataclass
@@ -140,189 +247,117 @@ class Agg:
     tempo_sum: int = 0
     tempo_count: int = 0
 
-    def to_public(self) -> dict:
-        sat = (self.nota_sum / self.nota_count) if self.nota_count else None
-        avg_tempo = (self.tempo_sum / self.tempo_count) if self.tempo_count else None
-
+    def to_public(self) -> Dict[str, Any]:
         responded_rate = (self.respondidas / self.finalizadas) if self.finalizadas else None
-        resolution_rate = (
-            (self.resolvidas_indicador / self.finalizadas) if self.finalizadas else None
-        )
+        resolution_rate = (self.resolvidas_indicador / self.finalizadas) if self.finalizadas else None
+        satisfaction_avg = (self.nota_sum / self.nota_count) if self.nota_count else None
+        avg_response_days = (self.tempo_sum / self.tempo_count) if self.tempo_count else None
 
         return {
-            "display_name": self.display_name,
+            "display_name": self.display_name or None,
             "complaints_total": self.total,
             "complaints_finalizadas": self.finalizadas,
-            "responded_rate": round(responded_rate, 4) if responded_rate is not None else None,
-            "resolution_rate": round(resolution_rate, 4) if resolution_rate is not None else None,
-            "satisfaction_avg": round(sat, 2) if sat is not None else None,
-            "avg_response_days": round(avg_tempo, 1) if avg_tempo is not None else None,
+            "responded_rate": round(responded_rate, 6) if responded_rate is not None else None,
+            "resolution_rate": round(resolution_rate, 6) if resolution_rate is not None else None,
+            "satisfaction_avg": round(satisfaction_avg, 6) if satisfaction_avg is not None else None,
+            "avg_response_days": round(avg_response_days, 6) if avg_response_days is not None else None,
         }
 
 
-def discover_basecompleta_urls(
-    months: int = 12,
-    *,
-    dataset_url: str = DATASET_URL,
-    package_id: str = CKAN_PACKAGE_ID,
-) -> Dict[str, str]:
+def iter_rows_from_gz_csv(path: str) -> Iterator[Dict[str, str]]:
     """
-    Retorna dict { 'YYYY-MM': '<url csv>' } do(s) mês(es) mais recentes.
+    Stream de linhas (dict) a partir de um .csv.gz.
 
-    Estratégia:
-    1) CKAN API (mais estável do que parsear HTML)
-    2) fallback: parse do HTML do dataset
+    - Detecta encoding e delimitador.
+    - Mapeia headers para nomes canônicos via aliases.
+    - Faz pad/truncate defensivo quando a linha vier com colunas fora do esperado.
     """
-    # 1) CKAN API
-    try:
-        resp = _http_get(
-            CKAN_PACKAGE_SHOW,
-            params={"id": package_id},
-            stream=False,
-            timeout=60,
-        )
-        data = resp.json()
-        if data.get("success"):
-            resources = data["result"]["resources"]
-            matches: Dict[str, str] = {}
+    encoding = _detect_encoding_gz(path)
+    p = Path(path)
 
-            for r in resources:
-                url = (r.get("url") or "").strip()
-                if not url:
-                    continue
-                m = BASECOMPLETA_URL_RE.search(url)
-                if not m:
-                    continue
-                ym = m.group("ym")
-                matches[ym] = url
-
-            yms = sorted(matches.keys(), reverse=True)[:months]
-            return {ym: matches[ym] for ym in yms}
-    except Exception:
-        pass
-
-    # 2) fallback: HTML
-    html_resp = _http_get(dataset_url, stream=False, timeout=60)
-    html = html_resp.text
-
-    href_re = re.compile(
-        r'href="(?P<url>https?://[^"]+/download/basecompleta(?P<ym>\d{4}-\d{2})\.csv)"',
-        re.IGNORECASE,
-    )
-
-    matches2: Dict[str, str] = {}
-    for m in href_re.finditer(html):
-        matches2[m.group("ym")] = m.group("url")
-
-    yms2 = sorted(matches2.keys(), reverse=True)[:months]
-    return {ym: matches2[ym] for ym in yms2}
-
-
-def _sha256_file(path: str) -> str:
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(1024 * 1024), b""):
-            h.update(chunk)
-    return h.hexdigest()
-
-
-def download_csv_to_gz(url: str, out_gz_path: str, timeout: int = 300) -> dict:
-    dirpath = os.path.dirname(out_gz_path)
-    if dirpath:
-        os.makedirs(dirpath, exist_ok=True)
-
-    tmp_path = out_gz_path + ".tmp"
-
-    try:
-        resp = _http_get(url, stream=True, timeout=timeout)
-        with resp:
-            with gzip.open(tmp_path, "wb") as gz:
-                for chunk in resp.iter_content(chunk_size=1024 * 1024):
-                    if chunk:
-                        gz.write(chunk)
-
-        os.replace(tmp_path, out_gz_path)
-
-        return {
-            "url": url,
-            "path": out_gz_path,
-            "sha256": _sha256_file(out_gz_path),
-            "downloaded_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
-            "bytes": os.path.getsize(out_gz_path),
-        }
-    except Exception as e:
-        if os.path.exists(tmp_path):
-            os.unlink(tmp_path)
-        raise RuntimeError(f"Falha no download de {url}: {e}") from e
-
-
-def iter_rows_from_gz_csv(path: str, encoding: str = "latin-1") -> Iterable[dict]:
-    """
-    Leitura em streaming, assumindo delimitador ';' (padrão do dataset).
-    """
-    with gzip.open(path, "rb") as f:
-        text = io.TextIOWrapper(f, encoding=encoding, errors="replace", newline="")
-        reader = csv.reader(text, delimiter=";")
-
-        try:
-            headers = next(reader)
-        except StopIteration:
+    with gzip.open(p, "rt", encoding=encoding, errors="replace", newline="") as f:
+        header_line = f.readline()
+        if not header_line:
             return
 
-        norm_headers = [_norm_header(h) for h in headers]
-        fieldnames = [HEADER_ALIASES.get(h, h) for h in norm_headers]
+        delim = _detect_delimiter(header_line)
+        header_reader = csv.reader(io.StringIO(header_line), delimiter=delim)
+        headers_raw = next(header_reader, [])
+        if not headers_raw:
+            return
 
-        for row in reader:
+        headers = []
+        for h in headers_raw:
+            nh = _norm_header(h)
+            headers.append(_HEADER_ALIASES.get(nh, nh))
+
+        expected = len(headers)
+        row_reader = csv.reader(f, delimiter=delim)
+
+        for row in row_reader:
             if not row:
                 continue
-            if len(row) != len(fieldnames):
-                continue
-            yield dict(zip(fieldnames, row))
+
+            # pad/truncate leve (evita descartar por pequenas inconsistências)
+            if len(row) < expected:
+                row = row + ([""] * (expected - len(row)))
+            elif len(row) > expected:
+                row = row[:expected]
+
+            out: Dict[str, str] = {}
+            for i, key in enumerate(headers):
+                out[key] = row[i] if i < len(row) else ""
+            yield out
 
 
 def aggregate_month(path_gz: str) -> Dict[str, Agg]:
-    aggs: Dict[str, Agg] = {}
+    """
+    Agrega um mês por nome_fantasia normalizado.
+
+    Retorna: dict { name_key: Agg }
+    """
+    out: Dict[str, Agg] = {}
 
     for row in iter_rows_from_gz_csv(path_gz):
-        nome = _get_field(row, "nome_fantasia")
-        if not nome:
+        name_raw = (row.get("nome_fantasia") or "").strip()
+        if not name_raw:
             continue
 
-        key = _norm_text(nome)
-        if key not in aggs:
-            aggs[key] = Agg(display_name=nome)
+        key = _mk_key(name_raw)
+        if not key:
+            continue
 
-        a = aggs[key]
+        a = out.get(key)
+        if a is None:
+            a = Agg(display_name=name_raw)
+            out[key] = a
+
         a.total += 1
 
-        situacao = _get_field(row, "situacao").lower()
-        is_finalizada = situacao.startswith("finalizada")
+        situacao = _norm_text(row.get("situacao") or "")
+        is_finalizada = situacao.startswith(_FINAL_PREFIX)
+        if is_finalizada:
+            a.finalizadas += 1
 
-        if not is_finalizada:
-            continue
-
-        a.finalizadas += 1
-
-        respondida = _get_field(row, "respondida").upper()
-        if respondida == "S":
+        if is_finalizada and _truthy(row.get("respondida")):
             a.respondidas += 1
 
-        avaliacao = _get_field(row, "avaliacao").lower()
+        # Avaliação da Reclamação: "Resolvida" OU "Não avaliada" conta como resolvida no indicador
+        if is_finalizada:
+            aval = _norm_text(row.get("avaliacao") or "")
+            if aval.startswith("resolvida") or aval.startswith("nao avaliada") or aval.startswith("não avaliada"):
+                a.resolvidas_indicador += 1
 
-        # Regra do indicador: "Finalizada não avaliada" conta como resolvida.
-        if "nao avaliada" in situacao or "não avaliada" in situacao:
-            a.resolvidas_indicador += 1
-        elif "resolvida" in avaliacao:
-            a.resolvidas_indicador += 1
+        if is_finalizada:
+            n = _parse_float(row.get("nota"))
+            if n is not None:
+                a.nota_sum += float(n)
+                a.nota_count += 1
 
-        nota = _safe_float(_get_field(row, "nota"))
-        if nota is not None:
-            a.nota_sum += nota
-            a.nota_count += 1
+        if is_finalizada:
+            tr = _parse_float(row.get("tempo_resposta"))
+            if tr is not None:
+                a.tempo_sum += int(round(tr))
+                a.tempo_count += 1
 
-        tempo = _safe_int(_get_field(row, "tempo_resposta"))
-        if tempo is not None and respondida == "S":
-            a.tempo_sum += tempo
-            a.tempo_count += 1
-
-    return aggs
+    return out
