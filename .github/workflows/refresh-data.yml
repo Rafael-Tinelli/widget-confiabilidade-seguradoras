@@ -32,8 +32,7 @@ jobs:
           pip install -r requirements.txt
           if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
 
-      # --- NOVO: Instala o navegador para o Crawler da SUSEP (Insurers) ---
-      # Isso precisa rodar ANTES do script 'api.build_insurers'
+      # --- Instala o navegador para o Crawler da SUSEP (Insurers) ---
       - name: Install Playwright Browsers
         run: |
           playwright install chromium --with-deps
@@ -67,7 +66,6 @@ jobs:
         run: |
           set -e
           test -s "data/raw/opin_participants_full.json.gz"
-          # Verifica se existe pelo menos um snapshot
           count=$(ls -1 data/snapshots/opin_participants_full_*.json.gz 2>/dev/null | wc -l)
           if [ "$count" -eq 0 ]; then echo "ERRO: Nenhum snapshot de participants encontrado"; exit 1; fi
           echo "OK: participants FULL archives present."
@@ -85,11 +83,27 @@ jobs:
           PY
 
       # -------------------------
+      # DEBUG: Inspeciona arquivo insurers.json ANTES do build
+      # -------------------------
+      # Isso ajuda a verificar se a fixture está correta no disco antes do Python rodar
+      - name: Debug insurers.json (pre-check)
+        run: |
+          ls -la api/v1 || true
+          echo "---- head do arquivo existente ----"
+          python - <<'PY'
+          from pathlib import Path
+          p = Path("api/v1/insurers.json")
+          print("exists:", p.exists(), "size:", p.stat().st_size if p.exists() else None)
+          if p.exists():
+              txt = p.read_text(encoding="utf-8", errors="ignore")
+              print(txt[:400])
+          PY
+
+      # -------------------------
       # BUILD 2: INSURERS (SES)
       # -------------------------
       - name: Build JSON (insurers)
-        # O script api.build_insurers vai chamar api.sources.ses
-        # que agora usa o Playwright instalado acima para baixar o ZIP
+        # O script api.build_insurers chama api.sources.ses (Playwright)
         run: python -m api.build_insurers
 
       - name: Validate insurers.json (metrics check)
@@ -107,9 +121,8 @@ jobs:
           if count <= 0:
               raise SystemExit(f"ERRO: meta.count inválido ({count}).")
 
-          # Verifica estrutura básica dos primeiros itens (agora usando 'data' conforme a correção)
+          # Verifica estrutura básica dos primeiros itens (agora usando 'data')
           for it in data.get("insurers", [])[:5]:
-              # Na versão nova do script, a chave de métricas chama-se 'data'
               if "data" not in it:
                   raise SystemExit(f"ERRO: item {it.get('id')} sem chave 'data'.")
               
@@ -144,13 +157,13 @@ jobs:
       # TESTS
       # -------------------------
       - name: Run tests
-        # Garante que api/build_insurers.py gerou o JSON no formato que o teste espera
+        # Garante que api/build_insurers.py gerou o JSON no formato esperado
         run: pytest -q
 
       # -------------------------
       # ARTIFACTS (DEBUG)
       # -------------------------
-      # Se falhar, sobe a pasta ses_debug para podermos ver o HTML do bloqueio
+      # Se falhar, sobe a pasta ses_debug com prints do Playwright
       - name: Upload Debug Artifacts (on failure)
         if: failure()
         uses: actions/upload-artifact@v4
