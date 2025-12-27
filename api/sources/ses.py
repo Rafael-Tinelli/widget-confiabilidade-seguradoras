@@ -9,14 +9,10 @@ import unicodedata
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
-
-from playwright.sync_api import TimeoutError as PwTimeoutError
-from playwright.sync_api import sync_playwright
+from typing import Any, Dict, Optional, Tuple
 
 SES_URL = "https://www2.susep.gov.br/menuestatistica/ses/principal.aspx"
 DEBUG_DIR = Path("ses_debug")
-
 _DELIMS = [";", ",", "\t", "|"]
 
 
@@ -191,6 +187,10 @@ def _find_ses_download_trigger(page):
 
 
 def _download_zip_via_browser() -> Tuple[Path, str]:
+    # LAZY IMPORT: Só importa se essa função for chamada
+    from playwright.sync_api import TimeoutError as PwTimeoutError
+    from playwright.sync_api import sync_playwright
+
     _ensure_debug_dir()
 
     print(f"Browser: Navigating to {SES_URL}...")
