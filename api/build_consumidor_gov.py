@@ -4,7 +4,7 @@ import json
 import os
 from dataclasses import asdict
 from datetime import datetime
-from typing import Any, Dict, Iterable, Tuple
+from typing import Any
 
 from api.sources.consumidor_gov import (
     Agg,
@@ -13,8 +13,13 @@ from api.sources.consumidor_gov import (
     download_csv_to_gz,
 )
 
-CACHE_DIR = "data/.cache/consumidor_gov"  # não versionar
+# Cache local (não versionar)
+CACHE_DIR = "data/.cache/consumidor_gov"
+
+# Agregados mensais (versionar)
 MONTHLY_DIR = "data/derived/consumidor_gov/monthly"
+
+# Janela consolidada (versionar)
 OUT_LATEST = "data/derived/consumidor_gov/consumidor_gov_agg_latest.json"
 
 
@@ -32,17 +37,34 @@ def _monthly_path(ym: str) -> str:
     return os.path.join(MONTHLY_DIR, f"consumidor_gov_{ym}.json")
 
 
-def _load_json(path: str) -> Dict[str, Any]:
+def _load_json(path: str) -> dict[str, Any]:
     with open(path, "r", encoding="utf-8") as f:
         return json.load(f)
 
 
-def _write_json(path: str, payload: Dict[str, Any]) -> None:
+def _write_json(path: str, payload: dict[str, Any]) -> None:
     with open(path, "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, indent=2)
 
 
-def _agg_from_raw(raw: Dict[str, Any]) -> Agg:
+def _read_current_as_of() -> str | None:
+    if not os.path.exists(OUT_LATEST):
+        return None
+    try:
+        meta = _load_json(OUT_LATEST).get("meta", {})
+        val = meta.get("as_of")
+        return str(val) if val else None
+    except Exception:
+        return None
+
+
+def _latest_available_month() -> str | None:
+    # Consulta mínima (CKAN/HTML) para descobrir o mês mais recente publicado
+    latest_urls = discover_basecompleta_urls(months=1)
+    return next(iter(latest_urls.keys()), None)
+
+
+def _agg_from_raw(raw: dict[str, Any]) -> Agg:
     a = Agg()
     a.display_name = raw.get("display_name", "") or ""
     a.total = int(raw.get("total", 0) or 0)
@@ -56,31 +78,29 @@ def _agg_from_raw(raw: Dict[str, Any]) -> Agg:
     return a
 
 
-def _sum_aggs(items: Iterable[Tuple[str, Dict[str, Any]]]) -> Dict[str, Agg]:
-    out: Dict[str, Agg] = {}
-    for key, raw in items:
-        if key not in out:
-            out[key] = _agg_from_raw(raw)
-            continue
+def _merge_raw_into(target: dict[str, Agg], key: str, raw: dict[str, Any]) -> None:
+    if key not in target:
+        target[key] = _agg_from_raw(raw)
+        return
 
-        base = out[key]
-        cur = _agg_from_raw(raw)
+    base = target[key]
+    cur = _agg_from_raw(raw)
 
-        base.total += cur.total
-        base.finalizadas += cur.finalizadas
-        base.respondidas += cur.respondidas
-        base.resolvidas_indicador += cur.resolvidas_indicador
-        base.nota_sum += cur.nota_sum
-        base.nota_count += cur.nota_count
-        base.tempo_sum += cur.tempo_sum
-        base.tempo_count += cur.tempo_count
-
-    return out
+    base.total += cur.total
+    base.finalizadas += cur.finalizadas
+    base.respondidas += cur.respondidas
+    base.resolvidas_indicador += cur.resolvidas_indicador
+    base.nota_sum += cur.nota_sum
+    base.nota_count += cur.nota_count
+    base.tempo_sum += cur.tempo_sum
+    base.tempo_count += cur.tempo_count
 
 
-def _prune_monthly(retain: int = 36) -> None:
+def _prune_monthly(retain: int) -> None:
     files = sorted(
-        [f for f in os.listdir(MONTHLY_DIR) if f.startswith("consumidor_gov_") and f.endswith(".json")]
+        f
+        for f in os.listdir(MONTHLY_DIR)
+        if f.startswith("consumidor_gov_") and f.endswith(".json")
     )
     if len(files) <= retain:
         return
@@ -96,6 +116,24 @@ def _prune_monthly(retain: int = 36) -> None:
 def main(months: int = 12) -> None:
     _ensure_dirs()
 
+    # ------------------------------------------------------------
+    # FAST EXIT (sem mês novo => não reprocessa nada)
+    # Forçar rebuild manual: CONSUMIDOR_GOV_FORCE=1
+    # ------------------------------------------------------------
+    if os.environ.get("CONSUMIDOR_GOV_FORCE") != "1":
+        latest = _latest_available_month()
+        current = _read_current_as_of()
+
+        if latest and current and latest == current:
+            # Extra: garante que o monthly do mês corrente existe
+            if os.path.exists(_monthly_path(latest)):
+                print(
+                    f"OK: Consumidor.gov já atualizado (as_of={current}). "
+                    "Pulando rebuild."
+                )
+                return
+
+    # Descobre a janela de meses a processar
     urls = discover_basecompleta_urls(months=months)
     if not urls:
         raise SystemExit("Nenhuma URL de Base Completa encontrada (Consumidor.gov).")
@@ -103,8 +141,11 @@ def main(months: int = 12) -> None:
     yms = sorted(urls.keys())  # crescente
     as_of = max(urls.keys())
 
-    # 1) Garante agregados mensais (incremental)
-    produced = []
+    # ------------------------------------------------------------
+    # 1) Construir agregados mensais (incremental)
+    # ------------------------------------------------------------
+    produced: list[str] = []
+
     for ym in yms:
         out_month = _monthly_path(ym)
         if os.path.exists(out_month):
@@ -116,7 +157,7 @@ def main(months: int = 12) -> None:
         info = download_csv_to_gz(url, gz_path)
         aggs = aggregate_month(gz_path)
 
-        payload = {
+        payload_month = {
             "meta": {
                 "ym": ym,
                 "source": "dados.mj.gov.br",
@@ -125,14 +166,14 @@ def main(months: int = 12) -> None:
                 "download": info,
                 "generated_at": _utc_now(),
             },
-            # raw é o que permite somar meses sem perda
+            # "raw" permite somar meses sem perda
             "by_name_key_raw": {k: asdict(v) for k, v in aggs.items()},
         }
 
-        _write_json(out_month, payload)
+        _write_json(out_month, payload_month)
         produced.append(ym)
 
-        # opcional: remover cache do mês após processar (poupa disco)
+        # Remove cache do CSV (não versionar e poupar espaço)
         try:
             os.remove(gz_path)
         except OSError:
@@ -140,23 +181,27 @@ def main(months: int = 12) -> None:
 
     _prune_monthly(retain=max(36, months + 6))
 
-    # 2) Monta janela (12m) somando os raw dos meses escolhidos
-    month_payloads = []
+    # ------------------------------------------------------------
+    # 2) Montar janela (12m) somando os "raw" dos months escolhidos
+    # ------------------------------------------------------------
+    merged: dict[str, Agg] = {}
+
     for ym in yms:
         p = _monthly_path(ym)
-        if os.path.exists(p):
-            month_payloads.append((ym, _load_json(p)))
+        if not os.path.exists(p):
+            continue
 
-    if not month_payloads:
+        mp = _load_json(p)
+        raw_map = mp.get("by_name_key_raw", {})
+        if not isinstance(raw_map, dict):
+            continue
+
+        for k, raw in raw_map.items():
+            if isinstance(raw, dict):
+                _merge_raw_into(merged, str(k), raw)
+
+    if not merged:
         raise SystemExit("Nenhum agregado mensal disponível para montar a janela.")
-
-    merged_items = []
-    for ym, mp in month_payloads:
-        raw = mp.get("by_name_key_raw", {})
-        for k, v in raw.items():
-            merged_items.append((k, v))
-
-    merged = _sum_aggs(merged_items)
 
     out = {
         "meta": {
