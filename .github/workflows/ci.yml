@@ -17,12 +17,47 @@ jobs:
 
       - name: Install deps
         run: |
+          set -euo pipefail
           python -m pip install --upgrade pip
           pip install -r requirements-dev.txt
           pip install -r requirements.txt
 
       - name: Lint
-        run: ruff check .
+        run: |
+          set -euo pipefail
+          ruff check .
 
       - name: Tests
-        run: pytest -q
+        run: |
+          set -euo pipefail
+          pytest -q || (
+            echo ""
+            echo "===== DEBUG insurers.json ====="
+            python - <<'PY'
+import json
+from pathlib import Path
+
+p = Path("api/v1/insurers.json")
+print("exists:", p.exists())
+if not p.exists():
+    raise SystemExit("ERRO: api/v1/insurers.json não existe no CI.")
+
+print("size:", p.stat().st_size)
+data = json.loads(p.read_text(encoding="utf-8"))
+
+print("schemaVersion:", data.get("schemaVersion"))
+print("generatedAt:", data.get("generatedAt"))
+print("meta.count:", data.get("meta", {}).get("count"))
+insurers = data.get("insurers", [])
+print("insurers.len:", len(insurers))
+
+if insurers:
+    it = insurers[0]
+    print("first.id:", it.get("id"))
+    print("first.keys:", sorted(it.keys()))
+    if "data" in it and isinstance(it["data"], dict):
+        print("first.data.keys:", sorted(it["data"].keys()))
+PY
+            echo "===== END DEBUG ====="
+            exit 1
+          )
