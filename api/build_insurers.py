@@ -130,22 +130,38 @@ def _normalize_cnpj(value: Any) -> str | None:
     return digits
 
 
-def _load_consumidor_gov() -> tuple[dict[str, Any] | None, dict[str, Any] | None, str | None]:
+def _load_consumidor_gov() -> tuple[
+    dict[str, Any] | None,
+    dict[str, Any] | None,
+    dict[str, Any] | None,
+    str | None
+]:
     """
-    Returns: (meta, by_name_key, error_note)
+    Returns: (meta, by_name_key, by_cnpj_key, error_note)
     """
     if not CONSUMIDOR_GOV_LATEST.exists() or CONSUMIDOR_GOV_LATEST.stat().st_size < 10:
-        return None, None, "consumidorGov: derived file missing"
+        return None, None, None, "consumidorGov: derived file missing"
 
     try:
         payload = json.loads(CONSUMIDOR_GOV_LATEST.read_text(encoding="utf-8"))
         meta = payload.get("meta") or {}
+
         by_name_key = payload.get("by_name_key") or {}
-        if not isinstance(by_name_key, dict) or not by_name_key:
-            return meta, None, "consumidorGov: by_name_key empty/invalid"
-        return meta, by_name_key, None
+        by_cnpj_key = payload.get("by_cnpj_key") or {}
+
+        if not isinstance(by_name_key, dict):
+            by_name_key = {}
+        if not isinstance(by_cnpj_key, dict):
+            by_cnpj_key = {}
+
+        if not by_name_key and not by_cnpj_key:
+            return meta, None, None, "consumidorGov: both by_name_key and by_cnpj_key empty/invalid"
+
+        return meta, (by_name_key or None), (by_cnpj_key or None), None
+
     except Exception as e:
-        return None, None, f"consumidorGov: failed to load ({e})"
+        return None, None, None, f"consumidorGov: failed to load ({e})"
+
 
 
 def _build_consumidor_matcher(by_name_key: dict[str, Any]) -> NameMatcher:
