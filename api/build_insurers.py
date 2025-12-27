@@ -238,7 +238,6 @@ def build_payload() -> dict[str, Any]:
     cg_meta, cg_by_name, cg_by_cnpj, cg_err = _load_consumidor_gov()
     matcher: NameMatcher | None = _build_consumidor_matcher(cg_by_name) if cg_by_name else None
 
-
     # --- Load OPIN participants CNPJs ---
     opin_cnpjs, opin_err = _load_opin_participants_cnpjs()
 
@@ -282,105 +281,107 @@ def build_payload() -> dict[str, Any]:
         }
 
         # --- B2 (Consumidor.gov reputation) ---
-        # --- B2 (Consumidor.gov reputation) ---
-cg_matched = False
+        cg_matched = False
 
-# 1) Preferência: match por CNPJ (quando disponível no agregado)
-if cnpj and cg_by_cnpj:
-    metrics = cg_by_cnpj.get(cnpj)
-    if isinstance(metrics, dict):
-        block = {
-            "match": {
-                "consumer_key": f"cnpj:{cnpj}",
-                "matched_name": metrics.get("display_name"),
-                "score": 1.0,
-                "method": "cnpj",
-            },
-            "metrics": {
-                "complaints_total": metrics.get("complaints_total"),
-                "complaints_finalizadas": metrics.get("complaints_finalizadas"),
-                "responded_rate": metrics.get("responded_rate") or metrics.get("response_rate"),
-                "resolution_rate": metrics.get("resolution_rate"),
-                "satisfaction_avg": metrics.get("satisfaction_avg"),
-                "avg_response_days": metrics.get("avg_response_days"),
-            },
-            "meta": {
-                "as_of": (cg_meta or {}).get("as_of"),
-                "window_months": (cg_meta or {}).get("window_months"),
-                "months": (cg_meta or {}).get("months"),
-            },
-        }
+        # 1) Preferência: match por CNPJ (quando disponível no agregado)
+        if cnpj and cg_by_cnpj:
+            metrics = cg_by_cnpj.get(cnpj)
+            if isinstance(metrics, dict):
+                block = {
+                    "match": {
+                        "consumer_key": f"cnpj:{cnpj}",
+                        "matched_name": metrics.get("display_name"),
+                        "score": 1.0,
+                        "method": "cnpj",
+                    },
+                    "metrics": {
+                        "complaints_total": metrics.get("complaints_total"),
+                        "complaints_finalizadas": metrics.get("complaints_finalizadas"),
+                        "responded_rate": metrics.get("responded_rate") or metrics.get("response_rate"),
+                        "resolution_rate": metrics.get("resolution_rate"),
+                        "satisfaction_avg": metrics.get("satisfaction_avg"),
+                        "avg_response_days": metrics.get("avg_response_days"),
+                    },
+                    "meta": {
+                        "as_of": (cg_meta or {}).get("as_of"),
+                        "window_months": (cg_meta or {}).get("window_months"),
+                        "months": (cg_meta or {}).get("months"),
+                    },
+                }
 
-        insurer_obj["data"].setdefault("reputation", {})
-        insurer_obj["data"]["reputation"]["consumidorGov"] = block
+                insurer_obj["data"].setdefault("reputation", {})
+                insurer_obj["data"]["reputation"]["consumidorGov"] = block
 
-        matched.append(
-            {
-                "insurer_id": insurer_obj["id"],
-                "insurer_name": name,
-                "consumer_key": f"cnpj:{cnpj}",
-                "consumer_name": metrics.get("display_name"),
-                "score": 1.0,
-            }
-        )
-        cg_matched = True
+                matched.append(
+                    {
+                        "insurer_id": insurer_obj["id"],
+                        "insurer_name": name,
+                        "consumer_key": f"cnpj:{cnpj}",
+                        "consumer_name": metrics.get("display_name"),
+                        "score": 1.0,
+                    }
+                )
+                cg_matched = True
 
-# 2) Fallback: match por nome (se não casou por CNPJ)
-if (not cg_matched) and matcher and cg_by_name:
-    m = matcher.best(
-        name,
-        threshold=CONSUMIDOR_MATCH_THRESHOLD,
-        min_margin=CONSUMIDOR_MATCH_MIN_MARGIN,
-    )
-    if m:
-        metrics = cg_by_name.get(m.key)
-        if isinstance(metrics, dict):
-            block = {
-                "match": {
-                    "consumer_key": m.key,
-                    "matched_name": metrics.get("display_name"),
-                    "score": m.score,
-                    "method": "token_jaccard_margin",
-                },
-                "metrics": {
-                    "complaints_total": metrics.get("complaints_total"),
-                    "complaints_finalizadas": metrics.get("complaints_finalizadas"),
-                    "responded_rate": metrics.get("responded_rate") or metrics.get("response_rate"),
-                    "resolution_rate": metrics.get("resolution_rate"),
-                    "satisfaction_avg": metrics.get("satisfaction_avg"),
-                    "avg_response_days": metrics.get("avg_response_days"),
-                },
-                "meta": {
-                    "as_of": (cg_meta or {}).get("as_of"),
-                    "window_months": (cg_meta or {}).get("window_months"),
-                    "months": (cg_meta or {}).get("months"),
-                },
-            }
+        # 2) Fallback: match por nome (se não casou por CNPJ)
+        if (not cg_matched) and matcher and cg_by_name:
+            m = matcher.best(
+                name,
+                threshold=CONSUMIDOR_MATCH_THRESHOLD,
+                min_margin=CONSUMIDOR_MATCH_MIN_MARGIN,
+            )
+            if m:
+                metrics = cg_by_name.get(m.key)
+                if isinstance(metrics, dict):
+                    block = {
+                        "match": {
+                            "consumer_key": m.key,
+                            "matched_name": metrics.get("display_name"),
+                            "score": m.score,
+                            "method": "token_jaccard_margin",
+                        },
+                        "metrics": {
+                            "complaints_total": metrics.get("complaints_total"),
+                            "complaints_finalizadas": metrics.get("complaints_finalizadas"),
+                            "responded_rate": metrics.get("responded_rate") or metrics.get("response_rate"),
+                            "resolution_rate": metrics.get("resolution_rate"),
+                            "satisfaction_avg": metrics.get("satisfaction_avg"),
+                            "avg_response_days": metrics.get("avg_response_days"),
+                        },
+                        "meta": {
+                            "as_of": (cg_meta or {}).get("as_of"),
+                            "window_months": (cg_meta or {}).get("window_months"),
+                            "months": (cg_meta or {}).get("months"),
+                        },
+                    }
 
-            insurer_obj["data"].setdefault("reputation", {})
-            insurer_obj["data"]["reputation"]["consumidorGov"] = block
+                    insurer_obj["data"].setdefault("reputation", {})
+                    insurer_obj["data"]["reputation"]["consumidorGov"] = block
 
-            rec = {
-                "insurer_id": insurer_obj["id"],
-                "insurer_name": name,
-                "consumer_key": m.key,
-                "consumer_name": metrics.get("display_name"),
-                "score": m.score,
-            }
-            matched.append(rec)
-            if float(m.score) < (CONSUMIDOR_MATCH_THRESHOLD + 0.03):
-                low_conf.append(rec)
-        else:
+                    rec = {
+                        "insurer_id": insurer_obj["id"],
+                        "insurer_name": name,
+                        "consumer_key": m.key,
+                        "consumer_name": metrics.get("display_name"),
+                        "score": m.score,
+                    }
+                    matched.append(rec)
+
+                    if float(m.score) < (CONSUMIDOR_MATCH_THRESHOLD + 0.03):
+                        low_conf.append(rec)
+                else:
+                    unmatched.append({"insurer_id": insurer_obj["id"], "insurer_name": name})
+            else:
+                unmatched.append({"insurer_id": insurer_obj["id"], "insurer_name": name})
+
+        # Se existe base Consumidor.gov mas não casou por nada (e não houve matcher), audita como unmatched
+        if (not cg_matched) and (not matcher) and (cg_by_cnpj or cg_by_name):
             unmatched.append({"insurer_id": insurer_obj["id"], "insurer_name": name})
-    else:
-        unmatched.append({"insurer_id": insurer_obj["id"], "insurer_name": name})
 
-# 3) Se não casou por nada e você quiser auditar também:
-# (já está coberto pelo unmatched acima)
-
+        insurers.append(insurer_obj)
 
     # --- Match report (auditável) ---
-    if matcher:
+    if cg_by_name or cg_by_cnpj:
         report = {
             "generatedAt": _now_iso(),
             "consumidorGov": {
