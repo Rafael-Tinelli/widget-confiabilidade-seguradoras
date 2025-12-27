@@ -30,7 +30,9 @@ jobs:
       - name: Tests
         run: |
           set -euo pipefail
-          pytest -q || (
+          if pytest -q; then
+            echo "pytest OK"
+          else
             echo ""
             echo "===== DEBUG insurers.json ====="
             python - <<'PY'
@@ -48,6 +50,7 @@ data = json.loads(p.read_text(encoding="utf-8"))
 print("schemaVersion:", data.get("schemaVersion"))
 print("generatedAt:", data.get("generatedAt"))
 print("meta.count:", data.get("meta", {}).get("count"))
+
 insurers = data.get("insurers", [])
 print("insurers.len:", len(insurers))
 
@@ -55,9 +58,9 @@ if insurers:
     it = insurers[0]
     print("first.id:", it.get("id"))
     print("first.keys:", sorted(it.keys()))
-    if "data" in it and isinstance(it["data"], dict):
+    if isinstance(it.get("data"), dict):
         print("first.data.keys:", sorted(it["data"].keys()))
 PY
             echo "===== END DEBUG ====="
             exit 1
-          )
+          fi
