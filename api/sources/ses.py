@@ -314,6 +314,13 @@ def _pick_best_csv(
             best_hdr = rows[0][:80]
 
     if not best or best_score < len(required_groups):
+        _ensure_debug_dir()
+        try:
+            (DEBUG_DIR / "csv_candidates_failed.txt").write_text(
+                f"Candidates: {candidates}\nLast Header: {best_hdr}", encoding="utf-8"
+            )
+        except Exception:
+            pass
         raise RuntimeError(
             "Não foi possível identificar o CSV correto no ZIP. "
             f"Candidatos={candidates}. MelhorScore={best_score}. "
@@ -466,6 +473,13 @@ def extract_ses_master_and_financials(
             )
 
             if sid_i is None or ym_i is None or pr_i is None:
+                # FORENSICS: Salva os headers para debug em caso de falha
+                _ensure_debug_dir()
+                try:
+                    (DEBUG_DIR / "headers_failed_seguros.txt").write_text(str(h_seg), encoding="utf-8")
+                    (DEBUG_DIR / "headers_failed_cias.txt").write_text(str(h_cias), encoding="utf-8")
+                except Exception:
+                    pass
                 raise RuntimeError(
                     f"Colunas obrigatórias ausentes em '{seguros}'. "
                     f"sid_i={sid_i}, ym_i={ym_i}, pr_i={pr_i}. Header={rows_seguros[0][:80]}"
