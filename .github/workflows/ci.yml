@@ -13,6 +13,7 @@ jobs:
 
       - uses: actions/setup-python@v5
         with:
+          # Mantendo a versão que você usou no snippet (3.11)
           python-version: "3.11"
 
       - name: Install deps
@@ -30,37 +31,45 @@ jobs:
       - name: Tests
         run: |
           set -euo pipefail
+          # Tenta rodar o teste. Se passar, ótimo.
           if pytest -q; then
             echo "pytest OK"
           else
+            # Se falhar, imprime o diagnóstico do JSON para sabermos o motivo
             echo ""
             echo "===== DEBUG insurers.json ====="
             python - <<'PY'
-import json
-from pathlib import Path
+          import json
+          import sys
+          from pathlib import Path
 
-p = Path("api/v1/insurers.json")
-print("exists:", p.exists())
-if not p.exists():
-    raise SystemExit("ERRO: api/v1/insurers.json não existe no CI.")
+          p = Path("api/v1/insurers.json")
+          print(f"exists: {p.exists()}")
 
-print("size:", p.stat().st_size)
-data = json.loads(p.read_text(encoding="utf-8"))
+          if not p.exists():
+              print("ERRO: api/v1/insurers.json nao existe.")
+              # Não damos raise SystemExit aqui para deixar o script terminar de imprimir o que der
+          else:
+              print(f"size: {p.stat().st_size}")
+              try:
+                  data = json.loads(p.read_text(encoding="utf-8"))
+                  print(f"schemaVersion: {data.get('schemaVersion')}")
+                  print(f"generatedAt: {data.get('generatedAt')}")
+                  print(f"meta.count: {data.get('meta', {}).get('count')}")
 
-print("schemaVersion:", data.get("schemaVersion"))
-print("generatedAt:", data.get("generatedAt"))
-print("meta.count:", data.get("meta", {}).get("count"))
+                  insurers = data.get("insurers", [])
+                  print(f"insurers.len: {len(insurers)}")
 
-insurers = data.get("insurers", [])
-print("insurers.len:", len(insurers))
-
-if insurers:
-    it = insurers[0]
-    print("first.id:", it.get("id"))
-    print("first.keys:", sorted(it.keys()))
-    if isinstance(it.get("data"), dict):
-        print("first.data.keys:", sorted(it["data"].keys()))
-PY
+                  if insurers:
+                      it = insurers[0]
+                      print(f"first.id: {it.get('id')}")
+                      print(f"first.keys: {sorted(it.keys())}")
+                      if isinstance(it.get("data"), dict):
+                          print(f"first.data.keys: {sorted(it['data'].keys())}")
+              except Exception as e:
+                  print(f"ERRO ao ler JSON: {e}")
+          PY
             echo "===== END DEBUG ====="
+            # Força a falha do step para o CI ficar vermelho
             exit 1
           fi
