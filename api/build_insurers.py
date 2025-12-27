@@ -175,8 +175,9 @@ def _build_consumidor_matcher(by_name_key: dict[str, Any]) -> NameMatcher:
 
 def _load_opin_participants_cnpjs() -> tuple[set[str], str | None]:
     """
-    Tries to extract CNPJs from api/v1/participants.json (schema can vary).
+    Extract CNPJs from api/v1/participants.json (schema can vary).
     Returns: (set_cnpjs, error_note)
+    Uses recursive walk + regex fallback to be extremely robust.
     """
     if not OPIN_PARTICIPANTS.exists() or OPIN_PARTICIPANTS.stat().st_size < 10:
         return set(), "opin: participants.json missing"
@@ -186,34 +187,36 @@ def _load_opin_participants_cnpjs() -> tuple[set[str], str | None]:
     except Exception as e:
         return set(), f"opin: failed to parse participants.json ({e})"
 
-    items: list[Any] = []
-    for key in ("participants", "data", "items"):
-        if isinstance(payload.get(key), list):
-            items = payload[key]
-            break
-
-    if not items:
-        return set(), "opin: no list-like collection found in participants.json"
-
     cnpjs: set[str] = set()
-    for it in items:
-        if not isinstance(it, dict):
-            continue
 
-        for k in ("cnpj", "CNPJ", "registrationNumber", "registration_number", "document", "documentNumber"):
-            if k in it:
-                n = _normalize_cnpj(it.get(k))
-                if n:
-                    cnpjs.add(n)
-                    break
-
-        if "data" in it and isinstance(it["data"], dict):
-            for k in ("cnpj", "CNPJ", "registrationNumber", "document", "documentNumber"):
-                if k in it["data"]:
-                    n = _normalize_cnpj(it["data"].get(k))
+    def walk(obj: Any) -> None:
+        if isinstance(obj, dict):
+            for k, v in obj.items():
+                lk = str(k).lower()
+                if any(t in lk for t in ("cnpj", "registrationnumber", "document", "documentnumber")):
+                    n = _normalize_cnpj(v)
                     if n:
                         cnpjs.add(n)
-                        break
+                walk(v)
+        elif isinstance(obj, list):
+            for it in obj:
+                walk(it)
+        elif isinstance(obj, str):
+            # captura CNPJ com/sem máscara dentro de strings
+            for m in re.findall(r"\b\d{2}\.?\d{3}\.?\d{3}/?\d{4}-?\d{2}\b", obj):
+                n = _normalize_cnpj(m)
+                if n:
+                    cnpjs.add(n)
+
+    walk(payload)
+
+    if not cnpjs:
+        # fallback bruto: procura sequências de 14 dígitos no JSON inteiro serializado
+        blob = json.dumps(payload, ensure_ascii=False)
+        for m in re.findall(r"\b\d{14}\b", blob):
+            n = _normalize_cnpj(m)
+            if n:
+                cnpjs.add(n)
 
     if not cnpjs:
         return set(), "opin: no CNPJ extracted from participants.json"
@@ -251,8 +254,9 @@ def build_payload() -> dict[str, Any]:
         premiums = float(it.get("premiums") or 0.0)
         claims = float(it.get("claims") or 0.0)
 
-        if premiums <= 0:
-            continue
+        # HARDENING: Não filtrar empresas com prêmio 0.
+        # Queremos o universo completo (cadastro SES) para evitar queda no count.
+        # if premiums <= 0: continue  <-- REMOVIDO
 
         loss_ratio = round((claims / premiums), 6) if premiums > 0 else 0.0
         segment = _infer_segment_fallback(premiums)
