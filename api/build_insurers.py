@@ -161,7 +161,6 @@ def write_outputs() -> None:
         encoding="utf-8",
     )
 
-
 if __name__ == "__main__":
     write_outputs()
     print("OK: generated api/v1/insurers.json (SLIM) and FULL archives")
