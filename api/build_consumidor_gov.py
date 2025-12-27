@@ -8,18 +8,13 @@ from typing import Any
 
 from api.sources.consumidor_gov import (
     Agg,
-    aggregate_month,
+    aggregate_month_dual,
     discover_basecompleta_urls,
     download_csv_to_gz,
 )
 
-# Cache local (não versionar)
 CACHE_DIR = "data/.cache/consumidor_gov"
-
-# Agregados mensais (versionar)
 MONTHLY_DIR = "data/derived/consumidor_gov/monthly"
-
-# Janela consolidada (versionar)
 OUT_LATEST = "data/derived/consumidor_gov/consumidor_gov_agg_latest.json"
 
 
@@ -59,54 +54,39 @@ def _read_current_as_of() -> str | None:
 
 
 def _latest_available_month() -> str | None:
-    # Consulta mínima (CKAN/HTML) para descobrir o mês mais recente publicado
     latest_urls = discover_basecompleta_urls(months=1)
     return next(iter(latest_urls.keys()), None)
 
 
 def _agg_from_raw(raw: dict[str, Any]) -> Agg:
-    a = Agg()
-    a.display_name = raw.get("display_name", "") or ""
-    a.total = int(raw.get("total", 0) or 0)
-    a.finalizadas = int(raw.get("finalizadas", 0) or 0)
-    a.respondidas = int(raw.get("respondidas", 0) or 0)
-    a.resolvidas_indicador = int(raw.get("resolvidas_indicador", 0) or 0)
-    a.nota_sum = float(raw.get("nota_sum", 0.0) or 0.0)
-    a.nota_count = int(raw.get("nota_count", 0) or 0)
-    a.tempo_sum = int(raw.get("tempo_sum", 0) or 0)
-    a.tempo_count = int(raw.get("tempo_count", 0) or 0)
-    return a
+    return Agg(
+        display_name=str(raw.get("display_name") or ""),
+        total=int(raw.get("total", 0) or 0),
+        finalizadas=int(raw.get("finalizadas", 0) or 0),
+        respondidas=int(raw.get("respondidas", 0) or 0),
+        resolvidas_indicador=int(raw.get("resolvidas_indicador", 0) or 0),
+        nota_sum=float(raw.get("nota_sum", 0.0) or 0.0),
+        nota_count=int(raw.get("nota_count", 0) or 0),
+        tempo_sum=float(raw.get("tempo_sum", 0.0) or 0.0),
+        tempo_count=int(raw.get("tempo_count", 0) or 0),
+    )
 
 
 def _merge_raw_into(target: dict[str, Agg], key: str, raw: dict[str, Any]) -> None:
-    if key not in target:
-        target[key] = _agg_from_raw(raw)
-        return
-
-    base = target[key]
     cur = _agg_from_raw(raw)
-
-    base.total += cur.total
-    base.finalizadas += cur.finalizadas
-    base.respondidas += cur.respondidas
-    base.resolvidas_indicador += cur.resolvidas_indicador
-    base.nota_sum += cur.nota_sum
-    base.nota_count += cur.nota_count
-    base.tempo_sum += cur.tempo_sum
-    base.tempo_count += cur.tempo_count
+    if key not in target:
+        target[key] = cur
+        return
+    target[key].merge(cur)
 
 
 def _prune_monthly(retain: int) -> None:
     files = sorted(
-        f
-        for f in os.listdir(MONTHLY_DIR)
-        if f.startswith("consumidor_gov_") and f.endswith(".json")
+        f for f in os.listdir(MONTHLY_DIR) if f.startswith("consumidor_gov_") and f.endswith(".json")
     )
     if len(files) <= retain:
         return
-
-    to_delete = files[: len(files) - retain]
-    for f in to_delete:
+    for f in files[: len(files) - retain]:
         try:
             os.remove(os.path.join(MONTHLY_DIR, f))
         except OSError:
@@ -116,36 +96,23 @@ def _prune_monthly(retain: int) -> None:
 def main(months: int = 12) -> None:
     _ensure_dirs()
 
-    # ------------------------------------------------------------
-    # FAST EXIT (sem mês novo => não reprocessa nada)
-    # Forçar rebuild manual: CONSUMIDOR_GOV_FORCE=1
-    # ------------------------------------------------------------
     if os.environ.get("CONSUMIDOR_GOV_FORCE") != "1":
         latest = _latest_available_month()
         current = _read_current_as_of()
+        if latest and current and latest == current and os.path.exists(_monthly_path(latest)):
+            print(f"OK: Consumidor.gov já atualizado (as_of={current}). Pulando rebuild.")
+            return
 
-        if latest and current and latest == current:
-            # Extra: garante que o monthly do mês corrente existe
-            if os.path.exists(_monthly_path(latest)):
-                print(
-                    f"OK: Consumidor.gov já atualizado (as_of={current}). "
-                    "Pulando rebuild."
-                )
-                return
-
-    # Descobre a janela de meses a processar
     urls = discover_basecompleta_urls(months=months)
     if not urls:
         raise SystemExit("Nenhuma URL de Base Completa encontrada (Consumidor.gov).")
 
-    yms = sorted(urls.keys())  # crescente
+    yms = sorted(urls.keys())
     as_of = max(urls.keys())
 
-    # ------------------------------------------------------------
-    # 1) Construir agregados mensais (incremental)
-    # ------------------------------------------------------------
     produced: list[str] = []
 
+    # 1) monthly incremental
     for ym in yms:
         out_month = _monthly_path(ym)
         if os.path.exists(out_month):
@@ -155,9 +122,9 @@ def main(months: int = 12) -> None:
         gz_path = os.path.join(CACHE_DIR, f"basecompleta_{ym}.csv.gz")
 
         info = download_csv_to_gz(url, gz_path)
-        aggs = aggregate_month(gz_path)
+        by_name, by_cnpj = aggregate_month_dual(gz_path)
 
-        payload_month = {
+        payload_month: dict[str, Any] = {
             "meta": {
                 "ym": ym,
                 "source": "dados.mj.gov.br",
@@ -166,14 +133,13 @@ def main(months: int = 12) -> None:
                 "download": info,
                 "generated_at": _utc_now(),
             },
-            # "raw" permite somar meses sem perda
-            "by_name_key_raw": {k: asdict(v) for k, v in aggs.items()},
+            "by_name_key_raw": {k: asdict(v) for k, v in by_name.items()},
+            "by_cnpj_key_raw": {k: asdict(v) for k, v in by_cnpj.items()},
         }
 
         _write_json(out_month, payload_month)
         produced.append(ym)
 
-        # Remove cache do CSV (não versionar e poupar espaço)
         try:
             os.remove(gz_path)
         except OSError:
@@ -181,10 +147,9 @@ def main(months: int = 12) -> None:
 
     _prune_monthly(retain=max(36, months + 6))
 
-    # ------------------------------------------------------------
-    # 2) Montar janela (12m) somando os "raw" dos months escolhidos
-    # ------------------------------------------------------------
-    merged: dict[str, Agg] = {}
+    # 2) merge window
+    merged_name: dict[str, Agg] = {}
+    merged_cnpj: dict[str, Agg] = {}
 
     for ym in yms:
         p = _monthly_path(ym)
@@ -192,18 +157,23 @@ def main(months: int = 12) -> None:
             continue
 
         mp = _load_json(p)
-        raw_map = mp.get("by_name_key_raw", {})
-        if not isinstance(raw_map, dict):
-            continue
 
-        for k, raw in raw_map.items():
-            if isinstance(raw, dict):
-                _merge_raw_into(merged, str(k), raw)
+        raw_name = mp.get("by_name_key_raw", {})
+        if isinstance(raw_name, dict):
+            for k, raw in raw_name.items():
+                if isinstance(raw, dict):
+                    _merge_raw_into(merged_name, str(k), raw)
 
-    if not merged:
+        raw_cnpj = mp.get("by_cnpj_key_raw", {})
+        if isinstance(raw_cnpj, dict):
+            for k, raw in raw_cnpj.items():
+                if isinstance(raw, dict):
+                    _merge_raw_into(merged_cnpj, str(k), raw)
+
+    if not merged_name:
         raise SystemExit("Nenhum agregado mensal disponível para montar a janela.")
 
-    out = {
+    out: dict[str, Any] = {
         "meta": {
             "source": "dados.mj.gov.br",
             "dataset": "reclamacoes-do-consumidor-gov-br",
@@ -213,12 +183,19 @@ def main(months: int = 12) -> None:
             "generated_at": _utc_now(),
             "monthly_newly_built": produced,
         },
-        "by_name_key_raw": {k: asdict(v) for k, v in merged.items()},
-        "by_name_key": {k: v.to_public() for k, v in merged.items()},
+        "by_name_key_raw": {k: asdict(v) for k, v in merged_name.items()},
+        "by_name_key": {k: v.to_public() for k, v in merged_name.items()},
     }
 
+    if merged_cnpj:
+        out["by_cnpj_key_raw"] = {k: asdict(v) for k, v in merged_cnpj.items()}
+        out["by_cnpj_key"] = {k: v.to_public() for k, v in merged_cnpj.items()}
+
     _write_json(OUT_LATEST, out)
-    print(f"OK: {OUT_LATEST} (empresas={len(out['by_name_key'])}, as_of={as_of})")
+    print(
+        f"OK: {OUT_LATEST} (by_name_key={len(out['by_name_key'])}, "
+        f"by_cnpj_key={len(out.get('by_cnpj_key', {}))}, as_of={as_of})"
+    )
 
 
 if __name__ == "__main__":
