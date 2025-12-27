@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import gzip
 import json
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict
@@ -87,8 +88,10 @@ def build_payload() -> Dict[str, Any]:
                 "cnpj": it.get("cnpj"),
                 "segment": segment,
                 "products": [],
-                # FIX: Adicionado campo flags vazio para passar no teste
-                "flags": [],
+                # FIX: flags padronizadas para schema v1
+                "flags": {
+                    "openInsuranceParticipant": False
+                },
                 "data": {
                     "premiums": round(premiums, 2),
                     "claims": round(claims, 2),
@@ -135,6 +138,12 @@ def write_outputs() -> None:
     API_V1.mkdir(parents=True, exist_ok=True)
 
     payload = build_payload()
+    
+    count = payload["meta"]["count"]
+    # SAFETY CHECK: Não sobrescreve se o resultado for vazio
+    if count <= 0:
+        print("CRITICAL ERROR: O crawler retornou 0 seguradoras. Abortando para preservar os dados existentes.")
+        sys.exit(1)
 
     # FULL raw
     with gzip.open(FULL_RAW_GZ, "wt", encoding="utf-8") as f:
