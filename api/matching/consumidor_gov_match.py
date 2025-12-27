@@ -3,57 +3,60 @@ from __future__ import annotations
 import re
 import unicodedata
 from dataclasses import dataclass
-from math import log
-from typing import Dict, Optional, Set
+from typing import Dict, Iterable, List, Optional
 
 
-_STOPWORDS: Set[str] = {
-    # conectivos e partículas
-    "de", "da", "do", "das", "dos", "e", "em", "no", "na", "nos", "nas", "por",
-    # sufixos societários / jurídicos comuns
-    "sa", "s", "a", "s.a", "s/a", "ltda", "me", "epp", "eireli", "sistema",
-    "cia", "companhia", "comp", "cooperativa", "assoc", "associacao",
-    "instituicao", "fundacao",
-    # termos corporativos genéricos
-    "grupo", "holding", "participacoes", "participacao", "administradora",
-    "brasil", "brasileira", "nacional",
+_CORP_STOPWORDS = {
+    "seguro", "seguros", "seguradora", "seguradoras", "resseguro", "resseguradora",
+    "previdencia", "previdenciaria", "capitalizacao",
+    "sa", "s", "a", "s/a", "s.a", "s.a.",
+    "ltda", "me", "epp", "eireli",
+    "cia", "cia.", "companhia",
+    "de", "do", "da", "das", "dos", "e", "em", "para", "por", "no", "na",
+    "brasil", "br", "brazil",
+    "holding", "grupo",
+    "servicos", "servico", "administradora", "administracao", "adm",
+    "corretora", "corretagem",
+    "banco",
 }
 
-# Tokens curtos relevantes para marcas (ex.: "bb") entram via regra abaixo.
-_MIN_TOKEN_LEN = 2
 
-
-def _strip_parentheticals(s: str) -> str:
-    # Remove conteúdo entre parênteses e colchetes (ex.: "(INATIVA)")
-    s = re.sub(r"\([^)]*\)", " ", s)
-    s = re.sub(r"\[[^]]*\]", " ", s)
-    return s
-
-
-def _norm_ascii_lower(s: str) -> str:
-    s = (s or "").strip()
-    s = _strip_parentheticals(s)
+def _strip_accents(s: str) -> str:
     s = unicodedata.normalize("NFKD", s)
-    s = "".join(ch for ch in s if not unicodedata.combining(ch))
-    s = s.lower()
+    return "".join(ch for ch in s if not unicodedata.combining(ch))
+
+
+def _norm(s: str) -> str:
+    s = (s or "").strip().lower()
+    s = s.replace("\ufeff", "")
+    s = _strip_accents(s)
+    s = s.replace("&", " e ")
+    s = re.sub(r"[\./\\\-_,;:(){}\[\]<>|+*=!@#$%^~`]+", " ", s)
+    s = re.sub(r"\s+", " ", s).strip()
     return s
 
 
-def normalize_tokens(name: str) -> Set[str]:
-    """
-    Normaliza o nome e devolve tokens "úteis" para matching.
-
-    Observação:
-    - NÃO removemos termos do ramo (ex.: "seguros", "vida", "previdencia") por stopword.
-      Eles ajudam a separar entidades dentro de um mesmo grupo econômico.
-    """
-    s = _norm_ascii_lower(name)
-    s = re.sub(r"[^a-z0-9]+", " ", s).strip()
+def _tokenize(name: str) -> List[str]:
+    s = _norm(name)
     if not s:
-        return set()
+        return []
+    toks = [t for t in s.split(" ") if t and t not in _CORP_STOPWORDS and len(t) > 1]
+    toks = [t for t in toks if not t.isdigit()]
+    return toks
 
-    tokens = [t for t in s.split() if len(t) >= _MIN_TOKEN_LEN]
-    return {t for t in tokens if t not in _STOPWORDS}
+
+def _jaccard(a: Iterable[str], b: Iterable[str]) -> float:
+    sa, sb = set(a), set(b)
+    if not sa or not sb:
+        return 0.0
+    return len(sa & sb) / len(sa | sb)
+
+
+def _containment(a: Iterable[str], b: Iterable[str]) -> float:
+    sa, sb = set(a), set(b)
+    if not sa:
+        return 0.0
+    return len(sa & sb) / len(sa)
 
 
 @dataclass(frozen=True)
@@ -63,52 +66,9 @@ class Match:
 
 
 class NameMatcher:
-    """
-    Matcher conservador para cruzar nomes entre Consumidor.gov (nome fantasia)
-    e SES (nome formal). Retorna a melhor chave do Consumidor.gov (key) e score.
-
-    Similaridade: Weighted Jaccard (IDF-like) + bônus leve de contenção.
-    """
-
-    def __init__(self, candidates: Dict[str, str]) -> None:
-        # candidates: {consumer_key: display_name}
-        self.candidates = candidates
-
-        token_freq: Dict[str, int] = {}
-        processed: Dict[str, tuple[str, Set[str], str]] = {}
-
-        for key, display in candidates.items():
-            disp = (display or "").strip()
-            toks = normalize_tokens(disp)
-            core = re.sub(r"\s+", "", _norm_ascii_lower(disp))
-            processed[str(key)] = (disp, toks, core)
-
-            for t in toks:
-                token_freq[t] = token_freq.get(t, 0) + 1
-
-        self._processed = processed
-        self._N = max(1, len(processed))
-
-        # IDF-like weights: raros pesam mais; muito comuns pesam pouco (mas não zeram)
-        self._w: Dict[str, float] = {}
-        for t, f in token_freq.items():
-            self._w[t] = log((self._N + 1) / (f + 1)) + 1.0
-
-    def _weighted_jaccard(self, a: Set[str], b: Set[str]) -> float:
-        if not a or not b:
-            return 0.0
-        inter = a.intersection(b)
-        uni = a.union(b)
-
-        w_inter = 0.0
-        for t in inter:
-            w_inter += self._w.get(t, 1.0)
-
-        w_union = 0.0
-        for t in uni:
-            w_union += self._w.get(t, 1.0)
-
-        return (w_inter / w_union) if w_union > 0 else 0.0
+    def __init__(self, candidates: Dict[str, str]):
+        self._candidates = candidates
+        self._cand_tokens: Dict[str, List[str]] = {k: _tokenize(v) for k, v in candidates.items()}
 
     def best(
         self,
@@ -117,40 +77,40 @@ class NameMatcher:
         threshold: float = 0.85,
         min_margin: float = 0.08,
     ) -> Optional[Match]:
-        q = (query_name or "").strip()
-        q_tokens = normalize_tokens(q)
+        q_tokens = _tokenize(query_name)
         if not q_tokens:
             return None
 
-        q_core = re.sub(r"\s+", "", _norm_ascii_lower(q))
-
         best_key: Optional[str] = None
         best_score = 0.0
-        second = 0.0
+        second_score = 0.0
 
-        for key, (_disp, toks, core) in self._processed.items():
-            if not toks:
+        q_join = " ".join(q_tokens)
+
+        for key, c_tokens in self._cand_tokens.items():
+            if not c_tokens:
                 continue
 
-            score = self._weighted_jaccard(q_tokens, toks)
+            j = _jaccard(q_tokens, c_tokens)
+            c = _containment(q_tokens, c_tokens)
+            score = max(j, c)
 
-            # Bônus leve por contenção: ajuda a desempatar em nomes muito parecidos
-            # Ex.: "porto seguro" vs "porto seguro cartoes"
-            if core and (core in q_core or q_core in core):
-                score = min(1.0, score + 0.03)
+            c_join = " ".join(c_tokens)
+            if c_join.startswith(q_join) or q_join.startswith(c_join):
+                score = min(1.0, score + 0.05)
 
             if score > best_score:
-                second = best_score
+                second_score = best_score
                 best_score = score
                 best_key = key
-            elif score > second:
-                second = score
+            elif score > second_score:
+                second_score = score
 
-        if best_key is None:
+        if not best_key:
             return None
         if best_score < threshold:
             return None
-        if (best_score - second) < min_margin:
+        if (best_score - second_score) < min_margin:
             return None
 
-        return Match(key=best_key, score=best_score)
+        return Match(best_key, float(round(best_score, 6)))
