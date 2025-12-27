@@ -82,7 +82,9 @@ def _merge_raw_into(target: dict[str, Agg], key: str, raw: dict[str, Any]) -> No
 
 def _prune_monthly(retain: int) -> None:
     files = sorted(
-        f for f in os.listdir(MONTHLY_DIR) if f.startswith("consumidor_gov_") and f.endswith(".json")
+        f
+        for f in os.listdir(MONTHLY_DIR)
+        if f.startswith("consumidor_gov_") and f.endswith(".json")
     )
     if len(files) <= retain:
         return
@@ -111,8 +113,6 @@ def main(months: int = 12) -> None:
     as_of = max(urls.keys())
 
     produced: list[str] = []
-
-    # 1) monthly incremental
     for ym in yms:
         out_month = _monthly_path(ym)
         if os.path.exists(out_month):
@@ -147,7 +147,6 @@ def main(months: int = 12) -> None:
 
     _prune_monthly(retain=max(36, months + 6))
 
-    # 2) merge window
     merged_name: dict[str, Agg] = {}
     merged_cnpj: dict[str, Agg] = {}
 
@@ -155,7 +154,6 @@ def main(months: int = 12) -> None:
         p = _monthly_path(ym)
         if not os.path.exists(p):
             continue
-
         mp = _load_json(p)
 
         raw_name = mp.get("by_name_key_raw", {})
@@ -179,24 +177,3 @@ def main(months: int = 12) -> None:
             "dataset": "reclamacoes-do-consumidor-gov-br",
             "window_months": months,
             "months": yms,
-            "as_of": as_of,
-            "generated_at": _utc_now(),
-            "monthly_newly_built": produced,
-        },
-        "by_name_key_raw": {k: asdict(v) for k, v in merged_name.items()},
-        "by_name_key": {k: v.to_public() for k, v in merged_name.items()},
-    }
-
-    if merged_cnpj:
-        out["by_cnpj_key_raw"] = {k: asdict(v) for k, v in merged_cnpj.items()}
-        out["by_cnpj_key"] = {k: v.to_public() for k, v in merged_cnpj.items()}
-
-    _write_json(OUT_LATEST, out)
-    print(
-        f"OK: {OUT_LATEST} (by_name_key={len(out['by_name_key'])}, "
-        f"by_cnpj_key={len(out.get('by_cnpj_key', {}))}, as_of={as_of})"
-    )
-
-
-if __name__ == "__main__":
-    main()
