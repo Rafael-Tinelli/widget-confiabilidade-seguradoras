@@ -8,6 +8,7 @@ import time
 import unicodedata
 import zipfile
 from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
@@ -51,6 +52,39 @@ def _digits(s: Optional[str]) -> Optional[str]:
         return None
     d = re.sub(r"\D+", "", s)
     return d or None
+
+
+def _normalize_cnpj(raw: Any) -> Optional[str]:
+    """
+    Normaliza CNPJ para 14 dígitos.
+    Lida com casos em que o CSV traz o campo como número / notação científica.
+    """
+    if raw is None:
+        return None
+    s = str(raw).strip()
+    if not s:
+        return None
+
+    digits = re.sub(r"\D+", "", s)
+    if len(digits) == 14:
+        return digits
+
+    # tenta lidar com casos numéricos / notação científica
+    try:
+        d = Decimal(s)
+        digits = str(int(d))
+    except (InvalidOperation, ValueError):
+        pass
+
+    digits = re.sub(r"\D+", "", digits)
+    if digits.isdigit() and len(digits) < 14:
+        digits = digits.zfill(14)
+
+    # fallback defensivo para dumps estranhos
+    if len(digits) == 15 and digits.endswith("0"):
+        digits = digits[:-1]
+
+    return digits if len(digits) == 14 else None
 
 
 def _read_head(path: Path, n: int = 4096) -> bytes:
@@ -386,7 +420,9 @@ def extract_ses_master_and_financials(
             if not cias_candidates:
                 cias_candidates = [n for n in csvs if "ses_cias" in n.lower()]
             if not seg_candidates:
-                seg_candidates = [n for n in csvs if "ses_seguros" in n.lower() or "seguros" in n.lower()]
+                seg_candidates = [
+                    n for n in csvs if "ses_seguros" in n.lower() or "seguros" in n.lower()
+                ]
 
             if not cias_candidates or not seg_candidates:
                 raise RuntimeError(f"CSVs válidos não identificados. Conteúdo: {all_files}")
@@ -438,7 +474,20 @@ def extract_ses_master_and_financials(
 
             id_i = g_idx(h_cias, ["cod_enti", "coenti", "cod_cia", "co_enti"])
             nm_i = g_idx(h_cias, ["noenti", "nome", "nome_cia"])
-            cn_i = g_idx(h_cias, ["cnpj", "numcnpj"])
+            # FIX (B3): ampliar aliases de CNPJ (ex.: NU_CNPJ -> nu_cnpj)
+            cn_i = g_idx(
+                h_cias,
+                [
+                    "cnpj",
+                    "numcnpj",
+                    "nu_cnpj",
+                    "nucnpj",
+                    "cnpj_enti",
+                    "cnpjentidade",
+                    "nu_cnpj_enti",
+                    "nu_cnpj_entidade",
+                ],
+            )
 
             sid_i = g_idx(h_seg, ["cod_enti", "coenti", "cod_cia", "co_enti"])
             ym_i = g_idx(h_seg, ["damesano", "anomes", "competencia", "damesaano"])
@@ -467,6 +516,7 @@ def extract_ses_master_and_financials(
                     "sinistro_retido",
                     "sinistro_ocorrido_cap",
                     "sinistros_ocorridos_cap",
+                    "sinistro_ocorrido_cap",
                     "sinistros",
                     "sinistro",
                 ],
@@ -476,8 +526,12 @@ def extract_ses_master_and_financials(
                 # FORENSICS: Salva os headers para debug em caso de falha
                 _ensure_debug_dir()
                 try:
-                    (DEBUG_DIR / "headers_failed_seguros.txt").write_text(str(h_seg), encoding="utf-8")
-                    (DEBUG_DIR / "headers_failed_cias.txt").write_text(str(h_cias), encoding="utf-8")
+                    (DEBUG_DIR / "headers_failed_seguros.txt").write_text(
+                        str(h_seg), encoding="utf-8"
+                    )
+                    (DEBUG_DIR / "headers_failed_cias.txt").write_text(
+                        str(h_cias), encoding="utf-8"
+                    )
                 except Exception:
                     pass
                 raise RuntimeError(
@@ -491,6 +545,7 @@ def extract_ses_master_and_financials(
                 f"claims={(h_seg[sn_i] if sn_i is not None else None)}"
             )
 
+            # --- Base mestre de companhias (nome + cnpj) ---
             companies: Dict[str, Dict[str, Any]] = {}
             if id_i is not None and nm_i is not None:
                 for row in rows_cias[1:]:
@@ -499,23 +554,43 @@ def extract_ses_master_and_financials(
                     sid = _digits(row[id_i])
                     if not sid:
                         continue
+
                     cn = None
+                    # FIX (B3): normalização robusta para 14 dígitos
                     if cn_i is not None and len(row) > cn_i:
-                        cn = _digits(row[cn_i])
+                        cn = _normalize_cnpj(row[cn_i])
+
                     companies[sid.zfill(6)] = {"name": row[nm_i].strip(), "cnpj": cn}
 
-            agg: Dict[str, Dict[str, float]] = {}
+            # --- FIX (B1): rolling_12m real (duas passadas) ---
+            # 1) Descobre max_ym
             max_ym = 0
+            for row in rows_seguros[1:]:
+                if len(row) <= ym_i:
+                    continue
+                ym = _parse_ym(row[ym_i])
+                if ym and ym > max_ym:
+                    max_ym = ym
 
+            if max_ym <= 0:
+                raise RuntimeError("Não foi possível determinar o período (max_ym).")
+
+            # rolling 12m: (max_ym - 11) .. max_ym
+            max_idx = (max_ym // 100) * 12 + (max_ym % 100) - 1
+            start_idx = max_idx - 11
+            start_year = start_idx // 12
+            start_month = start_idx % 12 + 1
+            start_ym = start_year * 100 + start_month
+
+            # 2) Agrega apenas a janela
+            agg: Dict[str, Dict[str, float]] = {}
             for row in rows_seguros[1:]:
                 if len(row) <= max(sid_i, ym_i, pr_i):
                     continue
 
                 ym = _parse_ym(row[ym_i])
-                if not ym:
+                if not ym or ym < start_ym or ym > max_ym:
                     continue
-                if ym > max_ym:
-                    max_ym = ym
 
                 sid = _digits(row[sid_i])
                 if not sid:
@@ -530,16 +605,6 @@ def extract_ses_master_and_financials(
                 bucket = agg.setdefault(sid, {"p": 0.0, "c": 0.0})
                 bucket["p"] += prem
                 bucket["c"] += sin
-
-            if max_ym <= 0:
-                raise RuntimeError("Não foi possível determinar o período (max_ym).")
-
-            # rolling 12m: do mês (max_ym - 11) até max_ym
-            max_idx = (max_ym // 100) * 12 + (max_ym % 100) - 1
-            start_idx = max_idx - 11
-            start_year = start_idx // 12
-            start_month = start_idx % 12 + 1
-            start_ym = start_year * 100 + start_month
 
             out: Dict[str, Dict[str, Any]] = {}
             for sid, val in agg.items():
