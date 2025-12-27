@@ -21,6 +21,11 @@ jobs:
           pip install -r requirements-dev.txt
           pip install -r requirements.txt
 
+      # --- NOVO PASSO: Instala o navegador necessário para os testes ---
+      - name: Install Playwright Browsers
+        run: |
+          playwright install chromium --with-deps
+
       - name: Lint
         run: ruff check .
 
