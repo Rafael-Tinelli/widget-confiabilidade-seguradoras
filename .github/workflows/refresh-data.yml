@@ -99,11 +99,13 @@ jobs:
               print(txt[:400])
           PY
 
-      # -------------------------
-      # BUILD 2: INSURERS (SES)
-      # -------------------------
+     # -------------------------
+     # BUILD 2: INSURERS (SES)
+     # -------------------------
       - name: Build JSON (insurers)
-        # O script api.build_insurers chama api.sources.ses (Playwright)
+        env:
+          MIN_INSURERS_COUNT: "200"
+          MAX_COUNT_DROP_PCT: "0.20"
         run: python -m api.build_insurers
 
       - name: Validate insurers.json (metrics check)
