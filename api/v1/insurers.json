@@ -30,7 +30,9 @@
       "cnpj": "00.000.000/0001-00",
       "segment": "S2",
       "products": [],
-      "flags": [],
+      "flags": {
+        "openInsuranceParticipant": true
+      },
       "data": {
         "premiums": 150000000.0,
         "claims": 70000000.0,
