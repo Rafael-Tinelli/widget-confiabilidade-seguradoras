@@ -67,7 +67,6 @@ def _infer_segment_fallback(val: float) -> str:
 
 
 def build_payload() -> Dict[str, Any]:
-    # Sem argumento de URL, usa o discovery do Browser
     meta, companies = extract_ses_master_and_financials()
 
     insurers = []
@@ -88,6 +87,8 @@ def build_payload() -> Dict[str, Any]:
                 "cnpj": it.get("cnpj"),
                 "segment": segment,
                 "products": [],
+                # FIX: Adicionado campo flags vazio para passar no teste
+                "flags": [],
                 "data": {
                     "premiums": round(premiums, 2),
                     "claims": round(claims, 2),
