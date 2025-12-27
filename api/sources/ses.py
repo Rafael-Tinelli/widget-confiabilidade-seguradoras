@@ -9,11 +9,32 @@ import unicodedata
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Iterable, Optional, Tuple
+
+import requests
 
 SES_URL = "https://www2.susep.gov.br/menuestatistica/ses/principal.aspx"
+SES_BASE_ZIP_URL = "https://www2.susep.gov.br/download/estatisticas/BaseCompleta.zip"
+
 DEBUG_DIR = Path("ses_debug")
-_DELIMS = [";", ",", "\t", "|"]
+_MAX_SAMPLE_ROWS = 50_000
+
+# Heurísticas de colunas (headers normalizados)
+_PREMIUM_HINTS = [
+    "premio_direto",
+    "premio_retido",
+    "premio_emitido",
+    "premio_ganho",
+    "premio",
+    "premios",
+]
+_CLAIMS_HINTS = [
+    "sinistro_direto",
+    "sinistro_retido",
+    "sinistro_ocorrido",
+    "sinistro",
+    "sinistros",
+]
 
 
 @dataclass(frozen=True)
@@ -25,19 +46,16 @@ class SesExtractionMeta:
     period_to: str
 
 
+# ----------------------------
+# Utilitários
+# ----------------------------
+
 def _ensure_debug_dir() -> None:
     DEBUG_DIR.mkdir(parents=True, exist_ok=True)
-    keep = DEBUG_DIR / "_keep.txt"
-    if not keep.exists():
-        keep.write_text(
-            f"SES debug evidence folder. created_at={int(time.time())}\n",
-            encoding="utf-8",
-        )
 
 
 def _norm(s: str) -> str:
-    s = (s or "").strip().strip('"').strip("'")
-    s = s.replace("\ufeff", "")
+    s = (s or "").strip().strip('"').strip("'").replace("\ufeff", "")
     s = unicodedata.normalize("NFKD", s)
     s = "".join(ch for ch in s if not unicodedata.combining(ch))
     s = s.lower()
@@ -51,23 +69,6 @@ def _digits(s: Optional[str]) -> Optional[str]:
         return None
     d = re.sub(r"\D+", "", str(s))
     return d or None
-
-
-def _cnpj14(raw: Any) -> Optional[str]:
-    """
-    Normaliza CNPJ para exatamente 14 dígitos.
-    - Remove não-dígitos
-    - zfill(14) se vier com zeros à esquerda omitidos
-    - descarta se não conseguir ficar em 14 dígitos
-    """
-    d = _digits(str(raw) if raw is not None else None)
-    if not d:
-        return None
-    if len(d) < 14:
-        d = d.zfill(14)
-    if len(d) != 14:
-        return None
-    return d
 
 
 def _read_head(path: Path, n: int = 4096) -> bytes:
@@ -86,14 +87,7 @@ def _is_zip_signature(head8: bytes) -> bool:
 def _classify_payload(head: bytes) -> str:
     txt = head.decode("utf-8", errors="ignore").lower().strip()
     if txt.startswith("<!doctype html") or txt.startswith("<html") or txt.startswith("<"):
-        markers = [
-            "cloudflare",
-            "access denied",
-            "forbidden",
-            "attention required",
-            "captcha",
-            "turnstile",
-        ]
+        markers = ["cloudflare", "access denied", "forbidden", "captcha", "turnstile"]
         hit = [m for m in markers if m in txt]
         return f"HTML (provável bloqueio/erro). markers={hit[:5]}"
     if txt.startswith("{") or txt.startswith("["):
@@ -104,31 +98,19 @@ def _classify_payload(head: bytes) -> str:
 
 
 def _validate_zip_or_raise(zip_path: Path, url_hint: str) -> None:
-    if not zip_path.exists():
-        raise FileNotFoundError(f"Download não gerou arquivo: {zip_path}")
-
-    size = zip_path.stat().st_size
+    size = zip_path.stat().st_size if zip_path.exists() else 0
     if size == 0:
         raise RuntimeError("Arquivo baixado veio com 0 bytes (timeout/bloqueio).")
 
     head = _read_head(zip_path, 4096)
-    head8 = head[:8]
-    if _is_zip_signature(head8) and zipfile.is_zipfile(zip_path):
+    if _is_zip_signature(head[:8]) and zipfile.is_zipfile(zip_path):
         return
 
     _ensure_debug_dir()
-    try:
-        (DEBUG_DIR / "download_head.bin").write_bytes(head)
-    except Exception:
-        pass
-
+    ts = int(time.time())
+    (DEBUG_DIR / f"invalid_download_head_{ts}.bin").write_bytes(head)
     snippet = head[:1200].decode("utf-8", errors="ignore")
     kind = _classify_payload(head)
-
-    try:
-        (DEBUG_DIR / f"invalid_download_{int(time.time())}.txt").write_bytes(head)
-    except Exception:
-        pass
 
     raise RuntimeError(
         "Arquivo baixado não é ZIP válido. "
@@ -137,217 +119,69 @@ def _validate_zip_or_raise(zip_path: Path, url_hint: str) -> None:
     )
 
 
-def _save_page_evidence(page, label: str) -> None:
-    _ensure_debug_dir()
-    ts = int(time.time())
+def _download_to_temp(url: str, timeout: int = 180) -> Path:
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
+    tmp_path = Path(tmp.name)
+    tmp.close()
+
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/120.0.0.0 Safari/537.36"
+        ),
+        "Accept": "application/zip,application/octet-stream,*/*",
+        "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8",
+        "Referer": SES_URL,
+    }
+
+    with requests.get(url, stream=True, timeout=timeout, headers=headers) as r:
+        r.raise_for_status()
+        with tmp_path.open("wb") as f:
+            for chunk in r.iter_content(chunk_size=1024 * 256):
+                if chunk:
+                    f.write(chunk)
+
+    _validate_zip_or_raise(tmp_path, url)
+    return tmp_path
+
+
+def _discover_zip_url_from_page() -> Optional[str]:
     try:
-        page.screenshot(path=str(DEBUG_DIR / f"{label}_{ts}.png"), full_page=True)
-    except Exception:
-        pass
-    try:
-        (DEBUG_DIR / f"{label}_{ts}.html").write_text(
-            page.content(), encoding="utf-8", errors="ignore"
-        )
-    except Exception:
-        pass
-
-
-def _first_visible(locator):
-    n = locator.count()
-    for i in range(n):
-        it = locator.nth(i)
-        try:
-            if it.is_visible():
-                return it
-        except Exception:
-            continue
-    return None
-
-
-def _find_ses_download_trigger(page):
-    target = re.compile(
-        r"Base[\s\u00A0]*de[\s\u00A0]*Dados[\s\u00A0]*do[\s\u00A0]*SES",
-        re.IGNORECASE,
-    )
-
-    try:
-        page.wait_for_load_state("networkidle", timeout=30_000)
-    except Exception:
-        pass
-
-    for fr in page.frames:
-        clickables = fr.locator(
-            "a, button, input[type=submit], input[type=button], [role=link], "
-            "[onclick*='__doPostBack'], a[href*='__doPostBack']"
-        ).filter(has_text=target)
-
-        cand = _first_visible(clickables)
-        if cand:
-            print("Browser: Found direct clickable element.")
-            return cand
-
-        text_hit = fr.get_by_text(target)
-        th = _first_visible(text_hit)
-        if th:
-            ancestor = th.locator(
-                "xpath=ancestor-or-self::a[1] | "
-                "ancestor-or-self::button[1] | "
-                "ancestor-or-self::input[1] | "
-                "ancestor-or-self::*[contains(@onclick,'__doPostBack')][1]"
-            )
-            anc = _first_visible(ancestor)
-            if anc:
-                print("Browser: Found clickable ancestor.")
-                return anc
-
-    return None
-
-
-def _download_zip_via_browser() -> Tuple[Path, str]:
-    from playwright.sync_api import TimeoutError as PwTimeoutError
-    from playwright.sync_api import sync_playwright
-
-    _ensure_debug_dir()
-
-    print(f"Browser: Navigating to {SES_URL}...")
-    with sync_playwright() as p:
-        browser = p.chromium.launch(
-            headless=True,
-            args=["--disable-blink-features=AutomationControlled", "--no-sandbox"],
-        )
-
-        context = browser.new_context(
-            accept_downloads=True,
-            locale="pt-BR",
-            timezone_id="America/Sao_Paulo",
-            user_agent=(
+        headers = {
+            "User-Agent": (
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                 "AppleWebKit/537.36 (KHTML, like Gecko) "
                 "Chrome/120.0.0.0 Safari/537.36"
             ),
-            extra_http_headers={
-                "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8",
-                "Upgrade-Insecure-Requests": "1",
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            },
-        )
-
-        context.add_init_script(
-            "Object.defineProperty(navigator,'webdriver',{get:()=>undefined});"
-        )
-
-        page = context.new_page()
-
-        try:
-            page.goto(SES_URL, timeout=90_000, wait_until="domcontentloaded")
-
-            print("Browser: Locating ASP.NET download trigger...")
-            trigger = _find_ses_download_trigger(page)
-
-            if not trigger:
-                visible_text = page.locator("body").inner_text()
-                raise RuntimeError(
-                    "Trigger 'Base de Dados do SES' NÃO encontrado. "
-                    f"Texto visível (head 500): {visible_text[:500]}"
-                )
-
-            print("Browser: Found trigger. Clicking...")
-            trigger.scroll_into_view_if_needed()
-
-            with page.expect_download(timeout=180_000) as dlinfo:
-                trigger.click(timeout=30_000)
-
-            download = dlinfo.value
-            dl_url = getattr(download, "url", "") or "playwright_download"
-            print(f"Browser: Download started from {dl_url}")
-
-            tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
-            tmp_path = Path(tmp.name)
-            tmp.close()
-
-            download.save_as(tmp_path)
-            _validate_zip_or_raise(tmp_path, dl_url)
-
-            browser.close()
-            return tmp_path, dl_url
-
-        except (PwTimeoutError, Exception) as e:
-            _save_page_evidence(page, "ses_failure")
-            browser.close()
-            raise RuntimeError(f"Playwright SES download failed: {e}") from e
-
-
-def _detect_csv_dialect(z: zipfile.ZipFile, fname: str) -> tuple[str, str]:
-    with z.open(fname) as f:
-        head = f.read(65536)
-
-    encoding = "utf-8-sig" if head.startswith(b"\xef\xbb\xbf") else "latin-1"
-    try:
-        txt = head.decode(encoding, errors="ignore")
+            "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8",
+        }
+        html = requests.get(SES_URL, timeout=60, headers=headers).text
     except Exception:
-        txt = head.decode("latin-1", errors="ignore")
+        return None
 
-    first_line = (txt.splitlines()[:1] or [""])[0]
+    hits = re.findall(r'href="([^"]+\.zip)"', html, flags=re.IGNORECASE)
+    if not hits:
+        return None
 
-    delim = max(_DELIMS, key=lambda d: first_line.count(d))
-    if first_line.count(delim) == 0:
-        delim = ";"
-
-    print(f"Reading {fname} | Enc: {encoding} | Delim: {delim!r}")
-    return encoding, delim
-
-
-def _read_csv(z: zipfile.ZipFile, fname: str) -> list[list[str]]:
-    enc, delim = _detect_csv_dialect(z, fname)
-    with z.open(fname) as f:
-        content = io.TextIOWrapper(f, encoding=enc, errors="replace", newline="")
-        return list(csv.reader(content, delimiter=delim))
+    cand = hits[-1]
+    if cand.startswith("http"):
+        return cand
+    if cand.startswith("/"):
+        return f"https://www2.susep.gov.br{cand}"
+    return f"https://www2.susep.gov.br/{cand.lstrip('./')}"
 
 
-def _pick_best_csv(
-    z: zipfile.ZipFile,
-    candidates: list[str],
-    required_groups: list[list[str]],
-) -> str:
-    best: str | None = None
-    best_score = -1
-    best_rows = -1
-    best_hdr = None
+def _download_zip() -> Tuple[Path, str]:
+    try:
+        return _download_to_temp(SES_BASE_ZIP_URL), SES_BASE_ZIP_URL
+    except Exception as e1:
+        print(f"SES: falha ao baixar BaseCompleta.zip (URL canônica): {e1}")
 
-    for fname in candidates:
-        rows = _read_csv(z, fname)
-        if not rows:
-            continue
-        h = [_norm(x) for x in rows[0]]
-
-        score = 0
-        for group in required_groups:
-            if any(_norm(k) in h for k in group):
-                score += 1
-
-        n_rows = len(rows)
-        # desempate: prefira o arquivo que tem MAIS linhas
-        if (score > best_score) or (score == best_score and n_rows > best_rows):
-            best = fname
-            best_score = score
-            best_rows = n_rows
-            best_hdr = rows[0][:80]
-
-    if not best or best_score < len(required_groups):
-        _ensure_debug_dir()
-        try:
-            (DEBUG_DIR / "csv_candidates_failed.txt").write_text(
-                f"Candidates: {candidates}\nLast Header: {best_hdr}", encoding="utf-8"
-            )
-        except Exception:
-            pass
-        raise RuntimeError(
-            "Não foi possível identificar o CSV correto no ZIP. "
-            f"Candidatos={candidates}. MelhorScore={best_score}. "
-            f"Requisitos={required_groups}. HeaderExemplo={best_hdr}"
-        )
-
-    return best
+    url = _discover_zip_url_from_page()
+    if not url:
+        raise RuntimeError("SES: não foi possível descobrir URL do ZIP a partir do HTML.")
+    return _download_to_temp(url), url
 
 
 def _parse_brl_number(raw: Any) -> float:
@@ -364,232 +198,262 @@ def _parse_brl_number(raw: Any) -> float:
         return 0.0
 
 
+def _parse_ym(value: Any) -> Optional[int]:
+    if value is None:
+        return None
+    s = str(value).strip()
+    if not s:
+        return None
+
+    m = re.search(r"\b(\d{4})\D?(\d{2})\b", s)
+    if m:
+        return int(m.group(1)) * 100 + int(m.group(2))
+
+    m = re.search(r"\b(\d{2})\D+(\d{4})\b", s)
+    if m:
+        mm = int(m.group(1))
+        yy = int(m.group(2))
+        if 1 <= mm <= 12:
+            return yy * 100 + mm
+    return None
+
+
 def _ym_to_iso_01(ym: int) -> str:
     return f"{ym // 100:04d}-{ym % 100:02d}-01"
 
 
-def _parse_ym(value: Any) -> Optional[int]:
-    if not value:
-        return None
-    s = str(value).strip()
-    m = re.search(r"\b(\d{4})\D?(\d{2})\b", s) or re.search(r"\b(\d{2})\D+(\d{4})\b", s)
-    if not m:
-        return None
-    v1 = int(m.group(1))
-    v2 = int(m.group(2))
-    if v1 > 12:
-        return v1 * 100 + v2
-    return v2 * 100 + v1
+def _month_index(ym: int) -> int:
+    return (ym // 100) * 12 + (ym % 100) - 1
 
+
+def _from_month_index(idx: int) -> int:
+    yy = idx // 12
+    mm = idx % 12 + 1
+    return yy * 100 + mm
+
+
+def _detect_dialect(z: zipfile.ZipFile, fname: str) -> tuple[str, str]:
+    with z.open(fname) as f:
+        head = f.read(65536)
+
+    encoding = "utf-8-sig" if head.startswith(b"\xef\xbb\xbf") else "latin-1"
+    txt = head.decode(encoding, errors="ignore")
+    first = (txt.splitlines()[:1] or [""])[0]
+    delims = [";", ",", "\t", "|"]
+    delim = max(delims, key=lambda d: first.count(d))
+    if first.count(delim) == 0:
+        delim = ";"
+    return encoding, delim
+
+
+def _iter_rows(z: zipfile.ZipFile, fname: str) -> Iterable[list[str]]:
+    enc, delim = _detect_dialect(z, fname)
+    with z.open(fname) as f:
+        wrapper = io.TextIOWrapper(f, encoding=enc, errors="replace", newline="")
+        reader = csv.reader(wrapper, delimiter=delim)
+        for row in reader:
+            yield row
+
+
+def _read_header(z: zipfile.ZipFile, fname: str) -> list[str]:
+    it = _iter_rows(z, fname)
+    return next(it, [])
+
+
+def _find_idx_exact(h_norm: list[str], keys: list[str]) -> Optional[int]:
+    for k in keys:
+        nk = _norm(k)
+        if nk in h_norm:
+            return h_norm.index(nk)
+    return None
+
+
+def _find_idx_contains(h_norm: list[str], needle: str) -> Optional[int]:
+    n = _norm(needle)
+    for i, col in enumerate(h_norm):
+        if n in col:
+            return i
+    return None
+
+
+def _pick_best_csv(
+    z: zipfile.ZipFile,
+    candidates: list[str],
+    required_groups: list[list[str]],
+) -> str:
+    best = None
+    best_score = -1
+
+    for fname in candidates:
+        hdr = _read_header(z, fname)
+        if not hdr:
+            continue
+        h = [_norm(x) for x in hdr]
+        score = 0
+        for group in required_groups:
+            if any(_norm(k) in h for k in group):
+                score += 1
+        if score > best_score:
+            best = fname
+            best_score = score
+
+    if not best or best_score < len(required_groups):
+        raise RuntimeError(f"Não foi possível identificar CSV correto. candidates={candidates}")
+    return best
+
+
+def _select_best_numeric_column(sample_rows: list[list[str]], idx_candidates: list[int]) -> Optional[int]:
+    if not idx_candidates:
+        return None
+    sums = {i: 0.0 for i in idx_candidates}
+    nnz = {i: 0 for i in idx_candidates}
+
+    for row in sample_rows:
+        for i in idx_candidates:
+            if i >= len(row):
+                continue
+            v = _parse_brl_number(row[i])
+            if v != 0.0:
+                nnz[i] += 1
+                sums[i] += abs(v)
+
+    idx_candidates.sort(key=lambda i: (sums.get(i, 0.0), nnz.get(i, 0)), reverse=True)
+    return idx_candidates[0] if idx_candidates else None
+
+
+# ----------------------------
+# Extração principal
+# ----------------------------
 
 def extract_ses_master_and_financials(
     zip_url: Optional[str] = None,
 ) -> Tuple[SesExtractionMeta, Dict[str, Dict[str, Any]]]:
-    if zip_url:
-        print(
-            f"SES: zip_url={zip_url} informado, mas ignorado em favor do crawler Playwright."
-        )
+    """
+    Extrai:
+      - Ses_cias.csv: id, nome, cnpj
+      - Ses_seguros.csv: prêmios e sinistros (rolling_12m)
 
-    zip_path, used_url = _download_zip_via_browser()
+    Nota: sem Playwright. Isso resolve o seu cenário do Codex (403 ao baixar Chromium).
+    """
+    _ = zip_url  # compatibilidade
 
+    zip_path, used_url = _download_zip()
     try:
         with zipfile.ZipFile(zip_path) as z:
-            all_files = z.namelist()
-            print(f"DEBUG: ZIP Contents: {all_files}")
+            csvs = [n for n in z.namelist() if n.lower().endswith(".csv")]
+            if not csvs:
+                raise RuntimeError("ZIP do SES não contém CSV.")
 
-            csvs = [n for n in all_files if n.lower().endswith(".csv")]
-
-            # Preferência canônica
-            cias_candidates = [n for n in csvs if re.fullmatch(r"ses_cias\.csv", n.lower())]
-            seg_candidates = [n for n in csvs if re.fullmatch(r"ses_seguros\.csv", n.lower())]
-
-            # Fallback (se um dia mudarem capitalização/nome)
-            if not cias_candidates:
-                cias_candidates = [n for n in csvs if "ses_cias" in n.lower()]
-            if not seg_candidates:
-                # "seguros" pode vir em outros arquivos — deixe o picker escolher pelo header + volume
-                seg_candidates = [
-                    n for n in csvs
-                    if "ses_seguros" in n.lower()
-                    or "seguros" in n.lower()
-                    or "valoresmov" in n.lower()
-                ]
-
-            if not cias_candidates or not seg_candidates:
-                raise RuntimeError(f"CSVs válidos não identificados. Conteúdo: {all_files}")
+            cias_candidates = [n for n in csvs if "ses_cias" in n.lower()] or csvs
+            seg_candidates = [n for n in csvs if "ses_seguros" in n.lower() or "seguros" in n.lower()] or csvs
 
             cias = _pick_best_csv(
                 z,
                 cias_candidates,
-                required_groups=[
-                    ["cod_enti", "coenti", "cod_cia", "co_enti"],
-                    ["noenti", "nome", "nome_cia"],
-                ],
+                required_groups=[["coenti", "cod_enti", "cod_cia", "co_enti"], ["noenti", "nome"]],
             )
 
             seguros = _pick_best_csv(
                 z,
                 seg_candidates,
-                required_groups=[
-                    ["cod_enti", "coenti", "cod_cia", "co_enti"],
-                    ["damesano", "anomes", "competencia", "damesaano"],
-                    [
-                        "premio_direto",
-                        "premio_de_seguros",
-                        "premio_retido",
-                        "premio_ganho",
-                        "premio_emitido2",
-                        "premio_emitido_cap",
-                        "premio_direto_cap",
-                        "premio",
-                        "premio_emitido",
-                        "premios",
-                    ],
-                ],
+                required_groups=[["coenti", "cod_enti", "cod_cia", "co_enti"], ["damesano", "anomes", "competencia"], ["premio"]],
             )
 
-            print(f"SES: CSVs selecionados: cias={cias} | seguros={seguros}")
+            hdr_cias = _read_header(z, cias)
+            hdr_seg = _read_header(z, seguros)
+            h_cias = [_norm(x) for x in hdr_cias]
+            h_seg = [_norm(x) for x in hdr_seg]
 
-            rows_cias = _read_csv(z, cias)
-            rows_seguros = _read_csv(z, seguros)
+            id_i = _find_idx_exact(h_cias, ["coenti", "cod_enti", "cod_cia", "co_enti"])
+            nm_i = _find_idx_exact(h_cias, ["noenti", "nome", "nome_cia"])
+            cn_i = _find_idx_contains(h_cias, "cnpj")
 
-            h_cias = [_norm(x) for x in rows_cias[0]]
-            h_seg = [_norm(x) for x in rows_seguros[0]]
+            sid_i = _find_idx_exact(h_seg, ["coenti", "cod_enti", "cod_cia", "co_enti"])
+            ym_i = _find_idx_exact(h_seg, ["damesano", "anomes", "competencia", "damesaano"])
+            if sid_i is None or ym_i is None:
+                raise RuntimeError(f"Colunas obrigatórias ausentes em '{seguros}'.")
 
-            def g_idx(h: list[str], keys: list[str]) -> Optional[int]:
-                for k in keys:
-                    nk = _norm(k)
-                    if nk in h:
-                        return h.index(nk)
-                return None
+            prem_idxs = [i for i, col in enumerate(h_seg) if ("premio" in col) or any(_norm(x) in col for x in _PREMIUM_HINTS)]
+            sin_idxs = [i for i, col in enumerate(h_seg) if ("sinistro" in col) or any(_norm(x) in col for x in _CLAIMS_HINTS)]
 
-            id_i = g_idx(h_cias, ["cod_enti", "coenti", "cod_cia", "co_enti"])
-            nm_i = g_idx(h_cias, ["noenti", "nome", "nome_cia"])
+            max_ym = 0
+            sample: list[list[str]] = []
+            rows1 = _iter_rows(z, seguros)
+            next(rows1, None)
+            for row in rows1:
+                if ym_i < len(row):
+                    ym = _parse_ym(row[ym_i])
+                    if ym and ym > max_ym:
+                        max_ym = ym
+                if len(sample) < _MAX_SAMPLE_ROWS:
+                    sample.append(row)
 
-            # CNPJ muda bastante de nome (nu_cnpj, cnpj_cia, num_cnpj, etc)
-            cn_i = g_idx(
-                h_cias,
-                ["cnpj", "numcnpj", "nu_cnpj", "num_cnpj", "cnpj_cia", "cgc", "nu_cgc"],
-            )
-            if cn_i is None:
-                for i, col in enumerate(h_cias):
-                    if "cnpj" in col or col.endswith("cgc") or "cgc" in col:
-                        cn_i = i
-                        break
+            if max_ym <= 0:
+                raise RuntimeError("Não foi possível determinar max_ym (competência).")
 
-            sid_i = g_idx(h_seg, ["cod_enti", "coenti", "cod_cia", "co_enti"])
-            ym_i = g_idx(h_seg, ["damesano", "anomes", "competencia", "damesaano"])
+            pr_i = _select_best_numeric_column(sample, prem_idxs)
+            sn_i = _select_best_numeric_column(sample, sin_idxs) if sin_idxs else None
+            if pr_i is None:
+                raise RuntimeError("Não foi possível identificar coluna de prêmios no Ses_seguros.csv.")
 
-            pr_i = g_idx(
-                h_seg,
-                [
-                    "premio_direto",
-                    "premio_de_seguros",
-                    "premio_retido",
-                    "premio_ganho",
-                    "premio_emitido2",
-                    "premio_emitido_cap",
-                    "premio_direto_cap",
-                    "premio",
-                    "premio_emitido",
-                    "premios",
-                ],
-            )
-
-            sn_i = g_idx(
-                h_seg,
-                [
-                    "sinistro_direto",
-                    "sinistro_ocorrido",
-                    "sinistro_retido",
-                    "sinistro_ocorrido_cap",
-                    "sinistros_ocorridos_cap",
-                    "sinistros",
-                    "sinistro",
-                ],
-            )
-
-            if sid_i is None or ym_i is None or pr_i is None:
-                _ensure_debug_dir()
-                try:
-                    (DEBUG_DIR / "headers_failed_seguros.txt").write_text(str(h_seg), encoding="utf-8")
-                    (DEBUG_DIR / "headers_failed_cias.txt").write_text(str(h_cias), encoding="utf-8")
-                except Exception:
-                    pass
-                raise RuntimeError(
-                    f"Colunas obrigatórias ausentes em '{seguros}'. "
-                    f"sid_i={sid_i}, ym_i={ym_i}, pr_i={pr_i}. Header={rows_seguros[0][:80]}"
-                )
+            start_ym = _from_month_index(_month_index(max_ym) - 11)
 
             print(
-                "SES: Colunas selecionadas: "
-                f"sid={h_seg[sid_i]}, ym={h_seg[ym_i]}, premium={h_seg[pr_i]}, "
-                f"claims={(h_seg[sn_i] if sn_i is not None else None)}, "
-                f"cnpj={(h_cias[cn_i] if (cn_i is not None and cn_i < len(h_cias)) else None)}"
+                "SES: colunas selecionadas | "
+                f"sid={h_seg[sid_i]} ym={h_seg[ym_i]} premium={h_seg[pr_i]} "
+                f"claims={(h_seg[sn_i] if sn_i is not None else None)} "
+                f"window={start_ym}-{max_ym}"
             )
 
             companies: Dict[str, Dict[str, Any]] = {}
             if id_i is not None and nm_i is not None:
-                for row in rows_cias[1:]:
-                    if len(row) <= max(id_i, nm_i):
+                rows_c = _iter_rows(z, cias)
+                next(rows_c, None)
+                for row in rows_c:
+                    if id_i >= len(row) or nm_i >= len(row):
                         continue
                     sid = _digits(row[id_i])
                     if not sid:
                         continue
-
-                    cn = None
-                    if cn_i is not None and len(row) > cn_i:
-                        cn = _cnpj14(row[cn_i])
-
-                    companies[sid.zfill(6)] = {"name": row[nm_i].strip(), "cnpj": cn}
+                    sid = sid.zfill(6)
+                    cnpj = None
+                    if cn_i is not None and cn_i < len(row):
+                        d = _digits(row[cn_i])
+                        if d:
+                            cnpj = d.zfill(14) if len(d) <= 14 else d
+                    companies[sid] = {"name": (row[nm_i] or "").strip(), "cnpj": cnpj}
 
             agg: Dict[str, Dict[str, float]] = {}
-            max_ym = 0
-
-            for row in rows_seguros[1:]:
-                if len(row) <= max(sid_i, ym_i, pr_i):
+            rows2 = _iter_rows(z, seguros)
+            next(rows2, None)
+            for row in rows2:
+                if sid_i >= len(row) or ym_i >= len(row) or pr_i >= len(row):
                     continue
-
                 ym = _parse_ym(row[ym_i])
-                if not ym:
+                if not ym or ym < start_ym or ym > max_ym:
                     continue
-                if ym > max_ym:
-                    max_ym = ym
-
                 sid = _digits(row[sid_i])
                 if not sid:
                     continue
                 sid = sid.zfill(6)
 
                 prem = _parse_brl_number(row[pr_i])
-                sin = 0.0
-                if sn_i is not None and len(row) > sn_i:
-                    sin = _parse_brl_number(row[sn_i])
+                sin = _parse_brl_number(row[sn_i]) if (sn_i is not None and sn_i < len(row)) else 0.0
 
                 bucket = agg.setdefault(sid, {"p": 0.0, "c": 0.0})
                 bucket["p"] += prem
                 bucket["c"] += sin
 
-            if max_ym <= 0:
-                raise RuntimeError("Não foi possível determinar o período (max_ym).")
-
-            # rolling 12m metadata (mantém compatibilidade com build atual; filtragem pode ser aplicada em versão futura)
-            max_idx = (max_ym // 100) * 12 + (max_ym % 100) - 1
-            start_idx = max_idx - 11
-            start_year = start_idx // 12
-            start_month = start_idx % 12 + 1
-            start_ym = start_year * 100 + start_month
-
             out: Dict[str, Dict[str, Any]] = {}
-            for sid, val in agg.items():
-                if val["p"] <= 0:
+            for sid, v in agg.items():
+                if v["p"] <= 0:
                     continue
                 base = companies.get(sid) or {"name": f"SES_{sid}", "cnpj": None}
                 out[sid] = {
-                    "name": base["name"],
-                    "cnpj": base["cnpj"],
-                    "premiums": round(val["p"], 2),
-                    "claims": round(val["c"], 2),
+                    "name": base.get("name") or f"SES_{sid}",
+                    "cnpj": base.get("cnpj"),
+                    "premiums": round(v["p"], 2),
+                    "claims": round(v["c"], 2),
                 }
 
             meta = SesExtractionMeta(
