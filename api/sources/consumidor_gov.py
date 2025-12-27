@@ -1,3 +1,4 @@
+# api/sources/consumidor_gov.py
 from __future__ import annotations
 
 import csv
@@ -5,455 +6,228 @@ import gzip
 import io
 import json
 import re
-import tempfile
-import time
-import unicodedata
-import zipfile
-from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Any, Dict, List, Optional
+from dataclasses import dataclass
+from datetime import date, datetime
+from typing import Any
 
 import requests
-
-CKAN_BASE = "https://dados.mj.gov.br/api/3/action"
-CKAN_PACKAGE_SHOW = f"{CKAN_BASE}/package_show"
-DATASET_ID = "reclamacoes-do-consumidor-gov-br"
-
-DEFAULT_WINDOW_MONTHS = 12
-
-
-def _now_iso() -> str:
-    return time.strftime("%Y-%m-%d", time.gmtime())
-
-
-def _repo_root() -> Path:
-    here = Path(__file__).resolve()
-    for p in [here, *here.parents]:
-        if (p / "api").exists() and (p / "data").exists():
-            return p
-    return here.parents[1]
-
-
-def _norm(s: str) -> str:
-    s = (s or "").strip().strip('"').strip("'")
-    s = s.replace("\ufeff", "")
-    s = unicodedata.normalize("NFKD", s)
-    s = "".join(ch for ch in s if not unicodedata.combining(ch))
-    s = s.lower()
-    s = re.sub(r"\s+", "_", s)
-    s = re.sub(r"[^a-z0-9_]+", "", s)
-    return s
-
-
-def _digits(s: Optional[str]) -> Optional[str]:
-    if not s:
-        return None
-    d = re.sub(r"\D+", "", str(s))
-    return d or None
-
-
-def _detect_delimiter(sample: str) -> str:
-    first = (sample.splitlines()[:1] or [""])[0]
-    cand = [(";", first.count(";")), (",", first.count(",")), ("\t", first.count("\t"))]
-    cand.sort(key=lambda x: x[1], reverse=True)
-    return cand[0][0] if cand[0][1] > 0 else ";"
-
-
-def _parse_bool(v: Any) -> Optional[bool]:
-    if v is None:
-        return None
-    s = str(v).strip().lower()
-    if not s:
-        return None
-    if s in {"s", "sim", "y", "yes", "true", "1"}:
-        return True
-    if s in {"n", "nao", "não", "no", "false", "0"}:
-        return False
-    return None
-
-
-def _parse_float(v: Any) -> Optional[float]:
-    if v is None:
-        return None
-    s = str(v).strip()
-    if not s:
-        return None
-    s = s.replace(".", "").replace(",", ".")
-    s = re.sub(r"[^0-9\.\-]+", "", s)
-    try:
-        return float(s)
-    except Exception:
-        return None
-
-
-def _parse_int(v: Any) -> Optional[int]:
-    f = _parse_float(v)
-    if f is None:
-        return None
-    try:
-        return int(round(f))
-    except Exception:
-        return None
-
-
-def _name_key(name: str) -> Optional[str]:
-    n = _norm(name)
-    n = re.sub(r"_+", "_", n).strip("_")
-    return n or None
 
 
 @dataclass
 class Agg:
-    total: int = 0
-    responded: int = 0
-    resolved: int = 0
-    rating_sum: float = 0.0
-    rating_count: int = 0
+    display_name: str
+    complaints_total: int = 0
+    complaints_finalizadas: int = 0
+    responded_total: int = 0
+    resolved_total: int = 0
+    satisfaction_sum: float = 0.0
+    satisfaction_n: int = 0
     response_days_sum: float = 0.0
-    response_days_count: int = 0
-    name_counts: Dict[str, int] = field(default_factory=dict)
+    response_days_n: int = 0
 
-    def update(
-        self,
-        *,
-        display_name: Optional[str],
-        responded: Optional[bool],
-        resolved: Optional[bool],
-        rating: Optional[float],
-        response_days: Optional[int],
-    ) -> None:
-        self.total += 1
-        if responded is True:
-            self.responded += 1
-        if resolved is True:
-            self.resolved += 1
-        if rating is not None:
-            self.rating_sum += float(rating)
-            self.rating_count += 1
-        if response_days is not None:
-            self.response_days_sum += float(response_days)
-            self.response_days_count += 1
-        if display_name:
-            self.name_counts[display_name] = self.name_counts.get(display_name, 0) + 1
+    def merge(self, other: Agg) -> None:
+        self.complaints_total += other.complaints_total
+        self.complaints_finalizadas += other.complaints_finalizadas
+        self.responded_total += other.responded_total
+        self.resolved_total += other.resolved_total
+        self.satisfaction_sum += other.satisfaction_sum
+        self.satisfaction_n += other.satisfaction_n
+        self.response_days_sum += other.response_days_sum
+        self.response_days_n += other.response_days_n
 
-    def best_display_name(self, fallback: str) -> str:
-        if not self.name_counts:
-            return fallback
-        return max(self.name_counts.items(), key=lambda x: x[1])[0]
+    def to_public(self) -> dict[str, Any]:
+        responded_rate = (self.responded_total / self.complaints_finalizadas) if self.complaints_finalizadas else None
+        resolution_rate = (self.resolved_total / self.complaints_finalizadas) if self.complaints_finalizadas else None
+        satisfaction_avg = (self.satisfaction_sum / self.satisfaction_n) if self.satisfaction_n else None
+        avg_response_days = (self.response_days_sum / self.response_days_n) if self.response_days_n else None
 
-    def to_public(self, display_name: str) -> Dict[str, Any]:
-        resp_rate = self.responded / self.total if self.total else 0.0
-        res_rate = self.resolved / self.total if self.total else 0.0
-        sat = (self.rating_sum / self.rating_count) if self.rating_count else None
-        avg_days = (self.response_days_sum / self.response_days_count) if self.response_days_count else None
         return {
-            "display_name": display_name,
-            "complaints_total": self.total,
-            "response_rate": round(resp_rate, 6),
-            "resolution_rate": round(res_rate, 6),
-            "satisfaction_avg": (round(float(sat), 6) if sat is not None else None),
-            "avg_response_days": (round(float(avg_days), 6) if avg_days is not None else None),
+            "display_name": self.display_name,
+            "complaints_total": self.complaints_total,
+            "complaints_finalizadas": self.complaints_finalizadas,
+            "responded_rate": responded_rate,
+            "resolution_rate": resolution_rate,
+            "satisfaction_avg": satisfaction_avg,
+            "avg_response_days": avg_response_days,
         }
 
 
-def _download_to_temp(url: str, timeout: int = 180) -> Path:
-    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".bin")
-    tmp_path = Path(tmp.name)
-    tmp.close()
-
-    headers = {
-        "User-Agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/120.0.0.0 Safari/537.36"
-        ),
-        "Accept": "*/*",
-        "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8",
-    }
-
-    with requests.get(url, stream=True, timeout=timeout, headers=headers) as r:
-        r.raise_for_status()
-        with tmp_path.open("wb") as f:
-            for chunk in r.iter_content(chunk_size=1024 * 256):
-                if chunk:
-                    f.write(chunk)
-
-    return tmp_path
+def _norm_key(s: str) -> str:
+    s = (s or "").strip().lower()
+    s = re.sub(r"\s+", " ", s)
+    s = re.sub(r"[^a-z0-9 ]+", "", s)
+    return s.strip()
 
 
-def _open_as_text(path: Path) -> io.TextIOBase:
-    head = path.read_bytes()[:8]
-
-    if zipfile.is_zipfile(path):
-        z = zipfile.ZipFile(path)
-        names = [n for n in z.namelist() if n.lower().endswith(".csv")]
-        if not names:
-            raise RuntimeError("ZIP não contém CSV.")
-        fbin = z.open(names[0], "r")
-        wrapper = io.TextIOWrapper(fbin, encoding="utf-8", errors="replace", newline="")
-        wrapper._zip_ref = z  # type: ignore[attr-defined]
-        return wrapper
-
-    if len(head) >= 2 and head[0] == 0x1F and head[1] == 0x8B:
-        fbin = gzip.open(path, "rb")
-        return io.TextIOWrapper(fbin, encoding="utf-8", errors="replace", newline="")
-
-    return path.open("r", encoding="utf-8", errors="replace", newline="")
+def _to_int(x: Any) -> int:
+    try:
+        return int(str(x).strip())
+    except Exception:
+        return 0
 
 
-def _ckan_package() -> Dict[str, Any]:
-    r = requests.get(CKAN_PACKAGE_SHOW, params={"id": DATASET_ID}, timeout=60)
+def _to_float(x: Any) -> float:
+    try:
+        s = str(x).strip().replace(",", ".")
+        return float(s)
+    except Exception:
+        return 0.0
+
+
+def discover_month_csv_urls(index_url: str) -> list[str]:
+    """
+    O índice do Consumidor.gov (dados abertos) costuma publicar links para CSV.GZ mensais.
+    Esta função tenta coletar todos os URLs .csv.gz a partir de um HTML/JSON simples.
+    """
+    r = requests.get(index_url, timeout=60)
     r.raise_for_status()
-    payload = r.json()
-    if not payload.get("success"):
-        raise RuntimeError(f"CKAN package_show falhou: {payload}")
-    return payload["result"]
+    content_type = (r.headers.get("content-type") or "").lower()
 
+    urls: list[str] = []
+    if "application/json" in content_type:
+        data = r.json()
+        text = json.dumps(data, ensure_ascii=False)
+        urls = re.findall(r"https?://[^\s\"']+?\.csv\.gz", text, flags=re.I)
+    else:
+        html = r.text
+        urls = re.findall(r"https?://[^\s\"']+?\.csv\.gz", html, flags=re.I)
 
-def _extract_ym_from_text(txt: str) -> Optional[str]:
-    if not txt:
-        return None
-    m = re.search(r"\b(20\d{2})[-_/\.](0[1-9]|1[0-2])\b", txt)
-    if m:
-        return f"{m.group(1)}-{m.group(2)}"
-    m = re.search(r"\b(20\d{2})(0[1-9]|1[0-2])\b", txt)
-    if m:
-        return f"{m.group(1)}-{m.group(2)}"
-    return None
-
-
-def _list_monthly_resources(pkg: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
-    out: Dict[str, Dict[str, Any]] = {}
-    for res in pkg.get("resources", []):
-        url = res.get("url") or ""
-        name = res.get("name") or res.get("title") or ""
-        fmt = (res.get("format") or "").lower()
-
-        if "csv" not in fmt and not url.lower().endswith((".csv", ".csv.gz", ".zip", ".gz")):
-            continue
-
-        ym = (
-            _extract_ym_from_text(name)
-            or _extract_ym_from_text(url)
-            or _extract_ym_from_text(res.get("description") or "")
-            or _extract_ym_from_text(res.get("last_modified") or "")
-            or _extract_ym_from_text(res.get("created") or "")
-        )
-        if not ym:
-            continue
-
-        cur = out.get(ym)
-        if not cur:
-            out[ym] = res
-            continue
-
-        def _ts(r: Dict[str, Any]) -> str:
-            return str(r.get("last_modified") or r.get("created") or "")
-
-        if _ts(res) > _ts(cur):
-            out[ym] = res
-
+    # De-dup preservando ordem
+    seen: set[str] = set()
+    out: list[str] = []
+    for u in urls:
+        if u not in seen:
+            seen.add(u)
+            out.append(u)
     return out
 
 
-def _latest_months(months: List[str], window_months: int) -> List[str]:
-    months_sorted = sorted(months)
-    return months_sorted[-window_months:]
+def download_month_csv_gz(url: str) -> bytes:
+    r = requests.get(url, timeout=180)
+    r.raise_for_status()
+    return r.content
 
 
-ALIASES = {
-    "supplier_name": [
-        "nome_fantasia",
-        "nomefantasia",
-        "fornecedor",
-        "nome_fornecedor",
-        "nomefantasiafornecedor",
-        "razao_social",
-        "razaosocial",
-    ],
-    "supplier_cnpj": [
-        "cnpj",
-        "cnpjdofornecedor",
-        "cnpj_do_fornecedor",
-        "cnpjfornecedor",
-        "cnpj_fornecedor",
-        "cpf_cnpj",
-        "cpfcnpj",
-    ],
-    "responded": [
-        "respondida",
-        "respondida_pelo_fornecedor",
-        "respondidapelo_fornecedor",
-        "fornecedor_respondeu",
-        "resposta_fornecedor",
-    ],
-    "resolved": [
-        "resolvida",
-        "reclamacao_resolvida",
-        "reclamacaoresolvida",
-        "solucionada",
-        "solucao",
-    ],
-    "rating": [
-        "nota",
-        "avaliacao",
-        "avaliacao_reclamacao",
-        "avaliacaoreclamacao",
-        "nota_do_consumidor",
-        "notadoconsumidor",
-    ],
-    "response_days": [
-        "tempo_resposta",
-        "temposresposta",
-        "tempo_resposta_em_dias",
-        "tempoderesposta",
-        "dias_resposta",
-    ],
-}
-
-
-def _header_norm_map(fieldnames: List[str]) -> Dict[str, str]:
-    return {_norm(h): h for h in (fieldnames or []) if h}
-
-
-def _get(row: Dict[str, Any], hdrmap: Dict[str, str], aliases: List[str]) -> Optional[str]:
-    for a in aliases:
-        k = hdrmap.get(_norm(a))
-        if k and k in row:
-            v = row.get(k)
-            if v is not None and str(v).strip() != "":
-                return str(v)
-    for a in aliases:
-        na = _norm(a)
-        for hk_norm, hk in hdrmap.items():
-            if na in hk_norm:
-                v = row.get(hk)
-                if v is not None and str(v).strip() != "":
-                    return str(v)
+def _pick_col(row: dict[str, Any], candidates: list[str]) -> Any:
+    for k in candidates:
+        if k in row:
+            return row.get(k)
     return None
 
 
-def build_consumidor_gov_agg(
-    *,
-    window_months: int = DEFAULT_WINDOW_MONTHS,
-    raw_dir: Optional[Path] = None,
-    out_path: Optional[Path] = None,
-) -> Path:
-    root = _repo_root()
-    raw_dir = raw_dir or (root / "data" / "raw" / "consumidor_gov")
-    out_path = out_path or (root / "data" / "derived" / "consumidor_gov" / "consumidor_gov_agg_latest.json")
-    raw_dir.mkdir(parents=True, exist_ok=True)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
+def _bool_from_pt(x: Any) -> bool:
+    s = str(x or "").strip().lower()
+    return s in {"1", "true", "sim", "s", "yes", "y"}
 
-    pkg = _ckan_package()
-    monthly = _list_monthly_resources(pkg)
-    if not monthly:
-        raise RuntimeError("Nenhum recurso mensal CSV identificado no dataset.")
 
-    months = _latest_months(list(monthly.keys()), window_months)
+def aggregate_month(gz_bytes: bytes) -> dict[str, Agg]:
+    """
+    Lê um CSV.GZ mensal do Consumidor.gov e agrega por fornecedor (name_key).
+    Retorna: dict[name_key] -> Agg
+    """
+    buf = io.BytesIO(gz_bytes)
+    with gzip.GzipFile(fileobj=buf, mode="rb") as gz:
+        raw = gz.read()
 
-    by_name: Dict[str, Agg] = {}
-    by_cnpj: Dict[str, Agg] = {}
+    # Tentativa de encoding: muitos arquivos vêm em UTF-8, mas alguns podem ter variações.
+    text = raw.decode("utf-8", errors="replace")
+    f = io.StringIO(text)
 
-    for ym in months:
-        res = monthly[ym]
-        url = res.get("url")
-        if not url:
+    # Sniff delimitador com fallback
+    sample = f.read(4096)
+    f.seek(0)
+    delim = ";" if sample.count(";") >= sample.count(",") else ","
+
+    reader = csv.DictReader(f, delimiter=delim)
+    aggs: dict[str, Agg] = {}
+
+    for row in reader:
+        # Campos típicos (variáveis conforme layout do mês)
+        fornecedor = _pick_col(
+            row,
+            [
+                "fornecedor",
+                "nome_fornecedor",
+                "razao_social",
+                "nomefantasia",
+                "nome_fantasia",
+                "empresa",
+                "nomeempresa",
+            ],
+        )
+        display_name = str(fornecedor or "").strip()
+        if not display_name:
             continue
 
-        cache_path = raw_dir / f"{ym}.bin"
-        if not cache_path.exists() or cache_path.stat().st_size == 0:
-            tmp = _download_to_temp(url)
-            try:
-                cache_path.write_bytes(tmp.read_bytes())
-            finally:
-                try:
-                    tmp.unlink()
-                except Exception:
-                    pass
+        name_key = _norm_key(display_name)
+        if not name_key:
+            continue
 
-        ftxt = _open_as_text(cache_path)
-        try:
-            sample = ftxt.read(65536)
-            delim = _detect_delimiter(sample)
-            ftxt.seek(0)
+        # Métricas “mínimas” — você pode expandir depois, mas sem quebrar compatibilidade.
+        finalizada = _pick_col(row, ["finalizada", "foi_finalizada", "status_finalizada", "finalizada_flag"])
+        respondida = _pick_col(row, ["respondida", "foi_respondida", "status_respondida", "respondida_flag"])
+        resolvida = _pick_col(row, ["resolvida", "foi_resolvida", "status_resolvida", "resolvida_flag"])
+        nota = _pick_col(row, ["nota_consumidor", "nota", "satisfacao", "satisfacao_consumidor"])
+        dias = _pick_col(row, ["tempo_resposta_dias", "dias_resposta", "tempo_resposta", "prazo_resposta_dias"])
 
-            reader = csv.DictReader(ftxt, delimiter=delim)
-            hdrmap = _header_norm_map(reader.fieldnames or [])
+        a = aggs.get(name_key)
+        if not a:
+            a = Agg(display_name=display_name)
+            aggs[name_key] = a
 
-            for row in reader:
-                supplier_name = _get(row, hdrmap, ALIASES["supplier_name"]) or ""
-                supplier_cnpj = _get(row, hdrmap, ALIASES["supplier_cnpj"])
+        a.complaints_total += 1
+        if _bool_from_pt(finalizada):
+            a.complaints_finalizadas += 1
+        if _bool_from_pt(respondida):
+            a.responded_total += 1
+        if _bool_from_pt(resolvida):
+            a.resolved_total += 1
 
-                responded = _parse_bool(_get(row, hdrmap, ALIASES["responded"]))
-                resolved = _parse_bool(_get(row, hdrmap, ALIASES["resolved"]))
-                rating = _parse_float(_get(row, hdrmap, ALIASES["rating"]))
-                resp_days = _parse_int(_get(row, hdrmap, ALIASES["response_days"]))
+        n = _to_float(nota)
+        if n > 0:
+            a.satisfaction_sum += n
+            a.satisfaction_n += 1
 
-                nk = _name_key(supplier_name)
-                if nk:
-                    by_name.setdefault(nk, Agg()).update(
-                        display_name=supplier_name,
-                        responded=responded,
-                        resolved=resolved,
-                        rating=rating,
-                        response_days=resp_days,
-                    )
+        d = _to_float(dias)
+        if d > 0:
+            a.response_days_sum += d
+            a.response_days_n += 1
 
-                cnpj = _digits(supplier_cnpj)
-                if cnpj:
-                    if len(cnpj) <= 14:
-                        cnpj = cnpj.zfill(14)
-                    by_cnpj.setdefault(cnpj, Agg()).update(
-                        display_name=supplier_name or cnpj,
-                        responded=responded,
-                        resolved=resolved,
-                        rating=rating,
-                        response_days=resp_days,
-                    )
-        finally:
-            try:
-                z = getattr(ftxt, "_zip_ref", None)
-                ftxt.close()
-                if z:
-                    z.close()
-            except Exception:
-                pass
+    return aggs
 
-    by_name_public: Dict[str, Any] = {}
-    for k, agg in by_name.items():
-        disp = agg.best_display_name(k)
-        by_name_public[k] = agg.to_public(disp)
 
-    by_cnpj_public: Dict[str, Any] = {}
-    for k, agg in by_cnpj.items():
-        disp = agg.best_display_name(k)
-        by_cnpj_public[k] = agg.to_public(disp) | {"cnpj": k}
+def aggregate_window(month_urls: list[str], max_months: int = 12) -> tuple[dict[str, Agg], dict[str, Any]]:
+    """
+    Baixa e agrega uma janela de meses (mais recentes primeiro, se você passar assim).
+    Retorna: (aggs_by_name_key, meta)
+    """
+    months_used: list[str] = []
+    merged: dict[str, Agg] = {}
 
-    payload = {
-        "meta": {
-            "as_of": _now_iso(),
-            "window_months": window_months,
-            "months": months,
-            "dataset_id": DATASET_ID,
-            "raw_cache_dir": str(raw_dir).replace(str(root), "").lstrip("/"),
-        },
-        "by_name_key": by_name_public,
-        "by_cnpj_key": by_cnpj_public,
-        "stats": {
-            "companies_by_name": len(by_name_public),
-            "companies_by_cnpj": len(by_cnpj_public),
-        },
+    for i, url in enumerate(month_urls[:max_months]):
+        gz_bytes = download_month_csv_gz(url)
+        aggs = aggregate_month(gz_bytes)
+
+        for k, a in aggs.items():
+            if k not in merged:
+                merged[k] = a
+            else:
+                merged[k].merge(a)
+
+        months_used.append(url)
+
+        # Hard cap defensivo contra listas enormes
+        if i >= max_months - 1:
+            break
+
+    meta = {
+        "as_of": datetime.utcnow().replace(microsecond=0).isoformat() + "Z",
+        "window_months": max_months,
+        "months": months_used,
     }
-
-    out_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-    return out_path
+    return merged, meta
 
 
-def main() -> None:
-    out = build_consumidor_gov_agg()
-    print(f"Consumidor.gov agregado gerado em: {out}")
-
-
-if __name__ == "__main__":
-    main()
+def to_payload(aggs: dict[str, Agg], meta: dict[str, Any]) -> dict[str, Any]:
+    by_name_key: dict[str, Any] = {k: a.to_public() for k, a in aggs.items()}
+    return {"meta": meta, "by_name_key": by_name_key}
