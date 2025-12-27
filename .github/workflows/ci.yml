@@ -13,7 +13,6 @@ jobs:
 
       - uses: actions/setup-python@v5
         with:
-          # Mantendo a versão que você usou no snippet (3.11)
           python-version: "3.11"
 
       - name: Install deps
@@ -48,7 +47,6 @@ jobs:
 
           if not p.exists():
               print("ERRO: api/v1/insurers.json nao existe.")
-              # Não damos raise SystemExit aqui para deixar o script terminar de imprimir o que der
           else:
               print(f"size: {p.stat().st_size}")
               try:
