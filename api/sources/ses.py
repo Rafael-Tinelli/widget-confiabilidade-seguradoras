@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import csv
 import io
-import os
 import re
 import tempfile
 import time
@@ -10,7 +9,7 @@ import unicodedata
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from playwright.sync_api import TimeoutError as PwTimeoutError
 from playwright.sync_api import sync_playwright
@@ -112,6 +111,11 @@ def _validate_zip_or_raise(zip_path: Path, url_hint: str) -> None:
 
     snippet = head[:1200].decode("utf-8", errors="ignore")
     kind = _classify_payload(head)
+
+    try:
+        (DEBUG_DIR / f"invalid_download_{int(time.time())}.txt").write_bytes(head)
+    except Exception:
+        pass
 
     raise RuntimeError(
         "Arquivo baixado não é ZIP válido. "
@@ -262,7 +266,11 @@ def _detect_csv_dialect(z: zipfile.ZipFile, fname: str) -> tuple[str, str]:
         head = f.read(65536)
 
     encoding = "utf-8-sig" if head.startswith(b"\xef\xbb\xbf") else "latin-1"
-    txt = head.decode(encoding, errors="ignore")
+    try:
+        txt = head.decode(encoding, errors="ignore")
+    except Exception:
+        txt = head.decode("latin-1", errors="ignore")
+
     first_line = (txt.splitlines()[:1] or [""])[0]
 
     delim = max(_DELIMS, key=lambda d: first_line.count(d))
