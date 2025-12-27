@@ -6,7 +6,6 @@ import io
 import re
 import zipfile
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import urljoin
 
@@ -99,9 +98,6 @@ def _fetch_text(url: str) -> str:
 def discover_ses_zip_url() -> str:
     """
     Localiza um link .zip relacionado à 'Base Completa' do SES.
-    Estratégia:
-      1) tenta achar .zip diretamente no principal
-      2) se não achar, busca link para uma página de download e tenta achar .zip lá
     """
     html = _fetch_text(SES_HOME)
 
@@ -214,6 +210,34 @@ def _find_cnpj_idx(header: list[str]) -> int | None:
     return None
 
 
+def _infer_cnpj_idx_by_sampling(header: list[str], rows: list[list[str]], sample_rows: int = 200) -> int | None:
+    if not header or not rows:
+        return None
+    width = len(header)
+    hits: list[tuple[int, int]] = []
+    
+    for i in range(width):
+        cnt = 0
+        for r in rows[:sample_rows]:
+            if i >= len(r):
+                continue
+            d = _digits(r[i])
+            if len(d) == 14:
+                cnt += 1
+        hits.append((cnt, i))
+    
+    if not hits:
+        return None
+
+    hits.sort(reverse=True)
+    best_cnt, best_i = hits[0]
+    
+    # Se pelo menos 5% da amostra (ou 5 linhas) tiver formato CNPJ, aceitamos
+    threshold = max(5, int(min(sample_rows, len(rows)) * 0.05))
+    
+    return best_i if best_cnt >= threshold else None
+
+
 def extract_ses_master_and_financials() -> tuple[SesMeta, dict[str, dict[str, Any]]]:
     zip_url = discover_ses_zip_url()
     zip_bytes = _download_bytes(zip_url)
@@ -230,7 +254,12 @@ def extract_ses_master_and_financials() -> tuple[SesMeta, dict[str, dict[str, An
 
     sid_i = _idx(h_cias, ["coenti", "id", "codigo", "codigo_entidade"])
     name_i = _idx(h_cias, ["noenti", "nome", "nome_entidade", "razao_social", "no_entidade"])
+    
+    # 1. Tenta achar CNPJ pelo nome do header
     cnpj_i = _find_cnpj_idx(h_cias)
+    # 2. Se falhar, tenta inferir olhando os dados (amostragem)
+    if cnpj_i is None:
+        cnpj_i = _infer_cnpj_idx_by_sampling(h_cias, rows_cias)
 
     if sid_i is None or name_i is None:
         raise RuntimeError("SES: não foi possível localizar colunas de ID/Nome em Ses_cias.csv.")
@@ -300,18 +329,15 @@ def extract_ses_master_and_financials() -> tuple[SesMeta, dict[str, dict[str, An
         buckets[sid]["claims"] += c
 
     companies: dict[str, dict[str, Any]] = {}
-    for sid, vals in buckets.items():
-        premiums = float(vals.get("premiums") or 0.0)
-        claims = float(vals.get("claims") or 0.0)
-        if premiums <= 0:
-            continue
-
-        base = cias.get(sid) or {"name": f"SES_ENTIDADE_{sid}", "cnpj": None}
+    # IMPORTANT: Iteramos sobre 'cias' (cadastro mestre) para garantir que todas 
+    # as empresas cadastradas apareçam no JSON final, mesmo sem prêmios no período.
+    for sid, base in cias.items():
+        vals = buckets.get(sid) or {"premiums": 0.0, "claims": 0.0}
         companies[sid] = {
             "name": base.get("name"),
             "cnpj": base.get("cnpj"),
-            "premiums": premiums,
-            "claims": claims,
+            "premiums": float(vals.get("premiums") or 0.0),
+            "claims": float(vals.get("claims") or 0.0),
         }
 
     meta = SesMeta(
