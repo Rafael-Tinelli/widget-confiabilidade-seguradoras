@@ -27,6 +27,11 @@ jobs:
           python-version: "3.11"
           cache: "pip"
 
+      - name: Configure NO_PROXY for dados.mj.gov.br
+        run: |
+          echo "NO_PROXY=${NO_PROXY:+$NO_PROXY,}dados.mj.gov.br" >> $GITHUB_ENV
+          echo "no_proxy=${no_proxy:+$no_proxy,}dados.mj.gov.br" >> $GITHUB_ENV
+
       - name: Install deps
         run: |
           pip install -r requirements.txt
