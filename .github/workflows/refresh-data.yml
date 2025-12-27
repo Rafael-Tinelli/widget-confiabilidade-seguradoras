@@ -201,7 +201,6 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          git add api/v1 data/raw data/snapshots
           git add api/v1 data/raw data/derived data/snapshots
 
           if git diff --cached --quiet; then
