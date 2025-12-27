@@ -1,349 +1,3 @@
-from __future__ import annotations
-
-import csv
-import io
-import re
-import tempfile
-import time
-import unicodedata
-import zipfile
-from dataclasses import dataclass
-from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
-
-from playwright.sync_api import TimeoutError as PwTimeoutError
-from playwright.sync_api import sync_playwright
-
-SES_URL = "https://www2.susep.gov.br/menuestatistica/ses/principal.aspx"
-DEBUG_DIR = Path("ses_debug")
-_DELIMS = [";", ",", "\t", "|"]
-
-
-@dataclass(frozen=True)
-class SesExtractionMeta:
-    zip_url: str
-    cias_file: str
-    seguros_file: str
-    period_from: str
-    period_to: str
-
-
-def _ensure_debug_dir() -> None:
-    DEBUG_DIR.mkdir(parents=True, exist_ok=True)
-
-
-def _norm(s: str) -> str:
-    s = (s or "").strip().strip('"').strip("'")
-    s = s.replace("\ufeff", "")
-    s = unicodedata.normalize("NFKD", s)
-    s = "".join(ch for ch in s if not unicodedata.combining(ch))
-    s = s.lower()
-    s = re.sub(r"\s+", "_", s)
-    s = re.sub(r"[^a-z0-9_]+", "", s)
-    return s
-
-
-def _digits(s: Optional[str]) -> Optional[str]:
-    if not s:
-        return None
-    d = re.sub(r"\D+", "", s)
-    return d or None
-
-
-def _read_head(path: Path, n: int = 4096) -> bytes:
-    with path.open("rb") as f:
-        return f.read(n)
-
-
-def _is_zip_signature(head8: bytes) -> bool:
-    return (
-        head8.startswith(b"PK\x03\x04")
-        or head8.startswith(b"PK\x05\x06")
-        or head8.startswith(b"PK\x07\x08")
-    )
-
-
-def _classify_payload(head: bytes) -> str:
-    txt = head.decode("utf-8", errors="ignore").lower().strip()
-    if txt.startswith("<!doctype html") or txt.startswith("<html") or txt.startswith("<"):
-        markers = [
-            "cloudflare",
-            "access denied",
-            "forbidden",
-            "attention required",
-            "captcha",
-            "turnstile",
-        ]
-        hit = [m for m in markers if m in txt]
-        return f"HTML (provável bloqueio/erro). markers={hit[:5]}"
-    if txt.startswith("{") or txt.startswith("["):
-        return "JSON (provável erro)"
-    if b";" in head or b"," in head:
-        return "Provável CSV/Texto"
-    return "Binário desconhecido (não-ZIP)"
-
-
-def _validate_zip_or_raise(zip_path: Path, url_hint: str) -> None:
-    if not zip_path.exists():
-        raise FileNotFoundError(f"Download não gerou arquivo: {zip_path}")
-
-    size = zip_path.stat().st_size
-    if size == 0:
-        raise RuntimeError("Arquivo baixado veio com 0 bytes (timeout/bloqueio).")
-
-    head = _read_head(zip_path, 4096)
-    head8 = head[:8]
-    if _is_zip_signature(head8) and zipfile.is_zipfile(zip_path):
-        return
-
-    _ensure_debug_dir()
-    try:
-        (DEBUG_DIR / "download_head.bin").write_bytes(head)
-    except Exception:
-        pass
-
-    snippet = head[:1200].decode("utf-8", errors="ignore")
-    kind = _classify_payload(head)
-
-    # Tenta salvar o conteúdo para debug se for pequeno
-    try:
-        (DEBUG_DIR / f"invalid_download_{int(time.time())}.txt").write_bytes(head)
-    except Exception:
-        pass
-
-    raise RuntimeError(
-        "Arquivo baixado não é ZIP válido. "
-        f"kind={kind} size={size} url={url_hint}\n"
-        f"snippet:\n{snippet}"
-    )
-
-
-def _save_page_evidence(page, label: str) -> None:
-    _ensure_debug_dir()
-    ts = int(time.time())
-    try:
-        page.screenshot(path=str(DEBUG_DIR / f"{label}_{ts}.png"), full_page=True)
-    except Exception:
-        pass
-    try:
-        (DEBUG_DIR / f"{label}_{ts}.html").write_text(page.content(), encoding="utf-8", errors="ignore")
-    except Exception:
-        pass
-
-
-def _first_visible(locator):
-    n = locator.count()
-    for i in range(n):
-        it = locator.nth(i)
-        try:
-            if it.is_visible():
-                return it
-        except Exception:
-            continue
-    return None
-
-
-def _find_ses_download_trigger(page):
-    # Regex tolerante a NBSP e quebras
-    target = re.compile(
-        r"Base[\s\u00A0]*d[eo][\s\u00A0]*(Dados)?[\s\u00A0]*do[\s\u00A0]*SES", re.IGNORECASE
-    )
-
-    try:
-        page.wait_for_load_state("networkidle", timeout=30_000)
-    except Exception:
-        pass
-
-    frames = page.frames
-    for fr in frames:
-        clickables = fr.locator(
-            "a, button, input[type=submit], input[type=button], [role=link], "
-            "[onclick*='__doPostBack'], a[href*='__doPostBack']"
-        ).filter(has_text=target)
-
-        cand = _first_visible(clickables)
-        if cand:
-            print("Browser: Found direct clickable element.")
-            return cand
-
-        text_hit = fr.get_by_text(target)
-        th = _first_visible(text_hit)
-        if th:
-            ancestor = th.locator(
-                "xpath=ancestor-or-self::a[1] | "
-                "ancestor-or-self::button[1] | "
-                "ancestor-or-self::input[1] | "
-                "ancestor-or-self::*[contains(@onclick,'__doPostBack')][1]"
-            )
-            anc = _first_visible(ancestor)
-            if anc:
-                print("Browser: Found clickable ancestor via text.")
-                return anc
-
-    return None
-
-
-def _download_zip_via_browser() -> Tuple[Path, str]:
-    print(f"Browser: Navigating to {SES_URL}...")
-    with sync_playwright() as p:
-        browser = p.chromium.launch(
-            headless=True,
-            args=["--disable-blink-features=AutomationControlled", "--no-sandbox"],
-        )
-        context = browser.new_context(
-            accept_downloads=True,
-            locale="pt-BR",
-            timezone_id="America/Sao_Paulo",
-            user_agent=(
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/120.0.0.0 Safari/537.36"
-            ),
-            extra_http_headers={
-                "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8",
-                "Upgrade-Insecure-Requests": "1",
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            },
-        )
-        context.add_init_script("Object.defineProperty(navigator,'webdriver',{get:()=>undefined});")
-        page = context.new_page()
-
-        try:
-            page.goto(SES_URL, timeout=90_000, wait_until="domcontentloaded")
-
-            print("Browser: Locating ASP.NET download trigger...")
-            trigger = _find_ses_download_trigger(page)
-
-            if not trigger:
-                visible_text = page.locator("body").inner_text()
-                raise RuntimeError(
-                    "Trigger 'Base de Dados do SES' NÃO encontrado. "
-                    f"Texto visível (head 500chars): {visible_text[:500]}"
-                )
-
-            print("Browser: Found trigger. Clicking...")
-            try:
-                trigger.scroll_into_view_if_needed()
-            except Exception:
-                pass
-
-            with page.expect_download(timeout=180_000) as dlinfo:
-                trigger.click(timeout=30_000, force=True)
-
-            download = dlinfo.value
-            dl_url = getattr(download, "url", "") or "playwright_download"
-
-            print(f"Browser: Download started from {dl_url}")
-
-            tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
-            tmp_path = Path(tmp.name)
-            tmp.close()
-
-            download.save_as(tmp_path)
-
-            _validate_zip_or_raise(tmp_path, dl_url)
-
-            browser.close()
-            return tmp_path, dl_url
-
-        except (PwTimeoutError, Exception) as e:
-            _save_page_evidence(page, "ses_failure")
-            browser.close()
-            raise RuntimeError(f"Playwright SES download failed: {e}") from e
-
-
-def _parse_brl_number(raw: Any) -> float:
-    if raw is None:
-        return 0.0
-    s = str(raw).strip()
-    if not s:
-        return 0.0
-    s = s.replace(".", "").replace(",", ".")
-    s = re.sub(r"[^0-9\.\-]+", "", s)
-    try:
-        return float(s)
-    except ValueError:
-        return 0.0
-
-
-def _ym_to_iso_01(ym: int) -> str:
-    return f"{ym // 100:04d}-{ym % 100:02d}-01"
-
-
-def _parse_ym(value: Any) -> Optional[int]:
-    if not value:
-        return None
-    s = str(value).strip()
-    m = re.search(r"\b(\d{4})\D?(\d{2})\b", s) or re.search(r"\b(\d{2})\D+(\d{4})\b", s)
-    if not m:
-        return None
-    v1 = int(m.group(1))
-    v2 = int(m.group(2))
-    if v1 > 12:
-        return v1 * 100 + v2
-    return v2 * 100 + v1
-
-
-def _detect_csv_dialect(z: zipfile.ZipFile, fname: str) -> Tuple[str, str]:
-    with z.open(fname) as f:
-        head = f.read(65536)
-
-    encoding = "utf-8-sig" if head.startswith(b"\xef\xbb\xbf") else "latin-1"
-    try:
-        txt = head.decode(encoding, errors="ignore")
-    except Exception:
-        txt = head.decode("latin-1", errors="ignore")
-        
-    first_line = (txt.splitlines()[:1] or [""])[0]
-
-    delim = max(_DELIMS, key=lambda d: first_line.count(d))
-    if first_line.count(delim) == 0:
-        delim = ";"  # fallback conservador
-
-    return encoding, delim
-
-
-def _read_csv(z: zipfile.ZipFile, fname: str) -> List[List[str]]:
-    enc, delim = _detect_csv_dialect(z, fname)
-    print(f"Reading {fname} | Enc: {enc} | Delim: '{delim}'")
-    with z.open(fname) as f:
-        content = io.TextIOWrapper(f, encoding=enc, errors="replace", newline="")
-        return list(csv.reader(content, delimiter=delim))
-
-
-def _pick_best_csv(z: zipfile.ZipFile, candidates: List[str], required_groups: List[List[str]]) -> str:
-    best = None
-    best_score = -1
-    best_hdr = None
-
-    for fname in candidates:
-        rows = _read_csv(z, fname)
-        if not rows:
-            continue
-        h = [_norm(x) for x in rows[0]]
-
-        score = 0
-        for group in required_groups:
-            if any(_norm(k) in h for k in group):
-                score += 1
-
-        if score > best_score:
-            best = fname
-            best_score = score
-            best_hdr = rows[0][:50] if rows else []
-
-    if not best or best_score < len(required_groups):
-        msg = (
-            "Não foi possível identificar o CSV correto no ZIP. "
-            f"Candidatos={candidates}. MelhorScore={best_score}. "
-            f"Requisitos={required_groups}. HeaderExemplo={best_hdr}"
-        )
-        print(f"ERROR: {msg}")
-        return None  # Retorna None para tratar no chamador
-
-    return best
-
-
 def extract_ses_master_and_financials(
     zip_url: Optional[str] = None,
 ) -> Tuple[SesExtractionMeta, Dict[str, Dict[str, Any]]]:
@@ -363,7 +17,6 @@ def extract_ses_master_and_financials(
             seg_candidates = [n for n in csvs if "seguros" in n.lower() or "finan" in n.lower()]
 
             if not cias_candidates or not seg_candidates:
-                # Fallback: se nomes não baterem, tenta todos os CSVs
                 print("WARNING: Nomes de arquivo padrão não encontrados. Testando todos os CSVs.")
                 cias_candidates = csvs
                 seg_candidates = csvs
@@ -373,7 +26,9 @@ def extract_ses_master_and_financials(
                 z,
                 cias_candidates,
                 required_groups=[
+                    # Grupo 1: ID da empresa
                     ["cod_enti", "coenti", "cod_cia", "co_enti", "codigo"],
+                    # Grupo 2: Nome da empresa
                     ["noenti", "nome", "nome_cia", "razao_social"],
                 ],
             )
@@ -382,9 +37,12 @@ def extract_ses_master_and_financials(
                 z,
                 seg_candidates,
                 required_groups=[
+                    # Grupo 1: ID da empresa
                     ["cod_enti", "coenti", "cod_cia", "co_enti"],
+                    # Grupo 2: Data (Ano/Mês)
                     ["damesano", "anomes", "competencia", "damesaano"],
-                    ["premio", "premio_emitido", "premios"],
+                    # Grupo 3: Prêmios (Adicionados variantes descobertas no log)
+                    ["premio", "premio_emitido", "premios", "premio_direto", "premio_de_seguros"],
                 ],
             )
 
@@ -416,8 +74,12 @@ def extract_ses_master_and_financials(
 
             sid_i = g_idx(h_seg, ["cod_enti", "coenti", "cod_cia", "co_enti", "codigo"])
             ym_i = g_idx(h_seg, ["damesano", "anomes", "competencia", "damesaano"])
-            pr_i = g_idx(h_seg, ["premio", "premio_emitido", "premios", "premio_direto"])
-            sn_i = g_idx(h_seg, ["sinistros", "sinistro", "sinistros_ocorridos"])
+            
+            # Atualiza busca de colunas de Prêmios com os novos nomes
+            pr_i = g_idx(h_seg, ["premio", "premio_emitido", "premios", "premio_direto", "premio_de_seguros"])
+            
+            # Sinistros (mantém variantes comuns)
+            sn_i = g_idx(h_seg, ["sinistros", "sinistro", "sinistros_ocorridos", "sinistro_direto", "sinistro_ocorrido"])
             
             # Validação crítica para não retornar 0 silenciosamente
             if sid_i is None or ym_i is None or pr_i is None:
