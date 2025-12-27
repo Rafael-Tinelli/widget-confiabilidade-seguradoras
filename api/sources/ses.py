@@ -25,18 +25,14 @@ class SesMeta:
     period_to: str
 
 
-def _now_iso() -> str:
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+def _digits(x: Any) -> str:
+    return re.sub(r"\D+", "", str(x or ""))
 
 
 def _norm(s: str) -> str:
     s = (s or "").strip().lower()
     s = re.sub(r"[^a-z0-9]+", "", s)
     return s
-
-
-def _digits(s: Any) -> str:
-    return re.sub(r"\D+", "", str(s or ""))
 
 
 def _parse_brl_num(x: Any) -> float:
@@ -102,7 +98,7 @@ def _fetch_text(url: str) -> str:
 
 def discover_ses_zip_url() -> str:
     """
-    Busca um link .zip relacionado à 'Base Completa' do SES.
+    Localiza um link .zip relacionado à 'Base Completa' do SES.
     Estratégia:
       1) tenta achar .zip diretamente no principal
       2) se não achar, busca link para uma página de download e tenta achar .zip lá
@@ -111,7 +107,6 @@ def discover_ses_zip_url() -> str:
 
     zips = re.findall(r'href="([^"]+?\.zip)"', html, flags=re.I)
     if zips:
-        # Prioriza algo com 'base'/'completa' no nome
         best = None
         for u in zips:
             lu = u.lower()
@@ -120,10 +115,8 @@ def discover_ses_zip_url() -> str:
                 break
         return urljoin(SES_HOME, best or zips[0])
 
-    # Fallback: seguir link de download
     m = re.search(r'href="([^"]+)"[^>]*>\s*Base\s+do\s+SES\s+para\s+Download', html, flags=re.I)
     if not m:
-        # fallback genérico: qualquer href com 'download' e 'ses'
         links = re.findall(r'href="([^"]+)"', html, flags=re.I)
         cand = None
         for u in links:
@@ -160,12 +153,10 @@ def _find_zip_member(z: zipfile.ZipFile, prefer_exact_lower: str, contains_any: 
     names = z.namelist()
     lower = [n.lower() for n in names]
 
-    # 1) exact filename
     for i, ln in enumerate(lower):
         if ln.endswith(prefer_exact_lower):
             return names[i]
 
-    # 2) contains any
     scored: list[tuple[int, int, str]] = []
     for n in names:
         ln = n.lower()
@@ -180,7 +171,6 @@ def _find_zip_member(z: zipfile.ZipFile, prefer_exact_lower: str, contains_any: 
     if not scored:
         raise RuntimeError(f"SES: não encontrei CSV compatível para {prefer_exact_lower}.")
 
-    # maior score, depois maior tamanho (para evitar pegar CSV parcial)
     scored.sort(key=lambda x: (x[0], x[1]), reverse=True)
     return scored[0][2]
 
@@ -190,7 +180,6 @@ def _read_csv_from_zip(z: zipfile.ZipFile, member: str) -> tuple[list[str], list
     text = raw.decode("latin-1", errors="replace")
     f = io.StringIO(text)
 
-    # detectar delimitador pelo header
     head = f.readline()
     delim = ";" if head.count(";") >= head.count(",") else ","
     f.seek(0)
@@ -199,9 +188,7 @@ def _read_csv_from_zip(z: zipfile.ZipFile, member: str) -> tuple[list[str], list
     rows = list(reader)
     if not rows:
         return [], []
-    header = rows[0]
-    body = rows[1:]
-    return header, body
+    return rows[0], rows[1:]
 
 
 def _idx(header: list[str], keys: list[str]) -> int | None:
@@ -215,14 +202,12 @@ def _idx(header: list[str], keys: list[str]) -> int | None:
 
 def _find_cnpj_idx(header: list[str]) -> int | None:
     hn = [_norm(h) for h in header]
-    # preferências (mais comuns no SES)
     prefer = ["cnpj", "nucnpj", "nu_cnpj", "numcnpj", "cnpjempresa", "cnpjentidade"]
     for k in prefer:
         kk = _norm(k)
         for i, col in enumerate(hn):
             if col == kk:
                 return i
-    # fallback: qualquer coluna contendo 'cnpj'
     for i, col in enumerate(hn):
         if "cnpj" in col:
             return i
@@ -243,7 +228,6 @@ def extract_ses_master_and_financials() -> tuple[SesMeta, dict[str, dict[str, An
     if not h_cias or not h_seg:
         raise RuntimeError("SES: CSVs vazios ou não carregados corretamente.")
 
-    # --- índices cias ---
     sid_i = _idx(h_cias, ["coenti", "id", "codigo", "codigo_entidade"])
     name_i = _idx(h_cias, ["noenti", "nome", "nome_entidade", "razao_social", "no_entidade"])
     cnpj_i = _find_cnpj_idx(h_cias)
@@ -266,17 +250,14 @@ def extract_ses_master_and_financials() -> tuple[SesMeta, dict[str, dict[str, An
                 cnpj = c
         cias[sid] = {"name": name or f"SES_ENTIDADE_{sid}", "cnpj": cnpj}
 
-    # --- índices seguros ---
     seg_sid_i = _idx(h_seg, ["coenti", "id", "codigo", "codigo_entidade"])
     ym_i = _idx(h_seg, ["damesano", "ano_mes", "competencia", "mes_ano", "mesano"])
-
     prem_i = _idx(h_seg, ["premio_direto", "premio", "premio_emitido", "premios", "premio_total"])
     clm_i = _idx(h_seg, ["sinistro_direto", "sinistro", "sinistros", "sinistro_total"])
 
     if seg_sid_i is None or ym_i is None or prem_i is None or clm_i is None:
         raise RuntimeError("SES: não foi possível localizar colunas-chave em Ses_seguros.csv.")
 
-    # 1) descobrir max_ym
     max_ym: tuple[int, int] | None = None
     for r in rows_seg:
         if ym_i >= len(r):
@@ -294,7 +275,6 @@ def extract_ses_master_and_financials() -> tuple[SesMeta, dict[str, dict[str, An
     max_i = _ym_to_int(max_ym)
     start_i = _ym_to_int(start_ym)
 
-    # 2) agregar apenas janela rolling_12m
     buckets: dict[str, dict[str, float]] = {}
     for r in rows_seg:
         if seg_sid_i >= len(r) or ym_i >= len(r) or prem_i >= len(r) or clm_i >= len(r):
@@ -319,7 +299,6 @@ def extract_ses_master_and_financials() -> tuple[SesMeta, dict[str, dict[str, An
         buckets[sid]["premiums"] += p
         buckets[sid]["claims"] += c
 
-    # montar companies
     companies: dict[str, dict[str, Any]] = {}
     for sid, vals in buckets.items():
         premiums = float(vals.get("premiums") or 0.0)
