@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2025-12-27T17:30:17+00:00",
+  "generatedAt": "2025-12-27T20:48:08+00:00",
   "consumidorGov": {
     "as_of": "2025-11",
     "window_months": 12,
@@ -23,9 +23,9 @@
   },
   "stats": {
     "insurers_total": 246,
-    "matched": 82,
-    "unmatched": 164,
-    "low_confidence": 0
+    "matched": 77,
+    "unmatched": 169,
+    "low_confidence": 1
   },
   "matched": [
     {
@@ -40,21 +40,21 @@
       "insurer_name": "BRADESCO SEGUROS S.A",
       "consumer_key": "bradesco seguros",
       "consumer_name": "Bradesco Seguros",
-      "score": 1.1
+      "score": 1.0
     },
     {
       "insurer_id": "ses:005631",
       "insurer_name": "CAIXA SEGURADORA S.A.",
       "consumer_key": "caixa seguradora",
       "consumer_name": "Caixa Seguradora",
-      "score": 1.1
+      "score": 1.0
     },
     {
       "insurer_id": "ses:005665",
       "insurer_name": "MAPFRE VIDA S.A.",
       "consumer_key": "mapfre vida",
       "consumer_name": "Mapfre Vida",
-      "score": 1.1
+      "score": 1.0
     },
     {
       "insurer_id": "ses:005690",
@@ -68,56 +68,49 @@
       "insurer_name": "SOMPO SEGUROS S.A.",
       "consumer_key": "sompo seguros",
       "consumer_name": "Sompo Seguros",
-      "score": 1.1
+      "score": 1.0
     },
     {
       "insurer_id": "ses:005070",
       "insurer_name": "ZURICH SANTANDER BRASIL SEGUROS E PREVIDÊNCIA S.A.",
       "consumer_key": "zurich santander seguros",
       "consumer_name": "Zurich Santander Seguros",
-      "score": 1.0
+      "score": 0.9455311730048346
     },
     {
       "insurer_id": "ses:005118",
       "insurer_name": "TRADITIO COMPANHIA DE SEGUROS",
       "consumer_key": "traditio companhia de seguros",
       "consumer_name": "Traditio Companhia de Seguros",
-      "score": 1.1
+      "score": 1.0
     },
     {
       "insurer_id": "ses:005142",
       "insurer_name": "ICATU SEGUROS S.A",
       "consumer_key": "icatu seguros",
       "consumer_name": "Icatu Seguros",
-      "score": 1.1
-    },
-    {
-      "insurer_id": "ses:005151",
-      "insurer_name": "TOKIO MARINE BRASIL SEGURADORA S.A.",
-      "consumer_key": "tokio marine",
-      "consumer_name": "Tokio Marine",
-      "score": 1.1
+      "score": 1.0
     },
     {
       "insurer_id": "ses:005312",
       "insurer_name": "BRADESCO AUTO/RE COMPANHIA DE SEGUROS",
       "consumer_key": "bradesco auto re",
       "consumer_name": "Bradesco Auto/RE",
-      "score": 1.1
+      "score": 0.8555478130533186
     },
     {
       "insurer_id": "ses:008737",
       "insurer_name": "AIG SEGUROS BRASIL S.A.",
       "consumer_key": "aig seguros",
       "consumer_name": "AIG Seguros",
-      "score": 1.1
+      "score": 1.0
     },
     {
       "insurer_id": "ses:001007",
       "insurer_name": "SABEMI SEGURADORA S.A.",
       "consumer_key": "sabemi seguradora",
       "consumer_name": "Sabemi Seguradora",
-      "score": 1.1
+      "score": 1.0
     },
     {
       "insurer_id": "ses:005011",
@@ -131,56 +124,49 @@
       "insurer_name": "ALLIANZ SEGUROS S.A.",
       "consumer_key": "allianz seguros",
       "consumer_name": "Allianz Seguros",
-      "score": 1.1
+      "score": 1.0
+    },
+    {
+      "insurer_id": "ses:005185",
+      "insurer_name": "YELUM SEGUROS S.A.",
+      "consumer_key": "yelum seguros antiga liberty seguros",
+      "consumer_name": "Yelum Seguros (antiga Liberty Seguros)",
+      "score": 1.0
     },
     {
       "insurer_id": "ses:006467",
       "insurer_name": "ALFA SEGURADORA S.A.",
       "consumer_key": "alfa seguradora",
       "consumer_name": "Alfa Seguradora",
-      "score": 1.1
+      "score": 1.0
     },
     {
       "insurer_id": "ses:006548",
       "insurer_name": "CARDIF DO BRASIL VIDA E PREVIDÊNCIA S/A",
       "consumer_key": "cardif vida",
       "consumer_name": "Cardif Vida",
-      "score": 1.0
-    },
-    {
-      "insurer_id": "ses:006572",
-      "insurer_name": "HDI SEGUROS S.A.",
-      "consumer_key": "hdi seguros",
-      "consumer_name": "HDI Seguros",
-      "score": 1.1
+      "score": 0.9282582716347738
     },
     {
       "insurer_id": "ses:006602",
       "insurer_name": "MITSUI SUMITOMO SEGUROS S.A.",
       "consumer_key": "mitsui sumitomo seguros",
       "consumer_name": "Mitsui Sumitomo Seguros",
-      "score": 1.1
+      "score": 1.0
     },
     {
       "insurer_id": "ses:006696",
       "insurer_name": "AXA XL SEGUROS S.A.",
       "consumer_key": "axa seguros",
       "consumer_name": "Axa Seguros",
-      "score": 1.0
-    },
-    {
-      "insurer_id": "ses:005789",
-      "insurer_name": "AMIL SEGURADORA S/A",
-      "consumer_key": "amil",
-      "consumer_name": "Amil",
-      "score": 1.1
+      "score": 0.9180178246407339
     },
     {
       "insurer_id": "ses:005843",
       "insurer_name": "INDIANA SEGUROS S.A.",
       "consumer_key": "indiana seguros",
       "consumer_name": "Indiana Seguros",
-      "score": 1.1
+      "score": 1.0
     },
     {
       "insurer_id": "ses:005886",
@@ -190,11 +176,11 @@
       "score": 1.0
     },
     {
-      "insurer_id": "ses:005908",
-      "insurer_name": "GENERALI  BRASIL  SEGUROS S.A.",
-      "consumer_key": "generali",
-      "consumer_name": "Generali",
-      "score": 1.1
+      "insurer_id": "ses:005932",
+      "insurer_name": "ATLANTICA - BRADESCO SEGUROS S.A",
+      "consumer_key": "bradesco seguros",
+      "consumer_name": "Bradesco Seguros",
+      "score": 0.9406039175845978
     },
     {
       "insurer_id": "ses:005941",
@@ -208,20 +194,13 @@
       "insurer_name": "SWISS RE CORPORATE SOLUTIONS BRASIL SEGUROS S.A.",
       "consumer_key": "swiss re corporate solutions brasil seguros",
       "consumer_name": "Swiss Re Corporate Solutions Brasil Seguros",
-      "score": 1.1
-    },
-    {
-      "insurer_id": "ses:006084",
-      "insurer_name": "MBM SEGURADORA S.A.",
-      "consumer_key": "mbm seguros",
-      "consumer_name": "MBM Seguros",
       "score": 1.0
     },
     {
-      "insurer_id": "ses:006785",
-      "insurer_name": "BRASILSEG COMPANHIA DE SEGUROS",
-      "consumer_key": "brasilseg bb seguros",
-      "consumer_name": "Brasilseg (BB Seguros)",
+      "insurer_id": "ses:005274",
+      "insurer_name": "BANESTES SEGUROS S.A.",
+      "consumer_key": "banestes seguros",
+      "consumer_name": "Banestes Seguros",
       "score": 1.0
     },
     {
@@ -229,21 +208,21 @@
       "insurer_name": "SINAF SEGUROS S.A.",
       "consumer_key": "sinaf seguros",
       "consumer_name": "Sinaf Seguros",
-      "score": 1.1
+      "score": 1.0
+    },
+    {
+      "insurer_id": "ses:006921",
+      "insurer_name": "KOVR SEGURADORA S.A.",
+      "consumer_key": "kovr seguradora antiga invest seguradora",
+      "consumer_name": "Kovr Seguradora (antiga Invest Seguradora)",
+      "score": 1.0
     },
     {
       "insurer_id": "ses:006122",
       "insurer_name": "FATOR SEGURADORA S/A",
       "consumer_key": "fator seguradora",
       "consumer_name": "Fator Seguradora",
-      "score": 1.1
-    },
-    {
-      "insurer_id": "ses:006190",
-      "insurer_name": "TOKIO MARINE SEGURADORA S.A.",
-      "consumer_key": "tokio marine",
-      "consumer_name": "Tokio Marine",
-      "score": 1.1
+      "score": 1.0
     },
     {
       "insurer_id": "ses:006203",
@@ -253,46 +232,39 @@
       "score": 1.0
     },
     {
-      "insurer_id": "ses:006238",
-      "insurer_name": "MAPFRE SEGUROS GERAIS S.A.",
-      "consumer_key": "mapfre seguros",
-      "consumer_name": "Mapfre Seguros",
-      "score": 1.1
-    },
-    {
-      "insurer_id": "ses:002437",
-      "insurer_name": "BTG PACTUAL SEGURADORA S.A.",
-      "consumer_key": "btg pactual seguros",
-      "consumer_name": "BTG Pactual Seguros",
-      "score": 1.0
+      "insurer_id": "ses:001414",
+      "insurer_name": "BERKLEY INTERNATIONAL DO BRASIL SEGUROS S/A",
+      "consumer_key": "berkley brasil seguros",
+      "consumer_name": "Berkley Brasil Seguros",
+      "score": 0.9224260213429682
     },
     {
       "insurer_id": "ses:001490",
       "insurer_name": "ESSOR SEGUROS S.A",
       "consumer_key": "essor seguros",
       "consumer_name": "Essor Seguros",
-      "score": 1.1
+      "score": 1.0
     },
     {
       "insurer_id": "ses:001571",
       "insurer_name": "HDI GLOBAL SEGUROS S.A",
       "consumer_key": "hdi global seguros",
       "consumer_name": "HDI Global Seguros",
-      "score": 1.1
+      "score": 1.0
     },
     {
       "insurer_id": "ses:002879",
       "insurer_name": "COMPREV SEGURADORA S.A.",
       "consumer_key": "comprev seguradora",
       "consumer_name": "Comprev Seguradora",
-      "score": 1.1
+      "score": 1.0
     },
     {
       "insurer_id": "ses:002852",
       "insurer_name": "AXA SEGUROS S.A.",
       "consumer_key": "axa seguros",
       "consumer_name": "Axa Seguros",
-      "score": 1.1
+      "score": 1.0
     },
     {
       "insurer_id": "ses:002933",
@@ -306,27 +278,13 @@
       "insurer_name": "GAZIN SEGUROS S.A.",
       "consumer_key": "gazin seguros",
       "consumer_name": "Gazin Seguros",
-      "score": 1.1
+      "score": 1.0
     },
     {
       "insurer_id": "ses:003069",
       "insurer_name": "POTTENCIAL SEGURADORA S.A.",
       "consumer_key": "pottencial seguradora",
       "consumer_name": "Pottencial Seguradora",
-      "score": 1.1
-    },
-    {
-      "insurer_id": "ses:004367",
-      "insurer_name": "PRUDENTIAL DO BRASIL SEGUROS S.A.",
-      "consumer_key": "prudential do brasil",
-      "consumer_name": "Prudential do Brasil",
-      "score": 1.1
-    },
-    {
-      "insurer_id": "ses:003298",
-      "insurer_name": "MAPFRE PREVIDÊNCIA S.A.",
-      "consumer_key": "mapfre seguros",
-      "consumer_name": "Mapfre Seguros",
       "score": 1.0
     },
     {
@@ -334,13 +292,13 @@
       "insurer_name": "ANGELUS SEGUROS S.A.",
       "consumer_key": "angelus seguros",
       "consumer_name": "Angelus Seguros",
-      "score": 1.1
+      "score": 1.0
     },
     {
-      "insurer_id": "ses:003671",
-      "insurer_name": "USEBENS SEGUROS S.A.",
-      "consumer_key": "usebens seguradora",
-      "consumer_name": "Usebens Seguradora",
+      "insurer_id": "ses:003794",
+      "insurer_name": "BS2 SEGUROS S.A.",
+      "consumer_key": "bs2 seguros antiga previmax previda ncia privada e seguradora",
+      "consumer_name": "BS2 Seguros (ANTIGA PREVIMAX PREVIDÃNCIA PRIVADA E SEGURADORA)",
       "score": 1.0
     },
     {
@@ -348,35 +306,42 @@
       "insurer_name": "NEWE SEGUROS S.A.",
       "consumer_key": "newe seguros",
       "consumer_name": "Newe Seguros",
-      "score": 1.1
+      "score": 1.0
+    },
+    {
+      "insurer_id": "ses:004928",
+      "insurer_name": "STARR INTERNATIONAL BRASIL SEGURADORA S.A.",
+      "consumer_key": "starr brasil seguradora",
+      "consumer_name": "Starr Brasil Seguradora",
+      "score": 0.9265990836405621
     },
     {
       "insurer_id": "ses:006513",
       "insurer_name": "CHUBB SEGUROS BRASIL S.A.",
       "consumer_key": "chubb seguros",
       "consumer_name": "Chubb Seguros",
-      "score": 1.1
+      "score": 1.0
     },
     {
       "insurer_id": "ses:001627",
       "insurer_name": "SAFRA SEGUROS GERAIS S.A.",
       "consumer_key": "safra seguros gerais",
       "consumer_name": "Safra Seguros Gerais",
-      "score": 1.1
+      "score": 1.0
     },
     {
       "insurer_id": "ses:001970",
       "insurer_name": "UNIMED SEGUROS PATRIMONIAIS S.A.",
       "consumer_key": "unimed seguros patrimoniais",
       "consumer_name": "Unimed Seguros Patrimoniais",
-      "score": 1.1
+      "score": 1.0
     },
     {
       "insurer_id": "ses:002119",
       "insurer_name": "ARUANA SEGURADORA S. A.",
       "consumer_key": "aruana seguradora",
       "consumer_name": "Aruana Seguradora",
-      "score": 1.1
+      "score": 1.0
     },
     {
       "insurer_id": "ses:006564",
@@ -390,91 +355,98 @@
       "insurer_name": "SANTANDER AUTO S.A.",
       "consumer_key": "santander auto",
       "consumer_name": "Santander Auto",
-      "score": 1.1
+      "score": 1.0
+    },
+    {
+      "insurer_id": "ses:001546",
+      "insurer_name": "BP SEGURADORA S.A.",
+      "consumer_key": "bp seguradora",
+      "consumer_name": "BP Seguradora",
+      "score": 1.0
     },
     {
       "insurer_id": "ses:002542",
       "insurer_name": "OMINT SEGUROS SA",
       "consumer_key": "omint seguros",
       "consumer_name": "Omint Seguros",
-      "score": 1.1
+      "score": 1.0
     },
     {
       "insurer_id": "ses:001864",
       "insurer_name": "REAG SEGURADORA S.A.",
       "consumer_key": "reag seguradora",
       "consumer_name": "Reag Seguradora",
-      "score": 1.1
-    },
-    {
-      "insurer_id": "ses:002062",
-      "insurer_name": "LUIZASEG SEGUROS S.A.",
-      "consumer_key": "luizaseg",
-      "consumer_name": "Luizaseg",
-      "score": 1.1
+      "score": 1.0
     },
     {
       "insurer_id": "ses:001279",
       "insurer_name": "SOMBRERO SEGUROS S.A.",
       "consumer_key": "sombrero seguros",
       "consumer_name": "Sombrero Seguros",
-      "score": 1.1
+      "score": 1.0
     },
     {
       "insurer_id": "ses:002071",
       "insurer_name": "AVLA SEGUROS BRASIL S.A.",
       "consumer_key": "avla seguros",
       "consumer_name": "Avla Seguros",
-      "score": 1.1
+      "score": 1.0
+    },
+    {
+      "insurer_id": "ses:006653",
+      "insurer_name": "TOO SEGUROS S.A.",
+      "consumer_key": "too seguros antiga pan seguros",
+      "consumer_name": "Too Seguros (antiga PAN Seguros)",
+      "score": 1.0
     },
     {
       "insurer_id": "ses:006947",
       "insurer_name": "UNIMED SEGURADORA S.A.",
       "consumer_key": "unimed seguradora",
       "consumer_name": "Unimed Seguradora",
-      "score": 1.1
+      "score": 1.0
     },
     {
       "insurer_id": "ses:006751",
       "insurer_name": "SEGUROS SURA S.A.",
       "consumer_key": "seguros sura",
       "consumer_name": "Seguros Sura",
-      "score": 1.1
+      "score": 1.0
     },
     {
       "insurer_id": "ses:006793",
       "insurer_name": "GENTE SEGURADORA S.A.",
       "consumer_key": "gente seguradora",
       "consumer_name": "Gente Seguradora",
-      "score": 1.1
+      "score": 1.0
+    },
+    {
+      "insurer_id": "ses:001554",
+      "insurer_name": "EQ SEGUROS S.A.",
+      "consumer_key": "eq seguros antiga equatorial seguradora",
+      "consumer_name": "EQ Seguros (antiga Equatorial Seguradora)",
+      "score": 1.0
     },
     {
       "insurer_id": "ses:001805",
       "insurer_name": "OXXY SEGURADORA S/A",
       "consumer_key": "oxxy seguradora",
       "consumer_name": "Oxxy Seguradora",
-      "score": 1.1
+      "score": 1.0
     },
     {
       "insurer_id": "ses:002143",
       "insurer_name": "ASSURANT SEGURADORA SA",
       "consumer_key": "assurant seguradora",
       "consumer_name": "Assurant Seguradora",
-      "score": 1.1
+      "score": 1.0
     },
     {
       "insurer_id": "ses:002577",
       "insurer_name": "COBUCCIO SEGUROS S.A.",
       "consumer_key": "cobuccio seguros",
       "consumer_name": "COBUCCIO SEGUROS",
-      "score": 1.1
-    },
-    {
-      "insurer_id": "ses:001481",
-      "insurer_name": "HDI SEGUROS DO BRASIL S.A.",
-      "consumer_key": "hdi seguros",
-      "consumer_name": "HDI Seguros",
-      "score": 1.1
+      "score": 1.0
     },
     {
       "insurer_id": "ses:002275",
@@ -488,97 +460,90 @@
       "insurer_name": "EZZE SEGUROS S.A.",
       "consumer_key": "ezze seguros",
       "consumer_name": "Ezze Seguros",
-      "score": 1.1
+      "score": 1.0
     },
     {
-      "insurer_id": "ses:003603",
-      "insurer_name": "SIMPLE2U SEGUROS S.A.",
-      "consumer_key": "simple2u",
-      "consumer_name": "Simple2u",
-      "score": 1.1
+      "insurer_id": "ses:002798",
+      "insurer_name": "AKAD SEGUROS S.A.",
+      "consumer_key": "akad seguros antiga argo seguros",
+      "consumer_name": "Akad Seguros (antiga Argo Seguros)",
+      "score": 1.0
     },
     {
       "insurer_id": "ses:003531",
       "insurer_name": "ZEMA SEGUROS S.A.",
       "consumer_key": "zema seguros",
       "consumer_name": "Zema Seguros",
-      "score": 1.1
+      "score": 1.0
     },
     {
       "insurer_id": "ses:002950",
       "insurer_name": "SANCOR SEGUROS DO BRASIL S.A.",
       "consumer_key": "sancor seguros",
       "consumer_name": "Sancor Seguros",
-      "score": 1.1
-    },
-    {
-      "insurer_id": "ses:004111",
-      "insurer_name": "JNS SEGURADORA S.A.",
-      "consumer_key": "jns seguros",
-      "consumer_name": "JNS Seguros",
       "score": 1.0
     },
     {
-      "insurer_id": "ses:002241",
-      "insurer_name": "JUSTOS SEGUROS S.A.",
-      "consumer_key": "justos",
-      "consumer_name": "Justos",
-      "score": 1.1
+      "insurer_id": "ses:003727",
+      "insurer_name": "FAIRWAY SEGUROS S.A.",
+      "consumer_key": "fairway seguros antiga travelers seguros brasil",
+      "consumer_name": "Fairway Seguros (antiga Travelers Seguros Brasil)",
+      "score": 1.0
     },
     {
       "insurer_id": "ses:004600",
       "insurer_name": "BVIX SEGURADORA SA",
       "consumer_key": "bvix seguradora",
       "consumer_name": "BVIX SEGURADORA",
-      "score": 1.1
+      "score": 1.0
     },
     {
       "insurer_id": "ses:004952",
       "insurer_name": "SUHAI SEGURADORA S.A.",
       "consumer_key": "suhai seguradora",
       "consumer_name": "Suhai Seguradora",
-      "score": 1.1
+      "score": 1.0
+    },
+    {
+      "insurer_id": "ses:004715",
+      "insurer_name": "CREFISA SEGUROS S.A.",
+      "consumer_key": "crefisa seguros",
+      "consumer_name": "Crefisa Seguros",
+      "score": 1.0
     },
     {
       "insurer_id": "ses:002305",
       "insurer_name": "BTG PACTUAL SEGUROS S.A.",
       "consumer_key": "btg pactual seguros",
       "consumer_name": "BTG Pactual Seguros",
-      "score": 1.1
+      "score": 1.0
     },
     {
-      "insurer_id": "ses:006971",
-      "insurer_name": "GOLDEN CROSS SEGURADORA  S/A",
-      "consumer_key": "golden cross",
-      "consumer_name": "Golden Cross",
-      "score": 1.1
+      "insurer_id": "ses:006734",
+      "insurer_name": "AIG BRASIL COMPANHIA DE SEGUROS  ( INATIVA)",
+      "consumer_key": "aig seguros",
+      "consumer_name": "AIG Seguros",
+      "score": 1.0
     },
     {
       "insurer_id": "ses:004537",
       "insurer_name": "DARWIN SEGUROS S.A.",
       "consumer_key": "darwin seguros",
       "consumer_name": "Darwin Seguros",
-      "score": 1.1
+      "score": 1.0
     },
     {
       "insurer_id": "ses:004383",
       "insurer_name": "180 SEGUROS S.A.",
       "consumer_key": "180 seguros",
       "consumer_name": "180 Seguros",
-      "score": 1.1
+      "score": 1.0
     },
     {
       "insurer_id": "ses:004481",
       "insurer_name": "DASSEG SEGUROS S.A.",
       "consumer_key": "dasseg seguros",
       "consumer_name": "Dasseg Seguros",
-      "score": 1.1
-    },
-    {
-      "insurer_id": "ses:001015",
-      "insurer_name": "ALLIANZ BRASIL SEGURADORA S.A",
-      "consumer_key": "allianz seguros",
-      "consumer_name": "Allianz Seguros",
       "score": 1.0
     },
     {
@@ -586,24 +551,32 @@
       "insurer_name": "PIER SEGURADORA S.A.",
       "consumer_key": "pier seguradora",
       "consumer_name": "Pier Seguradora",
-      "score": 1.1
+      "score": 1.0
     },
     {
       "insurer_id": "ses:001261",
       "insurer_name": "FACTA SEGURADORA S.A.",
       "consumer_key": "facta seguradora",
       "consumer_name": "Facta Seguradora",
-      "score": 1.1
+      "score": 1.0
     },
     {
-      "insurer_id": "ses:004570",
-      "insurer_name": "IZA SEGURADORA S.A.",
-      "consumer_key": "iza seguros",
-      "consumer_name": "Iza Seguros",
-      "score": 1.0
+      "insurer_id": "ses:003638",
+      "insurer_name": "SKY SEGURADORA S.A. - MICROSSEGURADORA",
+      "consumer_key": "sky seguradora",
+      "consumer_name": "Sky Seguradora",
+      "score": 0.9526644326215515
     }
   ],
-  "low_confidence": [],
+  "low_confidence": [
+    {
+      "insurer_id": "ses:005312",
+      "insurer_name": "BRADESCO AUTO/RE COMPANHIA DE SEGUROS",
+      "consumer_key": "bradesco auto re",
+      "consumer_name": "Bradesco Auto/RE",
+      "score": 0.8555478130533186
+    }
+  ],
   "unmatched": [
     {
       "insurer_id": "ses:005363",
@@ -674,6 +647,10 @@
       "insurer_name": "UNIVERSAL COMPANHIA DE SEGUROS GERAIS"
     },
     {
+      "insurer_id": "ses:005151",
+      "insurer_name": "TOKIO MARINE BRASIL SEGURADORA S.A."
+    },
+    {
       "insurer_id": "ses:005291",
       "insurer_name": "SÃO PAULO CIA NACIONAL DE SEGUROS GERAIS"
     },
@@ -698,16 +675,16 @@
       "insurer_name": "CONFIANÇA CIA DE SEGUROS"
     },
     {
-      "insurer_id": "ses:005185",
-      "insurer_name": "YELUM SEGUROS S.A."
-    },
-    {
       "insurer_id": "ses:006459",
       "insurer_name": "CIA DE SEGUROS TRANQUILIDADE- BRASIL"
     },
     {
       "insurer_id": "ses:006483",
       "insurer_name": "XL INSURANCE (BRAZIL) SEGURADORA S/A"
+    },
+    {
+      "insurer_id": "ses:006572",
+      "insurer_name": "HDI SEGUROS S.A."
     },
     {
       "insurer_id": "ses:006688",
@@ -718,12 +695,16 @@
       "insurer_name": "RIO BRANCO SEGURADORA S/A."
     },
     {
+      "insurer_id": "ses:005789",
+      "insurer_name": "AMIL SEGURADORA S/A"
+    },
+    {
       "insurer_id": "ses:005801",
       "insurer_name": "TREVO SEGURADORA S/A"
     },
     {
-      "insurer_id": "ses:005932",
-      "insurer_name": "ATLANTICA - BRADESCO SEGUROS S.A"
+      "insurer_id": "ses:005908",
+      "insurer_name": "GENERALI  BRASIL  SEGUROS S.A."
     },
     {
       "insurer_id": "ses:005967",
@@ -754,6 +735,10 @@
       "insurer_name": "SANTOS SEGURADORA S.A."
     },
     {
+      "insurer_id": "ses:006084",
+      "insurer_name": "MBM SEGURADORA S.A."
+    },
+    {
       "insurer_id": "ses:006092",
       "insurer_name": "NOVO HAMBURGO CIA. DE SEGUROS GERAIS"
     },
@@ -766,10 +751,6 @@
       "insurer_name": "COMPANHIA DE SEGUROS PREVIDÊNCIA DO SUL - PREVISUL"
     },
     {
-      "insurer_id": "ses:005274",
-      "insurer_name": "BANESTES SEGUROS S.A."
-    },
-    {
       "insurer_id": "ses:005282",
       "insurer_name": "PRUDENTIAL DO BRASIL SEGUROS DE VIDA S.A"
     },
@@ -780,6 +761,10 @@
     {
       "insurer_id": "ses:006777",
       "insurer_name": "APS SEGURADORA S.A."
+    },
+    {
+      "insurer_id": "ses:006785",
+      "insurer_name": "BRASILSEG COMPANHIA DE SEGUROS"
     },
     {
       "insurer_id": "ses:006840",
@@ -804,10 +789,6 @@
     {
       "insurer_id": "ses:006912",
       "insurer_name": "ITAUSEG SEGURADORA S.A."
-    },
-    {
-      "insurer_id": "ses:006921",
-      "insurer_name": "KOVR SEGURADORA S.A."
     },
     {
       "insurer_id": "ses:006939",
@@ -838,12 +819,20 @@
       "insurer_name": "BRASILVEÍCULOS COMPANHIA DE SEGUROS"
     },
     {
+      "insurer_id": "ses:006190",
+      "insurer_name": "TOKIO MARINE SEGURADORA S.A."
+    },
+    {
       "insurer_id": "ses:006211",
       "insurer_name": "ALIANÇA DO BRASIL SEGUROS S.A"
     },
     {
       "insurer_id": "ses:006220",
       "insurer_name": "SUL AMÉRICA SEGUROS DE PESSOAS E PREVIDÊNCIA S.A."
+    },
+    {
+      "insurer_id": "ses:006238",
+      "insurer_name": "MAPFRE SEGUROS GERAIS S.A."
     },
     {
       "insurer_id": "ses:006246",
@@ -874,8 +863,8 @@
       "insurer_name": "VIDA SEGURADORA S.A."
     },
     {
-      "insurer_id": "ses:001414",
-      "insurer_name": "BERKLEY INTERNATIONAL DO BRASIL SEGUROS S/A"
+      "insurer_id": "ses:002437",
+      "insurer_name": "BTG PACTUAL SEGURADORA S.A."
     },
     {
       "insurer_id": "ses:002461",
@@ -902,16 +891,24 @@
       "insurer_name": "ITAU SEGUROS DE AUTO E RESIDÊNCIA S.A."
     },
     {
+      "insurer_id": "ses:004367",
+      "insurer_name": "PRUDENTIAL DO BRASIL SEGUROS S.A."
+    },
+    {
+      "insurer_id": "ses:003298",
+      "insurer_name": "MAPFRE PREVIDÊNCIA S.A."
+    },
+    {
       "insurer_id": "ses:003328",
       "insurer_name": "COFACE DO BRASIL SEGUROS DE CRÉDITO S/A"
     },
     {
-      "insurer_id": "ses:004669",
-      "insurer_name": "FAIRFAX BRASIL SEGUROS CORPORATIVOS S.A"
+      "insurer_id": "ses:003671",
+      "insurer_name": "USEBENS SEGUROS S.A."
     },
     {
-      "insurer_id": "ses:003794",
-      "insurer_name": "BS2 SEGUROS S.A."
+      "insurer_id": "ses:004669",
+      "insurer_name": "FAIRFAX BRASIL SEGUROS CORPORATIVOS S.A"
     },
     {
       "insurer_id": "ses:004359",
@@ -928,10 +925,6 @@
     {
       "insurer_id": "ses:004740",
       "insurer_name": "KIRTON VIDA  E PREVIDÊNCIA S.A."
-    },
-    {
-      "insurer_id": "ses:004928",
-      "insurer_name": "STARR INTERNATIONAL BRASIL SEGURADORA S.A."
     },
     {
       "insurer_id": "ses:004936",
@@ -962,10 +955,6 @@
       "insurer_name": "DAYPREV VIDA E PREVIDÊNCIA S.A."
     },
     {
-      "insurer_id": "ses:001546",
-      "insurer_name": "BP SEGURADORA S.A."
-    },
-    {
       "insurer_id": "ses:001741",
       "insurer_name": "DAYCOVAL SEGUROS S.A."
     },
@@ -974,8 +963,8 @@
       "insurer_name": "ATRADIUS CRÉDITO Y CAUCIÓN SEGURADORA S.A."
     },
     {
-      "insurer_id": "ses:006653",
-      "insurer_name": "TOO SEGUROS S.A."
+      "insurer_id": "ses:002062",
+      "insurer_name": "LUIZASEG SEGUROS S.A."
     },
     {
       "insurer_id": "ses:006998",
@@ -990,10 +979,6 @@
       "insurer_name": "SUIÇA SEGURADORA"
     },
     {
-      "insurer_id": "ses:001554",
-      "insurer_name": "EQ SEGUROS S.A."
-    },
-    {
       "insurer_id": "ses:002267",
       "insurer_name": "VOCÊ SEGURADORA S.A."
     },
@@ -1002,32 +987,36 @@
       "insurer_name": "XP VIDA E PREVIDÊNCIA S.A."
     },
     {
-      "insurer_id": "ses:002798",
-      "insurer_name": "AKAD SEGUROS S.A."
+      "insurer_id": "ses:001481",
+      "insurer_name": "HDI SEGUROS DO BRASIL S.A."
+    },
+    {
+      "insurer_id": "ses:003603",
+      "insurer_name": "SIMPLE2U SEGUROS S.A."
     },
     {
       "insurer_id": "ses:003654",
       "insurer_name": "SICOOB SEGURADORA DE VIDA E PREVIDÊNCIA S.A."
     },
     {
-      "insurer_id": "ses:003727",
-      "insurer_name": "FAIRWAY SEGUROS S.A."
-    },
-    {
       "insurer_id": "ses:002054",
       "insurer_name": "KAPAM SEGURADORA S.A."
+    },
+    {
+      "insurer_id": "ses:004111",
+      "insurer_name": "JNS SEGURADORA S.A."
     },
     {
       "insurer_id": "ses:002674",
       "insurer_name": "ZENPLA SEGUROS S.A."
     },
     {
-      "insurer_id": "ses:003786",
-      "insurer_name": "ARCA SEGURADORA S.A"
+      "insurer_id": "ses:002241",
+      "insurer_name": "JUSTOS SEGUROS S.A."
     },
     {
-      "insurer_id": "ses:004715",
-      "insurer_name": "CREFISA SEGUROS S.A."
+      "insurer_id": "ses:003786",
+      "insurer_name": "ARCA SEGURADORA S.A"
     },
     {
       "insurer_id": "ses:002321",
@@ -1054,10 +1043,6 @@
       "insurer_name": "SDB CIA SEGUROS GERAIS"
     },
     {
-      "insurer_id": "ses:006734",
-      "insurer_name": "AIG BRASIL COMPANHIA DE SEGUROS  ( INATIVA)"
-    },
-    {
       "insurer_id": "ses:006491",
       "insurer_name": "ALVORADA VIDA S.A."
     },
@@ -1072,6 +1057,10 @@
     {
       "insurer_id": "ses:006955",
       "insurer_name": "COMPANHIA DE SEGUROS GRALHA AZUL"
+    },
+    {
+      "insurer_id": "ses:006971",
+      "insurer_name": "GOLDEN CROSS SEGURADORA  S/A"
     },
     {
       "insurer_id": "ses:006009",
@@ -1118,6 +1107,10 @@
       "insurer_name": "XS2 VIDA E PREVIDÊNCIA S.A."
     },
     {
+      "insurer_id": "ses:001015",
+      "insurer_name": "ALLIANZ BRASIL SEGURADORA S.A"
+    },
+    {
       "insurer_id": "ses:003271",
       "insurer_name": "SEGURADORA LÍDER DO CONSÓRCIO DO SEGURO DPVAT S.A."
     },
@@ -1140,6 +1133,10 @@
     {
       "insurer_id": "ses:004227",
       "insurer_name": "STG SEGUROS S.A."
+    },
+    {
+      "insurer_id": "ses:004570",
+      "insurer_name": "IZA SEGURADORA S.A."
     },
     {
       "insurer_id": "ses:003476",
@@ -1248,10 +1245,6 @@
     {
       "insurer_id": "ses:006700",
       "insurer_name": "CIA DE SEGUROS MONARCA"
-    },
-    {
-      "insurer_id": "ses:003638",
-      "insurer_name": "SKY SEGURADORA S.A. - MICROSSEGURADORA"
     },
     {
       "insurer_id": "ses:003964",
