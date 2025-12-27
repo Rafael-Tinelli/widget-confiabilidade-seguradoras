@@ -14,6 +14,10 @@ import requests
 SES_HOME = "https://www2.susep.gov.br/menuestatistica/ses/principal.aspx"
 UA = {"User-Agent": "Mozilla/5.0 (compatible; SanidaBot/1.0; +https://example.com)"}
 
+# Global session to ignore env proxies (anti-proxy/SSL issues)
+_SESSION = requests.Session()
+_SESSION.trust_env = False
+
 
 @dataclass(frozen=True)
 class SesMeta:
@@ -89,7 +93,8 @@ def _ym_to_date_str(ym: tuple[int, int]) -> str:
 
 
 def _fetch_text(url: str) -> str:
-    r = requests.get(url, headers=UA, timeout=60)
+    # Uses _SESSION to bypass proxies if needed
+    r = _SESSION.get(url, headers=UA, timeout=60)
     r.raise_for_status()
     r.encoding = r.apparent_encoding or "utf-8"
     return r.text
@@ -140,9 +145,17 @@ def discover_ses_zip_url() -> str:
 
 
 def _download_bytes(url: str) -> bytes:
-    r = requests.get(url, headers=UA, timeout=180)
+    # Uses _SESSION to bypass proxies if needed
+    r = _SESSION.get(url, headers=UA, timeout=180)
     r.raise_for_status()
-    return r.content
+    b = r.content
+    
+    # Avoid silent BadZipFile errors (e.g. if we got HTML error page instead of ZIP)
+    if not (b.startswith(b"PK\x03\x04") or b.startswith(b"PK\x05\x06") or b.startswith(b"PK\x07\x08")):
+        snippet = b[:200].decode("latin-1", errors="replace").strip()
+        raise RuntimeError(f"SES: download não parece ZIP (head={snippet!r})")
+    
+    return b
 
 
 def _find_zip_member(z: zipfile.ZipFile, prefer_exact_lower: str, contains_any: list[str]) -> str:
@@ -210,32 +223,37 @@ def _find_cnpj_idx(header: list[str]) -> int | None:
     return None
 
 
-def _infer_cnpj_idx_by_sampling(header: list[str], rows: list[list[str]], sample_rows: int = 200) -> int | None:
+def _infer_cnpj_idx_by_sampling(
+    header: list[str], rows: list[list[str]], exclude: set[int] | None = None
+) -> int | None:
+    exclude = exclude or set()
     if not header or not rows:
         return None
-    width = len(header)
-    hits: list[tuple[int, int]] = []
-    
-    for i in range(width):
-        cnt = 0
-        for r in rows[:sample_rows]:
+
+    sample = rows[:200]
+    best_i: int | None = None
+    best_hits = 0
+
+    for i in range(len(header)):
+        if i in exclude:
+            continue
+        hits = 0
+        for r in sample:
             if i >= len(r):
                 continue
             d = _digits(r[i])
             if len(d) == 14:
-                cnt += 1
-        hits.append((cnt, i))
-    
-    if not hits:
-        return None
+                hits += 1
+        if hits > best_hits:
+            best_hits = hits
+            best_i = i
 
-    hits.sort(reverse=True)
-    best_cnt, best_i = hits[0]
+    # Minimo: 3 ocorrências e 20% do sample (pra não pegar coluna errada)
+    if best_i is None:
+        return None
     
-    # Se pelo menos 5% da amostra (ou 5 linhas) tiver formato CNPJ, aceitamos
-    threshold = max(5, int(min(sample_rows, len(rows)) * 0.05))
-    
-    return best_i if best_cnt >= threshold else None
+    min_hits = max(3, int(len(sample) * 0.2))
+    return best_i if best_hits >= min_hits else None
 
 
 def extract_ses_master_and_financials() -> tuple[SesMeta, dict[str, dict[str, Any]]]:
@@ -255,14 +273,14 @@ def extract_ses_master_and_financials() -> tuple[SesMeta, dict[str, dict[str, An
     sid_i = _idx(h_cias, ["coenti", "id", "codigo", "codigo_entidade"])
     name_i = _idx(h_cias, ["noenti", "nome", "nome_entidade", "razao_social", "no_entidade"])
     
-    # 1. Tenta achar CNPJ pelo nome do header
-    cnpj_i = _find_cnpj_idx(h_cias)
-    # 2. Se falhar, tenta inferir olhando os dados (amostragem)
-    if cnpj_i is None:
-        cnpj_i = _infer_cnpj_idx_by_sampling(h_cias, rows_cias)
-
     if sid_i is None or name_i is None:
         raise RuntimeError("SES: não foi possível localizar colunas de ID/Nome em Ses_cias.csv.")
+    
+    # 1. Tenta achar CNPJ pelo nome do header
+    cnpj_i = _find_cnpj_idx(h_cias)
+    # 2. Se falhar, tenta inferir olhando os dados (amostragem), ignorando ID e Nome
+    if cnpj_i is None:
+        cnpj_i = _infer_cnpj_idx_by_sampling(h_cias, rows_cias, exclude={sid_i, name_i})
 
     cias: dict[str, dict[str, Any]] = {}
     for r in rows_cias:
