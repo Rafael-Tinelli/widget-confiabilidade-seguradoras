@@ -1,3 +1,4 @@
+# api/build_insurers.py
 from __future__ import annotations
 
 import gzip
@@ -134,7 +135,7 @@ def _load_consumidor_gov() -> tuple[
     dict[str, Any] | None,
     dict[str, Any] | None,
     dict[str, Any] | None,
-    str | None
+    str | None,
 ]:
     """
     Returns: (meta, by_name_key, by_cnpj_key, error_note)
@@ -161,7 +162,6 @@ def _load_consumidor_gov() -> tuple[
 
     except Exception as e:
         return None, None, None, f"consumidorGov: failed to load ({e})"
-
 
 
 def _build_consumidor_matcher(by_name_key: dict[str, Any]) -> NameMatcher:
@@ -199,7 +199,7 @@ def _load_opin_participants_cnpjs() -> tuple[set[str], str | None]:
     for it in items:
         if not isinstance(it, dict):
             continue
-        # Heurística para chaves comuns
+
         for k in ("cnpj", "CNPJ", "registrationNumber", "registration_number", "document", "documentNumber"):
             if k in it:
                 n = _normalize_cnpj(it.get(k))
@@ -207,7 +207,6 @@ def _load_opin_participants_cnpjs() -> tuple[set[str], str | None]:
                     cnpjs.add(n)
                     break
 
-        # Alguns schemas podem ter nesting
         if "data" in it and isinstance(it["data"], dict):
             for k in ("cnpj", "CNPJ", "registrationNumber", "document", "documentNumber"):
                 if k in it["data"]:
@@ -373,10 +372,6 @@ def build_payload() -> dict[str, Any]:
                     unmatched.append({"insurer_id": insurer_obj["id"], "insurer_name": name})
             else:
                 unmatched.append({"insurer_id": insurer_obj["id"], "insurer_name": name})
-
-        # Se existe base Consumidor.gov mas não casou por nada (e não houve matcher), audita como unmatched
-        if (not cg_matched) and (not matcher) and (cg_by_cnpj or cg_by_name):
-            unmatched.append({"insurer_id": insurer_obj["id"], "insurer_name": name})
 
         insurers.append(insurer_obj)
 
