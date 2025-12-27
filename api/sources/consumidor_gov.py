@@ -3,361 +3,457 @@ from __future__ import annotations
 import csv
 import gzip
 import io
+import json
 import re
+import tempfile
 import time
 import unicodedata
-from dataclasses import dataclass
-from datetime import datetime
+import zipfile
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Iterator, Optional
+from typing import Any, Dict, List, Optional
 
 import requests
 
-CKAN_API = "https://dados.mj.gov.br/api/3/action/package_show"
-PACKAGE_ID = "reclamacoes-do-consumidor-gov-br"
+CKAN_BASE = "https://dados.mj.gov.br/api/3/action"
+CKAN_PACKAGE_SHOW = f"{CKAN_BASE}/package_show"
+DATASET_ID = "reclamacoes-do-consumidor-gov-br"
 
-# Timeouts (connect, read)
-_TIMEOUT = (10, 60)
-
-_MONTH_RE = re.compile(r"(20\d{2})[-_](0[1-9]|1[0-2])")
+DEFAULT_WINDOW_MONTHS = 12
 
 
-def _norm_text(s: str) -> str:
-    s = (s or "").strip()
+def _now_iso() -> str:
+    return time.strftime("%Y-%m-%d", time.gmtime())
+
+
+def _repo_root() -> Path:
+    here = Path(__file__).resolve()
+    for p in [here, *here.parents]:
+        if (p / "api").exists() and (p / "data").exists():
+            return p
+    return here.parents[1]
+
+
+def _norm(s: str) -> str:
+    s = (s or "").strip().strip('"').strip("'")
+    s = s.replace("\ufeff", "")
     s = unicodedata.normalize("NFKD", s)
     s = "".join(ch for ch in s if not unicodedata.combining(ch))
-    return s.lower()
-
-
-def _norm_header(h: str) -> str:
-    s = _norm_text(h)
-    return re.sub(r"[^a-z0-9]+", "", s)
-
-
-# Aliases para colunas (variações históricas e/ou alternativas)
-_HEADER_ALIASES: Dict[str, str] = {
-    # Nome / Identificação
-    "nomefantasia": "nome_fantasia",
-    "nomefantasiaconsumidor": "nome_fantasia",
-    "nomefantasiaprestador": "nome_fantasia",
-    "nomefantasiafornecedor": "nome_fantasia",
-    "fornecedor": "nome_fantasia",
-    "empresa": "nome_fantasia",
-    # Situação
-    "situacao": "situacao",
-    "situacaoreclamacao": "situacao",
-    "status": "situacao",
-    "statusreclamacao": "situacao",
-    "statusdareclamacao": "situacao",
-    # Respondida
-    "respondida": "respondida",
-    "reclamacaorespondida": "respondida",
-    "respondida?": "respondida",
-    "respondeu": "respondida",
-    # Avaliação / Resolução
-    "avaliacaoreclamacao": "avaliacao",
-    "avaliacaodareclamacao": "avaliacao",
-    "avaliacao": "avaliacao",
-    "resolvida": "avaliacao",
-    "indicadoresolucao": "avaliacao",
-    # Nota
-    "notadoconsumidor": "nota",
-    "nota": "nota",
-    "notadocliente": "nota",
-    "avaliacaodoconsumidor": "nota",
-    # Tempo de resposta
-    "temporesposta": "tempo_resposta",
-    "tempoderesposta": "tempo_resposta",
-    "tempomedioresposta": "tempo_resposta",
-    "tempomedioderesposta": "tempo_resposta",
-}
-
-_FINAL_PREFIX = "finalizada"
-_TRUE_SET = {"s", "sim", "1", "true", "t", "y", "yes"}
-
-
-def _utc_now() -> str:
-    return datetime.utcnow().isoformat(timespec="seconds") + "Z"
-
-
-def _extract_ym(name_or_url: str) -> Optional[str]:
-    m = _MONTH_RE.search(name_or_url or "")
-    if not m:
-        return None
-    return f"{m.group(1)}-{m.group(2)}"
-
-
-def _session() -> requests.Session:
-    s = requests.Session()
-    s.headers.update(
-        {
-            "User-Agent": "Mozilla/5.0 (compatible; QSeguradorasBot/1.0; +https://github.com/)",
-            "Accept": "*/*",
-        }
-    )
+    s = s.lower()
+    s = re.sub(r"\s+", "_", s)
+    s = re.sub(r"[^a-z0-9_]+", "", s)
     return s
 
 
-def discover_basecompleta_urls(months: int = 12) -> Dict[str, str]:
-    """
-    Descobre URLs de recursos "Base Completa" do dataset do Consumidor.gov via CKAN.
-
-    Returns: dict { 'YYYY-MM': url }
-    """
-    resp = _session().get(CKAN_API, params={"id": PACKAGE_ID}, timeout=_TIMEOUT)
-    resp.raise_for_status()
-    data = resp.json()
-    if not data.get("success"):
-        raise RuntimeError("CKAN API returned success=False")
-
-    resources = data.get("result", {}).get("resources") or []
-    out: Dict[str, str] = {}
-
-    for r in resources:
-        fmt = str(r.get("format") or "").lower()
-        if fmt != "csv":
-            continue
-
-        name = str(r.get("name") or "")
-        url = str(r.get("url") or "")
-        hint = f"{name} {url}".lower()
-
-        if ("basecompleta" not in hint) and ("base completa" not in hint):
-            continue
-
-        ym = _extract_ym(hint)
-        if not ym:
-            created = str(r.get("created") or "")
-            ym = _extract_ym(created)
-        if not ym:
-            continue
-
-        out[ym] = url
-
-    if not out:
-        return {}
-
-    yms_sorted = sorted(out.keys())
-    return {ym: out[ym] for ym in yms_sorted[-months:]}
-
-
-def download_csv_to_gz(url: str, out_gz_path: str, *, retries: int = 5) -> Dict[str, Any]:
-    """
-    Baixa um CSV (HTTP) e salva como .csv.gz, streaming, com retries.
-    """
-    out_path = Path(out_gz_path)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-
-    sess = _session()
-    last_err: Optional[Exception] = None
-    started = time.time()
-
-    for attempt in range(1, retries + 1):
-        try:
-            with sess.get(url, stream=True, timeout=_TIMEOUT) as r:
-                r.raise_for_status()
-                etag = r.headers.get("ETag")
-                lm = r.headers.get("Last-Modified")
-
-                nbytes = 0
-                with gzip.open(out_path, "wb") as gz:
-                    for chunk in r.iter_content(chunk_size=1024 * 256):
-                        if not chunk:
-                            continue
-                        gz.write(chunk)
-                        nbytes += len(chunk)
-
-            secs = round(time.time() - started, 3)
-            return {
-                "url": url,
-                "path": str(out_path),
-                "bytes": nbytes,
-                "seconds": secs,
-                "etag": etag,
-                "last_modified": lm,
-                "downloaded_at": _utc_now(),
-            }
-
-        except Exception as e:
-            last_err = e
-            if attempt >= retries:
-                break
-            time.sleep(min(30.0, 2.0**attempt))
-
-    raise RuntimeError(f"download failed after {retries} attempts: {last_err}")
-
-
-def _detect_encoding_gz(path: str) -> str:
-    p = Path(path)
-    with gzip.open(p, "rb") as f:
-        head = f.read(16_384)
-
-    if head.startswith(b"\xef\xbb\xbf"):
-        return "utf-8-sig"
-
-    try:
-        head.decode("utf-8")
-        return "utf-8"
-    except UnicodeDecodeError:
-        return "latin-1"
-
-
-def _detect_delimiter(header_line: str) -> str:
-    sc = header_line.count(";")
-    cc = header_line.count(",")
-    return ";" if sc >= cc else ","
-
-
-def _mk_key(name: str) -> str:
-    s = _norm_text(name)
-    s = re.sub(r"\([^)]*\)", " ", s)
-    s = re.sub(r"[^a-z0-9]+", " ", s).strip()
-    s = re.sub(r"\s+", " ", s)
-    return s
-
-
-def _parse_float(value: Any) -> Optional[float]:
-    if value is None:
-        return None
-    s = str(value).strip()
+def _digits(s: Optional[str]) -> Optional[str]:
     if not s:
         return None
-    s = s.replace(",", ".")
+    d = re.sub(r"\D+", "", str(s))
+    return d or None
+
+
+def _detect_delimiter(sample: str) -> str:
+    first = (sample.splitlines()[:1] or [""])[0]
+    cand = [(";", first.count(";")), (",", first.count(",")), ("\t", first.count("\t"))]
+    cand.sort(key=lambda x: x[1], reverse=True)
+    return cand[0][0] if cand[0][1] > 0 else ";"
+
+
+def _parse_bool(v: Any) -> Optional[bool]:
+    if v is None:
+        return None
+    s = str(v).strip().lower()
+    if not s:
+        return None
+    if s in {"s", "sim", "y", "yes", "true", "1"}:
+        return True
+    if s in {"n", "nao", "não", "no", "false", "0"}:
+        return False
+    return None
+
+
+def _parse_float(v: Any) -> Optional[float]:
+    if v is None:
+        return None
+    s = str(v).strip()
+    if not s:
+        return None
+    s = s.replace(".", "").replace(",", ".")
+    s = re.sub(r"[^0-9\.\-]+", "", s)
     try:
         return float(s)
-    except ValueError:
+    except Exception:
         return None
 
 
-def _truthy(value: Any) -> bool:
-    if value is None:
-        return False
-    return _norm_text(str(value)) in _TRUE_SET
+def _parse_int(v: Any) -> Optional[int]:
+    f = _parse_float(v)
+    if f is None:
+        return None
+    try:
+        return int(round(f))
+    except Exception:
+        return None
+
+
+def _name_key(name: str) -> Optional[str]:
+    n = _norm(name)
+    n = re.sub(r"_+", "_", n).strip("_")
+    return n or None
 
 
 @dataclass
 class Agg:
-    display_name: str = ""
     total: int = 0
-    finalizadas: int = 0
-    respondidas: int = 0
-    resolvidas_indicador: int = 0
-    nota_sum: float = 0.0
-    nota_count: int = 0
-    tempo_sum: int = 0
-    tempo_count: int = 0
+    responded: int = 0
+    resolved: int = 0
+    rating_sum: float = 0.0
+    rating_count: int = 0
+    response_days_sum: float = 0.0
+    response_days_count: int = 0
+    name_counts: Dict[str, int] = field(default_factory=dict)
 
-    def to_public(self) -> Dict[str, Any]:
-        responded_rate = (self.respondidas / self.finalizadas) if self.finalizadas else None
-        resolution_rate = (self.resolvidas_indicador / self.finalizadas) if self.finalizadas else None
-        satisfaction_avg = (self.nota_sum / self.nota_count) if self.nota_count else None
-        avg_response_days = (self.tempo_sum / self.tempo_count) if self.tempo_count else None
+    def update(
+        self,
+        *,
+        display_name: Optional[str],
+        responded: Optional[bool],
+        resolved: Optional[bool],
+        rating: Optional[float],
+        response_days: Optional[int],
+    ) -> None:
+        self.total += 1
+        if responded is True:
+            self.responded += 1
+        if resolved is True:
+            self.resolved += 1
+        if rating is not None:
+            self.rating_sum += float(rating)
+            self.rating_count += 1
+        if response_days is not None:
+            self.response_days_sum += float(response_days)
+            self.response_days_count += 1
+        if display_name:
+            self.name_counts[display_name] = self.name_counts.get(display_name, 0) + 1
 
+    def best_display_name(self, fallback: str) -> str:
+        if not self.name_counts:
+            return fallback
+        return max(self.name_counts.items(), key=lambda x: x[1])[0]
+
+    def to_public(self, display_name: str) -> Dict[str, Any]:
+        resp_rate = self.responded / self.total if self.total else 0.0
+        res_rate = self.resolved / self.total if self.total else 0.0
+        sat = (self.rating_sum / self.rating_count) if self.rating_count else None
+        avg_days = (self.response_days_sum / self.response_days_count) if self.response_days_count else None
         return {
-            "display_name": self.display_name or None,
+            "display_name": display_name,
             "complaints_total": self.total,
-            "complaints_finalizadas": self.finalizadas,
-            "responded_rate": round(responded_rate, 6) if responded_rate is not None else None,
-            "resolution_rate": round(resolution_rate, 6) if resolution_rate is not None else None,
-            "satisfaction_avg": round(satisfaction_avg, 6) if satisfaction_avg is not None else None,
-            "avg_response_days": round(avg_response_days, 6) if avg_response_days is not None else None,
+            "response_rate": round(resp_rate, 6),
+            "resolution_rate": round(res_rate, 6),
+            "satisfaction_avg": (round(float(sat), 6) if sat is not None else None),
+            "avg_response_days": (round(float(avg_days), 6) if avg_days is not None else None),
         }
 
 
-def iter_rows_from_gz_csv(path: str) -> Iterator[Dict[str, str]]:
-    """
-    Stream de linhas (dict) a partir de um .csv.gz.
+def _download_to_temp(url: str, timeout: int = 180) -> Path:
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".bin")
+    tmp_path = Path(tmp.name)
+    tmp.close()
 
-    - Detecta encoding e delimitador.
-    - Mapeia headers para nomes canônicos via aliases.
-    - Faz pad/truncate defensivo quando a linha vier com colunas fora do esperado.
-    """
-    encoding = _detect_encoding_gz(path)
-    p = Path(path)
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/120.0.0.0 Safari/537.36"
+        ),
+        "Accept": "*/*",
+        "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8",
+    }
 
-    with gzip.open(p, "rt", encoding=encoding, errors="replace", newline="") as f:
-        header_line = f.readline()
-        if not header_line:
-            return
+    with requests.get(url, stream=True, timeout=timeout, headers=headers) as r:
+        r.raise_for_status()
+        with tmp_path.open("wb") as f:
+            for chunk in r.iter_content(chunk_size=1024 * 256):
+                if chunk:
+                    f.write(chunk)
 
-        delim = _detect_delimiter(header_line)
-        header_reader = csv.reader(io.StringIO(header_line), delimiter=delim)
-        headers_raw = next(header_reader, [])
-        if not headers_raw:
-            return
-
-        headers = []
-        for h in headers_raw:
-            nh = _norm_header(h)
-            headers.append(_HEADER_ALIASES.get(nh, nh))
-
-        expected = len(headers)
-        row_reader = csv.reader(f, delimiter=delim)
-
-        for row in row_reader:
-            if not row:
-                continue
-
-            # pad/truncate leve (evita descartar por pequenas inconsistências)
-            if len(row) < expected:
-                row = row + ([""] * (expected - len(row)))
-            elif len(row) > expected:
-                row = row[:expected]
-
-            out: Dict[str, str] = {}
-            for i, key in enumerate(headers):
-                out[key] = row[i] if i < len(row) else ""
-            yield out
+    return tmp_path
 
 
-def aggregate_month(path_gz: str) -> Dict[str, Agg]:
-    """
-    Agrega um mês por nome_fantasia normalizado.
+def _open_as_text(path: Path) -> io.TextIOBase:
+    head = path.read_bytes()[:8]
 
-    Retorna: dict { name_key: Agg }
-    """
-    out: Dict[str, Agg] = {}
+    if zipfile.is_zipfile(path):
+        z = zipfile.ZipFile(path)
+        names = [n for n in z.namelist() if n.lower().endswith(".csv")]
+        if not names:
+            raise RuntimeError("ZIP não contém CSV.")
+        fbin = z.open(names[0], "r")
+        wrapper = io.TextIOWrapper(fbin, encoding="utf-8", errors="replace", newline="")
+        wrapper._zip_ref = z  # type: ignore[attr-defined]
+        return wrapper
 
-    for row in iter_rows_from_gz_csv(path_gz):
-        name_raw = (row.get("nome_fantasia") or "").strip()
-        if not name_raw:
+    if len(head) >= 2 and head[0] == 0x1F and head[1] == 0x8B:
+        fbin = gzip.open(path, "rb")
+        return io.TextIOWrapper(fbin, encoding="utf-8", errors="replace", newline="")
+
+    return path.open("r", encoding="utf-8", errors="replace", newline="")
+
+
+def _ckan_package() -> Dict[str, Any]:
+    r = requests.get(CKAN_PACKAGE_SHOW, params={"id": DATASET_ID}, timeout=60)
+    r.raise_for_status()
+    payload = r.json()
+    if not payload.get("success"):
+        raise RuntimeError(f"CKAN package_show falhou: {payload}")
+    return payload["result"]
+
+
+def _extract_ym_from_text(txt: str) -> Optional[str]:
+    if not txt:
+        return None
+    m = re.search(r"\b(20\d{2})[-_/\.](0[1-9]|1[0-2])\b", txt)
+    if m:
+        return f"{m.group(1)}-{m.group(2)}"
+    m = re.search(r"\b(20\d{2})(0[1-9]|1[0-2])\b", txt)
+    if m:
+        return f"{m.group(1)}-{m.group(2)}"
+    return None
+
+
+def _list_monthly_resources(pkg: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+    out: Dict[str, Dict[str, Any]] = {}
+    for res in pkg.get("resources", []):
+        url = res.get("url") or ""
+        name = res.get("name") or res.get("title") or ""
+        fmt = (res.get("format") or "").lower()
+
+        if "csv" not in fmt and not url.lower().endswith((".csv", ".csv.gz", ".zip", ".gz")):
             continue
 
-        key = _mk_key(name_raw)
-        if not key:
+        ym = (
+            _extract_ym_from_text(name)
+            or _extract_ym_from_text(url)
+            or _extract_ym_from_text(res.get("description") or "")
+            or _extract_ym_from_text(res.get("last_modified") or "")
+            or _extract_ym_from_text(res.get("created") or "")
+        )
+        if not ym:
             continue
 
-        a = out.get(key)
-        if a is None:
-            a = Agg(display_name=name_raw)
-            out[key] = a
+        cur = out.get(ym)
+        if not cur:
+            out[ym] = res
+            continue
 
-        a.total += 1
+        def _ts(r: Dict[str, Any]) -> str:
+            return str(r.get("last_modified") or r.get("created") or "")
 
-        situacao = _norm_text(row.get("situacao") or "")
-        is_finalizada = situacao.startswith(_FINAL_PREFIX)
-        if is_finalizada:
-            a.finalizadas += 1
-
-        if is_finalizada and _truthy(row.get("respondida")):
-            a.respondidas += 1
-
-        # Avaliação da Reclamação: "Resolvida" OU "Não avaliada" conta como resolvida no indicador
-        if is_finalizada:
-            aval = _norm_text(row.get("avaliacao") or "")
-            if aval.startswith("resolvida") or aval.startswith("nao avaliada") or aval.startswith("não avaliada"):
-                a.resolvidas_indicador += 1
-
-        if is_finalizada:
-            n = _parse_float(row.get("nota"))
-            if n is not None:
-                a.nota_sum += float(n)
-                a.nota_count += 1
-
-        if is_finalizada:
-            tr = _parse_float(row.get("tempo_resposta"))
-            if tr is not None:
-                a.tempo_sum += int(round(tr))
-                a.tempo_count += 1
+        if _ts(res) > _ts(cur):
+            out[ym] = res
 
     return out
+
+
+def _latest_months(months: List[str], window_months: int) -> List[str]:
+    months_sorted = sorted(months)
+    return months_sorted[-window_months:]
+
+
+ALIASES = {
+    "supplier_name": [
+        "nome_fantasia",
+        "nomefantasia",
+        "fornecedor",
+        "nome_fornecedor",
+        "nomefantasiafornecedor",
+        "razao_social",
+        "razaosocial",
+    ],
+    "supplier_cnpj": [
+        "cnpj",
+        "cnpjdofornecedor",
+        "cnpj_do_fornecedor",
+        "cnpjfornecedor",
+        "cnpj_fornecedor",
+        "cpf_cnpj",
+        "cpfcnpj",
+    ],
+    "responded": [
+        "respondida",
+        "respondida_pelo_fornecedor",
+        "respondidapelo_fornecedor",
+        "fornecedor_respondeu",
+        "resposta_fornecedor",
+    ],
+    "resolved": [
+        "resolvida",
+        "reclamacao_resolvida",
+        "reclamacaoresolvida",
+        "solucionada",
+        "solucao",
+    ],
+    "rating": [
+        "nota",
+        "avaliacao",
+        "avaliacao_reclamacao",
+        "avaliacaoreclamacao",
+        "nota_do_consumidor",
+        "notadoconsumidor",
+    ],
+    "response_days": [
+        "tempo_resposta",
+        "temposresposta",
+        "tempo_resposta_em_dias",
+        "tempoderesposta",
+        "dias_resposta",
+    ],
+}
+
+
+def _header_norm_map(fieldnames: List[str]) -> Dict[str, str]:
+    return {_norm(h): h for h in (fieldnames or []) if h}
+
+
+def _get(row: Dict[str, Any], hdrmap: Dict[str, str], aliases: List[str]) -> Optional[str]:
+    for a in aliases:
+        k = hdrmap.get(_norm(a))
+        if k and k in row:
+            v = row.get(k)
+            if v is not None and str(v).strip() != "":
+                return str(v)
+    for a in aliases:
+        na = _norm(a)
+        for hk_norm, hk in hdrmap.items():
+            if na in hk_norm:
+                v = row.get(hk)
+                if v is not None and str(v).strip() != "":
+                    return str(v)
+    return None
+
+
+def build_consumidor_gov_agg(
+    *,
+    window_months: int = DEFAULT_WINDOW_MONTHS,
+    raw_dir: Optional[Path] = None,
+    out_path: Optional[Path] = None,
+) -> Path:
+    root = _repo_root()
+    raw_dir = raw_dir or (root / "data" / "raw" / "consumidor_gov")
+    out_path = out_path or (root / "data" / "derived" / "consumidor_gov" / "consumidor_gov_agg_latest.json")
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    pkg = _ckan_package()
+    monthly = _list_monthly_resources(pkg)
+    if not monthly:
+        raise RuntimeError("Nenhum recurso mensal CSV identificado no dataset.")
+
+    months = _latest_months(list(monthly.keys()), window_months)
+
+    by_name: Dict[str, Agg] = {}
+    by_cnpj: Dict[str, Agg] = {}
+
+    for ym in months:
+        res = monthly[ym]
+        url = res.get("url")
+        if not url:
+            continue
+
+        cache_path = raw_dir / f"{ym}.bin"
+        if not cache_path.exists() or cache_path.stat().st_size == 0:
+            tmp = _download_to_temp(url)
+            try:
+                cache_path.write_bytes(tmp.read_bytes())
+            finally:
+                try:
+                    tmp.unlink()
+                except Exception:
+                    pass
+
+        ftxt = _open_as_text(cache_path)
+        try:
+            sample = ftxt.read(65536)
+            delim = _detect_delimiter(sample)
+            ftxt.seek(0)
+
+            reader = csv.DictReader(ftxt, delimiter=delim)
+            hdrmap = _header_norm_map(reader.fieldnames or [])
+
+            for row in reader:
+                supplier_name = _get(row, hdrmap, ALIASES["supplier_name"]) or ""
+                supplier_cnpj = _get(row, hdrmap, ALIASES["supplier_cnpj"])
+
+                responded = _parse_bool(_get(row, hdrmap, ALIASES["responded"]))
+                resolved = _parse_bool(_get(row, hdrmap, ALIASES["resolved"]))
+                rating = _parse_float(_get(row, hdrmap, ALIASES["rating"]))
+                resp_days = _parse_int(_get(row, hdrmap, ALIASES["response_days"]))
+
+                nk = _name_key(supplier_name)
+                if nk:
+                    by_name.setdefault(nk, Agg()).update(
+                        display_name=supplier_name,
+                        responded=responded,
+                        resolved=resolved,
+                        rating=rating,
+                        response_days=resp_days,
+                    )
+
+                cnpj = _digits(supplier_cnpj)
+                if cnpj:
+                    if len(cnpj) <= 14:
+                        cnpj = cnpj.zfill(14)
+                    by_cnpj.setdefault(cnpj, Agg()).update(
+                        display_name=supplier_name or cnpj,
+                        responded=responded,
+                        resolved=resolved,
+                        rating=rating,
+                        response_days=resp_days,
+                    )
+        finally:
+            try:
+                z = getattr(ftxt, "_zip_ref", None)
+                ftxt.close()
+                if z:
+                    z.close()
+            except Exception:
+                pass
+
+    by_name_public: Dict[str, Any] = {}
+    for k, agg in by_name.items():
+        disp = agg.best_display_name(k)
+        by_name_public[k] = agg.to_public(disp)
+
+    by_cnpj_public: Dict[str, Any] = {}
+    for k, agg in by_cnpj.items():
+        disp = agg.best_display_name(k)
+        by_cnpj_public[k] = agg.to_public(disp) | {"cnpj": k}
+
+    payload = {
+        "meta": {
+            "as_of": _now_iso(),
+            "window_months": window_months,
+            "months": months,
+            "dataset_id": DATASET_ID,
+            "raw_cache_dir": str(raw_dir).replace(str(root), "").lstrip("/"),
+        },
+        "by_name_key": by_name_public,
+        "by_cnpj_key": by_cnpj_public,
+        "stats": {
+            "companies_by_name": len(by_name_public),
+            "companies_by_cnpj": len(by_cnpj_public),
+        },
+    }
+
+    out_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    return out_path
+
+
+def main() -> None:
+    out = build_consumidor_gov_agg()
+    print(f"Consumidor.gov agregado gerado em: {out}")
+
+
+if __name__ == "__main__":
+    main()
