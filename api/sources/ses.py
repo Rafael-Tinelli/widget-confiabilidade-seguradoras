@@ -9,7 +9,7 @@ import unicodedata
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Iterable, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 SES_URL = "https://www2.susep.gov.br/menuestatistica/ses/principal.aspx"
 DEBUG_DIR = Path("ses_debug")
@@ -51,6 +51,23 @@ def _digits(s: Optional[str]) -> Optional[str]:
         return None
     d = re.sub(r"\D+", "", str(s))
     return d or None
+
+
+def _cnpj14(raw: Any) -> Optional[str]:
+    """
+    Normaliza CNPJ para exatamente 14 dígitos.
+    - Remove não-dígitos
+    - zfill(14) se vier com zeros à esquerda omitidos
+    - descarta se não conseguir ficar em 14 dígitos
+    """
+    d = _digits(str(raw) if raw is not None else None)
+    if not d:
+        return None
+    if len(d) < 14:
+        d = d.zfill(14)
+    if len(d) != 14:
+        return None
+    return d
 
 
 def _read_head(path: Path, n: int = 4096) -> bytes:
@@ -271,6 +288,7 @@ def _detect_csv_dialect(z: zipfile.ZipFile, fname: str) -> tuple[str, str]:
         txt = head.decode("latin-1", errors="ignore")
 
     first_line = (txt.splitlines()[:1] or [""])[0]
+
     delim = max(_DELIMS, key=lambda d: first_line.count(d))
     if first_line.count(delim) == 0:
         delim = ";"
@@ -291,8 +309,9 @@ def _pick_best_csv(
     candidates: list[str],
     required_groups: list[list[str]],
 ) -> str:
-    best = None
+    best: str | None = None
     best_score = -1
+    best_rows = -1
     best_hdr = None
 
     for fname in candidates:
@@ -306,9 +325,12 @@ def _pick_best_csv(
             if any(_norm(k) in h for k in group):
                 score += 1
 
-        if score > best_score:
+        n_rows = len(rows)
+        # desempate: prefira o arquivo que tem MAIS linhas
+        if (score > best_score) or (score == best_score and n_rows > best_rows):
             best = fname
             best_score = score
+            best_rows = n_rows
             best_hdr = rows[0][:80]
 
     if not best or best_score < len(required_groups):
@@ -347,16 +369,12 @@ def _ym_to_iso_01(ym: int) -> str:
 
 
 def _parse_ym(value: Any) -> Optional[int]:
-    if value is None:
+    if not value:
         return None
     s = str(value).strip()
-    if not s:
-        return None
-
     m = re.search(r"\b(\d{4})\D?(\d{2})\b", s) or re.search(r"\b(\d{2})\D+(\d{4})\b", s)
     if not m:
         return None
-
     v1 = int(m.group(1))
     v2 = int(m.group(2))
     if v1 > 12:
@@ -364,69 +382,13 @@ def _parse_ym(value: Any) -> Optional[int]:
     return v2 * 100 + v1
 
 
-def _ym_to_index(ym: int) -> int:
-    return (ym // 100) * 12 + (ym % 100)
-
-
-def _find_col_index_exact(headers_norm: list[str], candidates: Iterable[str]) -> Optional[int]:
-    for k in candidates:
-        nk = _norm(k)
-        if nk in headers_norm:
-            return headers_norm.index(nk)
-    return None
-
-
-def _find_col_index_contains(headers_norm: list[str], needle_substrings: Iterable[str]) -> Optional[int]:
-    for i, h in enumerate(headers_norm):
-        for sub in needle_substrings:
-            if sub in h:
-                return i
-    return None
-
-
-def _best_metric_column(
-    rows: list[list[str]],
-    headers_norm: list[str],
-    ym_idx: int,
-    start_ym: int,
-    end_ym: int,
-    col_name_contains: str,
-) -> Optional[int]:
-    candidates = [i for i, h in enumerate(headers_norm) if col_name_contains in h]
-    if not candidates:
-        return None
-
-    start_i = _ym_to_index(start_ym)
-    end_i = _ym_to_index(end_ym)
-
-    counts: dict[int, int] = {i: 0 for i in candidates}
-
-    for row in rows[1:]:
-        if len(row) <= max(candidates + [ym_idx]):
-            continue
-        ym = _parse_ym(row[ym_idx])
-        if not ym:
-            continue
-        yi = _ym_to_index(ym)
-        if yi < start_i or yi > end_i:
-            continue
-
-        for ci in candidates:
-            v = _parse_brl_number(row[ci])
-            if v > 0:
-                counts[ci] += 1
-
-    best = max(counts.items(), key=lambda kv: kv[1])
-    if best[1] <= 0:
-        return None
-    return best[0]
-
-
 def extract_ses_master_and_financials(
     zip_url: Optional[str] = None,
 ) -> Tuple[SesExtractionMeta, Dict[str, Dict[str, Any]]]:
     if zip_url:
-        print("SES: zip_url informado, mas ignorado em favor do crawler Playwright.")
+        print(
+            f"SES: zip_url={zip_url} informado, mas ignorado em favor do crawler Playwright."
+        )
 
     zip_path, used_url = _download_zip_via_browser()
 
@@ -437,13 +399,21 @@ def extract_ses_master_and_financials(
 
             csvs = [n for n in all_files if n.lower().endswith(".csv")]
 
+            # Preferência canônica
             cias_candidates = [n for n in csvs if re.fullmatch(r"ses_cias\.csv", n.lower())]
             seg_candidates = [n for n in csvs if re.fullmatch(r"ses_seguros\.csv", n.lower())]
 
+            # Fallback (se um dia mudarem capitalização/nome)
             if not cias_candidates:
                 cias_candidates = [n for n in csvs if "ses_cias" in n.lower()]
             if not seg_candidates:
-                seg_candidates = [n for n in csvs if "ses_seguros" in n.lower() or "seguros" in n.lower()]
+                # "seguros" pode vir em outros arquivos — deixe o picker escolher pelo header + volume
+                seg_candidates = [
+                    n for n in csvs
+                    if "ses_seguros" in n.lower()
+                    or "seguros" in n.lower()
+                    or "valoresmov" in n.lower()
+                ]
 
             if not cias_candidates or not seg_candidates:
                 raise RuntimeError(f"CSVs válidos não identificados. Conteúdo: {all_files}")
@@ -463,7 +433,18 @@ def extract_ses_master_and_financials(
                 required_groups=[
                     ["cod_enti", "coenti", "cod_cia", "co_enti"],
                     ["damesano", "anomes", "competencia", "damesaano"],
-                    ["premio", "premios", "premio_direto", "premio_emitido", "premio_ganho"],
+                    [
+                        "premio_direto",
+                        "premio_de_seguros",
+                        "premio_retido",
+                        "premio_ganho",
+                        "premio_emitido2",
+                        "premio_emitido_cap",
+                        "premio_direto_cap",
+                        "premio",
+                        "premio_emitido",
+                        "premios",
+                    ],
                 ],
             )
 
@@ -472,77 +453,79 @@ def extract_ses_master_and_financials(
             rows_cias = _read_csv(z, cias)
             rows_seguros = _read_csv(z, seguros)
 
-            if not rows_cias or not rows_seguros:
-                raise RuntimeError("SES: CSV vazio (cias ou seguros).")
-
             h_cias = [_norm(x) for x in rows_cias[0]]
             h_seg = [_norm(x) for x in rows_seguros[0]]
 
-            id_i = _find_col_index_exact(h_cias, ["cod_enti", "coenti", "cod_cia", "co_enti"])
-            nm_i = _find_col_index_exact(h_cias, ["noenti", "nome", "nome_cia", "no_enti"])
-            cn_i = _find_col_index_exact(h_cias, ["cnpj", "numcnpj", "nu_cnpj", "nu_cnpj_cia"])
+            def g_idx(h: list[str], keys: list[str]) -> Optional[int]:
+                for k in keys:
+                    nk = _norm(k)
+                    if nk in h:
+                        return h.index(nk)
+                return None
+
+            id_i = g_idx(h_cias, ["cod_enti", "coenti", "cod_cia", "co_enti"])
+            nm_i = g_idx(h_cias, ["noenti", "nome", "nome_cia"])
+
+            # CNPJ muda bastante de nome (nu_cnpj, cnpj_cia, num_cnpj, etc)
+            cn_i = g_idx(
+                h_cias,
+                ["cnpj", "numcnpj", "nu_cnpj", "num_cnpj", "cnpj_cia", "cgc", "nu_cgc"],
+            )
             if cn_i is None:
-                cn_i = _find_col_index_contains(h_cias, ["cnpj"])
+                for i, col in enumerate(h_cias):
+                    if "cnpj" in col or col.endswith("cgc") or "cgc" in col:
+                        cn_i = i
+                        break
 
-            sid_i = _find_col_index_exact(h_seg, ["cod_enti", "coenti", "cod_cia", "co_enti"])
-            ym_i = _find_col_index_exact(h_seg, ["damesano", "anomes", "competencia", "damesaano"])
+            sid_i = g_idx(h_seg, ["cod_enti", "coenti", "cod_cia", "co_enti"])
+            ym_i = g_idx(h_seg, ["damesano", "anomes", "competencia", "damesaano"])
 
-            if sid_i is None or ym_i is None:
-                _ensure_debug_dir()
-                (DEBUG_DIR / "headers_failed_seguros.txt").write_text(str(h_seg), encoding="utf-8")
-                (DEBUG_DIR / "headers_failed_cias.txt").write_text(str(h_cias), encoding="utf-8")
-                raise RuntimeError(
-                    f"SES: Colunas obrigatórias ausentes em '{seguros}'. sid_i={sid_i}, ym_i={ym_i}."
-                )
-
-            max_ym = 0
-            for row in rows_seguros[1:]:
-                if len(row) <= ym_i:
-                    continue
-                ym = _parse_ym(row[ym_i])
-                if ym and ym > max_ym:
-                    max_ym = ym
-
-            if max_ym <= 0:
-                raise RuntimeError("SES: Não foi possível determinar o período (max_ym).")
-
-            max_idx = _ym_to_index(max_ym)
-            start_idx = max_idx - 11
-            start_year = start_idx // 12
-            start_month = start_idx % 12
-            start_ym = (start_year * 100) + (start_month + 1)
-
-            pr_i = _best_metric_column(
-                rows=rows_seguros,
-                headers_norm=h_seg,
-                ym_idx=ym_i,
-                start_ym=start_ym,
-                end_ym=max_ym,
-                col_name_contains="premio",
+            pr_i = g_idx(
+                h_seg,
+                [
+                    "premio_direto",
+                    "premio_de_seguros",
+                    "premio_retido",
+                    "premio_ganho",
+                    "premio_emitido2",
+                    "premio_emitido_cap",
+                    "premio_direto_cap",
+                    "premio",
+                    "premio_emitido",
+                    "premios",
+                ],
             )
 
-            sn_i = _best_metric_column(
-                rows=rows_seguros,
-                headers_norm=h_seg,
-                ym_idx=ym_i,
-                start_ym=start_ym,
-                end_ym=max_ym,
-                col_name_contains="sinistro",
+            sn_i = g_idx(
+                h_seg,
+                [
+                    "sinistro_direto",
+                    "sinistro_ocorrido",
+                    "sinistro_retido",
+                    "sinistro_ocorrido_cap",
+                    "sinistros_ocorridos_cap",
+                    "sinistros",
+                    "sinistro",
+                ],
             )
 
-            if pr_i is None:
+            if sid_i is None or ym_i is None or pr_i is None:
                 _ensure_debug_dir()
-                (DEBUG_DIR / "headers_failed_seguros.txt").write_text(str(h_seg), encoding="utf-8")
+                try:
+                    (DEBUG_DIR / "headers_failed_seguros.txt").write_text(str(h_seg), encoding="utf-8")
+                    (DEBUG_DIR / "headers_failed_cias.txt").write_text(str(h_cias), encoding="utf-8")
+                except Exception:
+                    pass
                 raise RuntimeError(
-                    "SES: Nenhuma coluna de prêmio com valores >0 encontrada na janela rolling_12m. "
-                    f"Arquivo={seguros}"
+                    f"Colunas obrigatórias ausentes em '{seguros}'. "
+                    f"sid_i={sid_i}, ym_i={ym_i}, pr_i={pr_i}. Header={rows_seguros[0][:80]}"
                 )
 
             print(
                 "SES: Colunas selecionadas: "
                 f"sid={h_seg[sid_i]}, ym={h_seg[ym_i]}, premium={h_seg[pr_i]}, "
-                f"claims={(h_seg[sn_i] if sn_i is not None else None)} | "
-                f"window={_ym_to_iso_01(start_ym)}..{_ym_to_iso_01(max_ym)}"
+                f"claims={(h_seg[sn_i] if sn_i is not None else None)}, "
+                f"cnpj={(h_cias[cn_i] if (cn_i is not None and cn_i < len(h_cias)) else None)}"
             )
 
             companies: Dict[str, Dict[str, Any]] = {}
@@ -556,13 +539,12 @@ def extract_ses_master_and_financials(
 
                     cn = None
                     if cn_i is not None and len(row) > cn_i:
-                        cn = _digits(row[cn_i])
+                        cn = _cnpj14(row[cn_i])
 
-                    companies[sid.zfill(6)] = {"name": str(row[nm_i]).strip(), "cnpj": cn}
+                    companies[sid.zfill(6)] = {"name": row[nm_i].strip(), "cnpj": cn}
 
             agg: Dict[str, Dict[str, float]] = {}
-            start_i = _ym_to_index(start_ym)
-            end_i = _ym_to_index(max_ym)
+            max_ym = 0
 
             for row in rows_seguros[1:]:
                 if len(row) <= max(sid_i, ym_i, pr_i):
@@ -571,9 +553,8 @@ def extract_ses_master_and_financials(
                 ym = _parse_ym(row[ym_i])
                 if not ym:
                     continue
-                yi = _ym_to_index(ym)
-                if yi < start_i or yi > end_i:
-                    continue
+                if ym > max_ym:
+                    max_ym = ym
 
                 sid = _digits(row[sid_i])
                 if not sid:
@@ -581,9 +562,6 @@ def extract_ses_master_and_financials(
                 sid = sid.zfill(6)
 
                 prem = _parse_brl_number(row[pr_i])
-                if prem <= 0:
-                    continue
-
                 sin = 0.0
                 if sn_i is not None and len(row) > sn_i:
                     sin = _parse_brl_number(row[sn_i])
@@ -592,6 +570,16 @@ def extract_ses_master_and_financials(
                 bucket["p"] += prem
                 bucket["c"] += sin
 
+            if max_ym <= 0:
+                raise RuntimeError("Não foi possível determinar o período (max_ym).")
+
+            # rolling 12m metadata (mantém compatibilidade com build atual; filtragem pode ser aplicada em versão futura)
+            max_idx = (max_ym // 100) * 12 + (max_ym % 100) - 1
+            start_idx = max_idx - 11
+            start_year = start_idx // 12
+            start_month = start_idx % 12 + 1
+            start_ym = start_year * 100 + start_month
+
             out: Dict[str, Dict[str, Any]] = {}
             for sid, val in agg.items():
                 if val["p"] <= 0:
@@ -599,12 +587,10 @@ def extract_ses_master_and_financials(
                 base = companies.get(sid) or {"name": f"SES_{sid}", "cnpj": None}
                 out[sid] = {
                     "name": base["name"],
-                    "cnpj": base.get("cnpj"),
+                    "cnpj": base["cnpj"],
                     "premiums": round(val["p"], 2),
                     "claims": round(val["c"], 2),
                 }
-
-            print(f"SES: companies(master)={len(companies)} | active(rolling_12m)={len(out)}")
 
             meta = SesExtractionMeta(
                 used_url,
