@@ -1,9 +1,7 @@
-# api/sources/ses.py
 from __future__ import annotations
 
 import csv
 import io
-import os
 import re
 import zipfile
 from dataclasses import dataclass
@@ -15,8 +13,12 @@ import requests
 SES_HOME = "https://www2.susep.gov.br/menuestatistica/ses/principal.aspx"
 UA = {"User-Agent": "Mozilla/5.0 (compatible; SanidaBot/1.0)"}
 
-# SUSEP: deixa trust_env padrão (True). Consumidor.gov é o que precisa blindagem.
-_SESSION = requests.Session()
+# 1) DIRECT: ignora proxy do ambiente (resolve o "proxy tunnel 403")
+_SESSION_DIRECT = requests.Session()
+_SESSION_DIRECT.trust_env = False
+
+# 2) ENV: usa rede do ambiente (fallback quando direct falhar por DNS/rota)
+_SESSION_ENV = requests.Session()
 
 
 @dataclass(frozen=True)
@@ -92,77 +94,33 @@ def _ym_to_date_str(ym: tuple[int, int]) -> str:
     return f"{y:04d}-{m:02d}-01"
 
 
-def _env_proxies() -> dict[str, str]:
+def _request(url: str, timeout: int) -> requests.Response:
     """
-    Se o runner tiver proxy corporativo configurado, isso ajuda a contornar
-    NO_PROXY indevido para www2.susep.gov.br quando a resolução direta falha.
+    Tenta primeiro DIRECT (sem proxy). Se falhar por rede (DNS/timeout/rota),
+    tenta ENV (com proxy/infra do ambiente).
+    Não faz fallback quando já existe resposta HTTP válida (HTTPError),
+    porque trocar rota não resolve bloqueio do servidor.
     """
-    https = os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy")
-    http = os.environ.get("HTTP_PROXY") or os.environ.get("http_proxy")
-    proxies: dict[str, str] = {}
-    if https:
-        proxies["https"] = https
-    if http:
-        proxies["http"] = http
-    # se só tiver HTTPS_PROXY, usa para http também (comum em CI)
-    if "https" in proxies and "http" not in proxies:
-        proxies["http"] = proxies["https"]
-    return proxies
-
-
-def _looks_like_dns_failure(err: Exception) -> bool:
-    msg = str(err).lower()
-    needles = [
-        "name or service not known",
-        "temporary failure in name resolution",
-        "failed to resolve",
-        "getaddrinfo failed",
-        "nodename nor servname provided",
-        "dns",
-    ]
-    return any(n in msg for n in needles)
-
-
-def _get_text(url: str, timeout: int) -> str:
-    try:
-        r = _SESSION.get(url, headers=UA, timeout=timeout)
-        r.raise_for_status()
-        r.encoding = r.apparent_encoding or "utf-8"
-        return r.text
-    except requests.RequestException as exc:
-        # fallback: se falhar por DNS e existir proxy no ambiente, força proxy explícito (ignora NO_PROXY)
-        proxies = _env_proxies()
-        if proxies and _looks_like_dns_failure(exc):
-            r = _SESSION.get(url, headers=UA, timeout=timeout, proxies=proxies)
+    last: Exception | None = None
+    for sess in (_SESSION_DIRECT, _SESSION_ENV):
+        try:
+            r = sess.get(url, headers=UA, timeout=timeout)
             r.raise_for_status()
-            r.encoding = r.apparent_encoding or "utf-8"
-            return r.text
-        raise
-
-
-def _download_bytes(url: str, timeout: int) -> bytes:
-    try:
-        r = _SESSION.get(url, headers=UA, timeout=timeout)
-        r.raise_for_status()
-        b = r.content
-    except requests.RequestException as exc:
-        proxies = _env_proxies()
-        if proxies and _looks_like_dns_failure(exc):
-            r = _SESSION.get(url, headers=UA, timeout=timeout, proxies=proxies)
-            r.raise_for_status()
-            b = r.content
-        else:
-            raise
-
-    # checagem rápida de assinatura ZIP (evita BadZipFile mascarado por HTML)
-    if not (b.startswith(b"PK\x03\x04") or b.startswith(b"PK\x05\x06") or b.startswith(b"PK\x07\x08")):
-        snippet = b[:200].decode("latin-1", errors="replace").strip()
-        raise RuntimeError(f"SES: download não parece ZIP (head={snippet!r})")
-    return b
+            return r
+        except requests.HTTPError as exc:
+            last = exc
+            break
+        except requests.RequestException as exc:
+            last = exc
+            continue
+    assert last is not None
+    raise last
 
 
 def _fetch_text(url: str) -> str:
-    return _get_text(url, timeout=60)
+    r = _request(url, timeout=60)
+    r.encoding = r.apparent_encoding or "utf-8"
+    return r.text
 
 
 def discover_ses_zip_url() -> str:
@@ -214,6 +172,16 @@ def discover_ses_zip_url() -> str:
     return urljoin(download_page, best2 or zips2[0])
 
 
+def _download_bytes(url: str) -> bytes:
+    r = _request(url, timeout=180)
+    b = r.content
+    # checagem rápida de assinatura ZIP
+    if not (b.startswith(b"PK\x03\x04") or b.startswith(b"PK\x05\x06") or b.startswith(b"PK\x07\x08")):
+        snippet = b[:200].decode("latin-1", errors="replace").strip()
+        raise RuntimeError(f"SES: download não parece ZIP (head={snippet!r})")
+    return b
+
+
 def _find_zip_member(z: zipfile.ZipFile, prefer_exact_lower: str, contains_any: list[str]) -> str:
     names = z.namelist()
     lower = [n.lower() for n in names]
@@ -257,20 +225,11 @@ def _read_csv_from_zip(z: zipfile.ZipFile, member: str) -> tuple[list[str], list
 
 
 def _idx(header: list[str], keys: list[str]) -> int | None:
-    """
-    1) match exato normalizado
-    2) fallback: key contida na coluna (substring)
-    """
     hn = [_norm(h) for h in header]
     for k in keys:
         kk = _norm(k)
         if kk in hn:
             return hn.index(kk)
-    for k in keys:
-        kk = _norm(k)
-        for i, col in enumerate(hn):
-            if kk and kk in col:
-                return i
     return None
 
 
@@ -320,7 +279,7 @@ def _infer_cnpj_idx_by_sampling(
 
 def extract_ses_master_and_financials() -> tuple[SesMeta, dict[str, dict[str, Any]]]:
     zip_url = discover_ses_zip_url()
-    zip_bytes = _download_bytes(zip_url, timeout=180)
+    zip_bytes = _download_bytes(zip_url)
 
     with zipfile.ZipFile(io.BytesIO(zip_bytes)) as z:
         cias_member = _find_zip_member(z, "ses_cias.csv", ["ses_cias", "cias", "companhias"])
@@ -335,13 +294,13 @@ def extract_ses_master_and_financials() -> tuple[SesMeta, dict[str, dict[str, An
     sid_i = _idx(h_cias, ["coenti", "id", "codigo", "codigo_entidade"])
     name_i = _idx(h_cias, ["noenti", "nome", "nome_entidade", "razao_social", "no_entidade"])
 
-    if sid_i is None or name_i is None:
-        raise RuntimeError("SES: não foi possível localizar colunas de ID/Nome em Ses_cias.csv.")
-
     cnpj_i = _find_cnpj_idx(h_cias)
     exclude_indices = {i for i in (sid_i, name_i) if i is not None}
     if cnpj_i is None:
         cnpj_i = _infer_cnpj_idx_by_sampling(h_cias, rows_cias, exclude=exclude_indices)
+
+    if sid_i is None or name_i is None:
+        raise RuntimeError("SES: não foi possível localizar colunas de ID/Nome em Ses_cias.csv.")
 
     cias: dict[str, dict[str, Any]] = {}
     for r in rows_cias:
@@ -360,14 +319,8 @@ def extract_ses_master_and_financials() -> tuple[SesMeta, dict[str, dict[str, An
 
     seg_sid_i = _idx(h_seg, ["coenti", "id", "codigo", "codigo_entidade"])
     ym_i = _idx(h_seg, ["damesano", "ano_mes", "competencia", "mes_ano", "mesano"])
-    prem_i = _idx(
-        h_seg,
-        ["premio_direto", "premio", "premio_emitido", "premios", "premio_total", "vl_premio_direto"],
-    )
-    clm_i = _idx(
-        h_seg,
-        ["sinistro_direto", "sinistro", "sinistros", "sinistro_total", "vl_sinistro_direto"],
-    )
+    prem_i = _idx(h_seg, ["premio_direto", "premio", "premio_emitido", "premios", "premio_total"])
+    clm_i = _idx(h_seg, ["sinistro_direto", "sinistro", "sinistros", "sinistro_total"])
 
     if seg_sid_i is None or ym_i is None or prem_i is None or clm_i is None:
         raise RuntimeError("SES: não foi possível localizar colunas-chave em Ses_seguros.csv.")
@@ -413,17 +366,13 @@ def extract_ses_master_and_financials() -> tuple[SesMeta, dict[str, dict[str, An
         buckets[sid]["premiums"] += p
         buckets[sid]["claims"] += c
 
-    # Importante: mantém meta.count estável (não infla com entidades sem prêmio)
     companies: dict[str, dict[str, Any]] = {}
-    for sid, vals in buckets.items():
-        premiums = float(vals.get("premiums") or 0.0)
-        if premiums <= 0:
-            continue
-        base = cias.get(sid) or {"name": f"SES_ENTIDADE_{sid}", "cnpj": None}
+    for sid, base in cias.items():
+        vals = buckets.get(sid) or {"premiums": 0.0, "claims": 0.0}
         companies[sid] = {
             "name": base.get("name"),
             "cnpj": base.get("cnpj"),
-            "premiums": premiums,
+            "premiums": float(vals.get("premiums") or 0.0),
             "claims": float(vals.get("claims") or 0.0),
         }
 
