@@ -1,10 +1,13 @@
+# api/sources/ses.py
 from __future__ import annotations
 
 import csv
 import gzip
 import io
 import json
+import os
 import re
+import warnings
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -12,16 +15,26 @@ from typing import Any
 from urllib.parse import urljoin
 
 import requests
+from requests.exceptions import RequestException, SSLError
+from urllib3.exceptions import InsecureRequestWarning
 
-SES_HOME = "https://www2.susep.gov.br/menuestatistica/ses/principal.aspx"
-UA = {"User-Agent": "Mozilla/5.0 (compatible; SanidaBot/1.0)"}
+SES_HOME_DEFAULT = "https://www2.susep.gov.br/menuestatistica/ses/principal.aspx"
 
-# 1) DIRECT: ignora proxy do ambiente
+UA = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/124.0.0.0 Safari/537.36"
+    ),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
+    "Connection": "keep-alive",
+}
+
+# SUSEP: tentamos primeiro respeitar o ambiente (proxy/rotas), e depois direto.
+_SESSION_ENV = requests.Session()  # trust_env=True (default)
 _SESSION_DIRECT = requests.Session()
 _SESSION_DIRECT.trust_env = False
-
-# 2) ENV: usa rede/proxy do ambiente (quando existir)
-_SESSION_ENV = requests.Session()
 
 ROOT = Path(__file__).resolve().parents[2]
 DATA_RAW = ROOT / "data" / "raw"
@@ -68,12 +81,12 @@ def _parse_ym(v: Any) -> tuple[int, int] | None:
     if len(d) >= 6:
         y = int(d[0:4])
         m = int(d[4:6])
-        if 1 <= m <= 12:
+        if 2000 <= y <= 2100 and 1 <= m <= 12:
             return y, m
-    m = re.search(r"\b(\d{4})\D{0,3}(\d{2})\b", s)
-    if m:
-        y = int(m.group(1))
-        mo = int(m.group(2))
+    m2 = re.search(r"\b(20\d{2})\D{0,3}([01]\d)\b", s)
+    if m2:
+        y = int(m2.group(1))
+        mo = int(m2.group(2))
         if 1 <= mo <= 12:
             return y, mo
     return None
@@ -99,54 +112,50 @@ def _ym_to_date_str(ym: tuple[int, int]) -> str:
     return f"{y:04d}-{m:02d}-01"
 
 
+def _allow_insecure_ssl() -> bool:
+    return str(os.environ.get("SES_ALLOW_INSECURE_SSL", "")).strip() in {"1", "true", "True", "yes", "YES"}
+
+
 def _request(url: str, timeout: int) -> requests.Response:
     """
-    Estratégia:
-      - tenta ENV+verify=True
-      - tenta DIRECT+verify=True
-      - tenta ENV+verify=certifi.where()
-      - tenta DIRECT+verify=certifi.where()
-      - se SES_ALLOW_INSECURE_SSL=1 => tenta ENV/DIRECT com verify=False (último recurso)
+    Tenta obter a URL respeitando o ambiente (proxy/rotas) e, se falhar, tenta direto.
+    Se SSL falhar e SES_ALLOW_INSECURE_SSL=1, tenta novamente com verify=False.
     """
-    allow_insecure = str((__import__("os").environ.get("SES_ALLOW_INSECURE_SSL") or "")).strip() == "1"
+    allow_insecure = _allow_insecure_ssl()
+    last: Exception | None = None
 
-    verify_candidates: list[object] = [True]
-    try:
-        import certifi  # type: ignore
+    sessions = [_SESSION_ENV, _SESSION_DIRECT]
 
-        verify_candidates.append(certifi.where())
-    except Exception:
-        pass
+    for sess in sessions:
+        try:
+            r = sess.get(url, headers=UA, timeout=timeout, allow_redirects=True)
+            r.raise_for_status()
+            return r
+        except SSLError as exc:
+            last = exc
+            if allow_insecure:
+                # Evita spam de warning no log quando verify=False estiver habilitado por env.
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore", InsecureRequestWarning)
+                    try:
+                        print(
+                            "WARN: SES SSL verify falhou; tentando verify=False (SES_ALLOW_INSECURE_SSL=1).",
+                            flush=True,
+                        )
+                        r2 = sess.get(url, headers=UA, timeout=timeout, allow_redirects=True, verify=False)
+                        r2.raise_for_status()
+                        return r2
+                    except Exception as exc2:
+                        last = exc2
+                        continue
+            continue
+        except RequestException as exc:
+            last = exc
+            continue
 
-    last_exc: Exception | None = None
-
-    for verify in verify_candidates:
-        for sess in (_SESSION_ENV, _SESSION_DIRECT):
-            try:
-                r = sess.get(url, headers=UA, timeout=timeout, verify=verify)
-                r.raise_for_status()
-                return r
-            except requests.exceptions.SSLError as exc:
-                last_exc = exc
-                continue
-            except requests.RequestException as exc:
-                last_exc = exc
-                continue
-
-    if allow_insecure:
-        for sess in (_SESSION_ENV, _SESSION_DIRECT):
-            try:
-                print("WARN: SES SSL verify falhou; tentando verify=False (SES_ALLOW_INSECURE_SSL=1).")
-                r = sess.get(url, headers=UA, timeout=timeout, verify=False)
-                r.raise_for_status()
-                return r
-            except requests.RequestException as exc:
-                last_exc = exc
-                continue
-
-    if last_exc:
-        raise last_exc
-    raise RuntimeError("SES: falha desconhecida na requisição.")
+    if last:
+        raise last
+    raise RuntimeError("SES: falha desconhecida ao requisitar URL.")
 
 
 def _fetch_text(url: str) -> str:
@@ -155,61 +164,138 @@ def _fetch_text(url: str) -> str:
     return r.text
 
 
+def _extract_urls(html: str, base_url: str) -> list[str]:
+    """
+    Extrai URLs de href/src e também strings JS que pareçam URL/paths.
+    """
+    urls: set[str] = set()
+
+    # href/src padrão
+    for m in re.findall(r"""(?is)(?:href|src)\s*=\s*['"]([^'"]+)['"]""", html):
+        u = m.strip()
+        if not u:
+            continue
+        urls.add(urljoin(base_url, u))
+
+    # strings com .zip / download em JS
+    for m in re.findall(r"""(?is)['"]([^'"]+?(?:\.zip|download)[^'"]*)['"]""", html):
+        u = m.strip()
+        if not u:
+            continue
+        urls.add(urljoin(base_url, u))
+
+    # urls absolutas soltas
+    for m in re.findall(r"""(?is)https?://[^\s"'<>]+""", html):
+        u = m.strip()
+        if u:
+            urls.add(u)
+
+    return sorted(urls)
+
+
+def _score_zip(u: str) -> int:
+    lu = u.lower()
+    s = 0
+    if ".zip" in lu:
+        s += 10
+    if "base" in lu:
+        s += 3
+    if "completa" in lu or "completo" in lu:
+        s += 4
+    if "ses" in lu:
+        s += 2
+    if "download" in lu:
+        s += 3
+    if "menuestatistica" in lu:
+        s += 1
+    # penalidades simples (evita docs aleatórios)
+    if lu.endswith(".pdf"):
+        s -= 5
+    return s
+
+
+def _pick_best_zip(candidates: list[str]) -> str | None:
+    zips = [u for u in candidates if ".zip" in u.lower()]
+    if not zips:
+        return None
+    zips.sort(key=lambda x: _score_zip(x), reverse=True)
+    return zips[0]
+
+
 def discover_ses_zip_url() -> str:
-    html = _fetch_text(SES_HOME)
+    """
+    Descobre a URL do ZIP da Base Completa do SES.
 
-    # 1) Se já houver link .zip direto
-    zips = re.findall(r'href="([^"]+?\.zip)"', html, flags=re.I)
-    if zips:
-        best = None
-        for u in zips:
-            lu = u.lower()
-            if "base" in lu and ("completa" in lu or "completo" in lu):
-                best = u
-                break
-        return urljoin(SES_HOME, best or zips[0])
+    Ordem:
+    1) SES_ZIP_URL (override)
+    2) Extrair .zip do principal.aspx
+    3) Identificar páginas candidatas (download/base/ses) e buscar .zip nelas (crawl curto)
+    """
+    override = str(os.environ.get("SES_ZIP_URL", "")).strip()
+    if override:
+        return override
 
-    # 2) Caso exista uma página intermediária de download
-    m = re.search(r'href="([^"]+)"[^>]*>\s*Base\s+do\s+SES\s+para\s+Download', html, flags=re.I)
-    if not m:
-        links = re.findall(r'href="([^"]+)"', html, flags=re.I)
-        cand = None
-        for u in links:
-            lu = u.lower()
-            if "download" in lu and "ses" in lu:
-                cand = u
-                break
-        if not cand:
-            raise RuntimeError("SES: não encontrei link .zip nem página de download no principal.")
-        download_page = urljoin(SES_HOME, cand)
-    else:
-        download_page = urljoin(SES_HOME, m.group(1))
+    home = str(os.environ.get("SES_HOME_URL", "")).strip() or SES_HOME_DEFAULT
 
-    html2 = _fetch_text(download_page)
-    zips2 = re.findall(r'href="([^"]+?\.zip)"', html2, flags=re.I)
-    if not zips2:
-        raise RuntimeError("SES: página de download encontrada, mas nenhum link .zip foi localizado.")
-    best2 = None
-    for u in zips2:
+    html = _fetch_text(home)
+    urls = _extract_urls(html, home)
+
+    best = _pick_best_zip(urls)
+    if best:
+        return best
+
+    # Tentativa especial: âncora “Base do SES para Download” pode estar com HTML aninhado
+    m = re.search(
+        r"""(?is)<a[^>]+href\s*=\s*['"]([^'"]+)['"][^>]*>.*?Base\s+do\s+SES\s+para\s+Download""",
+        html,
+    )
+    if m:
+        candidate_page = urljoin(home, m.group(1))
+        html2 = _fetch_text(candidate_page)
+        urls2 = _extract_urls(html2, candidate_page)
+        best2 = _pick_best_zip(urls2)
+        if best2:
+            return best2
+
+    # Crawl curto: pegue links “prováveis” e tente achar .zip
+    likely_pages = []
+    for u in urls:
         lu = u.lower()
-        if "base" in lu and ("completa" in lu or "completo" in lu):
-            best2 = u
-            break
-    return urljoin(download_page, best2 or zips2[0])
+        if any(tok in lu for tok in ["download", "base", "ses"]) and ".zip" not in lu:
+            likely_pages.append(u)
+
+    # limita o crawl para não explodir tempo
+    for page in likely_pages[:8]:
+        try:
+            htmlp = _fetch_text(page)
+        except Exception:
+            continue
+        up = _extract_urls(htmlp, page)
+        bestp = _pick_best_zip(up)
+        if bestp:
+            return bestp
+
+    snippet = re.sub(r"\s+", " ", html[:500]).strip()
+    raise RuntimeError(
+        "SES: não encontrei link .zip nem página de download no principal. "
+        f"home={home} snippet={snippet!r}"
+    )
 
 
 def _download_bytes(url: str) -> bytes:
     r = _request(url, timeout=180)
     b = r.content
+    # ZIP signatures
     if not (b.startswith(b"PK\x03\x04") or b.startswith(b"PK\x05\x06") or b.startswith(b"PK\x07\x08")):
         snippet = b[:200].decode("latin-1", errors="replace").strip()
-        raise RuntimeError(f"SES: download não parece ZIP (head={snippet!r})")
+        raise RuntimeError(f"SES: download não parece ZIP (head={snippet!r}) url={url}")
     return b
 
 
 def _find_zip_member(z: zipfile.ZipFile, prefer_exact_lower: str, contains_any: list[str]) -> str:
     names = z.namelist()
     lower = [n.lower() for n in names]
+
     for i, ln in enumerate(lower):
         if ln.endswith(prefer_exact_lower):
             return names[i]
@@ -224,8 +310,10 @@ def _find_zip_member(z: zipfile.ZipFile, prefer_exact_lower: str, contains_any: 
         if score > 0 and ln.endswith(".csv"):
             info = z.getinfo(n)
             scored.append((score, info.file_size, n))
+
     if not scored:
         raise RuntimeError(f"SES: não encontrei CSV compatível para {prefer_exact_lower}.")
+
     scored.sort(key=lambda x: (x[0], x[1]), reverse=True)
     return scored[0][2]
 
@@ -294,7 +382,12 @@ def _infer_cnpj_idx_by_sampling(header: list[str], rows: list[list[str]], exclud
 
 
 def _load_cached_insurers_payload() -> tuple[SesMeta, dict[str, dict[str, Any]]] | None:
+    """
+    Fallback "evergreen": usa data/raw/insurers_full.json.gz ou o snapshot mais recente.
+    Isso impede o workflow de cair quando a SUSEP oscila (SSL/HTML/layout).
+    """
     candidates: list[Path] = []
+
     raw = DATA_RAW / "insurers_full.json.gz"
     if raw.exists():
         candidates.append(raw)
@@ -338,7 +431,6 @@ def _load_cached_insurers_payload() -> tuple[SesMeta, dict[str, dict[str, Any]]]
 
         period_from = str(period.get("from") or "") or "1970-01-01"
         period_to = str(period.get("to") or "") or "1970-01-01"
-
         files = ses_source.get("files") or []
         cias_file = str(files[0]) if files else "cached_ses_cias.csv"
         seguros_file = str(files[1]) if len(files) > 1 else "cached_ses_seguros.csv"
@@ -356,111 +448,121 @@ def _load_cached_insurers_payload() -> tuple[SesMeta, dict[str, dict[str, Any]]]
 
 
 def extract_ses_master_and_financials() -> tuple[SesMeta, dict[str, dict[str, Any]]]:
+    """
+    Retorna:
+      - SesMeta com URL/nomes de arquivos e janela (12 meses)
+      - companies: sid -> {name, cnpj, premiums, claims}
+
+    Se SUSEP falhar por rede/SSL/layout e houver cache/snapshot, usa o cache para manter o build verde.
+    """
     try:
         zip_url = discover_ses_zip_url()
         zip_bytes = _download_bytes(zip_url)
-    except requests.RequestException as exc:
+
+        with zipfile.ZipFile(io.BytesIO(zip_bytes)) as z:
+            cias_member = _find_zip_member(z, "ses_cias.csv", ["ses_cias", "cias", "companhias"])
+            seg_member = _find_zip_member(z, "ses_seguros.csv", ["ses_seguros", "seguros"])
+            h_cias, rows_cias = _read_csv_from_zip(z, cias_member)
+            h_seg, rows_seg = _read_csv_from_zip(z, seg_member)
+
+        if not h_cias or not h_seg:
+            raise RuntimeError("SES: CSVs vazios ou não carregados corretamente.")
+
+        sid_i = _idx(h_cias, ["coenti", "id", "codigo", "codigo_entidade"])
+        name_i = _idx(h_cias, ["noenti", "nome", "nome_entidade", "razao_social", "no_entidade"])
+
+        cnpj_i = _find_cnpj_idx(h_cias)
+        exclude_indices = {i for i in (sid_i, name_i) if i is not None}
+        if cnpj_i is None:
+            cnpj_i = _infer_cnpj_idx_by_sampling(h_cias, rows_cias, exclude=exclude_indices)
+
+        if sid_i is None or name_i is None:
+            raise RuntimeError("SES: não foi possível localizar colunas de ID/Nome em Ses_cias.csv.")
+
+        cias: dict[str, dict[str, Any]] = {}
+        for r in rows_cias:
+            if sid_i >= len(r) or name_i >= len(r):
+                continue
+            sid = _digits(r[sid_i]).zfill(6)
+            if not sid:
+                continue
+            name = str(r[name_i] or "").strip()
+            cnpj = None
+            if cnpj_i is not None and cnpj_i < len(r):
+                c = _digits(r[cnpj_i])
+                if len(c) == 14:
+                    cnpj = c
+            cias[sid] = {"name": name or f"SES_ENTIDADE_{sid}", "cnpj": cnpj}
+
+        seg_sid_i = _idx(h_seg, ["coenti", "id", "codigo", "codigo_entidade"])
+        ym_i = _idx(h_seg, ["damesano", "ano_mes", "competencia", "mes_ano", "mesano"])
+        prem_i = _idx(h_seg, ["premio_direto", "premio", "premio_emitido", "premios", "premio_total"])
+        clm_i = _idx(h_seg, ["sinistro_direto", "sinistro", "sinistros", "sinistro_total"])
+
+        if seg_sid_i is None or ym_i is None or prem_i is None or clm_i is None:
+            raise RuntimeError("SES: não foi possível localizar colunas-chave em Ses_seguros.csv.")
+
+        max_ym: tuple[int, int] | None = None
+        for r in rows_seg:
+            if ym_i >= len(r):
+                continue
+            ym = _parse_ym(r[ym_i])
+            if not ym:
+                continue
+            if (max_ym is None) or (_ym_to_int(ym) > _ym_to_int(max_ym)):
+                max_ym = ym
+
+        if not max_ym:
+            raise RuntimeError("SES: não consegui determinar o mês mais recente (max_ym).")
+
+        start_ym = _add_months(max_ym, -11)
+        max_i = _ym_to_int(max_ym)
+        start_i = _ym_to_int(start_ym)
+
+        buckets: dict[str, dict[str, float]] = {}
+        for r in rows_seg:
+            if seg_sid_i >= len(r) or ym_i >= len(r) or prem_i >= len(r) or clm_i >= len(r):
+                continue
+            sid = _digits(r[seg_sid_i]).zfill(6)
+            if not sid:
+                continue
+            ym = _parse_ym(r[ym_i])
+            if not ym:
+                continue
+            yi = _ym_to_int(ym)
+            if yi < start_i or yi > max_i:
+                continue
+            p = _parse_brl_num(r[prem_i])
+            c = _parse_brl_num(r[clm_i])
+            if sid not in buckets:
+                buckets[sid] = {"premiums": 0.0, "claims": 0.0}
+            buckets[sid]["premiums"] += p
+            buckets[sid]["claims"] += c
+
+        companies: dict[str, dict[str, Any]] = {}
+        for sid, base in cias.items():
+            vals = buckets.get(sid) or {"premiums": 0.0, "claims": 0.0}
+            companies[sid] = {
+                "name": base.get("name"),
+                "cnpj": base.get("cnpj"),
+                "premiums": float(vals.get("premiums") or 0.0),
+                "claims": float(vals.get("claims") or 0.0),
+            }
+
+        meta = SesMeta(
+            zip_url=zip_url,
+            cias_file=str(cias_member),
+            seguros_file=str(seg_member),
+            period_from=_ym_to_date_str(start_ym),
+            period_to=_ym_to_date_str(max_ym),
+        )
+        return meta, companies
+
+    except Exception as exc:
+        if str(os.environ.get("SES_DISABLE_CACHE_FALLBACK", "")).strip() == "1":
+            raise
         cached = _load_cached_insurers_payload()
         if cached:
-            print("WARN: SES download/SSL falhou, usando payload cacheado (data/raw/snapshots).")
+            print(f"WARN: SES falhou ({exc}); usando cache/snapshot existente.", flush=True)
             return cached
-        raise RuntimeError("SES: falha de rede/SSL e nenhum cache disponível.") from exc
-
-    with zipfile.ZipFile(io.BytesIO(zip_bytes)) as z:
-        cias_member = _find_zip_member(z, "ses_cias.csv", ["ses_cias", "cias", "companhias"])
-        seg_member = _find_zip_member(z, "ses_seguros.csv", ["ses_seguros", "seguros"])
-        h_cias, rows_cias = _read_csv_from_zip(z, cias_member)
-        h_seg, rows_seg = _read_csv_from_zip(z, seg_member)
-
-    if not h_cias or not h_seg:
-        raise RuntimeError("SES: CSVs vazios ou não carregados corretamente.")
-
-    sid_i = _idx(h_cias, ["coenti", "id", "codigo", "codigo_entidade"])
-    name_i = _idx(h_cias, ["noenti", "nome", "nome_entidade", "razao_social", "no_entidade"])
-
-    cnpj_i = _find_cnpj_idx(h_cias)
-    exclude_indices = {i for i in (sid_i, name_i) if i is not None}
-    if cnpj_i is None:
-        cnpj_i = _infer_cnpj_idx_by_sampling(h_cias, rows_cias, exclude=exclude_indices)
-
-    if sid_i is None or name_i is None:
-        raise RuntimeError("SES: não foi possível localizar colunas de ID/Nome em Ses_cias.csv.")
-
-    cias: dict[str, dict[str, Any]] = {}
-    for r in rows_cias:
-        if sid_i >= len(r) or name_i >= len(r):
-            continue
-        sid = _digits(r[sid_i]).zfill(6)
-        if not sid:
-            continue
-        name = str(r[name_i] or "").strip()
-        cnpj = None
-        if cnpj_i is not None and cnpj_i < len(r):
-            c = _digits(r[cnpj_i])
-            if len(c) == 14:
-                cnpj = c
-        cias[sid] = {"name": name or f"SES_ENTIDADE_{sid}", "cnpj": cnpj}
-
-    seg_sid_i = _idx(h_seg, ["coenti", "id", "codigo", "codigo_entidade"])
-    ym_i = _idx(h_seg, ["damesano", "ano_mes", "competencia", "mes_ano", "mesano"])
-    prem_i = _idx(h_seg, ["premio_direto", "premio", "premio_emitido", "premios", "premio_total"])
-    clm_i = _idx(h_seg, ["sinistro_direto", "sinistro", "sinistros", "sinistro_total"])
-
-    if seg_sid_i is None or ym_i is None or prem_i is None or clm_i is None:
-        raise RuntimeError("SES: não foi possível localizar colunas-chave em Ses_seguros.csv.")
-
-    max_ym: tuple[int, int] | None = None
-    for r in rows_seg:
-        if ym_i >= len(r):
-            continue
-        ym = _parse_ym(r[ym_i])
-        if not ym:
-            continue
-        if (max_ym is None) or (_ym_to_int(ym) > _ym_to_int(max_ym)):
-            max_ym = ym
-
-    if not max_ym:
-        raise RuntimeError("SES: não consegui determinar o mês mais recente (max_ym).")
-
-    start_ym = _add_months(max_ym, -11)
-    max_i = _ym_to_int(max_ym)
-    start_i = _ym_to_int(start_ym)
-
-    buckets: dict[str, dict[str, float]] = {}
-    for r in rows_seg:
-        if seg_sid_i >= len(r) or ym_i >= len(r) or prem_i >= len(r) or clm_i >= len(r):
-            continue
-        sid = _digits(r[seg_sid_i]).zfill(6)
-        if not sid:
-            continue
-        ym = _parse_ym(r[ym_i])
-        if not ym:
-            continue
-        yi = _ym_to_int(ym)
-        if yi < start_i or yi > max_i:
-            continue
-        p = _parse_brl_num(r[prem_i])
-        c = _parse_brl_num(r[clm_i])
-        if sid not in buckets:
-            buckets[sid] = {"premiums": 0.0, "claims": 0.0}
-        buckets[sid]["premiums"] += p
-        buckets[sid]["claims"] += c
-
-    companies: dict[str, dict[str, Any]] = {}
-    for sid, base in cias.items():
-        vals = buckets.get(sid) or {"premiums": 0.0, "claims": 0.0}
-        companies[sid] = {
-            "name": base.get("name"),
-            "cnpj": base.get("cnpj"),
-            "premiums": float(vals.get("premiums") or 0.0),
-            "claims": float(vals.get("claims") or 0.0),
-        }
-
-    meta = SesMeta(
-        zip_url=zip_url,
-        cias_file=str(cias_member),
-        seguros_file=str(seg_member),
-        period_from=_ym_to_date_str(start_ym),
-        period_to=_ym_to_date_str(max_ym),
-    )
-    return meta, companies
+        raise
