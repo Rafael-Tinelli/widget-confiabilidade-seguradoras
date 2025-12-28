@@ -96,7 +96,17 @@ def _pick_col(row: dict[str, Any], candidates: list[str]) -> Any:
 
 def _bool_from_pt(x: Any) -> bool:
     s = str(x or "").strip().lower()
-    return s in {"1", "true", "sim", "s", "yes", "y", "finalizada", "respondida", "resolvida"}
+    return s in {
+        "1",
+        "true",
+        "sim",
+        "s",
+        "yes",
+        "y",
+        "finalizada",
+        "respondida",
+        "resolvida",
+    }
 
 
 def _sniff_delimiter(sample: str) -> str:
@@ -130,16 +140,16 @@ def discover_basecompleta_urls(months: int = 12) -> dict[str, str]:
         return score
 
     def _infer_ym(text: str, res: dict[str, Any]) -> str | None:
-    t = text.lower()
-    m = re.search(r"(\d{4})[^\d]?(\d{2})", t)
-    if m:
-        return f"{m.group(1)}-{m.group(2)}"
-    for k in ("last_modified", "created"):
-        v = res.get(k)
-        if isinstance(v, str) and len(v) >= 7 and v[4] == "-":
-            # "YYYY-MM-..." -> "YYYY-MM"
-            return v[:7]
-    return None
+        t = text.lower()
+        m = re.search(r"(\d{4})[^\d]?(\d{2})", t)
+        if m:
+            return f"{m.group(1)}-{m.group(2)}"
+        for k in ("last_modified", "created"):
+            v = res.get(k)
+            if isinstance(v, str) and len(v) >= 7 and v[4] == "-":
+                # "YYYY-MM-..." -> "YYYY-MM"
+                return v[:7]
+        return None
 
     try:
         r = _SESSION.get(api, params={"id": DATASET_ID}, headers=UA, timeout=60)
@@ -151,6 +161,7 @@ def discover_basecompleta_urls(months: int = 12) -> dict[str, str]:
         for res in resources:
             if not isinstance(res, dict):
                 continue
+
             url = str(res.get("url") or "").strip()
             name = str(res.get("name") or "").strip()
             desc = str(res.get("description") or "").strip()
@@ -176,7 +187,7 @@ def discover_basecompleta_urls(months: int = 12) -> dict[str, str]:
     except Exception:
         pass
 
-    # fallback HTML (mantém compat, mas normalmente o CKAN já resolve)
+    # fallback HTML
     page = f"{CKAN_BASE}/dataset/{DATASET_ID}"
     r2 = _SESSION.get(page, headers=UA, timeout=60)
     r2.raise_for_status()
@@ -198,16 +209,15 @@ def discover_basecompleta_urls(months: int = 12) -> dict[str, str]:
         ym = f"{m.group(1)}-{m.group(2)}"
         if u.startswith("/"):
             u = CKAN_BASE + u
-        if u.startswith("/"):
-            u = CKAN_BASE + u
-            if ym not in urls2:
-                urls2[ym] = u
-        if not urls2:
+
+        if ym not in urls2:
+            urls2[ym] = u
+
+    if not urls2:
         return {}
 
     yms2 = sorted(urls2.keys(), reverse=True)[:months]
     return {ym: urls2[ym] for ym in sorted(yms2)}
-
 
 
 def download_csv_to_gz(url: str, out_gz_path: str) -> dict[str, Any]:
@@ -312,7 +322,11 @@ def aggregate_month(gz_path: str) -> dict[str, Agg]:
     return by_name
 
 
-def to_payload(meta: dict[str, Any], by_name: dict[str, Agg], by_cnpj: dict[str, Agg] | None = None) -> dict[str, Any]:
+def to_payload(
+    meta: dict[str, Any],
+    by_name: dict[str, Agg],
+    by_cnpj: dict[str, Agg] | None = None,
+) -> dict[str, Any]:
     payload: dict[str, Any] = {"meta": meta, "by_name_key": {k: v.to_public() for k, v in by_name.items()}}
     if by_cnpj:
         payload["by_cnpj_key"] = {k: v.to_public() for k, v in by_cnpj.items()}
