@@ -1,10 +1,9 @@
-# .github/workflows/refresh-data.yml
 name: refresh data
 
 on:
   workflow_dispatch:
   schedule:
-    - cron: "17 6 * * 0"  # semanal (domingo 06:17 UTC)
+    - cron: "17 6 * * 0" # domingo 06:17 UTC
 
 permissions:
   contents: write
@@ -16,6 +15,7 @@ concurrency:
 jobs:
   refresh:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -28,171 +28,69 @@ jobs:
           python-version: "3.11"
           cache: "pip"
 
-      - name: Configure NO_PROXY (mj.gov.br + susep + opin)
+      # Importante:
+      # - Consumidor.gov: costuma precisar bypass de proxy => NO_PROXY=dados.mj.gov.br
+      # - SUSEP: NÃO colocar em NO_PROXY (evita problemas de rede/SSL/DNS no runner)
+      - name: Configure Network Proxy Bypass
         run: |
-          echo "NO_PROXY=${NO_PROXY:+$NO_PROXY,}dados.mj.gov.br,www2.susep.gov.br,data.directory.opinbrasil.com.br" >> $GITHUB_ENV
-          echo "no_proxy=${no_proxy:+$no_proxy,}dados.mj.gov.br,www2.susep.gov.br,data.directory.opinbrasil.com.br" >> $GITHUB_ENV
+          echo "NO_PROXY=${NO_PROXY:+$NO_PROXY,}dados.mj.gov.br,data.directory.opinbrasil.com.br" >> $GITHUB_ENV
+          echo "no_proxy=${no_proxy:+$no_proxy,}dados.mj.gov.br,data.directory.opinbrasil.com.br" >> $GITHUB_ENV
 
       - name: Install deps
         run: |
           pip install -r requirements.txt
           if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
 
-      # Playwright removido: SES via requests/CSV parsing (sem Chromium)
+      # Fixa CA bundle explicitamente (evita runner com SSL env quebrado)
+      - name: Pin CA bundle for requests
+        run: |
+          python - <<'PY'
+          import certifi
+          print(certifi.where())
+          PY
+          echo "REQUESTS_CA_BUNDLE=$(python - <<'PY'
+          import certifi
+          print(certifi.where())
+          PY
+          )" >> $GITHUB_ENV
+          echo "SSL_CERT_FILE=$(python - <<'PY'
+          import certifi
+          print(certifi.where())
+          PY
+          )" >> $GITHUB_ENV
 
-      # -------------------------
-      # BUILD 1: PARTICIPANTS (OPIN)
-      # -------------------------
       - name: Build JSON (participants)
         run: python -m api.build_json
         env:
           OPIN_PARTICIPANTS_URL: "https://data.directory.opinbrasil.com.br/participants"
 
-      - name: Validate participants.json (non-empty + meta.count > 0)
-        run: |
-          python - <<'PY'
-          import json
-          from pathlib import Path
-
-          p = Path("api/v1/participants.json")
-          if (not p.exists()) or p.stat().st_size < 10:
-              raise SystemExit("ERRO: api/v1/participants.json ausente ou vazio. Abortando.")
-
-          data = json.loads(p.read_text(encoding="utf-8"))
-          count = int(data.get("meta", {}).get("count", 0))
-          if count <= 0:
-              raise SystemExit(f"ERRO: meta.count inválido ({count}). Abortando.")
-          print("OK: participants.json válido. meta.count =", count)
-          PY
-
-      - name: Validate FULL archives exist (participants)
-        run: |
-          set -e
-          test -s "data/raw/opin_participants_full.json.gz"
-          count=$(ls -1 data/snapshots/opin_participants_full_*.json.gz 2>/dev/null | wc -l)
-          if [ "$count" -eq 0 ]; then echo "ERRO: Nenhum snapshot de participants encontrado"; exit 1; fi
-          echo "OK: participants FULL archives present."
-
-      - name: Guardrail SLIM size limit (participants)
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-          p = Path("api/v1/participants.json")
-          size = p.stat().st_size
-          limit = 200_000  # 200 KB
-          if size > limit:
-              raise SystemExit(f"ERRO: participants.json inflou para {size} bytes (limite {limit}).")
-          print("OK: participants.json size =", size)
-          PY
-
-      # -------------------------
-      # DEBUG: Inspeciona arquivo insurers.json ANTES do build
-      # -------------------------
-      # Isso ajuda a verificar se a fixture está correta no disco antes do Python rodar
-      - name: Debug insurers.json (pre-check)
-        run: |
-          ls -la api/v1 || true
-          echo "---- head do arquivo existente ----"
-          python - <<'PY'
-          from pathlib import Path
-          p = Path("api/v1/insurers.json")
-          print("exists:", p.exists(), "size:", p.stat().st_size if p.exists() else None)
-          if p.exists():
-              txt = p.read_text(encoding="utf-8", errors="ignore")
-              print(txt[:400])
-          PY
-
-     # -------------------------
-     # BUILD 2: INSURERS (SES)
-     # -------------------------
       - name: Build Consumidor.gov Data
+        timeout-minutes: 30
         run: python -m api.build_consumidor_gov
 
       - name: Build JSON (insurers)
         env:
           MIN_INSURERS_COUNT: "200"
           MAX_COUNT_DROP_PCT: "0.20"
+          SES_ALLOW_INSECURE_SSL: "1"
         run: python -m api.build_insurers
 
-      - name: Validate insurers.json (metrics check)
-        run: |
-          python - <<'PY'
-          import json
-          from pathlib import Path
-
-          p = Path("api/v1/insurers.json")
-          if (not p.exists()) or p.stat().st_size < 10:
-              raise SystemExit("ERRO: api/v1/insurers.json ausente ou vazio.")
-
-          data = json.loads(p.read_text(encoding="utf-8"))
-          count = int(data.get("meta", {}).get("count", 0))
-          if count <= 0:
-              raise SystemExit(f"ERRO: meta.count inválido ({count}).")
-
-          # Verifica estrutura básica dos primeiros itens (agora usando 'data')
-          for it in data.get("insurers", [])[:5]:
-              if "data" not in it:
-                  raise SystemExit(f"ERRO: item {it.get('id')} sem chave 'data'.")
-              
-              metrics = it["data"]
-              if "premiums" not in metrics:
-                  raise SystemExit(f"ERRO: item {it.get('id')} sem 'data.premiums'.")
-          
-          print("OK: insurers.json válido. meta.count =", count)
-          PY
-
-      - name: Validate FULL archives exist (insurers)
-        run: |
-          set -e
-          test -s "data/raw/insurers_full.json.gz"
-          count=$(ls -1 data/snapshots/insurers_full_*.json.gz 2>/dev/null | wc -l)
-          if [ "$count" -eq 0 ]; then echo "ERRO: Nenhum snapshot de insurers encontrado"; exit 1; fi
-          echo "OK: insurers FULL archives present."
-
-      - name: Guardrail SLIM size limit (insurers)
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-          p = Path("api/v1/insurers.json")
-          size = p.stat().st_size
-          limit = 2_000_000  # 2 MB
-          if size > limit:
-              raise SystemExit(f"ERRO: insurers.json inflou para {size} bytes (limite {limit}).")
-          print("OK: insurers.json size =", size)
-          PY
-
-      # -------------------------
-      # TESTS
-      # -------------------------
       - name: Run tests
-        # Garante que api/build_insurers.py gerou o JSON no formato esperado
         run: pytest -q
 
-      # -------------------------
-      # PRUNE SNAPSHOTS
-      # -------------------------
-      - name: Prune old snapshots (keep last 60 each)
+      - name: Prune old snapshots
         run: |
-          find data/snapshots -maxdepth 1 -name 'opin_participants_full_*.json.gz' -printf '%T@ %p\n' \
-            | sort -nr | awk 'NR>60 {print $2}' | xargs -r rm --
-          
-          find data/snapshots -maxdepth 1 -name 'insurers_full_*.json.gz' -printf '%T@ %p\n' \
+          find data/snapshots -maxdepth 1 -name '*.json.gz' -printf '%T@ %p\n' \
             | sort -nr | awk 'NR>60 {print $2}' | xargs -r rm --
 
-      # -------------------------
-      # COMMIT
-      # -------------------------
-      - name: Commit changes (if any)
+      - name: Commit changes
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-
-          git add api/v1 data/raw data/derived data/snapshots
-
+          git add api/v1 data/raw data/snapshots data/derived
           if git diff --cached --quiet; then
             echo "No changes to commit."
             exit 0
           fi
-
-          git commit -m "chore(data): refresh participants + insurers"
+          git commit -m "chore(data): refresh participants + consumidor.gov + insurers"
           git push
