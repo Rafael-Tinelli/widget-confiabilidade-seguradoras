@@ -47,8 +47,8 @@ def _read_current_as_of() -> str | None:
         return None
     try:
         meta = _load_json(OUT_LATEST).get("meta", {})
-        val = meta.get("as_of")
-        return str(val) if val else None
+        as_of = meta.get("as_of")
+        return str(as_of) if as_of else None
     except Exception:
         return None
 
@@ -88,9 +88,9 @@ def _prune_monthly(retain: int) -> None:
     )
     if len(files) <= retain:
         return
-    for f in files[: len(files) - retain]:
+    for fname in files[: len(files) - retain]:
         try:
-            os.remove(os.path.join(MONTHLY_DIR, f))
+            os.remove(os.path.join(MONTHLY_DIR, fname))
         except OSError:
             pass
 
@@ -169,7 +169,7 @@ def main(months: int = 12) -> None:
                     _merge_raw_into(merged_cnpj, str(k), raw)
 
     if not merged_name:
-        raise SystemExit("Nenhum agregado mensal disponível para montar a janela.")
+        raise SystemExit("Nenhum agregado mensal disponível para montar a janela (by_name_key_raw vazio).")
 
     out: dict[str, Any] = {
         "meta": {
@@ -177,3 +177,24 @@ def main(months: int = 12) -> None:
             "dataset": "reclamacoes-do-consumidor-gov-br",
             "window_months": months,
             "months": yms,
+            "as_of": as_of,
+            "generated_at": _utc_now(),
+            "monthly_newly_built": produced,
+        },
+        "by_name_key_raw": {k: asdict(v) for k, v in merged_name.items()},
+        "by_name_key": {k: v.to_public() for k, v in merged_name.items()},
+    }
+
+    if merged_cnpj:
+        out["by_cnpj_key_raw"] = {k: asdict(v) for k, v in merged_cnpj.items()}
+        out["by_cnpj_key"] = {k: v.to_public() for k, v in merged_cnpj.items()}
+
+    _write_json(OUT_LATEST, out)
+    print(
+        f"OK: {OUT_LATEST} (by_name_key={len(out['by_name_key'])}, "
+        f"by_cnpj_key={len(out.get('by_cnpj_key', {}))}, as_of={as_of})"
+    )
+
+
+if __name__ == "__main__":
+    main()
