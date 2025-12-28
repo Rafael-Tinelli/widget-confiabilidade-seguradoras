@@ -12,9 +12,9 @@ from urllib.parse import urljoin
 import requests
 
 SES_HOME = "https://www2.susep.gov.br/menuestatistica/ses/principal.aspx"
-UA = {"User-Agent": "Mozilla/5.0 (compatible; SanidaBot/1.0; +https://example.com)"}
+UA = {"User-Agent": "Mozilla/5.0 (compatible; SanidaBot/1.0; +https://sanida.com.br)"}
 
-# Global session to ignore env proxies (anti-proxy/SSL issues)
+# Blindagem contra proxy do ambiente (voltava ProxyError/403 no CI)
 _SESSION = requests.Session()
 _SESSION.trust_env = False
 
@@ -93,68 +93,93 @@ def _ym_to_date_str(ym: tuple[int, int]) -> str:
 
 
 def _fetch_text(url: str) -> str:
-    # Uses _SESSION to bypass proxies if needed
     r = _SESSION.get(url, headers=UA, timeout=60)
     r.raise_for_status()
     r.encoding = r.apparent_encoding or "utf-8"
     return r.text
 
 
+def _best_zip_link(candidates: list[str]) -> str:
+    """
+    Escolhe o melhor link de ZIP por scoring (evita pegar zip errado).
+    """
+    best = None
+    best_score = -1
+    for u in candidates:
+        lu = u.lower()
+        score = 0
+        if "base" in lu:
+            score += 3
+        if "completa" in lu or "completo" in lu:
+            score += 6
+        if "ses" in lu:
+            score += 1
+        if ".zip" in lu:
+            score += 1
+        if score > best_score:
+            best_score = score
+            best = u
+    return best or candidates[0]
+
+
 def discover_ses_zip_url() -> str:
     """
-    Localiza um link .zip relacionado à 'Base Completa' do SES.
+    Localiza um link ZIP relacionado à 'Base Completa' do SES.
+    Estratégia:
+      1) tenta achar ZIP diretamente no principal
+      2) se não achar, busca a página "Base do SES para Download" e acha ZIP lá
     """
     html = _fetch_text(SES_HOME)
 
-    zips = re.findall(r'href="([^"]+?\.zip)"', html, flags=re.I)
+    hrefs = re.findall(r'href="([^"]+)"', html, flags=re.I)
+    zips = [u for u in hrefs if ".zip" in u.lower()]
     if zips:
-        best = None
-        for u in zips:
-            lu = u.lower()
-            if "base" in lu and ("completa" in lu or "completo" in lu):
-                best = u
-                break
-        return urljoin(SES_HOME, best or zips[0])
+        chosen = _best_zip_link(zips)
+        return urljoin(SES_HOME, chosen)
 
-    m = re.search(r'href="([^"]+)"[^>]*>\s*Base\s+do\s+SES\s+para\s+Download', html, flags=re.I)
-    if not m:
-        links = re.findall(r'href="([^"]+)"', html, flags=re.I)
-        cand = None
-        for u in links:
+    m = re.search(
+        r'href="([^"]+)"[^>]*>\s*Base\s+do\s+SES\s+para\s+Download',
+        html,
+        flags=re.I,
+    )
+    download_page = None
+    if m:
+        download_page = urljoin(SES_HOME, m.group(1))
+    else:
+        # fallback: qualquer link que pareça levar a download do SES
+        for u in hrefs:
             lu = u.lower()
             if "download" in lu and "ses" in lu:
-                cand = u
+                download_page = urljoin(SES_HOME, u)
                 break
-        if not cand:
-            raise RuntimeError("SES: não encontrei link .zip nem página de download no principal.")
-        download_page = urljoin(SES_HOME, cand)
-    else:
-        download_page = urljoin(SES_HOME, m.group(1))
+
+    if not download_page:
+        raise RuntimeError("SES: não encontrei link .zip nem página de download no principal.")
 
     html2 = _fetch_text(download_page)
-    zips2 = re.findall(r'href="([^"]+?\.zip)"', html2, flags=re.I)
+    hrefs2 = re.findall(r'href="([^"]+)"', html2, flags=re.I)
+    zips2 = [u for u in hrefs2 if ".zip" in u.lower()]
     if not zips2:
         raise RuntimeError("SES: página de download encontrada, mas nenhum link .zip foi localizado.")
-    best2 = None
-    for u in zips2:
-        lu = u.lower()
-        if "base" in lu and ("completa" in lu or "completo" in lu):
-            best2 = u
-            break
-    return urljoin(download_page, best2 or zips2[0])
+
+    chosen2 = _best_zip_link(zips2)
+    return urljoin(download_page, chosen2)
 
 
 def _download_bytes(url: str) -> bytes:
-    # Uses _SESSION to bypass proxies if needed
-    r = _SESSION.get(url, headers=UA, timeout=180)
+    r = _SESSION.get(url, headers=UA, timeout=240, allow_redirects=True)
     r.raise_for_status()
     b = r.content
-    
-    # Avoid silent BadZipFile errors (e.g. if we got HTML error page instead of ZIP)
-    if not (b.startswith(b"PK\x03\x04") or b.startswith(b"PK\x05\x06") or b.startswith(b"PK\x07\x08")):
-        snippet = b[:200].decode("latin-1", errors="replace").strip()
-        raise RuntimeError(f"SES: download não parece ZIP (head={snippet!r})")
-    
+
+    # evita BadZipFile silencioso: às vezes vem HTML de erro/bloqueio
+    if not (
+        b.startswith(b"PK\x03\x04")
+        or b.startswith(b"PK\x05\x06")
+        or b.startswith(b"PK\x07\x08")
+    ):
+        head = b[:200].decode("latin-1", errors="replace").strip()
+        raise RuntimeError(f"SES: download não parece ZIP (head={head!r})")
+
     return b
 
 
@@ -169,11 +194,13 @@ def _find_zip_member(z: zipfile.ZipFile, prefer_exact_lower: str, contains_any: 
     scored: list[tuple[int, int, str]] = []
     for n in names:
         ln = n.lower()
+        if not ln.endswith(".csv"):
+            continue
         score = 0
         for tok in contains_any:
             if tok in ln:
                 score += 1
-        if score > 0 and ln.endswith(".csv"):
+        if score > 0:
             info = z.getinfo(n)
             scored.append((score, info.file_size, n))
 
@@ -223,6 +250,17 @@ def _find_cnpj_idx(header: list[str]) -> int | None:
     return None
 
 
+def _hits_14_digits(rows: list[list[str]], col_i: int, sample_n: int = 200) -> int:
+    hits = 0
+    for r in rows[:sample_n]:
+        if col_i >= len(r):
+            continue
+        d = _digits(r[col_i])
+        if len(d) == 14:
+            hits += 1
+    return hits
+
+
 def _infer_cnpj_idx_by_sampling(
     header: list[str], rows: list[list[str]], exclude: set[int] | None = None
 ) -> int | None:
@@ -233,7 +271,6 @@ def _infer_cnpj_idx_by_sampling(
     sample = rows[:200]
     best_i: int | None = None
     best_hits = 0
-
     for i in range(len(header)):
         if i in exclude:
             continue
@@ -248,12 +285,63 @@ def _infer_cnpj_idx_by_sampling(
             best_hits = hits
             best_i = i
 
-    # Minimo: 3 ocorrências e 20% do sample (pra não pegar coluna errada)
     if best_i is None:
         return None
-    
+
+    # mínimo: 3 ocorrências e 20% do sample (pra não pegar coluna errada)
     min_hits = max(3, int(len(sample) * 0.2))
     return best_i if best_hits >= min_hits else None
+
+
+def _infer_metric_col(
+    header: list[str],
+    rows: list[list[str]],
+    kind: str,
+    prefer_keys: list[str],
+    must_tokens: list[str],
+    avoid_tokens: list[str] | None = None,
+) -> int | None:
+    """
+    Tenta achar coluna de métrica (prêmio/sinistro) de forma resiliente:
+    - 1) tenta prefer_keys (match exato)
+    - 2) se parecer ruim (quase tudo zero), varre header por tokens e escolhe a melhor por amostragem
+    """
+    avoid_tokens = avoid_tokens or []
+    hn = [_norm(h) for h in header]
+
+    def nonzero_hits(col_i: int, sample_n: int = 400) -> int:
+        hits = 0
+        for r in rows[:sample_n]:
+            if col_i >= len(r):
+                continue
+            if _parse_brl_num(r[col_i]) != 0.0:
+                hits += 1
+        return hits
+
+    cand = _idx(header, prefer_keys)
+    if cand is not None:
+        # se a coluna candidata for “morta”, tenta fallback
+        if nonzero_hits(cand) >= 5:
+            return cand
+
+    candidates: list[tuple[int, int, int]] = []
+    # (score_tokens, hits_nonzero, idx)
+    for i, col in enumerate(hn):
+        if any(a in col for a in avoid_tokens):
+            continue
+        if not all(t in col for t in must_tokens):
+            continue
+        score = sum(1 for t in must_tokens if t in col)
+        hits = nonzero_hits(i)
+        candidates.append((score, hits, i))
+
+    if not candidates:
+        return cand
+
+    candidates.sort(key=lambda x: (x[0], x[1]), reverse=True)
+    # exige “vida mínima”
+    _, best_hits, best_i = candidates[0]
+    return best_i if best_hits >= 5 else cand
 
 
 def extract_ses_master_and_financials() -> tuple[SesMeta, dict[str, dict[str, Any]]]:
@@ -272,13 +360,15 @@ def extract_ses_master_and_financials() -> tuple[SesMeta, dict[str, dict[str, An
 
     sid_i = _idx(h_cias, ["coenti", "id", "codigo", "codigo_entidade"])
     name_i = _idx(h_cias, ["noenti", "nome", "nome_entidade", "razao_social", "no_entidade"])
-    
+    cnpj_i = _find_cnpj_idx(h_cias)
+
     if sid_i is None or name_i is None:
         raise RuntimeError("SES: não foi possível localizar colunas de ID/Nome em Ses_cias.csv.")
-    
-    # 1. Tenta achar CNPJ pelo nome do header
-    cnpj_i = _find_cnpj_idx(h_cias)
-    # 2. Se falhar, tenta inferir olhando os dados (amostragem), ignorando ID e Nome
+
+    # valida CNPJ encontrado por header; se ruim, tenta inferência por amostragem
+    if cnpj_i is not None:
+        if _hits_14_digits(rows_cias, cnpj_i) < 3:
+            cnpj_i = None
     if cnpj_i is None:
         cnpj_i = _infer_cnpj_idx_by_sampling(h_cias, rows_cias, exclude={sid_i, name_i})
 
@@ -298,9 +388,42 @@ def extract_ses_master_and_financials() -> tuple[SesMeta, dict[str, dict[str, An
         cias[sid] = {"name": name or f"SES_ENTIDADE_{sid}", "cnpj": cnpj}
 
     seg_sid_i = _idx(h_seg, ["coenti", "id", "codigo", "codigo_entidade"])
-    ym_i = _idx(h_seg, ["damesano", "ano_mes", "competencia", "mes_ano", "mesano"])
-    prem_i = _idx(h_seg, ["premio_direto", "premio", "premio_emitido", "premios", "premio_total"])
-    clm_i = _idx(h_seg, ["sinistro_direto", "sinistro", "sinistros", "sinistro_total"])
+    ym_i = _idx(h_seg, ["damesano", "ano_mes", "competencia", "mes_ano", "mesano", "ano_mes_competencia"])
+
+    # inferência resiliente das colunas de prêmio e sinistro
+    prem_i = _infer_metric_col(
+        h_seg,
+        rows_seg,
+        kind="premiums",
+        prefer_keys=[
+            "premio_direto",
+            "premio",
+            "premio_emitido",
+            "premios",
+            "premio_total",
+            "vl_premio_direto",
+            "vlpremiodireto",
+            "vlpremio",
+        ],
+        must_tokens=["premio"],
+        avoid_tokens=["sinistro"],
+    )
+    clm_i = _infer_metric_col(
+        h_seg,
+        rows_seg,
+        kind="claims",
+        prefer_keys=[
+            "sinistro_direto",
+            "sinistro",
+            "sinistros",
+            "sinistro_total",
+            "vl_sinistro_direto",
+            "vlsinistrodireto",
+            "vlsinistro",
+        ],
+        must_tokens=["sinistro"],
+        avoid_tokens=["premio"],
+    )
 
     if seg_sid_i is None or ym_i is None or prem_i is None or clm_i is None:
         raise RuntimeError("SES: não foi possível localizar colunas-chave em Ses_seguros.csv.")
@@ -347,15 +470,18 @@ def extract_ses_master_and_financials() -> tuple[SesMeta, dict[str, dict[str, An
         buckets[sid]["claims"] += c
 
     companies: dict[str, dict[str, Any]] = {}
-    # IMPORTANT: Iteramos sobre 'cias' (cadastro mestre) para garantir que todas 
-    # as empresas cadastradas apareçam no JSON final, mesmo sem prêmios no período.
-    for sid, base in cias.items():
-        vals = buckets.get(sid) or {"premiums": 0.0, "claims": 0.0}
+    for sid, vals in buckets.items():
+        premiums = float(vals.get("premiums") or 0.0)
+        claims = float(vals.get("claims") or 0.0)
+        if premiums <= 0:
+            continue
+
+        base = cias.get(sid) or {"name": f"SES_ENTIDADE_{sid}", "cnpj": None}
         companies[sid] = {
             "name": base.get("name"),
             "cnpj": base.get("cnpj"),
-            "premiums": float(vals.get("premiums") or 0.0),
-            "claims": float(vals.get("claims") or 0.0),
+            "premiums": premiums,
+            "claims": claims,
         }
 
     meta = SesMeta(
