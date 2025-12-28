@@ -15,6 +15,7 @@ concurrency:
 jobs:
   refresh:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
 
     steps:
       - name: Checkout
@@ -30,61 +31,212 @@ jobs:
 
       # Importante:
       # - Consumidor.gov: costuma precisar bypass de proxy => NO_PROXY=dados.mj.gov.br
+      # - OPIN (participants): bypass no domínio do dataset
       # - SUSEP: NÃO colocar em NO_PROXY (evita problemas de rede/SSL/DNS no runner)
       - name: Configure Network Proxy Bypass
         run: |
-          echo "NO_PROXY=${NO_PROXY:+$NO_PROXY,}dados.mj.gov.br,data.directory.opinbrasil.com.br" >> $GITHUB_ENV
-          echo "no_proxy=${no_proxy:+$no_proxy,}dados.mj.gov.br,data.directory.opinbrasil.com.br" >> $GITHUB_ENV
+          set -euo pipefail
+          echo "NO_PROXY=${NO_PROXY:+$NO_PROXY,}dados.mj.gov.br,data.directory.opinbrasil.com.br" >> "$GITHUB_ENV"
+          echo "no_proxy=${no_proxy:+$no_proxy,}dados.mj.gov.br,data.directory.opinbrasil.com.br" >> "$GITHUB_ENV"
 
       - name: Install deps
         run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
           pip install -r requirements.txt
           if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
 
       # Fixa CA bundle explicitamente (evita runner com SSL env quebrado)
       - name: Pin CA bundle for requests
         run: |
-          python - <<'PY'
+          set -euo pipefail
+          CA="$(python - <<'PY'
           import certifi
           print(certifi.where())
           PY
-          echo "REQUESTS_CA_BUNDLE=$(python - <<'PY'
-          import certifi
-          print(certifi.where())
-          PY
-          )" >> $GITHUB_ENV
-          echo "SSL_CERT_FILE=$(python - <<'PY'
-          import certifi
-          print(certifi.where())
-          PY
-          )" >> $GITHUB_ENV
+          )"
+          echo "REQUESTS_CA_BUNDLE=$CA" >> "$GITHUB_ENV"
+          echo "SSL_CERT_FILE=$CA" >> "$GITHUB_ENV"
 
       - name: Build JSON (participants)
-        run: python -m api.build_json
+        run: |
+          set -euo pipefail
+          python -m api.build_json
         env:
           OPIN_PARTICIPANTS_URL: "https://data.directory.opinbrasil.com.br/participants"
 
       - name: Build Consumidor.gov Data
         timeout-minutes: 30
-        run: python -m api.build_consumidor_gov
+        run: |
+          set -euo pipefail
+          python -m api.build_consumidor_gov
 
       - name: Build JSON (insurers)
+        run: |
+          set -euo pipefail
+          python -m api.build_insurers
         env:
           MIN_INSURERS_COUNT: "200"
           MAX_COUNT_DROP_PCT: "0.20"
           SES_ALLOW_INSECURE_SSL: "1"
-        run: python -m api.build_insurers
+
+      # Smoke-check: garante (1) artefatos-chave existem, (2) metadados mínimos,
+      # (3) SES URL acessível e com "assinatura" de ZIP sem baixar o arquivo inteiro,
+      # (4) Consumidor.gov tem janela e volume mínimos.
+      - name: Smoke-check (outputs + connectivity)
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          import re
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          import requests
+          from requests.exceptions import SSLError, RequestException
+
+          def fail(msg: str) -> None:
+              raise SystemExit(f"SMOKE FAIL: {msg}")
+
+          def load_json(p: Path) -> dict:
+              if not p.exists():
+                  fail(f"arquivo não existe: {p}")
+              if p.stat().st_size < 50:
+                  fail(f"arquivo muito pequeno: {p} ({p.stat().st_size} bytes)")
+              try:
+                  return json.loads(p.read_text(encoding="utf-8"))
+              except Exception as e:
+                  fail(f"JSON inválido em {p}: {e}")
+
+          # --- 1) insurers.json ---
+          insurers_path = Path("api/v1/insurers.json")
+          ins = load_json(insurers_path)
+
+          schema = ins.get("schemaVersion")
+          if schema != "1.0.0":
+              fail(f"schemaVersion inesperado: {schema!r}")
+
+          insurers = ins.get("insurers") or []
+          meta = ins.get("meta") or {}
+          count = int(meta.get("count", 0) or 0)
+          if count != len(insurers):
+              fail(f"meta.count != len(insurers): {count} != {len(insurers)}")
+
+          min_count = int(os.getenv("MIN_INSURERS_COUNT", "0") or 0)
+          if min_count and count < min_count:
+              fail(f"meta.count abaixo do mínimo: {count} < {min_count}")
+
+          # generatedAt (best-effort): deve ser recente (até 48h)
+          gen = str(ins.get("generatedAt") or "")
+          if gen:
+              try:
+                  dt = datetime.fromisoformat(gen.replace("Z", "+00:00"))
+                  delta = abs((datetime.now(timezone.utc) - dt).total_seconds())
+                  if delta > 48 * 3600:
+                      fail(f"generatedAt muito antigo para refresh-data: {gen}")
+              except Exception:
+                  # não falha por parse; apenas não valida recência
+                  pass
+
+          sources = ins.get("sources") or {}
+          ses_src = sources.get("ses") or {}
+          ses_url = (ses_src.get("url") or ses_src.get("zip_url") or "").strip()
+          if not ses_url.startswith("http"):
+              fail(f"sources.ses.url ausente/ inválido: {ses_url!r}")
+
+          # --- 2) Consumidor.gov agg + monthly as_of ---
+          agg_path = Path("data/derived/consumidor_gov/consumidor_gov_agg_latest.json")
+          agg = load_json(agg_path)
+
+          m = agg.get("meta") or {}
+          as_of = str(m.get("as_of") or "")
+          if not re.fullmatch(r"20\d{2}-(0[1-9]|1[0-2])", as_of):
+              fail(f"consumidor_gov meta.as_of inválido: {as_of!r}")
+
+          months = m.get("months") or []
+          if not isinstance(months, list) or not (1 <= len(months) <= 24):
+              fail(f"consumidor_gov meta.months inválido: {months!r}")
+
+          by_name = agg.get("by_name_key") or {}
+          if not isinstance(by_name, dict) or len(by_name) < 50:
+              fail(f"consumidor_gov by_name_key muito pequeno: {len(by_name) if isinstance(by_name, dict) else 'n/a'}")
+
+          monthly_path = Path(f"data/derived/consumidor_gov/monthly/consumidor_gov_{as_of}.json")
+          if not monthly_path.exists():
+              fail(f"monthly do as_of não existe: {monthly_path}")
+          if monthly_path.stat().st_size < 1000:
+              fail(f"monthly do as_of muito pequeno: {monthly_path} ({monthly_path.stat().st_size} bytes)")
+
+          # --- 3) OPIN/participants: verificação resiliente (não assume nome fixo) ---
+          candidates = [
+              Path("api/v1/participants.json"),
+              Path("api/v1/opin_participants.json"),
+              Path("api/v1/participants_latest.json"),
+              Path("data/raw/opin_participants_latest.json"),
+              Path("data/raw/opin/participants_latest.json"),
+              Path("data/derived/opin/participants_latest.json"),
+          ]
+          found = [p for p in candidates if p.exists() and p.stat().st_size > 200]
+          if not found:
+              # fallback: qualquer arquivo em api/v1 com "particip" no nome
+              for p in Path("api/v1").glob("*particip*"):
+                  if p.is_file() and p.stat().st_size > 200:
+                      found.append(p)
+                      break
+          if not found:
+              fail("não encontrei artefato de participants/OPIN (api/v1 ou data/*)")
+
+          # --- 4) Conectividade SES (sem baixar arquivo inteiro) ---
+          # Tenta ler os primeiros bytes via Range; valida assinatura ZIP ("PK").
+          headers = {
+              "User-Agent": "Mozilla/5.0",
+              "Range": "bytes=0-3",
+          }
+
+          allow_insecure = str(os.getenv("SES_ALLOW_INSECURE_SSL", "")).strip().lower() in {"1", "true", "yes"}
+
+          def fetch_head_bytes(verify: bool) -> bytes:
+              r = requests.get(ses_url, headers=headers, timeout=30, stream=True, verify=verify, allow_redirects=True)
+              r.raise_for_status()
+              return r.raw.read(4)
+
+          try:
+              b = fetch_head_bytes(verify=True)
+          except SSLError:
+              if not allow_insecure:
+                  fail("SES SSL falhou com verify=True e SES_ALLOW_INSECURE_SSL não está habilitado")
+              b = fetch_head_bytes(verify=False)
+          except RequestException as e:
+              fail(f"falha ao conectar/baixar cabeçalho do SES: {e}")
+
+          if not (len(b) >= 2 and b[:2] == b"PK"):
+              fail(f"SES URL não parece ZIP (bytes iniciais={b!r})")
+
+          print("SMOKE OK:")
+          print(f"- insurers.json: count={count}, generatedAt={gen or '(sem generatedAt)'}")
+          print(f"- SES url OK (zip signature): {ses_url}")
+          print(f"- consumidor.gov OK: as_of={as_of}, months={len(months)}, by_name_key={len(by_name)}")
+          print(f"- participants OK: {found[0]}")
+          PY
+        env:
+          MIN_INSURERS_COUNT: "200"
+          SES_ALLOW_INSECURE_SSL: "1"
 
       - name: Run tests
-        run: pytest -q
+        run: |
+          set -euo pipefail
+          pytest -q
 
       - name: Prune old snapshots
         run: |
+          set -euo pipefail
           find data/snapshots -maxdepth 1 -name '*.json.gz' -printf '%T@ %p\n' \
             | sort -nr | awk 'NR>60 {print $2}' | xargs -r rm --
 
       - name: Commit changes
         run: |
+          set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add api/v1 data/raw data/snapshots data/derived
