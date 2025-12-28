@@ -104,55 +104,110 @@ def _sniff_delimiter(sample: str) -> str:
 
 
 def discover_basecompleta_urls(months: int = 12) -> dict[str, str]:
+    """
+    Descobre URLs mensais da Base Completa do Consumidor.gov via CKAN (package_show).
+    Robusto a mudanças de naming: usa scoring e infere YYYY-MM por:
+      (1) regex no name/desc/url
+      (2) fallback em res['last_modified'] / res['created'] (YYYY-MM)
+    """
     api = f"{CKAN_BASE}/api/3/action/package_show"
+
+    def _score(text: str) -> int:
+        t = text.lower()
+        score = 0
+        if "base completa" in t or "base_completa" in t or "basecompleta" in t:
+            score += 25
+        if "base" in t and "complet" in t:
+            score += 12
+        if "reclama" in t:
+            score += 3
+        if "consumidor" in t:
+            score += 2
+        if any(bad in t for bad in ["dicion", "gloss", "layout", "manual", "metadad", "pdf"]):
+            score -= 20
+        if any(good in t for good in ["/download/", ".csv", ".zip", ".gz"]):
+            score += 2
+        return score
+
+    def _infer_ym(text: str, res: dict[str, Any]) -> str | None:
+    t = text.lower()
+    m = re.search(r"(\d{4})[^\d]?(\d{2})", t)
+    if m:
+        return f"{m.group(1)}-{m.group(2)}"
+    for k in ("last_modified", "created"):
+        v = res.get(k)
+        if isinstance(v, str) and len(v) >= 7 and v[4] == "-":
+            # "YYYY-MM-..." -> "YYYY-MM"
+            return v[:7]
+    return None
+
     try:
         r = _SESSION.get(api, params={"id": DATASET_ID}, headers=UA, timeout=60)
         r.raise_for_status()
         pkg = r.json().get("result") or {}
         resources = pkg.get("resources") or []
-        urls: dict[str, str] = {}
+
+        best_by_ym: dict[str, tuple[int, str]] = {}
         for res in resources:
             if not isinstance(res, dict):
                 continue
-            url = str(res.get("url") or "")
-            name = str(res.get("name") or "")
-            if "base completa" not in name.lower():
+            url = str(res.get("url") or "").strip()
+            name = str(res.get("name") or "").strip()
+            desc = str(res.get("description") or "").strip()
+            fmt = str(res.get("format") or "").strip()
+            text = f"{name} {desc} {url} {fmt}"
+
+            sc = _score(text)
+            if sc <= 0 or not url:
                 continue
-            m = re.search(r"(\d{4})[^\d]?(\d{2})", name)
-            if not m:
+
+            ym = _infer_ym(text, res)
+            if not ym:
                 continue
-            ym = f"{m.group(1)}-{m.group(2)}"
-            urls[ym] = url
-        if urls:
-            yms = sorted(urls.keys(), reverse=True)[:months]
-            return {ym: urls[ym] for ym in sorted(yms)}
+
+            prev = best_by_ym.get(ym)
+            if prev is None or sc > prev[0]:
+                best_by_ym[ym] = (sc, url)
+
+        if best_by_ym:
+            yms = sorted(best_by_ym.keys(), reverse=True)[:months]
+            return {ym: best_by_ym[ym][1] for ym in sorted(yms)}
+
     except Exception:
         pass
 
+    # fallback HTML (mantém compat, mas normalmente o CKAN já resolve)
     page = f"{CKAN_BASE}/dataset/{DATASET_ID}"
     r2 = _SESSION.get(page, headers=UA, timeout=60)
     r2.raise_for_status()
     html = r2.text
 
-    links = re.findall(r'href="([^"]+)"', html, flags=re.I)
+    links = set(re.findall(r'href="([^"]+)"', html, flags=re.I))
+    links |= set(re.findall(r'data-url="([^"]+)"', html, flags=re.I))
+
     urls2: dict[str, str] = {}
     for u in links:
         lu = u.lower()
-        if "base-completa" not in lu and "base_completa" not in lu and "base%20completa" not in lu:
+        if "/download/" not in lu and not any(ext in lu for ext in [".csv", ".zip", ".gz"]):
             continue
-        m = re.search(r"(\d{4})[^\d]?(\d{2})", u)
+
+        m = re.search(r"(\d{4})[^\d]?(\d{2})", lu)
         if not m:
             continue
+
         ym = f"{m.group(1)}-{m.group(2)}"
         if u.startswith("/"):
             u = CKAN_BASE + u
+        if ym not in urls2:
         urls2[ym] = u
+
 
     if not urls2:
         return {}
 
     yms2 = sorted(urls2.keys(), reverse=True)[:months]
     return {ym: urls2[ym] for ym in sorted(yms2)}
+
 
 
 def download_csv_to_gz(url: str, out_gz_path: str) -> dict[str, Any]:
