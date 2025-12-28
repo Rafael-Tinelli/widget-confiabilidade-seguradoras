@@ -242,54 +242,90 @@ def aggregate_month_dual(gz_path: str) -> tuple[dict[str, Agg], dict[str, Agg]]:
     by_name: dict[str, Agg] = {}
     by_cnpj: dict[str, Agg] = {}
 
+    def _norm_field(s: str) -> str:
+        s = (s or "").strip().lower()
+        s = re.sub(r"\s+", " ", s)
+        s = re.sub(r"[^a-z0-9 ]+", "", s)
+        return s.replace(" ", "")
+
+    def _pick_field(fieldnames: list[str], must_contain: list[str], prefer_exact: list[str] | None = None) -> str | None:
+        """
+        Escolhe uma coluna por heurística:
+        - tenta 'prefer_exact' (case-insensitive, normalizado)
+        - senão ranqueia por 'must_contain' dentro do nome normalizado
+        """
+        if not fieldnames:
+            return None
+
+        norm_map = {fn: _norm_field(fn) for fn in fieldnames}
+
+        if prefer_exact:
+            pe = {_norm_field(x) for x in prefer_exact}
+            for fn, n in norm_map.items():
+                if n in pe:
+                    return fn
+
+        best_fn: str | None = None
+        best_score = 0
+        for fn, n in norm_map.items():
+            score = 0
+            for tok in must_contain:
+                if tok in n:
+                    score += 1
+            if score > best_score:
+                best_score = score
+                best_fn = fn
+
+        return best_fn if best_score > 0 else None
+
     with gzip.open(gz_path, "rt", encoding="utf-8", errors="replace") as f:
         sample = f.read(4096)
         delim = _sniff_delimiter(sample)
         f.seek(0)
 
         reader = csv.DictReader(f, delimiter=delim)
+        fieldnames = list(reader.fieldnames or [])
+
+        # Nome fornecedor (variações comuns)
+        f_fornecedor = _pick_field(
+            fieldnames,
+            must_contain=["nomefantasia", "fornecedor", "fantasia"],
+            prefer_exact=["nomeFantasia", "fornecedor", "nome_fornecedor", "Fornecedor", "nomeFantasiaFornecedor"],
+        )
+
+        # CNPJ fornecedor (variações comuns)
+        f_cnpj = _pick_field(
+            fieldnames,
+            must_contain=["cnpj", "fornecedor"],
+            prefer_exact=["cnpjFornecedor", "cnpj_fornecedor", "CNPJ", "cnpj", "cnpjFornecedorPrincipal"],
+        )
+
+        # Flags/Status
+        f_finalizada = _pick_field(fieldnames, must_contain=["finalizada", "status"], prefer_exact=["finalizada", "Finalizada", "status"])
+        f_respondida = _pick_field(fieldnames, must_contain=["respondida"], prefer_exact=["respondida", "Respondida"])
+        f_resolvida = _pick_field(fieldnames, must_contain=["resolvida", "indicadorresolucao"], prefer_exact=["resolvida", "Resolvida", "indicadorResolucao"])
+
+        # Nota e tempo
+        f_nota = _pick_field(fieldnames, must_contain=["nota", "consumidor"], prefer_exact=["notaConsumidor", "nota_consumidor", "nota"])
+        f_tempo = _pick_field(fieldnames, must_contain=["tempo", "resposta"], prefer_exact=["tempoResposta", "tempo_resposta", "tempoRespostaDias"])
+
         for row in reader:
             if not isinstance(row, dict):
                 continue
 
-            fornecedor = str(
-                _pick_col(
-                    row,
-                    [
-                        "nomeFantasia",
-                        "nome_fantasia",
-                        "fornecedor",
-                        "nome_fornecedor",
-                        "Fornecedor",
-                        "nomeFantasiaFornecedor",
-                    ],
-                )
-                or ""
-            ).strip()
-
-            cnpj = _digits(
-                _pick_col(
-                    row,
-                    [
-                        "cnpjFornecedor",
-                        "cnpj_fornecedor",
-                        "CNPJ",
-                        "cnpj",
-                        "cnpjFornecedorPrincipal",
-                    ],
-                )
-            )
+            fornecedor = str(row.get(f_fornecedor) or "").strip() if f_fornecedor else ""
+            cnpj = _digits(row.get(f_cnpj)) if f_cnpj else ""
             cnpj = cnpj if len(cnpj) == 14 else ""
 
             key_name = _norm_key(fornecedor) if fornecedor else ""
             key_cnpj = cnpj if cnpj else ""
 
-            finalizada = _bool_from_pt(_pick_col(row, ["finalizada", "Finalizada", "status"]))
-            respondida = _bool_from_pt(_pick_col(row, ["respondida", "Respondida"]))
-            resolvida = _bool_from_pt(_pick_col(row, ["resolvida", "Resolvida", "indicadorResolucao"]))
+            finalizada = _bool_from_pt(row.get(f_finalizada)) if f_finalizada else False
+            respondida = _bool_from_pt(row.get(f_respondida)) if f_respondida else False
+            resolvida = _bool_from_pt(row.get(f_resolvida)) if f_resolvida else False
 
-            nota = _to_float(_pick_col(row, ["notaConsumidor", "nota_consumidor", "nota"]))
-            tempo = _to_float(_pick_col(row, ["tempoResposta", "tempo_resposta", "tempoRespostaDias"]))
+            nota = _to_float(row.get(f_nota)) if f_nota else 0.0
+            tempo = _to_float(row.get(f_tempo)) if f_tempo else 0.0
 
             def _apply(target: dict[str, Agg], k: str) -> None:
                 if not k:
@@ -315,6 +351,7 @@ def aggregate_month_dual(gz_path: str) -> tuple[dict[str, Agg], dict[str, Agg]]:
             _apply(by_cnpj, key_cnpj)
 
     return by_name, by_cnpj
+
 
 
 def aggregate_month(gz_path: str) -> dict[str, Agg]:
