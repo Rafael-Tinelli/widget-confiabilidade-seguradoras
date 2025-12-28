@@ -1,9 +1,9 @@
 from __future__ import annotations
+from __future__ import annotations
 
 import csv
 import gzip
 import hashlib
-import io
 import os
 import re
 from dataclasses import dataclass
@@ -14,7 +14,7 @@ import requests
 
 CKAN_BASE = "https://dados.mj.gov.br"
 DATASET_ID = "reclamacoes-do-consumidor-gov-br"
-UA = {"User-Agent": "Mozilla/5.0 (compatible; SanidaBot/1.0; +https://sanida.com.br)"}
+UA = {"User-Agent": "Mozilla/5.0 (compatible; SanidaBot/1.0)"}
 
 _SESSION = requests.Session()
 _SESSION.trust_env = False
@@ -46,9 +46,7 @@ class Agg:
 
     def to_public(self) -> dict[str, Any]:
         responded_rate = (self.respondidas / self.finalizadas) if self.finalizadas else None
-        resolution_rate = (
-            self.resolvidas_indicador / self.finalizadas
-        ) if self.finalizadas else None
+        resolution_rate = (self.resolvidas_indicador / self.finalizadas) if self.finalizadas else None
         satisfaction_avg = (self.nota_sum / self.nota_count) if self.nota_count else None
         avg_response_days = (self.tempo_sum / self.tempo_count) if self.tempo_count else None
         return {
@@ -78,8 +76,8 @@ def _norm_key(s: str) -> str:
     return s.strip()
 
 
-def _digits(s: Any) -> str:
-    return re.sub(r"\D+", "", str(s or ""))
+def _digits(x: Any) -> str:
+    return re.sub(r"\D+", "", str(x or ""))
 
 
 def _to_float(x: Any) -> float:
@@ -106,14 +104,6 @@ def _sniff_delimiter(sample: str) -> str:
     return ";" if sample.count(";") >= sample.count(",") else ","
 
 
-def _sha256_file(path: str) -> str:
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(1024 * 1024), b""):
-            h.update(chunk)
-    return h.hexdigest()
-
-
 def discover_basecompleta_urls(months: int = 12) -> dict[str, str]:
     api = f"{CKAN_BASE}/api/3/action/package_show"
     try:
@@ -127,7 +117,7 @@ def discover_basecompleta_urls(months: int = 12) -> dict[str, str]:
                 continue
             url = str(res.get("url") or "")
             name = str(res.get("name") or "")
-            if "Base Completa" not in name and "base completa" not in name.lower():
+            if "base completa" not in name.lower():
                 continue
             m = re.search(r"(\d{4})[^\d]?(\d{2})", name)
             if not m:
@@ -140,7 +130,6 @@ def discover_basecompleta_urls(months: int = 12) -> dict[str, str]:
     except Exception:
         pass
 
-    # fallback HTML
     page = f"{CKAN_BASE}/dataset/{DATASET_ID}"
     r2 = _SESSION.get(page, headers=UA, timeout=60)
     r2.raise_for_status()
@@ -149,7 +138,8 @@ def discover_basecompleta_urls(months: int = 12) -> dict[str, str]:
     links = re.findall(r'href="([^"]+)"', html, flags=re.I)
     urls2: dict[str, str] = {}
     for u in links:
-        if "base-completa" not in u and "base_completa" not in u.lower():
+        lu = u.lower()
+        if "base-completa" not in lu and "base_completa" not in lu and "base%20completa" not in lu:
             continue
         m = re.search(r"(\d{4})[^\d]?(\d{2})", u)
         if not m:
@@ -181,12 +171,7 @@ def download_csv_to_gz(url: str, out_gz_path: str) -> dict[str, Any]:
                 gz.write(chunk)
                 size += len(chunk)
 
-    return {
-        "url": url,
-        "bytes": size,
-        "sha256": sha.hexdigest(),
-        "generated_at": _utc_now(),
-    }
+    return {"url": url, "bytes": size, "sha256": sha.hexdigest(), "generated_at": _utc_now()}
 
 
 def aggregate_month_dual(gz_path: str) -> tuple[dict[str, Agg], dict[str, Agg]]:
@@ -212,6 +197,7 @@ def aggregate_month_dual(gz_path: str) -> tuple[dict[str, Agg], dict[str, Agg]]:
                         "fornecedor",
                         "nome_fornecedor",
                         "Fornecedor",
+                        "nomeFantasiaFornecedor",
                     ],
                 )
                 or ""
@@ -220,7 +206,13 @@ def aggregate_month_dual(gz_path: str) -> tuple[dict[str, Agg], dict[str, Agg]]:
             cnpj = _digits(
                 _pick_col(
                     row,
-                    ["cnpjFornecedor", "cnpj_fornecedor", "CNPJ", "cnpj", "cnpjFornecedorPrincipal"],
+                    [
+                        "cnpjFornecedor",
+                        "cnpj_fornecedor",
+                        "CNPJ",
+                        "cnpj",
+                        "cnpjFornecedorPrincipal",
+                    ],
                 )
             )
             cnpj = cnpj if len(cnpj) == 14 else ""
@@ -231,6 +223,7 @@ def aggregate_month_dual(gz_path: str) -> tuple[dict[str, Agg], dict[str, Agg]]:
             finalizada = _bool_from_pt(_pick_col(row, ["finalizada", "Finalizada", "status"]))
             respondida = _bool_from_pt(_pick_col(row, ["respondida", "Respondida"]))
             resolvida = _bool_from_pt(_pick_col(row, ["resolvida", "Resolvida", "indicadorResolucao"]))
+
             nota = _to_float(_pick_col(row, ["notaConsumidor", "nota_consumidor", "nota"]))
             tempo = _to_float(_pick_col(row, ["tempoResposta", "tempo_resposta", "tempoRespostaDias"]))
 
@@ -257,4 +250,16 @@ def aggregate_month_dual(gz_path: str) -> tuple[dict[str, Agg], dict[str, Agg]]:
             _apply(by_name, key_name)
             _apply(by_cnpj, key_cnpj)
 
-    return by_name, by_c
+    return by_name, by_cnpj
+
+
+def aggregate_month(gz_path: str) -> dict[str, Agg]:
+    by_name, _ = aggregate_month_dual(gz_path)
+    return by_name
+
+
+def to_payload(meta: dict[str, Any], by_name: dict[str, Agg], by_cnpj: dict[str, Agg] | None = None) -> dict[str, Any]:
+    payload: dict[str, Any] = {"meta": meta, "by_name_key": {k: v.to_public() for k, v in by_name.items()}}
+    if by_cnpj:
+        payload["by_cnpj_key"] = {k: v.to_public() for k, v in by_cnpj.items()}
+    return payload
