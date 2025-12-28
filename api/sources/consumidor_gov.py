@@ -5,6 +5,7 @@ import gzip
 import hashlib
 import os
 import re
+import unicodedata
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
@@ -16,7 +17,7 @@ DATASET_ID = "reclamacoes-do-consumidor-gov-br"
 UA = {"User-Agent": "Mozilla/5.0 (compatible; SanidaBot/1.0)"}
 
 _SESSION = requests.Session()
-_SESSION.trust_env = False
+_SESSION.trust_env = False  # garante bypass de proxy do ambiente
 
 
 @dataclass
@@ -60,29 +61,25 @@ class Agg:
 
 
 def _utc_now() -> str:
-    return (
-        datetime.now(timezone.utc)
-        .replace(microsecond=0)
-        .isoformat()
-        .replace("+00:00", "Z")
-    )
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def _norm_key(s: str) -> str:
     s = (s or "").strip().lower()
+    s = unicodedata.normalize("NFKD", s)
+    s = "".join(ch for ch in s if not unicodedata.combining(ch))
     s = re.sub(r"\s+", " ", s)
     s = re.sub(r"[^a-z0-9 ]+", "", s)
     return s.strip()
 
 
-def _digits(x: Any) -> str:
-    return re.sub(r"\D+", "", str(x or ""))
+def _digits(s: Any) -> str:
+    return re.sub(r"\D+", "", str(s or ""))
 
 
 def _to_float(x: Any) -> float:
     try:
-        s = str(x).strip().replace(",", ".")
-        return float(s)
+        return float(str(x).strip().replace(",", "."))
     except Exception:
         return 0.0
 
@@ -96,275 +93,195 @@ def _pick_col(row: dict[str, Any], candidates: list[str]) -> Any:
 
 def _bool_from_pt(x: Any) -> bool:
     s = str(x or "").strip().lower()
-    return s in {
-        "1",
-        "true",
-        "sim",
-        "s",
-        "yes",
-        "y",
-        "finalizada",
-        "respondida",
-        "resolvida",
-    }
+    return s in {"1", "true", "sim", "s", "yes", "y"}
 
 
 def _sniff_delimiter(sample: str) -> str:
     return ";" if sample.count(";") >= sample.count(",") else ","
 
 
-def discover_basecompleta_urls(months: int = 12) -> dict[str, str]:
-    """
-    Descobre URLs mensais da Base Completa do Consumidor.gov via CKAN (package_show).
-    Robusto a mudanças de naming: usa scoring e infere YYYY-MM por:
-      (1) regex no name/desc/url
-      (2) fallback em res['last_modified'] / res['created'] (YYYY-MM)
-    """
-    api = f"{CKAN_BASE}/api/3/action/package_show"
+def _sha256_file(path: str) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
 
-    def _score(text: str) -> int:
-        t = text.lower()
-        score = 0
-        if "base completa" in t or "base_completa" in t or "basecompleta" in t:
-            score += 25
-        if "base" in t and "complet" in t:
-            score += 12
-        if "reclama" in t:
-            score += 3
-        if "consumidor" in t:
-            score += 2
-        if any(bad in t for bad in ["dicion", "gloss", "layout", "manual", "metadad", "pdf"]):
-            score -= 20
-        if any(good in t for good in ["/download/", ".csv", ".zip", ".gz"]):
-            score += 2
-        return score
 
-    def _infer_ym(text: str, res: dict[str, Any]) -> str | None:
-        t = text.lower()
-        m = re.search(r"(\d{4})[^\d]?(\d{2})", t)
-        if m:
-            return f"{m.group(1)}-{m.group(2)}"
-        for k in ("last_modified", "created"):
-            v = res.get(k)
-            if isinstance(v, str) and len(v) >= 7 and v[4] == "-":
-                # "YYYY-MM-..." -> "YYYY-MM"
-                return v[:7]
+def _extract_ym(text: str) -> str | None:
+    """
+    Extrai somente YYYY-MM válido (20xx e mês 01..12).
+    Aceita padrões como 2025-11, 2025_11, 202511.
+    """
+    t = (text or "").lower()
+    m = re.search(r"(20\d{2})[-_]?([01]\d)", t)
+    if not m:
         return None
+    y = int(m.group(1))
+    mo = int(m.group(2))
+    if y < 2000 or y > 2099:
+        return None
+    if mo < 1 or mo > 12:
+        return None
+    return f"{y:04d}-{mo:02d}"
 
+
+def discover_basecompleta_urls(months: int = 12) -> dict[str, str]:
+    api = f"{CKAN_BASE}/api/3/action/package_show"
+    found: dict[str, str] = {}
+
+    # 1) CKAN API
     try:
         r = _SESSION.get(api, params={"id": DATASET_ID}, headers=UA, timeout=60)
         r.raise_for_status()
         pkg = r.json().get("result") or {}
         resources = pkg.get("resources") or []
-
-        best_by_ym: dict[str, tuple[int, str]] = {}
         for res in resources:
             if not isinstance(res, dict):
                 continue
-
-            url = str(res.get("url") or "").strip()
-            name = str(res.get("name") or "").strip()
-            desc = str(res.get("description") or "").strip()
-            fmt = str(res.get("format") or "").strip()
-            text = f"{name} {desc} {url} {fmt}"
-
-            sc = _score(text)
-            if sc <= 0 or not url:
+            url = str(res.get("url") or "")
+            name = str(res.get("name") or "")
+            hay = f"{name} {url}".lower()
+            if "basecompleta" not in hay and "base completa" not in hay:
                 continue
-
-            ym = _infer_ym(text, res)
+            if not re.search(r"\.csv(\.gz)?($|\?)", url, flags=re.I):
+                continue
+            ym = _extract_ym(hay)
             if not ym:
                 continue
-
-            prev = best_by_ym.get(ym)
-            if prev is None or sc > prev[0]:
-                best_by_ym[ym] = (sc, url)
-
-        if best_by_ym:
-            yms = sorted(best_by_ym.keys(), reverse=True)[:months]
-            return {ym: best_by_ym[ym][1] for ym in sorted(yms)}
-
+            found[ym] = url
     except Exception:
         pass
 
-    # fallback HTML
-    page = f"{CKAN_BASE}/dataset/{DATASET_ID}"
-    r2 = _SESSION.get(page, headers=UA, timeout=60)
-    r2.raise_for_status()
-    html = r2.text
+    # 2) fallback HTML
+    if not found:
+        try:
+            page = f"{CKAN_BASE}/dataset/{DATASET_ID}"
+            r2 = _SESSION.get(page, headers=UA, timeout=60)
+            r2.raise_for_status()
+            urls = re.findall(r"https?://[^\s\"']+?\.csv(?:\.gz)?", r2.text, flags=re.I)
+            for u in urls:
+                lu = u.lower()
+                if "basecompleta" not in lu:
+                    continue
+                ym = _extract_ym(lu)
+                if not ym:
+                    continue
+                found[ym] = u
+        except Exception:
+            return {}
 
-    links = set(re.findall(r'href="([^"]+)"', html, flags=re.I))
-    links |= set(re.findall(r'data-url="([^"]+)"', html, flags=re.I))
-
-    urls2: dict[str, str] = {}
-    for u in links:
-        lu = u.lower()
-        if "/download/" not in lu and not any(ext in lu for ext in [".csv", ".zip", ".gz"]):
-            continue
-
-        m = re.search(r"(\d{4})[^\d]?(\d{2})", lu)
-        if not m:
-            continue
-
-        ym = f"{m.group(1)}-{m.group(2)}"
-        if u.startswith("/"):
-            u = CKAN_BASE + u
-
-        if ym not in urls2:
-            urls2[ym] = u
-
-    if not urls2:
+    if not found:
         return {}
 
-    yms2 = sorted(urls2.keys(), reverse=True)[:months]
-    return {ym: urls2[ym] for ym in sorted(yms2)}
+    yms_sorted = sorted(found.keys(), reverse=True)[: max(1, months)]
+    return {ym: found[ym] for ym in sorted(yms_sorted)}
 
 
 def download_csv_to_gz(url: str, out_gz_path: str) -> dict[str, Any]:
     os.makedirs(os.path.dirname(out_gz_path), exist_ok=True)
-
-    with _SESSION.get(url, headers=UA, timeout=180, stream=True) as r:
+    with _SESSION.get(url, headers=UA, timeout=600, stream=True) as r:
         r.raise_for_status()
-        sha = hashlib.sha256()
-        size = 0
-        with gzip.open(out_gz_path, "wb") as gz:
-            for chunk in r.iter_content(chunk_size=1024 * 256):
-                if not chunk:
-                    continue
-                sha.update(chunk)
-                gz.write(chunk)
-                size += len(chunk)
+        ct = (r.headers.get("content-type") or "").lower()
+        is_gz = url.lower().endswith(".gz") or "gzip" in ct
 
-    return {"url": url, "bytes": size, "sha256": sha.hexdigest(), "generated_at": _utc_now()}
+        if is_gz:
+            with open(out_gz_path, "wb") as f:
+                for chunk in r.iter_content(chunk_size=1024 * 1024):
+                    if chunk:
+                        f.write(chunk)
+        else:
+            with gzip.open(out_gz_path, "wb") as gz:
+                for chunk in r.iter_content(chunk_size=1024 * 1024):
+                    if chunk:
+                        gz.write(chunk)
+
+    return {
+        "url": url,
+        "bytes": os.path.getsize(out_gz_path),
+        "sha256": _sha256_file(out_gz_path),
+        "downloaded_at": _utc_now(),
+    }
 
 
 def aggregate_month_dual(gz_path: str) -> tuple[dict[str, Agg], dict[str, Agg]]:
     by_name: dict[str, Agg] = {}
     by_cnpj: dict[str, Agg] = {}
 
-    def _norm_field(s: str) -> str:
-        s = (s or "").strip().lower()
-        s = re.sub(r"\s+", " ", s)
-        s = re.sub(r"[^a-z0-9 ]+", "", s)
-        return s.replace(" ", "")
-
-    def _pick_field(fieldnames: list[str], must_contain: list[str], prefer_exact: list[str] | None = None) -> str | None:
-        """
-        Escolhe uma coluna por heurística:
-        - tenta 'prefer_exact' (case-insensitive, normalizado)
-        - senão ranqueia por 'must_contain' dentro do nome normalizado
-        """
-        if not fieldnames:
-            return None
-
-        norm_map = {fn: _norm_field(fn) for fn in fieldnames}
-
-        if prefer_exact:
-            pe = {_norm_field(x) for x in prefer_exact}
-            for fn, n in norm_map.items():
-                if n in pe:
-                    return fn
-
-        best_fn: str | None = None
-        best_score = 0
-        for fn, n in norm_map.items():
-            score = 0
-            for tok in must_contain:
-                if tok in n:
-                    score += 1
-            if score > best_score:
-                best_score = score
-                best_fn = fn
-
-        return best_fn if best_score > 0 else None
-
-    with gzip.open(gz_path, "rt", encoding="utf-8", errors="replace") as f:
+    with gzip.open(gz_path, "rt", encoding="latin-1", errors="replace") as f:
         sample = f.read(4096)
-        delim = _sniff_delimiter(sample)
         f.seek(0)
-
+        delim = _sniff_delimiter(sample)
         reader = csv.DictReader(f, delimiter=delim)
-        fieldnames = list(reader.fieldnames or [])
-
-        # Nome fornecedor (variações comuns)
-        f_fornecedor = _pick_field(
-            fieldnames,
-            must_contain=["nomefantasia", "fornecedor", "fantasia"],
-            prefer_exact=["nomeFantasia", "fornecedor", "nome_fornecedor", "Fornecedor", "nomeFantasiaFornecedor"],
-        )
-
-        # CNPJ fornecedor (variações comuns)
-        f_cnpj = _pick_field(
-            fieldnames,
-            must_contain=["cnpj", "fornecedor"],
-            prefer_exact=["cnpjFornecedor", "cnpj_fornecedor", "CNPJ", "cnpj", "cnpjFornecedorPrincipal"],
-        )
-
-        # Flags/Status
-        f_finalizada = _pick_field(fieldnames, must_contain=["finalizada", "status"], prefer_exact=["finalizada", "Finalizada", "status"])
-        f_respondida = _pick_field(fieldnames, must_contain=["respondida"], prefer_exact=["respondida", "Respondida"])
-        f_resolvida = _pick_field(fieldnames, must_contain=["resolvida", "indicadorresolucao"], prefer_exact=["resolvida", "Resolvida", "indicadorResolucao"])
-
-        # Nota e tempo
-        f_nota = _pick_field(fieldnames, must_contain=["nota", "consumidor"], prefer_exact=["notaConsumidor", "nota_consumidor", "nota"])
-        f_tempo = _pick_field(fieldnames, must_contain=["tempo", "resposta"], prefer_exact=["tempoResposta", "tempo_resposta", "tempoRespostaDias"])
 
         for row in reader:
             if not isinstance(row, dict):
                 continue
 
-            fornecedor = str(row.get(f_fornecedor) or "").strip() if f_fornecedor else ""
-            cnpj = _digits(row.get(f_cnpj)) if f_cnpj else ""
-            cnpj = cnpj if len(cnpj) == 14 else ""
+            fornecedor = str(
+                _pick_col(
+                    row,
+                    [
+                        "fornecedor",
+                        "nome_fornecedor",
+                        "razao_social",
+                        "nomefantasia",
+                        "nome_fantasia",
+                        "empresa",
+                        "nomeempresa",
+                        "nome_empresa",
+                    ],
+                )
+                or ""
+            ).strip()
+            if not fornecedor:
+                continue
 
-            key_name = _norm_key(fornecedor) if fornecedor else ""
-            key_cnpj = cnpj if cnpj else ""
+            name_key = _norm_key(fornecedor)
+            if not name_key:
+                continue
 
-            finalizada = _bool_from_pt(row.get(f_finalizada)) if f_finalizada else False
-            respondida = _bool_from_pt(row.get(f_respondida)) if f_respondida else False
-            resolvida = _bool_from_pt(row.get(f_resolvida)) if f_resolvida else False
+            cnpj_raw = _pick_col(row, ["cnpj", "cnpj_fornecedor", "cnpjempresa", "cnpj_empresa", "documento"])
+            cnpj_key = _digits(cnpj_raw)
+            if len(cnpj_key) != 14:
+                cnpj_key = ""
 
-            nota = _to_float(row.get(f_nota)) if f_nota else 0.0
-            tempo = _to_float(row.get(f_tempo)) if f_tempo else 0.0
+            finalizada = _pick_col(row, ["finalizada", "foi_finalizada", "status_finalizada"])
+            respondida = _pick_col(row, ["respondida", "foi_respondida", "status_respondida"])
+            resolvida = _pick_col(row, ["resolvida", "foi_resolvida", "status_resolvida"])
+            nota = _pick_col(row, ["nota_consumidor", "nota", "satisfacao"])
+            dias = _pick_col(row, ["tempo_resposta_dias", "dias_resposta", "tempo_resposta"])
 
-            def _apply(target: dict[str, Agg], k: str) -> None:
-                if not k:
-                    return
-                if k not in target:
-                    target[k] = Agg(display_name=fornecedor)
-                a = target[k]
+            def _apply(a: Agg) -> None:
+                if not a.display_name:
+                    a.display_name = fornecedor
                 a.total += 1
-                if finalizada:
+                if _bool_from_pt(finalizada):
                     a.finalizadas += 1
-                if respondida:
+                if _bool_from_pt(respondida):
                     a.respondidas += 1
-                if resolvida:
+                if _bool_from_pt(resolvida):
                     a.resolvidas_indicador += 1
-                if nota > 0:
-                    a.nota_sum += nota
+                n = _to_float(nota)
+                if n > 0:
+                    a.nota_sum += n
                     a.nota_count += 1
-                if tempo > 0:
-                    a.tempo_sum += tempo
+                d = _to_float(dias)
+                if d > 0:
+                    a.tempo_sum += d
                     a.tempo_count += 1
 
-            _apply(by_name, key_name)
-            _apply(by_cnpj, key_cnpj)
+            a1 = by_name.get(name_key)
+            if not a1:
+                a1 = Agg(display_name=fornecedor)
+                by_name[name_key] = a1
+            _apply(a1)
+
+            if cnpj_key:
+                a2 = by_cnpj.get(cnpj_key)
+                if not a2:
+                    a2 = Agg(display_name=fornecedor)
+                    by_cnpj[cnpj_key] = a2
+                _apply(a2)
 
     return by_name, by_cnpj
-
-
-
-def aggregate_month(gz_path: str) -> dict[str, Agg]:
-    by_name, _ = aggregate_month_dual(gz_path)
-    return by_name
-
-
-def to_payload(
-    meta: dict[str, Any],
-    by_name: dict[str, Agg],
-    by_cnpj: dict[str, Agg] | None = None,
-) -> dict[str, Any]:
-    payload: dict[str, Any] = {"meta": meta, "by_name_key": {k: v.to_public() for k, v in by_name.items()}}
-    if by_cnpj:
-        payload["by_cnpj_key"] = {k: v.to_public() for k, v in by_cnpj.items()}
-    return payload
