@@ -198,11 +198,11 @@ def discover_basecompleta_urls(months: int = 12) -> dict[str, str]:
         ym = f"{m.group(1)}-{m.group(2)}"
         if u.startswith("/"):
             u = CKAN_BASE + u
-        if ym not in urls2:
-        urls2[ym] = u
-
-
-    if not urls2:
+        if u.startswith("/"):
+            u = CKAN_BASE + u
+            if ym not in urls2:
+                urls2[ym] = u
+        if not urls2:
         return {}
 
     yms2 = sorted(urls2.keys(), reverse=True)[:months]
