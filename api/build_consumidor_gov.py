@@ -68,6 +68,7 @@ def build_month(ym: str, url: str) -> str:
     gz_path = os.path.join(RAW_DIR, f"consumidor_gov_{ym}.csv.gz")
     info = download_month_csv_gz(url, gz_path)
 
+    # Usa a nova função que retorna estatísticas de parsing
     by_name, by_cnpj, stats = aggregate_month_dual_with_stats(gz_path)
 
     out_path = _monthly_path(ym)
@@ -79,7 +80,14 @@ def build_month(ym: str, url: str) -> str:
             "source_url": url,
             "download": info,
             "generated_at": _utc_now(),
+            # Salva estatísticas cruas
             "parse": stats,
+            # Bloco explícito de qualidade do CNPJ para este mês
+            "cnpj": {
+                "detected_column": stats.get("cnpj_col"),
+                "rows_with_cnpj_valid": stats.get("rows_with_cnpj_valid"),
+                "unique_cnpj_keys": stats.get("unique_cnpj_keys"),
+            },
         },
         "by_name_key_raw": {k: asdict(v) for k, v in by_name.items()},
         "by_cnpj_key_raw": {k: asdict(v) for k, v in by_cnpj.items()},
@@ -117,8 +125,6 @@ def main(months: int = 12) -> None:
     if os.environ.get("CONSUMIDOR_GOV_MONTHS_LIST", "").strip():
         merge_yms = [x.strip() for x in os.environ["CONSUMIDOR_GOV_MONTHS_LIST"].split(",") if x.strip()]
     else:
-        from datetime import date
-
         y, m = map(int, as_of.split("-"))
         # últimos N meses incluindo o as_of
         merge_yms = []
@@ -167,8 +173,13 @@ def main(months: int = 12) -> None:
     # Merge rolling window
     merged_name: dict[str, Agg] = {}
     merged_cnpj: dict[str, Agg] = {}
-    detected_cnpj_months: list[str] = []
+    
     used_months: list[str] = []
+
+    # Estatísticas de merge para o agregado
+    cnpj_detected_months: list[str] = []
+    cnpj_col_counts: dict[str, int] = {}
+    cnpj_rows_valid_total: int = 0
 
     for ym in merge_yms:
         p = _monthly_path(ym)
@@ -179,14 +190,24 @@ def main(months: int = 12) -> None:
         except Exception:
             continue
 
+        # Coleta estatísticas de parsing do mês para o agregado
         meta = month.get("meta") or {}
-        parse = meta.get("parse") or {}
-        cols = (parse.get("columns") or {})
-        if cols.get("cnpj"):
-            detected_cnpj_months.append(ym)
+        parse_stats = meta.get("parse") if isinstance(meta.get("parse"), dict) else {}
+        
+        # Se houve coluna CNPJ detectada neste mês, registra
+        ccol = parse_stats.get("cnpj_col")
+        if ccol:
+            cnpj_detected_months.append(ym)
+            cnpj_col_counts[str(ccol)] = cnpj_col_counts.get(str(ccol), 0) + 1
+        
+        try:
+            cnpj_rows_valid_total += int(parse_stats.get("rows_with_cnpj_valid") or 0)
+        except (ValueError, TypeError):
+            pass
 
         raw_name = month.get("by_name_key_raw") or {}
         raw_cnpj = month.get("by_cnpj_key_raw") or {}
+        
         if not isinstance(raw_name, dict) or not raw_name:
             continue
 
@@ -201,6 +222,11 @@ def main(months: int = 12) -> None:
 
         used_months.append(ym)
 
+    # Determina a coluna mais frequente detectada (apenas informativo)
+    most_freq_col = None
+    if cnpj_col_counts:
+        most_freq_col = max(cnpj_col_counts, key=cnpj_col_counts.get)
+
     out = {
         "meta": {
             "as_of": as_of,
@@ -208,11 +234,20 @@ def main(months: int = 12) -> None:
             "months": used_months if used_months else merge_yms,
             "generated_at": _utc_now(),
             "produced_months": produced,
+            "source": "dados.mj.gov.br",
+            "dataset": "reclamacoes-do-consumidor-gov-br",
+            # Bloco de Diagnóstico do Agregado
             "cnpj": {
-                "detected_months": detected_cnpj_months,
-                "keys": len(merged_cnpj),
+                "detected_months": sorted(set(cnpj_detected_months)),
+                "detected_column_most_freq": most_freq_col,
+                "rows_with_cnpj_valid_total": cnpj_rows_valid_total,
+                "unique_keys": len(merged_cnpj),
             },
         },
+        # Mantém dados Raw para debug/compatibilidade
+        "by_name_key_raw": {k: asdict(v) for k, v in merged_name.items()},
+        "by_cnpj_key_raw": {k: asdict(v) for k, v in merged_cnpj.items()},
+        # Dados públicos formatados
         "by_name_key": {k: v.to_public() for k, v in merged_name.items()},
         "by_cnpj_key": {k: v.to_public() for k, v in merged_cnpj.items()},
     }
@@ -221,7 +256,7 @@ def main(months: int = 12) -> None:
 
     # Mantém uma folga (24) pra evitar ficar recriando mês antigo e pra dar fallback local
     _prune_monthly(retain=max(24, months))
-    print(f"OK: Consumidor.gov agregado atualizado (as_of={as_of}).")
+    print(f"OK: Consumidor.gov agregado atualizado (as_of={as_of}). Keys CNPJ={len(merged_cnpj)}")
 
 
 if __name__ == "__main__":
