@@ -42,8 +42,14 @@ jobs:
         env:
           MIN_INSURERS_COUNT: "200"
           MAX_COUNT_DROP_PCT: "0.20"
-          SES_ZIP_URL: "https://www2.susep.gov.br/download/estatisticas/BaseCompleta.zip"
+
+          # SES (fontes estáveis, sem depender de HTML/layout)
+          SES_ZIP_URL: "https://www2.susep.gov.br/redarq.asp?arq=BaseCompleta%2ezip"
+          SES_LISTAEMPRESAS_URL: "https://www2.susep.gov.br/menuestatistica/ses/download/LISTAEMPRESAS.csv"
+
+          # Mantém só se o runner realmente precisar (como estava no seu log)
           SES_ALLOW_INSECURE_SSL: "1"
+
 
       - name: Build JSON (consumidor.gov)
         run: |
