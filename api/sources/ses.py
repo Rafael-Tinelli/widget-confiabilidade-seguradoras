@@ -9,7 +9,6 @@ import re
 import time
 import unicodedata
 import zipfile
-import itertools
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -18,18 +17,19 @@ from typing import Any, Iterable
 import requests
 from requests.exceptions import SSLError
 
+
+# ----------------------------
+# URLs "evergreen" (sem depender de discovery HTML)
+# ----------------------------
+
+# Página informativa (não é fonte estável de download)
 SES_HOME_DEFAULT = "https://www2.susep.gov.br/menuestatistica/ses/principal.aspx"
 
-SES_DOWNLOAD_HINTS = [
-    "download",
-    "base",
-    "ses",
-    "estatisticas",
-    "estatística",
-    "estatistica",
-    "base completa",
-    "basecompleta",
-]
+# Link direto para o BaseCompleta.zip (forma estável; evita depender de HTML)
+SES_ZIP_URL_DEFAULT = "https://www2.susep.gov.br/redarq.asp?arq=BaseCompleta%2ezip"
+
+# Cadastro mestre com CNPJ (fonte crítica para o projeto)
+SES_LISTAEMPRESAS_URL_DEFAULT = "https://www2.susep.gov.br/menuestatistica/ses/download/LISTAEMPRESAS.csv"
 
 
 # ----------------------------
@@ -38,7 +38,7 @@ SES_DOWNLOAD_HINTS = [
 
 @dataclass
 class SesFetchResult:
-    zip_url: str
+    url: str
     fetched_at: str
     bytes_len: int
     sha256: str
@@ -88,168 +88,386 @@ def _is_zip_signature(b: bytes) -> bool:
     return len(b) >= 2 and b[:2] == b"PK"
 
 
+def _requests_get(url: str, *, timeout: float, stream: bool, verify: bool) -> requests.Response:
+    # Centraliza GET para facilitar fallback SSL
+    headers = _ua_headers()
+    r = requests.get(url, headers=headers, timeout=timeout, allow_redirects=True, stream=stream, verify=verify)
+    r.raise_for_status()
+    return r
+
+
 def _fetch_text(url: str) -> str:
     timeout = float(os.environ.get("SES_HTTP_TIMEOUT", "30"))
-    headers = _ua_headers()
     try:
-        r = requests.get(url, headers=headers, timeout=timeout, allow_redirects=True, verify=True)
-        r.raise_for_status()
+        r = _requests_get(url, timeout=timeout, stream=False, verify=True)
         return r.text
     except SSLError:
         if not _allow_insecure_ssl():
             raise
-        r = requests.get(url, headers=headers, timeout=timeout, allow_redirects=True, verify=False)
-        r.raise_for_status()
+        # fallback (ambiente com SSL quebrado)
+        r = _requests_get(url, timeout=timeout, stream=False, verify=False)
         return r.text
 
 
-def _extract_urls(html: str, base_url: str) -> list[str]:
-    urls: set[str] = set()
+# ----------------------------
+# Normalização
+# ----------------------------
 
-    for m in re.finditer(r'href=["\']([^"\']+)["\']', html, flags=re.I):
-        u = m.group(1).strip()
-        if not u:
-            continue
-        if u.startswith("#") or u.startswith("javascript:"):
-            continue
-        urls.add(u)
-
-    out: list[str] = []
-    for u in urls:
-        if u.startswith("http://") or u.startswith("https://"):
-            out.append(u)
-        elif u.startswith("//"):
-            out.append("https:" + u)
-        else:
-            if base_url.endswith("/"):
-                out.append(base_url + u.lstrip("/"))
-            else:
-                out.append(base_url.rsplit("/", 1)[0] + "/" + u.lstrip("/"))
-
-    return [_clean_url(x) for x in out]
+def _norm_key(s: str) -> str:
+    s = (s or "").replace("\ufeff", "").strip().lower()
+    s = unicodedata.normalize("NFKD", s)
+    s = "".join(ch for ch in s if not unicodedata.combining(ch))
+    s = re.sub(r"\s+", " ", s)
+    s = re.sub(r"[^a-z0-9 ]+", "", s)
+    return s.strip()
 
 
-def _score_zip(url: str) -> int:
-    u = url.lower()
-    score = 0
-    if "basecompleta" in u:
-        score += 50
-    if u.endswith(".zip"):
-        score += 10
-    if "estatistic" in u or "estatistica" in u:
-        score += 5
-    return score
+def _norm_header(s: str) -> str:
+    return _norm_key(s).replace(" ", "")
 
 
-def _pick_best_zip(urls: list[str]) -> str | None:
-    zips = [u for u in urls if u.lower().endswith(".zip")]
-    if not zips:
-        return None
-    zips.sort(key=_score_zip, reverse=True)
-    return zips[0]
+def _digits(x: Any) -> str:
+    return re.sub(r"\D+", "", str(x or ""))
+
+
+def _to_float(x: Any) -> float:
+    # típico do SES: 1.234.567,89
+    try:
+        return float(str(x).strip().replace(".", "").replace(",", "."))
+    except Exception:
+        return 0.0
 
 
 # ----------------------------
-# Public: discovery + download
+# CSV parsing robusto
+# ----------------------------
+
+def _detect_delim_and_skip_first_line(lines: list[str]) -> tuple[str, int]:
+    """
+    Retorna (delimiter, skip_n).
+
+    Trata caso Excel: primeira linha "sep=;"
+    """
+    for i, ln in enumerate(lines):
+        if not ln:
+            continue
+        t = ln.strip().lower()
+
+        if t.startswith("sep=") and len(t) >= 5:
+            return (t[4:5] or ";"), i + 1
+
+        counts = {d: ln.count(d) for d in [";", "|", ",", "\t"]}
+        best = max(counts, key=counts.get)
+        return (best if counts[best] > 0 else ";"), i
+
+    return ";", 0
+
+
+def _open_csv_bytes(data: bytes) -> tuple[csv.DictReader, list[str], str]:
+    # tenta encodings comuns
+    last_reader: csv.DictReader | None = None
+    last_fields: list[str] = []
+    last_delim = ";"
+
+    for enc in ("utf-8-sig", "latin-1"):
+        text = io.TextIOWrapper(io.BytesIO(data), encoding=enc, errors="replace", newline="")
+        l1 = text.readline()
+        l2 = text.readline()
+        l3 = text.readline()
+        probe = [l1, l2, l3]
+        delim, skip_n = _detect_delim_and_skip_first_line(probe)
+
+        head_lines = probe[skip_n:]
+        lines_iter: Iterable[str] = iter(head_lines + list(text))
+        reader = csv.DictReader(lines_iter, delimiter=delim)
+        fieldnames = list(reader.fieldnames or [])
+        if len(fieldnames) > 1:
+            return reader, fieldnames, delim
+
+        last_reader = reader
+        last_fields = fieldnames
+        last_delim = delim
+
+    # fallback: devolve o que conseguiu
+    return last_reader, last_fields, last_delim  # type: ignore[return-value]
+
+
+def _open_csv_from_zip(zf: zipfile.ZipFile, member: str) -> tuple[csv.DictReader, list[str], str]:
+    # abre com sniff de delimiter/encoding sem carregar arquivo inteiro em memória
+    last_reader: csv.DictReader | None = None
+    last_fields: list[str] = []
+    last_delim = ";"
+
+    for enc in ("utf-8-sig", "latin-1"):
+        raw = zf.open(member)
+        text = io.TextIOWrapper(raw, encoding=enc, errors="replace", newline="")
+
+        l1 = text.readline()
+        l2 = text.readline()
+        l3 = text.readline()
+        probe = [l1, l2, l3]
+        delim, skip_n = _detect_delim_and_skip_first_line(probe)
+
+        head_lines = probe[skip_n:]
+        lines_iter = iter(head_lines + list(text))
+
+        reader = csv.DictReader(lines_iter, delimiter=delim)
+        fieldnames = list(reader.fieldnames or [])
+        if len(fieldnames) > 1:
+            return reader, fieldnames, delim
+
+        last_reader = reader
+        last_fields = fieldnames
+        last_delim = delim
+
+    return last_reader, last_fields, last_delim  # type: ignore[return-value]
+
+
+# ----------------------------
+# Detecção de colunas (robusta para SES)
+# ----------------------------
+
+def _detect_company_id_col(fieldnames: list[str]) -> str | None:
+    """
+    No SES, o código de empresa aparece como:
+      - CodigoFIP (LISTAEMPRESAS.csv)
+      - Coenti (Ses_cias.csv e várias tabelas)
+      - variações com 'cod' + 'cia' etc
+    """
+    best = None
+    best_score = -1e9
+
+    for fn in fieldnames:
+        n = _norm_header(fn)
+        if not n:
+            continue
+
+        score = 0.0
+
+        # Fonte mestre
+        if n in {"codigofip", "codigo_fip"}:
+            score += 50.0
+
+        # Padrões SES
+        if n in {"coenti", "coentidade", "codentidade"}:
+            score += 45.0
+
+        # Padrões legados
+        if n in {"codcia", "cod_cia", "codigo_cia", "codigocia", "cdcia"}:
+            score += 30.0
+        if n in {"cia", "idcia"}:
+            score += 18.0
+        if "cia" in n and ("cod" in n or "codigo" in n or "id" in n):
+            score += 12.0
+
+        # penalidades
+        if "cnpj" in n:
+            score -= 30.0
+
+        score -= len(n) / 100.0
+
+        if score > best_score:
+            best_score = score
+            best = fn
+
+    return best if best_score > 0 else None
+
+
+def _detect_name_col(fieldnames: list[str]) -> str | None:
+    best = None
+    best_score = -1e9
+
+    for fn in fieldnames:
+        n = _norm_header(fn)
+        if not n:
+            continue
+
+        score = 0.0
+
+        # Fonte mestre
+        if n in {"nomeentidade"}:
+            score += 50.0
+
+        # Padrões SES
+        if n in {"noenti"}:
+            score += 45.0
+
+        # gerais
+        if any(t in n for t in ("nomefantasia", "fantasia")):
+            score += 20.0
+        if any(t in n for t in ("razaosocial", "razao", "denominacao")):
+            score += 15.0
+        if n == "nome" or n.startswith("nome"):
+            score += 10.0
+
+        # penalidades
+        if any(t in n for t in ("sigla", "uf", "pais")):
+            score -= 5.0
+        if "cnpj" in n:
+            score -= 10.0
+
+        score -= len(n) / 200.0
+
+        if score > best_score:
+            best_score = score
+            best = fn
+
+    return best if best_score > 0 else None
+
+
+def _detect_cnpj_col(fieldnames: list[str]) -> str | None:
+    for fn in fieldnames:
+        if "cnpj" in _norm_header(fn):
+            return fn
+    return None
+
+
+def _detect_amount_cols(fieldnames: list[str]) -> tuple[str | None, str | None]:
+    """
+    Detecta melhor coluna de prêmio e melhor coluna de sinistro.
+    Heurística: combinações de "prem/premio/pr" com "emit/diret/total"
+                e "sinist/indeniz/desp" com "ocorr/pago/total"
+    """
+    prem_best = None
+    prem_score = -1e9
+    sin_best = None
+    sin_score = -1e9
+
+    for fn in fieldnames:
+        n = _norm_header(fn)
+        if not n:
+            continue
+
+        # Premium / Prêmio
+        if ("prem" in n) or ("premio" in n) or (n.startswith("pr") and any(t in n for t in ("emit", "diret", "total"))):
+            s = 10.0
+            if any(t in n for t in ("emit", "diret", "total", "bruto", "contab")):
+                s += 6.0
+            if any(t in n for t in ("ganho", "custo", "tarifa", "taxa")):
+                s -= 4.0
+            s -= len(n) / 120.0
+            if s > prem_score:
+                prem_score = s
+                prem_best = fn
+
+        # Sinistros / Indenizações
+        if ("sinist" in n) or ("indeniz" in n) or (n.startswith("si") and any(t in n for t in ("ocorr", "pago", "total"))):
+            s = 10.0
+            if any(t in n for t in ("ocorr", "pago", "total", "bruto")):
+                s += 5.0
+            if any(t in n for t in ("recup", "ressarc")):
+                s -= 4.0
+            s -= len(n) / 120.0
+            if s > sin_score:
+                sin_score = s
+                sin_best = fn
+
+    if prem_score < 0:
+        prem_best = None
+    if sin_score < 0:
+        sin_best = None
+
+    return prem_best, sin_best
+
+
+def _parse_ym_from_row(row: dict[str, Any], fieldnames: list[str]) -> str | None:
+    fn = {k: _norm_header(k) for k in fieldnames}
+
+    year_key = None
+    month_key = None
+
+    for k, nk in fn.items():
+        if nk in {"ano", "anocompetencia", "anoref", "anobase"} or nk.endswith("ano"):
+            year_key = year_key or k
+        if nk in {"mes", "mescompetencia", "mesref", "mesbase"} or nk.endswith("mes"):
+            month_key = month_key or k
+
+    if year_key and month_key:
+        y = _digits(row.get(year_key))
+        m = _digits(row.get(month_key))
+        if len(y) == 4 and m.isdigit():
+            mm = int(m)
+            if 1 <= mm <= 12:
+                return f"{int(y):04d}-{mm:02d}"
+
+    # tenta campos tipo "competencia"/"periodo"/"anomes"
+    candidates = []
+    for k, nk in fn.items():
+        if any(t in nk for t in ("competencia", "periodo", "anomes", "mesano", "dataref", "dtref")):
+            candidates.append(k)
+
+    for k in candidates:
+        raw = str(row.get(k) or "").strip()
+
+        d = _digits(raw)
+        if len(d) >= 6:
+            y = d[:4]
+            m = d[4:6]
+            if y.isdigit() and m.isdigit():
+                mm = int(m)
+                if 1 <= mm <= 12:
+                    return f"{int(y):04d}-{mm:02d}"
+
+        m1 = re.search(r"(\d{4})[/-](\d{1,2})", raw)
+        if m1:
+            yy = int(m1.group(1))
+            mm = int(m1.group(2))
+            if 1 <= mm <= 12:
+                return f"{yy:04d}-{mm:02d}"
+
+        m2 = re.search(r"(\d{1,2})[/-](\d{4})", raw)
+        if m2:
+            mm = int(m2.group(1))
+            yy = int(m2.group(2))
+            if 1 <= mm <= 12:
+                return f"{yy:04d}-{mm:02d}"
+
+    return None
+
+
+def _ym_to_index(ym: str) -> int:
+    y, m = ym.split("-", 1)
+    return int(y) * 12 + int(m)
+
+
+def _months_back(ym: str, months: int) -> str:
+    y, m = map(int, ym.split("-"))
+    idx = (y * 12 + (m - 1)) - months
+    ny = idx // 12
+    nm = (idx % 12) + 1
+    return f"{ny:04d}-{nm:02d}"
+
+
+# ----------------------------
+# Download "evergreen"
 # ----------------------------
 
 def discover_ses_zip_url() -> str:
-    """
-    Resolve a URL do ZIP da Base Completa do SES.
-
-    Ordem:
-    1) SES_ZIP_URL (override; caminho feliz)
-    2) Extrair .zip do principal.aspx
-    3) Crawl curto em páginas candidatas (download/base/ses) buscando .zip
-    """
     override = str(os.environ.get("SES_ZIP_URL", "")).strip()
     if override:
         print(f"SES: usando override SES_ZIP_URL={override}", flush=True)
         return override
 
-    home = str(os.environ.get("SES_HOME_URL", "")).strip() or SES_HOME_DEFAULT
-    html = _fetch_text(home)
-
-    urls = _extract_urls(html, home)
-    best = _pick_best_zip(urls)
-    if best:
-        return best
-
-    candidates: list[str] = []
-    for u in urls:
-        ul = u.lower()
-        if any(h in ul for h in SES_DOWNLOAD_HINTS):
-            candidates.append(u)
-
-    for page in candidates[:10]:
-        try:
-            htmlp = _fetch_text(page)
-        except Exception:
-            continue
-        up = _extract_urls(htmlp, page)
-        bestp = _pick_best_zip(up)
-        if bestp:
-            return bestp
-
-    snippet = re.sub(r"\s+", " ", html[:500]).strip()
-    raise RuntimeError(
-        "SES: não encontrei link .zip nem página de download no principal. "
-        f"home={home} snippet={snippet!r}"
-    )
+    # default estável (evita discovery HTML)
+    return SES_ZIP_URL_DEFAULT
 
 
-def fetch_ses_zip_head_signature(zip_url: str) -> bytes:
-    timeout = float(os.environ.get("SES_HTTP_TIMEOUT", "30"))
-    headers = _ua_headers()
-    headers["Range"] = "bytes=0-3"
-
-    def _get(verify: bool) -> bytes:
-        r = requests.get(zip_url, headers=headers, timeout=timeout, stream=True, verify=verify, allow_redirects=True)
-        r.raise_for_status()
-        return r.raw.read(4)
-
-    try:
-        return _get(verify=True)
-    except SSLError:
-        if not _allow_insecure_ssl():
-            raise
-        return _get(verify=False)
+def discover_listaempresas_url() -> str:
+    override = str(os.environ.get("SES_LISTAEMPRESAS_URL", "")).strip()
+    if override:
+        print(f"SES: usando override SES_LISTAEMPRESAS_URL={override}", flush=True)
+        return override
+    return SES_LISTAEMPRESAS_URL_DEFAULT
 
 
-def wait_until_ses_zip_is_available(max_wait_seconds: int = 30) -> str:
-    start = time.time()
-    last: Exception | None = None
-
-    while time.time() - start < max_wait_seconds:
-        try:
-            url = discover_ses_zip_url()
-            head = fetch_ses_zip_head_signature(url)
-            if _is_zip_signature(head):
-                return url
-        except Exception as e:
-            last = e
-        time.sleep(2)
-
-    raise RuntimeError(f"SES zip não ficou disponível/validável em {max_wait_seconds}s") from last
-
-
-def _download_zip_streaming(zip_url: str, out_path: Path) -> SesFetchResult:
+def _download_streaming(url: str, out_path: Path, *, min_bytes: int = 1024) -> SesFetchResult:
     out_path.parent.mkdir(parents=True, exist_ok=True)
     tmp = out_path.with_suffix(out_path.suffix + ".tmp")
 
-    timeout = float(os.environ.get("SES_HTTP_TIMEOUT", "120"))
-    headers = _ua_headers()
+    timeout = float(os.environ.get("SES_HTTP_TIMEOUT", "180"))
 
     def _do_get(verify: bool) -> SesFetchResult:
-        r = requests.get(
-            zip_url,
-            headers=headers,
-            timeout=timeout,
-            stream=True,
-            verify=verify,
-            allow_redirects=True,
-        )
-        r.raise_for_status()
+        r = _requests_get(url, timeout=timeout, stream=True, verify=verify)
 
         h = hashlib.sha256()
         size = 0
@@ -257,15 +475,16 @@ def _download_zip_streaming(zip_url: str, out_path: Path) -> SesFetchResult:
             for chunk in r.iter_content(chunk_size=1024 * 1024):
                 if not chunk:
                     continue
-                if size == 0 and len(chunk) >= 2 and not _is_zip_signature(chunk[:2]):
-                    raise RuntimeError(f"SES: download não parece ZIP (assinatura != PK). url={zip_url!r}")
                 f.write(chunk)
                 h.update(chunk)
                 size += len(chunk)
 
+        if size < min_bytes:
+            raise RuntimeError(f"SES: download pequeno demais ({size} bytes). url={url!r}")
+
         tmp.replace(out_path)
         return SesFetchResult(
-            zip_url=zip_url,
+            url=url,
             fetched_at=_utc_now(),
             bytes_len=size,
             sha256=h.hexdigest(),
@@ -286,26 +505,25 @@ def download_and_validate_ses_zip() -> SesFetchResult:
     force = str(os.environ.get("SES_FORCE_DOWNLOAD", "")).strip().lower() in {"1", "true", "yes"}
 
     if cache.exists() and cache.stat().st_size > 1024 * 1024 and not force:
-        # valida assinatura
         with cache.open("rb") as f:
             head = f.read(4)
         if _is_zip_signature(head):
-            # sha256 de arquivo (rápido o suficiente; mas pode ser grande)
+            # ok: usa cache
             h = hashlib.sha256()
             with cache.open("rb") as f2:
                 for chunk in iter(lambda: f2.read(1024 * 1024), b""):
                     h.update(chunk)
             return SesFetchResult(
-                zip_url=zip_url,
+                url=zip_url,
                 fetched_at=_utc_now(),
                 bytes_len=int(cache.stat().st_size),
                 sha256=h.hexdigest(),
                 saved_to=str(cache),
             )
 
-    info = _download_zip_streaming(zip_url, cache)
+    info = _download_streaming(zip_url, cache, min_bytes=5 * 1024 * 1024)
 
-    # sanity: abre o zip
+    # sanity: abre zip
     try:
         with zipfile.ZipFile(cache) as zf:
             _ = zf.namelist()[:1]
@@ -315,478 +533,265 @@ def download_and_validate_ses_zip() -> SesFetchResult:
     return info
 
 
+def download_listaempresas_csv() -> SesFetchResult:
+    url = discover_listaempresas_url()
+    cache = Path(os.environ.get("SES_LISTAEMPRESAS_CACHE_PATH", "data/raw/ses_listaempresas.csv"))
+    force = str(os.environ.get("SES_FORCE_DOWNLOAD", "")).strip().lower() in {"1", "true", "yes"}
+
+    if cache.exists() and cache.stat().st_size > 10_000 and not force:
+        h = hashlib.sha256()
+        with cache.open("rb") as f:
+            data = f.read()
+            h.update(data)
+        return SesFetchResult(
+            url=url,
+            fetched_at=_utc_now(),
+            bytes_len=int(cache.stat().st_size),
+            sha256=h.hexdigest(),
+            saved_to=str(cache),
+        )
+
+    # LISTAEMPRESAS é pequeno
+    return _download_streaming(url, cache, min_bytes=10_000)
+
+
 # ----------------------------
-# Helpers (CSV parsing + heuristics)
+# Seleção de arquivos financeiros dentro do ZIP
+# (evita varrer 40 CSVs "na força")
 # ----------------------------
 
-def _norm_key(s: str) -> str:
-    s = (s or "").replace("\ufeff", "").strip().lower()
-    s = unicodedata.normalize("NFKD", s)
-    s = "".join(ch for ch in s if not unicodedata.combining(ch))
-    s = re.sub(r"\s+", " ", s)
-    s = re.sub(r"[^a-z0-9 ]+", "", s)
-    return s.strip()
-
-
-def _norm_header(s: str) -> str:
-    return _norm_key(s).replace(" ", "")
-
-
-def _digits(s: Any) -> str:
-    return re.sub(r"\D+", "", str(s or ""))
-
-
-def _to_float(x: Any) -> float:
-    try:
-        return float(str(x).strip().replace(".", "").replace(",", "."))
-    except Exception:
-        return 0.0
-
-
-def _sniff_delimiter(sample: str) -> str:
-    # tenta ser robusto: SES às vezes vem com ;, , , \t ou |
-    counts = {
-        ";": sample.count(";"),
-        "|": sample.count("|"),
-        ",": sample.count(","),
-        "\t": sample.count("\t"),
-    }
-    # escolhe o que mais aparece; fallback ';'
-    delim = max(counts, key=counts.get)
-    return delim if counts[delim] > 0 else ";"
-
-
-def _ym_to_index(ym: str) -> int:
-    # ym: "YYYY-MM"
-    y, m = ym.split("-", 1)
-    return int(y) * 12 + int(m)
-
-
-def _months_back(ym: str, months: int) -> str:
-    y, m = map(int, ym.split("-"))
-    idx = (y * 12 + (m - 1)) - months
-    ny = idx // 12
-    nm = (idx % 12) + 1
-    return f"{ny:04d}-{nm:02d}"
-
-
-def _parse_ym_from_row(row: dict[str, Any], fieldnames: list[str]) -> str | None:
-    # tenta: ano+mes
-    fn = {k: _norm_header(k) for k in fieldnames}
-    year_key = None
-    month_key = None
-
-    for k, nk in fn.items():
-        if nk in {"ano", "anocompetencia", "anoref", "anobase"} or nk.endswith("ano"):
-            year_key = year_key or k
-        if nk in {"mes", "mescompetencia", "mesref", "mesbase"} or nk.endswith("mes"):
-            month_key = month_key or k
-
-    if year_key and month_key:
-        y = _digits(row.get(year_key))
-        m = _digits(row.get(month_key))
-        if len(y) == 4 and m.isdigit():
-            mm = int(m)
-            if 1 <= mm <= 12:
-                return f"{int(y):04d}-{mm:02d}"
-
-    # tenta: competencia / periodo / anomes
-    candidates = []
-    for k, nk in fn.items():
-        if any(t in nk for t in ("competencia", "periodo", "anomes", "mesano", "dataref", "dtref")):
-            candidates.append(k)
-
-    for k in candidates:
-        raw = str(row.get(k) or "").strip()
-        d = _digits(raw)
-        if len(d) >= 6:
-            y = d[:4]
-            m = d[4:6]
-            if y.isdigit() and m.isdigit():
-                mm = int(m)
-                if 1 <= mm <= 12:
-                    return f"{int(y):04d}-{mm:02d}"
-
-        # formatos: YYYY-MM, MM/YYYY
-        m1 = re.search(r"(\d{4})[/-](\d{1,2})", raw)
-        if m1:
-            yy = int(m1.group(1))
-            mm = int(m1.group(2))
-            if 1 <= mm <= 12:
-                return f"{yy:04d}-{mm:02d}"
-        m2 = re.search(r"(\d{1,2})[/-](\d{4})", raw)
-        if m2:
-            mm = int(m2.group(1))
-            yy = int(m2.group(2))
-            if 1 <= mm <= 12:
-                return f"{yy:04d}-{mm:02d}"
-
-    return None
-
-
-def _score_master_file(name: str) -> float:
-    n = name.lower()
-    score = 0.0
-    if "cias" in n:
-        score += 50.0
-    if "companh" in n or "entidad" in n:
-        score += 20.0
-    if n.endswith(".csv"):
-        score += 5.0
-    score -= len(n) / 2000.0
-    return score
-
-
-def _detect_master_file(names: list[str]) -> str | None:
-    csvs = [x for x in names if x.lower().endswith(".csv")]
-    if not csvs:
-        return None
-    ranked = sorted(csvs, key=_score_master_file, reverse=True)
-    # pega o top que contenha pista real
-    for n in ranked[:25]:
-        nl = n.lower()
-        if "cias" in nl or "companh" in nl or "entidad" in nl:
-            return n
-    return ranked[0]
-
-
-def _detect_company_id_col(fieldnames: list[str]) -> str | None:
-    best = None
-    best_score = -1e9
-
-    for fn in fieldnames:
-        n = _norm_header(fn)
-        if not n:
-            continue
-
-        score = 0.0
-
-        # casos perfeitos
-        if n in {"codcia", "cod_cia", "codigo_cia", "codigocia", "cdcia"}:
-            score += 30.0
-
-        # casos comuns “curtos”
-        if n in {"cia", "idcia"}:
-            score += 18.0
-
-        # heurística geral
-        if "cia" in n and "cod" in n:
-            score += 20.0
-        if "cia" in n and ("id" in n or "codigo" in n):
-            score += 12.0
-
-        # penalidades
-        if "cnpj" in n:
-            score -= 25.0
-
-        score -= len(n) / 100.0
-
-        if score > best_score:
-            best_score = score
-            best = fn
-
-    return best if best_score > 0 else None
-
-
-def _detect_name_col(fieldnames: list[str]) -> str | None:
-    best = None
-    best_score = -1e9
-    for fn in fieldnames:
-        n = _norm_header(fn)
-        if not n:
-            continue
-        score = 0.0
-        if any(t in n for t in ("nomefantasia", "fantasia")):
-            score += 20.0
-        if any(t in n for t in ("razaosocial", "razao", "denominacao")):
-            score += 15.0
-        if "nome" == n or n.startswith("nome"):
-            score += 10.0
-        if any(t in n for t in ("sigla", "uf", "pais")):
-            score -= 5.0
-        if "cnpj" in n:
-            score -= 10.0
-        score -= len(n) / 200.0
-        if score > best_score:
-            best_score = score
-            best = fn
-    return best if best_score > 0 else None
-
-
-def _detect_cnpj_col(fieldnames: list[str]) -> str | None:
-    for fn in fieldnames:
-        if "cnpj" in _norm_header(fn):
-            return fn
-    return None
-
-
-def _detect_amount_cols(fieldnames: list[str]) -> tuple[str | None, str | None]:
-    prem_best = None
-    prem_score = -1e9
-    sin_best = None
-    sin_score = -1e9
-
-    for fn in fieldnames:
-        n = _norm_header(fn)
-        if not n:
-            continue
-
-        # Premium
-        if "prem" in n or "premio" in n:
-            s = 10.0
-            if any(t in n for t in ("emit", "diret", "total")):
-                s += 5.0
-            if any(t in n for t in ("ganho", "custo", "tarifa", "taxa")):
-                s -= 4.0
-            s -= len(n) / 120.0
-            if s > prem_score:
-                prem_score = s
-                prem_best = fn
-
-        # Claims / Sinistros
-        if "sinist" in n or "indeniz" in n:
-            s = 10.0
-            if any(t in n for t in ("ocorr", "total", "bruto")):
-                s += 4.0
-            if any(t in n for t in ("recup", "ressarc")):
-                s -= 4.0
-            s -= len(n) / 120.0
-            if s > sin_score:
-                sin_score = s
-                sin_best = fn
-
-    if prem_score < 0:
-        prem_best = None
-    if sin_score < 0:
-        sin_best = None
-    return prem_best, sin_best
-
-
-def _open_csv_from_zip(zf: zipfile.ZipFile, member: str) -> tuple[csv.DictReader, list[str], str]:
-    def detect_delim_and_skip(lines: list[str]) -> tuple[str, int]:
-        # retorna (delim, skip_lines)
-        # caso Excel: primeira linha "sep=;"
-        for i, ln in enumerate(lines):
-            if not ln:
-                continue
-            t = ln.strip().lower()
-            if t.startswith("sep="):
-                d = t[4:5]
-                return (d if d else ";"), i + 1
-
-            # primeira linha “real” (header) define melhor delimitador
-            counts = {d: ln.count(d) for d in [";", "|", ",", "\t"]}
-            best = max(counts, key=counts.get)
-            return (best if counts[best] > 0 else ";"), i
-
-        return ";", 0
-
-    # tenta 2 encodings comuns no SES
-    last_reader = None
-    last_fields: list[str] = []
-    last_delim = ";"
-
-    for enc in ("utf-8-sig", "latin-1"):
-        raw = zf.open(member)
-        text = io.TextIOWrapper(raw, encoding=enc, errors="replace", newline="")
-
-        # lê poucas linhas para detectar sep/delimiter
-        l1 = text.readline()
-        l2 = text.readline()
-        l3 = text.readline()
-
-        probe = [l1, l2, l3]
-        delim, skip_n = detect_delim_and_skip(probe)
-
-        # reinsere linhas (exceto as puladas) e segue stream normal
-        head_lines = probe[skip_n:]
-        lines_iter = itertools.chain(head_lines, text)
-
-        reader = csv.DictReader(lines_iter, delimiter=delim)
-        fieldnames = list(reader.fieldnames or [])
-
-        # se veio “uma coluna só”, quase sempre delimiter errado; tenta o próximo encoding
-        if len(fieldnames) > 1:
-            return reader, fieldnames, delim
-
-        last_reader = reader
-        last_fields = fieldnames
-        last_delim = delim
-
-    # fallback: devolve o “melhor que conseguiu” (vai ajudar no erro/diagnóstico)
-    return last_reader, last_fields, last_delim  # type: ignore[return-value]
-
-
-def _iter_relevant_csv_members(names: list[str]) -> Iterable[str]:
-    # heurística de relevância: evita ler tudo se o zip for gigantesco
+def _iter_csv_members(names: list[str]) -> Iterable[str]:
     for n in names:
-        nl = n.lower()
-        if not nl.endswith(".csv"):
-            continue
-        if any(x in nl for x in ("readme", "leia", "dicion", "doc", "layout")):
-            continue
-        # pistas financeiras
-        if any(x in nl for x in ("prem", "sinist", "prov", "segur", "ramos", "produt")):
+        if n.lower().endswith(".csv"):
             yield n
 
 
+def _score_financial_member(member: str) -> float:
+    nl = member.lower()
+    score = 0.0
+
+    # preferências gerais
+    if "valoresmovramos" in nl or "rmovram" in nl:
+        score += 25.0
+    if "seguros" in nl:
+        score += 15.0
+    if "sinist" in nl:
+        score += 10.0
+    if "prem" in nl:
+        score += 10.0
+    if "ramo" in nl:
+        score += 8.0
+
+    # penalidades leves (evita ficar preso só em prev/cap)
+    if "prev" in nl:
+        score -= 3.0
+    if "cap" in nl and "cap_" in nl:
+        score -= 2.0
+
+    # arquivos muito "meta"
+    if any(x in nl for x in ("readme", "leia", "dicion", "doc", "layout", "contatos", "administradores")):
+        score -= 50.0
+
+    score -= len(nl) / 3000.0
+    return score
+
+
+def _probe_member_schema(zf: zipfile.ZipFile, member: str) -> dict[str, Any] | None:
+    try:
+        # leitura leve: header + poucas linhas
+        with zf.open(member) as raw:
+            data = raw.read(200_000)  # suficiente para header + primeiras linhas
+        reader, fields, delim = _open_csv_bytes(data)
+    except Exception:
+        return None
+
+    if not fields or len(fields) < 2:
+        return None
+
+    id_col = _detect_company_id_col(fields)
+    prem_col, sin_col = _detect_amount_cols(fields)
+    if not id_col or (prem_col is None and sin_col is None):
+        return None
+
+    # tenta achar competência com uma linha de amostra
+    ym = None
+    try:
+        for _ in range(5):
+            row = next(reader)
+            if isinstance(row, dict):
+                ym = _parse_ym_from_row(row, fields)
+                if ym:
+                    break
+    except Exception:
+        ym = None
+
+    if not ym:
+        return None
+
+    return {
+        "member": member,
+        "fields": fields,
+        "delim": delim,
+        "id_col": id_col,
+        "prem_col": prem_col,
+        "sin_col": sin_col,
+        "score": _score_financial_member(member) + (15.0 if prem_col and sin_col else 0.0),
+    }
+
+
+def _pick_best_fact_files(zf: zipfile.ZipFile, names: list[str]) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    """
+    Retorna (best_prem_file, best_sin_file).
+    Se existir um arquivo "fato" com ambos (prem e sin), ele tende a ser escolhido para ambos.
+    """
+    candidates: list[dict[str, Any]] = []
+    for m in sorted(_iter_csv_members(names), key=_score_financial_member, reverse=True)[:25]:
+        probe = _probe_member_schema(zf, m)
+        if probe:
+            candidates.append(probe)
+
+    if not candidates:
+        return None, None
+
+    # 1) procura "single fact" com prem e sin
+    both = [c for c in candidates if c.get("prem_col") and c.get("sin_col")]
+    if both:
+        both.sort(key=lambda x: float(x["score"]), reverse=True)
+        return both[0], both[0]
+
+    # 2) separa melhor de prem e melhor de sin
+    prem = [c for c in candidates if c.get("prem_col")]
+    sin = [c for c in candidates if c.get("sin_col")]
+
+    prem.sort(key=lambda x: float(x["score"]), reverse=True)
+    sin.sort(key=lambda x: float(x["score"]), reverse=True)
+
+    return (prem[0] if prem else None), (sin[0] if sin else None)
+
+
 # ----------------------------
-# Public: B1 extraction (expected by build_insurers)
+# Public: extraction (expected by build_insurers)
 # ----------------------------
 
 def extract_ses_master_and_financials() -> tuple[SesExtractMeta, dict[str, dict[str, Any]]]:
     """
     Retorna:
-      meta_ses: SesExtractMeta (tem .zip_url, .cias_file, .seguros_file, .period_from, .period_to)
-      companies: dict[ses_id] => {name, cnpj, premiums, claims}
+      meta_ses: SesExtractMeta
+      companies: dict[codigoFIP] => {name, cnpj, premiums, claims}
 
-    Estratégia:
-      - Baixa/usa cache do BaseCompleta.zip (streaming)
-      - Detecta arquivo mestre (cias)
-      - Varre CSVs financeiros relevantes e agrega prêmios/sinistros
-      - Calcula rolling_12m usando o último mês observado
+    Fonte mestre (CNPJ): LISTAEMPRESAS.csv
+    Fonte fatos: BaseCompleta.zip (1 ou 2 tabelas "fato" auto-detectadas)
     """
-    info = download_and_validate_ses_zip()
+    zip_info = download_and_validate_ses_zip()
+    master_info = download_listaempresas_csv()
 
-    cache_path = Path(info.saved_to)
-    if not cache_path.exists() or cache_path.stat().st_size < 1024 * 1024:
-        raise RuntimeError(f"SES: cache ZIP inválido/pequeno demais: {cache_path}")
+    # --- 1) Carrega mestre LISTAEMPRESAS ---
+    master_path = Path(master_info.saved_to)
+    master_bytes = master_path.read_bytes()
 
+    master_reader, master_fields, master_delim = _open_csv_bytes(master_bytes)
+    id_col = _detect_company_id_col(master_fields) or "CodigoFIP"
+    name_col = _detect_name_col(master_fields) or "NomeEntidade"
+    cnpj_col = _detect_cnpj_col(master_fields) or "CNPJ"
+
+    companies: dict[str, dict[str, Any]] = {}
+    master_rows = 0
+
+    for row in master_reader:
+        if not isinstance(row, dict):
+            continue
+        master_rows += 1
+
+        codigo = _digits(row.get(id_col))
+        if not codigo:
+            continue
+
+        nome = str(row.get(name_col) or "").strip() or f"SES_ENTIDADE_{codigo}"
+        cnpj = _digits(row.get(cnpj_col))
+
+        companies[codigo] = {
+            "name": nome,
+            "cnpj": cnpj if len(cnpj) == 14 else None,
+            "premiums": 0.0,
+            "claims": 0.0,
+        }
+
+    if not companies:
+        raise RuntimeError(
+            f"SES: LISTAEMPRESAS não gerou nenhuma entidade. fields={master_fields[:10]} delim={master_delim!r}"
+        )
+
+    # --- 2) Abre zip e escolhe tabelas fato ---
+    cache_path = Path(zip_info.saved_to)
     with zipfile.ZipFile(cache_path) as zf:
         names = zf.namelist()
 
-        cias_member = _detect_master_file(names)
-        if not cias_member:
-            raise RuntimeError("SES: não consegui detectar arquivo mestre (CIAS) dentro do ZIP.")
+        best_prem, best_sin = _pick_best_fact_files(zf, names)
 
-        # --- Parse master (CIAS) ---
-        companies: dict[str, dict[str, Any]] = {}
-        master_rows = 0
-
-        reader, fieldnames, _delim = _open_csv_from_zip(zf, cias_member)
-        id_col = _detect_company_id_col(fieldnames)
-        name_col = _detect_name_col(fieldnames)
-        cnpj_col = _detect_cnpj_col(fieldnames)
-
-        if not fieldnames:
-            raise RuntimeError(f"SES: não consegui ler header do mestre CIAS. file={cias_member!r} delim={_delim!r}")
-
-            # fallback pragmático: SES_CIAS geralmente tem o código na 1ª coluna e nome em alguma das próximas
-            if not id_col:
-                id_col = fieldnames[0]
-
-            if not name_col:
-                name_col = fieldnames[1] if len(fieldnames) > 1 else fieldnames[0]
-
-            # se quiser debug controlado por env:
-            if str(os.environ.get("SES_DEBUG", "")).strip() in {"1", "true", "yes"}:
-                    print(
-                        "SES DEBUG CIAS:",
-                        {"file": cias_member, "delim": _delim, "fields": fieldnames[:30], "id_col": id_col, "name_col": name_col},
-                        flush=True,
-                    )
-
-
-        for row in reader:
-            if not isinstance(row, dict):
-                continue
-            master_rows += 1
-            ses_id = _digits(row.get(id_col))
-            if not ses_id:
-                continue
-            nm = str(row.get(name_col) or "").strip()
-            if not nm:
-                nm = f"SES_ENTIDADE_{ses_id}"
-            cnpj = _digits(row.get(cnpj_col)) if cnpj_col else ""
-            companies[ses_id] = {
-                "name": nm,
-                "cnpj": cnpj if len(cnpj) == 14 else None,
-                "premiums": 0.0,
-                "claims": 0.0,
-            }
-
-        # --- Parse financial CSVs (rolling_12m base) ---
-        prem_by_id: dict[str, dict[str, float]] = {}
-        claim_by_id: dict[str, dict[str, float]] = {}
+        # Se não detectar nada, não derruba o projeto: mantém mestre com 0, mas registra diagnóstico.
+        # (O guardrail MIN_INSURERS_COUNT + MAX_COUNT_DROP_PCT vai proteger a publicação.)
+        processed_files: list[str] = []
+        processed_rows_total = 0
         all_months: set[str] = set()
 
-        processed_files: dict[str, int] = {}
-        processed_rows_total = 0
+        prem_by_id: dict[str, dict[str, float]] = {}
+        sin_by_id: dict[str, dict[str, float]] = {}
 
-        for member in _iter_relevant_csv_members(names):
-            try:
-                fin_reader, fin_fields, _d = _open_csv_from_zip(zf, member)
-            except Exception:
-                continue
+        def ingest(member_info: dict[str, Any], mode: str) -> None:
+            nonlocal processed_rows_total
 
-            fin_id_col = _detect_company_id_col(fin_fields)
-            prem_col, sin_col = _detect_amount_cols(fin_fields)
+            member = str(member_info["member"])
+            processed_files.append(member)
 
-            # sem id ou sem nenhum valor financeiro, pula
-            if not fin_id_col or (prem_col is None and sin_col is None):
-                continue
+            reader, fields, _d = _open_csv_from_zip(zf, member)
+            idc = str(member_info["id_col"])
+            prem_col = member_info.get("prem_col")
+            sin_col = member_info.get("sin_col")
 
-            # precisa conseguir data/competência também
-            # (checagem leve: tenta extrair YM de uma linha rápida)
-            ym_probe = None
-            try:
-                probe_row = next(fin_reader)
-                if isinstance(probe_row, dict):
-                    ym_probe = _parse_ym_from_row(probe_row, fin_fields)
-            except StopIteration:
-                continue
-            except Exception:
-                continue
-
-            if not ym_probe:
-                continue
-
-            # Reabrir reader (porque consumimos 1 linha no probe)
-            try:
-                fin_reader2, fin_fields2, _d2 = _open_csv_from_zip(zf, member)
-            except Exception:
-                continue
-
-            file_rows = 0
-            for row in fin_reader2:
+            for row in reader:
                 if not isinstance(row, dict):
                     continue
 
-                ses_id = _digits(row.get(fin_id_col))
-                if not ses_id:
+                codigo = _digits(row.get(idc))
+                if not codigo:
                     continue
 
-                ym = _parse_ym_from_row(row, fin_fields2)
+                ym = _parse_ym_from_row(row, fields)
                 if not ym:
                     continue
 
-                file_rows += 1
                 processed_rows_total += 1
                 all_months.add(ym)
 
-                if prem_col is not None:
+                if mode in {"prem", "both"} and prem_col:
                     v = _to_float(row.get(prem_col))
                     if v:
-                        prem_by_id.setdefault(ses_id, {}).setdefault(ym, 0.0)
-                        prem_by_id[ses_id][ym] += v
+                        prem_by_id.setdefault(codigo, {}).setdefault(ym, 0.0)
+                        prem_by_id[codigo][ym] += v
 
-                if sin_col is not None:
+                if mode in {"sin", "both"} and sin_col:
                     v = _to_float(row.get(sin_col))
                     if v:
-                        claim_by_id.setdefault(ses_id, {}).setdefault(ym, 0.0)
-                        claim_by_id[ses_id][ym] += v
+                        sin_by_id.setdefault(codigo, {}).setdefault(ym, 0.0)
+                        sin_by_id[codigo][ym] += v
 
-            if file_rows > 0:
-                processed_files[member] = file_rows
+        if best_prem and best_sin and best_prem["member"] == best_sin["member"]:
+            ingest(best_prem, "both")
+            seguros_file = str(best_prem["member"])
+        else:
+            if best_prem:
+                ingest(best_prem, "prem")
+            if best_sin:
+                ingest(best_sin, "sin")
+            seguros_file = str(best_prem["member"] if best_prem else (best_sin["member"] if best_sin else ""))
 
-        # --- Determine rolling window ---
+        # --- 3) Define janela rolling 12m ---
         if all_months:
             latest = max(all_months, key=_ym_to_index)
-            start = _months_back(latest, 11)
-            period_from = start
             period_to = latest
+            period_from = _months_back(latest, 11)
         else:
-            # fallback defensivo: não quebra build_insurers
+            # fallback defensivo: evita quebrar o build
             period_to = _utc_now()[:7]
             period_from = _months_back(period_to, 11)
 
@@ -797,63 +802,39 @@ def extract_ses_master_and_financials() -> tuple[SesExtractMeta, dict[str, dict[
             i = _ym_to_index(ym)
             return start_idx <= i <= end_idx
 
-        # --- Apply totals to companies (ensure universe from master) ---
-        # 1) soma para empresas do mestre
-        for ses_id, base in companies.items():
+        # --- 4) Aplica totais no mestre ---
+        for codigo, base in companies.items():
             p = 0.0
-            c = 0.0
-            for ym, v in prem_by_id.get(ses_id, {}).items():
+            s = 0.0
+            for ym, v in prem_by_id.get(codigo, {}).items():
                 if in_window(ym):
                     p += v
-            for ym, v in claim_by_id.get(ses_id, {}).items():
+            for ym, v in sin_by_id.get(codigo, {}).items():
                 if in_window(ym):
-                    c += v
+                    s += v
+
             base["premiums"] = float(p)
-            base["claims"] = float(c)
-
-        # 2) inclui IDs que apareceram nos financeiros mas não estavam no mestre
-        # (melhor do que perder entidade e derrubar count em casos de layout)
-        extra_ids = set(prem_by_id.keys()) | set(claim_by_id.keys())
-        for ses_id in extra_ids:
-            if ses_id in companies:
-                continue
-            p = 0.0
-            c = 0.0
-            for ym, v in prem_by_id.get(ses_id, {}).items():
-                if in_window(ym):
-                    p += v
-            for ym, v in claim_by_id.get(ses_id, {}).items():
-                if in_window(ym):
-                    c += v
-            companies[ses_id] = {
-                "name": f"SES_ENTIDADE_{ses_id}",
-                "cnpj": None,
-                "premiums": float(p),
-                "claims": float(c),
-            }
-
-        # Escolhe 1 "arquivo financeiro" representativo para o sources.files
-        seguros_file = ""
-        if processed_files:
-            # maior volume de linhas processadas
-            seguros_file = max(processed_files, key=processed_files.get)
+            base["claims"] = float(s)
 
         meta = SesExtractMeta(
-            zip_url=info.zip_url,
-            cias_file=cias_member,
-            seguros_file=seguros_file or "(auto-detected multiple files)",
+            zip_url=zip_info.url,
+            cias_file=str(master_path.name),  # mestre real
+            seguros_file=seguros_file or "(auto-detect failed; no fact file processed)",
             period_from=period_from,
             period_to=period_to,
-            fetched_at=info.fetched_at,
-            bytes_len=info.bytes_len,
-            sha256=info.sha256,
-            saved_to=info.saved_to,
+            fetched_at=zip_info.fetched_at,
+            bytes_len=zip_info.bytes_len,
+            sha256=zip_info.sha256,
+            saved_to=zip_info.saved_to,
             notes={
+                "master_source": master_info.url,
+                "master_cache": master_info.saved_to,
                 "master_rows": master_rows,
                 "master_detected_cols": {"id_col": id_col, "name_col": name_col, "cnpj_col": cnpj_col},
-                "financial_files_processed": len(processed_files),
-                "financial_rows_processed": processed_rows_total,
-                "financial_top_files": sorted(processed_files.items(), key=lambda x: x[1], reverse=True)[:5],
+                "fact_files": processed_files,
+                "fact_rows_processed": processed_rows_total,
+                "auto_detect_best_prem": (best_prem or {}).get("member"),
+                "auto_detect_best_sin": (best_sin or {}).get("member"),
             },
         )
 
