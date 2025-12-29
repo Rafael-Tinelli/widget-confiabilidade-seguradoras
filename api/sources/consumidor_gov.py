@@ -1,16 +1,17 @@
 # api/sources/consumidor_gov.py
+# api/sources/consumidor_gov.py
 from __future__ import annotations
 
 import csv
 import gzip
 import hashlib
+import io
 import os
 import re
 import unicodedata
-import io
-from pathlib import Path
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 import requests
@@ -23,6 +24,9 @@ _SESSION = requests.Session()
 _SESSION.trust_env = False  # garante bypass de proxy do ambiente
 
 
+# ---------------------------------------------------------------------
+# Agregador
+# ---------------------------------------------------------------------
 @dataclass
 class Agg:
     display_name: str = ""
@@ -47,13 +51,14 @@ class Agg:
         self.tempo_sum += other.tempo_sum
         self.tempo_count += other.tempo_count
 
-        def merge_raw(self, raw: dict[str, Any]) -> None:
+    def merge_raw(self, raw: dict[str, Any]) -> None:
         """
         Compatibilidade com o builder: mescla um "raw dict" na agregação.
 
         Aceita chaves em dois formatos:
           - interno: total/finalizadas/respondidas/resolvidas_indicador/nota_sum/nota_count/tempo_sum/tempo_count
-          - público: complaints_total/complaints_finalizadas (demais rates não são mescláveis sem denominadores)
+          - público: complaints_total/complaints_finalizadas
+            (rates não são mescláveis sem denominadores)
         """
         if not isinstance(raw, dict):
             return
@@ -64,7 +69,6 @@ class Agg:
             s = str(v).strip()
             if not s:
                 return 0
-            # suporta "10", "10.0", "10,0"
             s = s.replace(",", ".")
             try:
                 return int(float(s))
@@ -83,18 +87,15 @@ class Agg:
             except (ValueError, TypeError):
                 return 0.0
 
-        # display name
         dn = raw.get("display_name") or raw.get("fornecedor") or raw.get("nome_fornecedor") or ""
         if not self.display_name and isinstance(dn, str) and dn.strip():
             self.display_name = dn.strip()
 
-        # contagens (preferir formato interno; cair para o público se vier assim)
         self.total += _as_int(raw.get("total", raw.get("complaints_total", 0)))
         self.finalizadas += _as_int(raw.get("finalizadas", raw.get("complaints_finalizadas", 0)))
         self.respondidas += _as_int(raw.get("respondidas", 0))
         self.resolvidas_indicador += _as_int(raw.get("resolvidas_indicador", 0))
 
-        # somas/contadores (se existirem no raw)
         self.nota_sum += _as_float(raw.get("nota_sum", 0.0))
         self.nota_count += _as_int(raw.get("nota_count", 0))
         self.tempo_sum += _as_float(raw.get("tempo_sum", 0.0))
@@ -116,8 +117,15 @@ class Agg:
         }
 
 
+# ---------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------
 def _utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _digits(s: Any) -> str:
+    return re.sub(r"\D+", "", str(s or ""))
 
 
 def _norm_key(s: str) -> str:
@@ -127,122 +135,6 @@ def _norm_key(s: str) -> str:
     s = re.sub(r"\s+", " ", s)
     s = re.sub(r"[^a-z0-9 ]+", "", s)
     return s.strip()
-
-
-
-# ---------------------------------------------------------------------
-# CNPJ matching (fallback) via LISTAEMPRESAS.csv (SES/SUSEP)
-# ---------------------------------------------------------------------
-
-DEFAULT_LISTAEMPRESAS_URL = "https://www2.susep.gov.br/menuestatistica/ses/download/LISTAEMPRESAS.csv"
-_LISTAEMPRESAS_CNPJ_BY_NAME: dict[str, str] | None = None
-
-_STOPWORDS = {
-    "sa", "s", "a", "s a", "s a", "cia", "companhia", "ltda", "me", "epp",
-    "eireli", "sociedade", "anonima", "anonima", "de", "do", "da", "dos", "das", "e",
-    "seguro", "seguros", "seguradora", "previdencia", "capitalizacao", "resseguro",
-}
-
-def _loose_name_key(name: str) -> str:
-    strict = _norm_key(name)
-    if not strict:
-        return ""
-    toks = [t for t in strict.split(" ") if t and t not in _STOPWORDS]
-    return " ".join(toks).strip()
-
-
-def _download_to_file(url: str, dest: Path) -> None:
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    with requests.get(url, stream=True, timeout=(15, 180)) as r:
-        r.raise_for_status()
-        tmp = dest.with_suffix(dest.suffix + ".part")
-        with open(tmp, "wb") as f:
-            for chunk in r.iter_content(chunk_size=1024 * 1024):
-                if chunk:
-                    f.write(chunk)
-        tmp.replace(dest)
-
-
-def _get_listaempresas_path() -> Path:
-    # permite override por arquivo local (útil em dev)
-    p = os.getenv("SES_LISTAEMPRESAS_PATH")
-    if p:
-        return Path(p)
-
-    cache_dir = Path(os.getenv("SES_CACHE_DIR", "data/raw/ses")).resolve()
-    dest = cache_dir / "LISTAEMPRESAS.csv"
-    if dest.exists() and dest.stat().st_size > 0:
-        return dest
-
-    url = os.getenv("SES_LISTAEMPRESAS_URL", DEFAULT_LISTAEMPRESAS_URL)
-    _download_to_file(url, dest)
-    return dest
-
-
-def _load_listaempresas_cnpj_by_name() -> dict[str, str]:
-    global _LISTAEMPRESAS_CNPJ_BY_NAME
-    if _LISTAEMPRESAS_CNPJ_BY_NAME is not None:
-        return _LISTAEMPRESAS_CNPJ_BY_NAME
-
-    path = _get_listaempresas_path()
-    raw = path.read_bytes()
-    try:
-        txt = raw.decode("utf-8-sig")
-    except UnicodeDecodeError:
-        txt = raw.decode("latin-1", errors="replace")
-
-    # heuristic delimiter
-    delim = ";" if txt[:4096].count(";") >= txt[:4096].count(",") else ","
-    reader = csv.DictReader(io.StringIO(txt), delimiter=delim)
-    fieldnames = reader.fieldnames or []
-
-    # colunas usuais: CodigoFIP, NomeEntidade, CNPJ
-    def pick(cands: list[str]) -> str | None:
-        norm = {_norm_key(fn): fn for fn in fieldnames}
-        for c in cands:
-            k = _norm_key(c)
-            if k in norm:
-                return norm[k]
-        return None
-
-    col_nome = pick(["NomeEntidade", "nome_entidade", "nome"])
-    col_cnpj = pick(["CNPJ", "cnpj"])
-    if not col_nome or not col_cnpj:
-        _LISTAEMPRESAS_CNPJ_BY_NAME = {}
-        return _LISTAEMPRESAS_CNPJ_BY_NAME
-
-    out: dict[str, str] = {}
-    for r in reader:
-        nome = (r.get(col_nome) or "").strip()
-        cnpj = _digits(r.get(col_cnpj))
-        if not nome or not cnpj:
-            continue
-        strict = _norm_key(nome)
-        loose = _loose_name_key(nome)
-        out[strict] = cnpj
-        if loose:
-            out.setdefault(loose, cnpj)
-    _LISTAEMPRESAS_CNPJ_BY_NAME = out
-    return out
-
-
-def _map_by_name_to_cnpj(by_name: dict[str, Agg], existing: dict[str, Agg] | None = None) -> dict[str, Agg]:
-    existing = existing or {}
-    m = _load_listaempresas_cnpj_by_name()
-    if not m:
-        return {}
-
-    out: dict[str, Agg] = {}
-    for nk, agg in by_name.items():
-        # nk já é normalizado por _norm_key em aggregate_one_month()
-        cnpj = m.get(nk) or m.get(_loose_name_key(nk))
-        if not cnpj or cnpj in existing or cnpj in out:
-            continue
-        out[cnpj] = agg
-    return out
-
-def _digits(s: Any) -> str:
-    return re.sub(r"\D+", "", str(s or ""))
 
 
 def _to_float(x: Any) -> float:
@@ -294,6 +186,143 @@ def _extract_ym(text: str) -> str | None:
     return f"{y:04d}-{mo:02d}"
 
 
+# ---------------------------------------------------------------------
+# CNPJ matching (fallback) via LISTAEMPRESAS.csv (SES/SUSEP)
+# ---------------------------------------------------------------------
+DEFAULT_LISTAEMPRESAS_URL = "https://www2.susep.gov.br/menuestatistica/ses/download/LISTAEMPRESAS.csv"
+_LISTAEMPRESAS_CNPJ_BY_NAME: dict[str, str] | None = None
+
+_STOPWORDS = {
+    "sa",
+    "s",
+    "a",
+    "cia",
+    "companhia",
+    "ltda",
+    "me",
+    "epp",
+    "eireli",
+    "sociedade",
+    "anonima",
+    "de",
+    "do",
+    "da",
+    "dos",
+    "das",
+    "e",
+    "seguro",
+    "seguros",
+    "seguradora",
+    "previdencia",
+    "capitalizacao",
+    "resseguro",
+}
+
+
+def _loose_name_key(name: str) -> str:
+    strict = _norm_key(name)
+    if not strict:
+        return ""
+    toks = [t for t in strict.split(" ") if t and t not in _STOPWORDS]
+    return " ".join(toks).strip()
+
+
+def _download_to_file(url: str, dest: Path) -> None:
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    with _SESSION.get(url, headers=UA, stream=True, timeout=(15, 180)) as r:
+        r.raise_for_status()
+        tmp = dest.with_suffix(dest.suffix + ".part")
+        with open(tmp, "wb") as f:
+            for chunk in r.iter_content(chunk_size=1024 * 1024):
+                if chunk:
+                    f.write(chunk)
+        tmp.replace(dest)
+
+
+def _get_listaempresas_path() -> Path:
+    # permite override por arquivo local (útil em dev)
+    p = os.getenv("SES_LISTAEMPRESAS_PATH")
+    if p:
+        return Path(p)
+
+    cache_dir = Path(os.getenv("SES_CACHE_DIR", "data/raw/ses")).resolve()
+    dest = cache_dir / "LISTAEMPRESAS.csv"
+    if dest.exists() and dest.stat().st_size > 0:
+        return dest
+
+    url = os.getenv("SES_LISTAEMPRESAS_URL", DEFAULT_LISTAEMPRESAS_URL)
+    _download_to_file(url, dest)
+    return dest
+
+
+def _load_listaempresas_cnpj_by_name() -> dict[str, str]:
+    global _LISTAEMPRESAS_CNPJ_BY_NAME
+    if _LISTAEMPRESAS_CNPJ_BY_NAME is not None:
+        return _LISTAEMPRESAS_CNPJ_BY_NAME
+
+    path = _get_listaempresas_path()
+    raw = path.read_bytes()
+    try:
+        txt = raw.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        txt = raw.decode("latin-1", errors="replace")
+
+    delim = ";" if txt[:4096].count(";") >= txt[:4096].count(",") else ","
+    reader = csv.DictReader(io.StringIO(txt), delimiter=delim)
+    fieldnames = reader.fieldnames or []
+
+    def pick(cands: list[str]) -> str | None:
+        norm = {_norm_key(fn): fn for fn in fieldnames}
+        for c in cands:
+            k = _norm_key(c)
+            if k in norm:
+                return norm[k]
+        return None
+
+    col_nome = pick(["NomeEntidade", "nome_entidade", "nome"])
+    col_cnpj = pick(["CNPJ", "cnpj"])
+    if not col_nome or not col_cnpj:
+        _LISTAEMPRESAS_CNPJ_BY_NAME = {}
+        return _LISTAEMPRESAS_CNPJ_BY_NAME
+
+    out: dict[str, str] = {}
+    for r in reader:
+        nome = (r.get(col_nome) or "").strip()
+        cnpj = _digits(r.get(col_cnpj))
+        if not nome or len(cnpj) != 14:
+            continue
+        strict = _norm_key(nome)
+        loose = _loose_name_key(nome)
+        out[strict] = cnpj
+        if loose:
+            out.setdefault(loose, cnpj)
+
+    _LISTAEMPRESAS_CNPJ_BY_NAME = out
+    return out
+
+
+def _map_by_name_to_cnpj(by_name: dict[str, Agg], existing: dict[str, Agg] | None = None) -> dict[str, Agg]:
+    """
+    Cria um by_cnpj "extra" a partir de by_name, usando LISTAEMPRESAS como tabela mestre.
+    Só adiciona CNPJs que ainda não existam em `existing`.
+    """
+    existing = existing or {}
+    m = _load_listaempresas_cnpj_by_name()
+    if not m:
+        return {}
+
+    out: dict[str, Agg] = {}
+    for nk, agg in by_name.items():
+        cnpj = m.get(nk) or m.get(_loose_name_key(nk))
+        if not cnpj or cnpj in existing or cnpj in out:
+            continue
+        out[cnpj] = agg
+    return out
+
+
+# ---------------------------------------------------------------------
+# Discovery de URLs basecompleta (CKAN)
+# ---------------------------------------------------------------------
 def discover_basecompleta_urls(months: int = 12) -> dict[str, str]:
     api = f"{CKAN_BASE}/api/3/action/package_show"
     found: dict[str, str] = {}
@@ -321,7 +350,7 @@ def discover_basecompleta_urls(months: int = 12) -> dict[str, str]:
     except Exception:
         pass
 
-    # 2) fallback HTML
+    # 2) fallback HTML (útil se CKAN estiver instável)
     if not found:
         try:
             page = f"{CKAN_BASE}/dataset/{DATASET_ID}"
@@ -346,8 +375,12 @@ def discover_basecompleta_urls(months: int = 12) -> dict[str, str]:
     return {ym: found[ym] for ym in sorted(yms_sorted)}
 
 
+# ---------------------------------------------------------------------
+# Download
+# ---------------------------------------------------------------------
 def download_csv_to_gz(url: str, out_gz_path: str) -> dict[str, Any]:
     os.makedirs(os.path.dirname(out_gz_path), exist_ok=True)
+
     with _SESSION.get(url, headers=UA, timeout=600, stream=True) as r:
         r.raise_for_status()
         ct = (r.headers.get("content-type") or "").lower()
@@ -371,6 +404,10 @@ def download_csv_to_gz(url: str, out_gz_path: str) -> dict[str, Any]:
         "downloaded_at": _utc_now(),
     }
 
+
+# ---------------------------------------------------------------------
+# Agregação
+# ---------------------------------------------------------------------
 def aggregate_month_dual(gz_path: str) -> tuple[dict[str, Agg], dict[str, Agg]]:
     by_name: dict[str, Agg] = {}
     by_cnpj: dict[str, Agg] = {}
@@ -457,7 +494,6 @@ def aggregate_month_dual(gz_path: str) -> tuple[dict[str, Agg], dict[str, Agg]]:
 # ---------------------------------------------------------------------
 # Back-compat wrappers (para o builder antigo)
 # ---------------------------------------------------------------------
-
 def download_month_csv_gz(
     a: str,
     b: str | None = None,
