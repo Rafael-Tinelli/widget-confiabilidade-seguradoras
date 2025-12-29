@@ -9,6 +9,7 @@ import re
 import time
 import unicodedata
 import zipfile
+import itertools
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -319,7 +320,7 @@ def download_and_validate_ses_zip() -> SesFetchResult:
 # ----------------------------
 
 def _norm_key(s: str) -> str:
-    s = (s or "").strip().lower()
+    s = (s or "").replace("\ufeff", "").strip().lower()
     s = unicodedata.normalize("NFKD", s)
     s = "".join(ch for ch in s if not unicodedata.combining(ch))
     s = re.sub(r"\s+", " ", s)
@@ -343,12 +344,16 @@ def _to_float(x: Any) -> float:
 
 
 def _sniff_delimiter(sample: str) -> str:
-    sc = sample.count(";")
-    cc = sample.count(",")
-    tc = sample.count("\t")
-    if tc > sc and tc > cc:
-        return "\t"
-    return ";" if sc >= cc else ","
+    # tenta ser robusto: SES às vezes vem com ;, , , \t ou |
+    counts = {
+        ";": sample.count(";"),
+        "|": sample.count("|"),
+        ",": sample.count(","),
+        "\t": sample.count("\t"),
+    }
+    # escolhe o que mais aparece; fallback ';'
+    delim = max(counts, key=counts.get)
+    return delim if counts[delim] > 0 else ";"
 
 
 def _ym_to_index(ym: str) -> int:
@@ -448,23 +453,38 @@ def _detect_master_file(names: list[str]) -> str | None:
 def _detect_company_id_col(fieldnames: list[str]) -> str | None:
     best = None
     best_score = -1e9
+
     for fn in fieldnames:
         n = _norm_header(fn)
         if not n:
             continue
+
         score = 0.0
+
+        # casos perfeitos
+        if n in {"codcia", "cod_cia", "codigo_cia", "codigocia", "cdcia"}:
+            score += 30.0
+
+        # casos comuns “curtos”
+        if n in {"cia", "idcia"}:
+            score += 18.0
+
+        # heurística geral
         if "cia" in n and "cod" in n:
             score += 20.0
-        if n in {"codcia", "cod_cia", "codigo_cia", "codigocia"}:
-            score += 15.0
         if "cia" in n and ("id" in n or "codigo" in n):
-            score += 10.0
+            score += 12.0
+
+        # penalidades
         if "cnpj" in n:
-            score -= 20.0
+            score -= 25.0
+
         score -= len(n) / 100.0
+
         if score > best_score:
             best_score = score
             best = fn
+
     return best if best_score > 0 else None
 
 
@@ -543,22 +563,58 @@ def _detect_amount_cols(fieldnames: list[str]) -> tuple[str | None, str | None]:
 
 
 def _open_csv_from_zip(zf: zipfile.ZipFile, member: str) -> tuple[csv.DictReader, list[str], str]:
-    # 1) sample para sniff delimiter
-    with zf.open(member) as bf:
-        sample_bytes = bf.read(4096)
-    try:
-        sample = sample_bytes.decode("latin-1", errors="replace")
-    except Exception:
-        sample = str(sample_bytes)
+    def detect_delim_and_skip(lines: list[str]) -> tuple[str, int]:
+        # retorna (delim, skip_lines)
+        # caso Excel: primeira linha "sep=;"
+        for i, ln in enumerate(lines):
+            if not ln:
+                continue
+            t = ln.strip().lower()
+            if t.startswith("sep="):
+                d = t[4:5]
+                return (d if d else ";"), i + 1
 
-    delim = _sniff_delimiter(sample)
+            # primeira linha “real” (header) define melhor delimitador
+            counts = {d: ln.count(d) for d in [";", "|", ",", "\t"]}
+            best = max(counts, key=counts.get)
+            return (best if counts[best] > 0 else ";"), i
 
-    # 2) abre de novo para o reader completo
-    raw = zf.open(member)
-    text = io.TextIOWrapper(raw, encoding="latin-1", errors="replace", newline="")
-    reader = csv.DictReader(text, delimiter=delim)
-    fieldnames = list(reader.fieldnames or [])
-    return reader, fieldnames, delim
+        return ";", 0
+
+    # tenta 2 encodings comuns no SES
+    last_reader = None
+    last_fields: list[str] = []
+    last_delim = ";"
+
+    for enc in ("utf-8-sig", "latin-1"):
+        raw = zf.open(member)
+        text = io.TextIOWrapper(raw, encoding=enc, errors="replace", newline="")
+
+        # lê poucas linhas para detectar sep/delimiter
+        l1 = text.readline()
+        l2 = text.readline()
+        l3 = text.readline()
+
+        probe = [l1, l2, l3]
+        delim, skip_n = detect_delim_and_skip(probe)
+
+        # reinsere linhas (exceto as puladas) e segue stream normal
+        head_lines = probe[skip_n:]
+        lines_iter = itertools.chain(head_lines, text)
+
+        reader = csv.DictReader(lines_iter, delimiter=delim)
+        fieldnames = list(reader.fieldnames or [])
+
+        # se veio “uma coluna só”, quase sempre delimiter errado; tenta o próximo encoding
+        if len(fieldnames) > 1:
+            return reader, fieldnames, delim
+
+        last_reader = reader
+        last_fields = fieldnames
+        last_delim = delim
+
+    # fallback: devolve o “melhor que conseguiu” (vai ajudar no erro/diagnóstico)
+    return last_reader, last_fields, last_delim  # type: ignore[return-value]
 
 
 def _iter_relevant_csv_members(names: list[str]) -> Iterable[str]:
@@ -612,13 +668,24 @@ def extract_ses_master_and_financials() -> tuple[SesExtractMeta, dict[str, dict[
         name_col = _detect_name_col(fieldnames)
         cnpj_col = _detect_cnpj_col(fieldnames)
 
-        if not id_col or not name_col:
-            # ainda assim tentamos seguir, mas isso é bem ruim
-            # id_col é essencial para "ses_id"
-            raise RuntimeError(
-                f"SES: mestre CIAS sem colunas mínimas. "
-                f"id_col={id_col!r} name_col={name_col!r} file={cias_member!r}"
-            )
+        if not fieldnames:
+            raise RuntimeError(f"SES: não consegui ler header do mestre CIAS. file={cias_member!r} delim={_delim!r}")
+
+            # fallback pragmático: SES_CIAS geralmente tem o código na 1ª coluna e nome em alguma das próximas
+            if not id_col:
+                id_col = fieldnames[0]
+
+            if not name_col:
+                name_col = fieldnames[1] if len(fieldnames) > 1 else fieldnames[0]
+
+            # se quiser debug controlado por env:
+            if str(os.environ.get("SES_DEBUG", "")).strip() in {"1", "true", "yes"}:
+                    print(
+                        "SES DEBUG CIAS:",
+                        {"file": cias_member, "delim": _delim, "fields": fieldnames[:30], "id_col": id_col, "name_col": name_col},
+                        flush=True,
+                    )
+
 
         for row in reader:
             if not isinstance(row, dict):
