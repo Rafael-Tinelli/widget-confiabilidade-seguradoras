@@ -53,6 +53,7 @@ jobs:
         env:
           MIN_INSURERS_COUNT: "200"
           MAX_COUNT_DROP_PCT: "0.20"
+          # Fixando URL para evitar scraping de HTML instável
           SES_ZIP_URL: "https://www2.susep.gov.br/download/estatisticas/BaseCompleta.zip"
           SES_ALLOW_INSECURE_SSL: "1"
 
@@ -161,23 +162,24 @@ jobs:
           if not isinstance(by_name, dict) or len(by_name) < 50:
               fail(f"consumidor_gov by_name_key muito pequeno: {len(by_name) if isinstance(by_name, dict) else 'n/a'}")
 
-          by_cnpj = agg.get("by_cnpj_key") or {}
-          if not isinstance(by_cnpj, dict):
-              by_cnpj = {}
-
-          cnpj_meta = m.get("cnpj") or {}
+          # --- CNPJ Guardrail (Robustez) ---
+          # Só falha se o parser detectou coluna de CNPJ em algum mês, mas falhou em extrair chaves.
+          cnpj_meta = m.get("cnpj") if isinstance(m.get("cnpj"), dict) else {}
           detected_months = cnpj_meta.get("detected_months") or []
-          if not isinstance(detected_months, list):
-              detected_months = []
-
-          # Se o parser detectou uma coluna CNPJ em pelo menos 1 mês, mas o agregado
-          # está sem chaves por CNPJ, isso é regressão do parser (falha hard).
-          if detected_months and len(by_cnpj) == 0:
-              fail(f"consumidor_gov: coluna CNPJ detectada em {detected_months}, mas by_cnpj_key está vazio (parser/regra de normalização)")
-
-          # Caso contrário, não derruba o pipeline (dataset pode não expor CNPJ).
-          if len(by_cnpj) == 0:
-              print("WARN: consumidorGov: by_cnpj_key vazio; matching será apenas por nome.", flush=True)
+          by_cnpj = agg.get("by_cnpj_key") if isinstance(agg.get("by_cnpj_key"), dict) else {}
+          
+          if detected_months:
+              # Se detectamos colunas, esperamos ter extraído chaves válidas.
+              # Limite baixo (5) apenas para garantir que o parser não quebrou totalmente.
+              if len(by_cnpj) < 5:
+                  fail(
+                      f"consumidor_gov: detectou CNPJ em {len(detected_months)} mês(es) "
+                      f"mas by_cnpj_key está vazio/insuficiente (len={len(by_cnpj)}). "
+                      f"Ex.: {detected_months[:3]}"
+                  )
+          elif len(by_cnpj) == 0:
+              # Se não detectou colunas e não tem chaves, é esperado (dataset mudou ou sem CNPJ).
+              print("WARN: consumidorGov: Nenhuma coluna CNPJ detectada no histórico; matching será apenas por nome.", flush=True)
 
           monthly_path = Path(f"data/derived/consumidor_gov/monthly/consumidor_gov_{as_of}.json")
           if not monthly_path.exists():
@@ -201,7 +203,7 @@ jobs:
               found = [p for p in apis if p.exists() and p.stat().st_size > 200]
           if not found:
               fail("participants não encontrado (nenhum candidates/ fallback em api/)")
-          
+           
           # --- 4) SES: valida assinatura ZIP (PK) via range (cabeçalho) ---
           headers = {"Range": "bytes=0-3", "User-Agent": "refresh-data-smoke/1.0"}
           allow_insecure = str(os.environ.get("SES_ALLOW_INSECURE_SSL", "")).strip().lower() in {"1", "true", "yes"}
