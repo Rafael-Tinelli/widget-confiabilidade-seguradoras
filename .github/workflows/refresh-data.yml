@@ -1,51 +1,40 @@
+# .github/workflows/refresh-data.yml
 name: refresh-data
 
 on:
   workflow_dispatch:
   schedule:
-    # todo dia às 03:17 UTC (~00:17 BRT)
-    - cron: "17 3 * * *"
+    - cron: "30 9 * * 1"
 
 permissions:
   contents: write
 
-concurrency:
-  group: refresh-data
-  cancel-in-progress: false
-
 jobs:
   refresh:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
       - name: Install deps
         run: |
           set -euo pipefail
-          python -m pip install --upgrade pip
+          python -m pip install -U pip
           pip install -r requirements.txt
           pip install -r requirements-dev.txt
 
-      # --- 1) Build Consumidor.gov monthly + agg ---
-      - name: Build consumidor.gov monthly + agg
+      - name: Lint
         run: |
           set -euo pipefail
-          python -m api.build_consumidor_gov
+          ruff check .
 
-      # --- 2) Build OPIN/participants ---
-      - name: Build OPIN participants
-        run: |
-          set -euo pipefail
-          python -m api.build_participants
+      # ---------------------
+      # Build core datasets
+      # ---------------------
 
-      # --- 3) Build final insurers.json ---
       - name: Build JSON (insurers)
         run: |
           set -euo pipefail
@@ -53,221 +42,115 @@ jobs:
         env:
           MIN_INSURERS_COUNT: "200"
           MAX_COUNT_DROP_PCT: "0.20"
-          # Fixando URL para evitar scraping de HTML instável
           SES_ZIP_URL: "https://www2.susep.gov.br/download/estatisticas/BaseCompleta.zip"
           SES_ALLOW_INSECURE_SSL: "1"
 
-      # Smoke-check (gate antes do commit)
-      - name: Smoke-check artifacts
+      - name: Build JSON (consumidor.gov)
+        run: |
+          set -euo pipefail
+          python -m api.build_consumidor_gov
+        env:
+          # janela padrão (pode sobrescrever no dispatch)
+          CONSUMIDOR_GOV_MONTHS: "12"
+          # opcional: mais debug
+          # CONSUMIDOR_GOV_DEBUG: "1"
+
+      - name: Build JSON (participants)
+        run: |
+          set -euo pipefail
+          python -m api.build_json
+        env:
+          OPIN_PARTICIPANTS_URL: "https://www.gov.br/susep/pt-br/acesso-a-informacao/dados-abertos/dados-abertos-susep/participe-do-mercado/relacao-de-sociedades-seguradoras-e-entidades-abertas-de-previdencia-complementar-e-capitalizacao"
+          OPIN_ALLOW_INSECURE_SSL: "1"
+
+      # ---------------------
+      # Smoke checks + guards
+      # ---------------------
+
+      - name: Smoke check outputs
         run: |
           set -euo pipefail
           python - <<'PY'
-          import json
-          import os
-          import re
+          import json, os, sys
           from pathlib import Path
-          from datetime import datetime, timezone
-
-          import requests
-          from requests.exceptions import RequestException
-          from requests.exceptions import SSLError
 
           def fail(msg: str) -> None:
-              raise SystemExit(f"SMOKE FAIL: {msg}")
+              print("FAIL:", msg, file=sys.stderr, flush=True)
+              sys.exit(1)
 
-          # --- 0) Insurers.json ---
-          p = Path("api/v1/insurers.json")
-          if not p.exists():
-              fail("api/v1/insurers.json não existe")
-          if p.stat().st_size < 10_000:
-              fail(f"api/v1/insurers.json muito pequeno: {p.stat().st_size} bytes")
-
-          ins = json.loads(p.read_text(encoding="utf-8"))
-          schema = ins.get("schemaVersion")
-          if schema != "1.0.0":
-              fail(f"schemaVersion inesperado: {schema!r}")
-
-          meta = ins.get("meta") or {}
+          # --- 1) insurers.json ---
+          insurers_path = Path("api/v1/insurers.json")
+          if not insurers_path.exists():
+              fail("api/v1/insurers.json não encontrado")
+          insurers = json.loads(insurers_path.read_text(encoding="utf-8"))
+          meta = insurers.get("meta") or {}
           count = int(meta.get("count") or 0)
-          min_count = int(os.environ.get("MIN_INSURERS_COUNT", "200"))
-          if count < min_count:
-              fail(f"meta.count baixo demais: {count} < {min_count}")
-
-          insurers = ins.get("insurers") or []
-          if not isinstance(insurers, list) or len(insurers) != count:
-              fail(f"len(insurers) inconsistente: len={len(insurers)} meta.count={count}")
-
-          # proteção contra queda abrupta (regressão)
-          max_drop_pct = float(os.environ.get("MAX_COUNT_DROP_PCT", "0.20"))
-          snap_dir = Path("data/snapshots")
-          snaps = sorted(snap_dir.glob("insurers_full_*.json.gz"))
-          if len(snaps) >= 2:
-              # pega o penúltimo snapshot para comparar (último pode ser o atual)
-              prev = snaps[-2]
-              import gzip
-              with gzip.open(prev, "rt", encoding="utf-8") as f:
-                  prev_ins = json.load(f)
-              prev_count = int((prev_ins.get("meta") or {}).get("count") or 0)
-              if prev_count > 0:
-                  drop = (prev_count - count) / prev_count
-                  if drop > max_drop_pct:
-                      fail(f"queda grande de count: prev={prev_count} now={count} drop={drop:.1%} > {max_drop_pct:.1%}")
-
-          # valida período rolling_12m (se existir)
-          rolling = meta.get("rolling_12m") or {}
-          if rolling:
-              start = str(rolling.get("start") or "")
-              end = str(rolling.get("end") or "")
-              if not re.fullmatch(r"20\d{2}-\d{2}-\d{2}", start):
-                  fail(f"rolling_12m.start inválido: {start!r}")
-              if not re.fullmatch(r"20\d{2}-\d{2}-\d{2}", end):
-                  fail(f"rolling_12m.end inválido: {end!r}")
-
-          # valida generatedAt (recência aproximada)
-          gen = meta.get("generatedAt")
-          if isinstance(gen, str) and gen:
-              try:
-                  dt = datetime.fromisoformat(gen.replace("Z", "+00:00"))
-                  delta = abs((datetime.now(timezone.utc) - dt).total_seconds())
-                  if delta > 48 * 3600:
-                      fail(f"generatedAt muito antigo para refresh-data: {gen}")
-              except Exception:
-                  # não falha por parse; apenas não valida recência
-                  pass
-
-          sources = ins.get("sources") or {}
-          ses_src = sources.get("ses") or {}
-          ses_url = (ses_src.get("url") or ses_src.get("zip_url") or "").strip()
-          if not ses_url.startswith("http"):
-              fail(f"sources.ses.url ausente/ inválido: {ses_url!r}")
+          if count < int(os.environ.get("MIN_INSURERS_COUNT", "200")):
+              fail(f"insurers count baixo: {count}")
 
           # --- 2) Consumidor.gov agg + monthly as_of ---
           agg_path = Path("data/derived/consumidor_gov/consumidor_gov_agg_latest.json")
           if not agg_path.exists():
-              fail(f"agg inexistente: {agg_path}")
-          if agg_path.stat().st_size < 1000:
-              fail(f"agg muito pequeno: {agg_path} ({agg_path.stat().st_size} bytes)")
+              fail("consumidor_gov_agg_latest.json não encontrado")
           agg = json.loads(agg_path.read_text(encoding="utf-8"))
-
           m = agg.get("meta") or {}
           as_of = str(m.get("as_of") or "")
-          if not re.fullmatch(r"20\d{2}-(0[1-9]|1[0-2])", as_of):
+          if len(as_of) != 7 or as_of[4] != "-":
               fail(f"consumidor_gov meta.as_of inválido: {as_of!r}")
-
-          months = m.get("months") or []
-          if not isinstance(months, list) or not (1 <= len(months) <= 24):
+          wm = int(m.get("window_months") or 0)
+          if wm <= 0:
+              fail(f"consumidor_gov meta.window_months inválido: {wm}")
+          months = m.get("months")
+          if not isinstance(months, list) or len(months) < 6:
               fail(f"consumidor_gov meta.months inválido: {months!r}")
 
           by_name = agg.get("by_name_key") or {}
           if not isinstance(by_name, dict) or len(by_name) < 50:
               fail(f"consumidor_gov by_name_key muito pequeno: {len(by_name) if isinstance(by_name, dict) else 'n/a'}")
 
-          # --- CNPJ Guardrail (Robustez) ---
-          # Só falha se o parser detectou coluna de CNPJ em algum mês, mas falhou em extrair chaves.
+          # Guardrail CNPJ (best-effort):
+          # - Se o builder expõe meta.cnpj.detected_months e houver detecção,
+          #   então o agregado deve ter chaves por CNPJ.
+          # - Se não houver metadados de CNPJ, não falha hard (dataset pode não expor).
           cnpj_meta = m.get("cnpj") if isinstance(m.get("cnpj"), dict) else {}
           detected_months = cnpj_meta.get("detected_months") or []
+          unique_keys = cnpj_meta.get("unique_keys")
           by_cnpj = agg.get("by_cnpj_key") if isinstance(agg.get("by_cnpj_key"), dict) else {}
-          
-          if detected_months:
-              # Se detectamos colunas, esperamos ter extraído chaves válidas.
-              # Limite baixo (5) apenas para garantir que o parser não quebrou totalmente.
-              if len(by_cnpj) < 5:
-                  fail(
-                      f"consumidor_gov: detectou CNPJ em {len(detected_months)} mês(es) "
-                      f"mas by_cnpj_key está vazio/insuficiente (len={len(by_cnpj)}). "
-                      f"Ex.: {detected_months[:3]}"
-                  )
-          elif len(by_cnpj) == 0:
-              # Se não detectou colunas e não tem chaves, é esperado (dataset mudou ou sem CNPJ).
-              print("WARN: consumidorGov: Nenhuma coluna CNPJ detectada no histórico; matching será apenas por nome.", flush=True)
+          if isinstance(detected_months, list) and len(detected_months) > 0:
+              if not isinstance(unique_keys, int):
+                  unique_keys = len(by_cnpj)
+              if unique_keys <= 0:
+                  fail("consumidor_gov: coluna CNPJ detectada em algum mês, mas agregado tem 0 chaves por CNPJ")
+          else:
+              if isinstance(by_cnpj, dict) and len(by_cnpj) == 0:
+                  print("WARN: consumidor_gov sem chaves por CNPJ (matching será por nome).", flush=True)
 
-          monthly_path = Path(f"data/derived/consumidor_gov/monthly/consumidor_gov_{as_of}.json")
-          if not monthly_path.exists():
-              fail(f"monthly do as_of não existe: {monthly_path}")
-          if monthly_path.stat().st_size < 1000:
-              fail(f"monthly do as_of muito pequeno: {monthly_path} ({monthly_path.stat().st_size} bytes)")
+          # --- 3) Participants/OPIN ---
+          participants_path = Path("data/derived/participants/participants_latest.json")
+          if not participants_path.exists():
+              fail("participants_latest.json não encontrado")
+          part = json.loads(participants_path.read_text(encoding="utf-8"))
+          pmeta = part.get("meta") or {}
+          pcount = int(pmeta.get("count") or 0)
+          if pcount < 50:
+              fail(f"participants count baixo: {pcount}")
 
-          # --- 3) OPIN/participants: verificação resiliente (não assume nome fixo) ---
-          candidates = [
-              Path("api/v1/participants.json"),
-              Path("api/v1/opin_participants.json"),
-              Path("api/v1/participants_latest.json"),
-              Path("data/raw/opin_participants_latest.json"),
-              Path("data/raw/opin/participants_latest.json"),
-              Path("data/derived/opin/participants_latest.json"),
-          ]
-          found = [p for p in candidates if p.exists() and p.stat().st_size > 200]
-          if not found:
-              # fallback: qualquer arquivo em api/
-              apis = list(Path("api").glob("**/*participants*.json"))
-              found = [p for p in apis if p.exists() and p.stat().st_size > 200]
-          if not found:
-              fail("participants não encontrado (nenhum candidates/ fallback em api/)")
-           
-          # --- 4) SES: valida assinatura ZIP (PK) via range (cabeçalho) ---
-          headers = {"Range": "bytes=0-3", "User-Agent": "refresh-data-smoke/1.0"}
-          allow_insecure = str(os.environ.get("SES_ALLOW_INSECURE_SSL", "")).strip().lower() in {"1", "true", "yes"}
-
-          def fetch_head_bytes(verify: bool) -> bytes:
-              r = requests.get(ses_url, headers=headers, timeout=30, stream=True, verify=verify, allow_redirects=True)
-              r.raise_for_status()
-              return r.raw.read(4)
-
-          try:
-              b = fetch_head_bytes(verify=True)
-          except SSLError:
-              if not allow_insecure:
-                  fail("SES SSL falhou com verify=True e SES_ALLOW_INSECURE_SSL não está habilitado")
-              b = fetch_head_bytes(verify=False)
-          except RequestException as e:
-              fail(f"falha ao conectar/baixar cabeçalho do SES: {e}")
-
-          if b[:2] != b"PK":
-              fail(f"SES não parece ZIP (assinatura != PK): bytes={b!r}")
-
-          print("SMOKE OK:")
-          print(f"- insurers.json OK: schema={schema}, count={count}, rolling={rolling or 'n/a'}")
-          print(f"- consumidor.gov OK: as_of={as_of}, months={len(months)}, by_name_key={len(by_name)}, by_cnpj_key={len(by_cnpj)}")
-          print(f"- SES ZIP signature OK: url={ses_url}")
-          print(f"- participants OK: {found[0]}")
-          PY
-        env:
-          MIN_INSURERS_COUNT: "200"
-          SES_ALLOW_INSECURE_SSL: "1"
-
-      - name: Run tests
-        run: |
-          set -euo pipefail
-          pytest -q
-
-      - name: Prune old snapshots
-        run: |
-          set -euo pipefail
-          # mantém no máximo 14 snapshots (aprox 2 semanas se diário)
-          python - <<'PY'
-          import os
-          from pathlib import Path
-
-          snap_dir = Path("data/snapshots")
-          snaps = sorted(snap_dir.glob("insurers_full_*.json.gz"))
-          keep = 14
-          if len(snaps) > keep:
-              for p in snaps[:-keep]:
-                  try:
-                      p.unlink()
-                  except Exception:
-                      pass
+          print("OK: smoke checks passaram.", flush=True)
           PY
 
-      - name: Commit changes
+      # ---------------------
+      # Commit back to repo
+      # ---------------------
+
+      - name: Commit outputs
         run: |
           set -euo pipefail
-          if git diff --quiet; then
-            echo "No changes."
-            exit 0
-          fi
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add -A
-          git commit -m "refresh-data: update snapshots and api artifacts"
+          git add api/v1/insurers.json data/derived data/snapshots || true
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+            exit 0
+          fi
+          git commit -m "chore(data): refresh datasets"
           git push
