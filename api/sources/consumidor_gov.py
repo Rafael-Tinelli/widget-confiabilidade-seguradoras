@@ -318,7 +318,6 @@ def download_csv_to_gz(url: str, out_gz_path: str) -> dict[str, Any]:
         "downloaded_at": _utc_now(),
     }
 
-
 def aggregate_month_dual(gz_path: str) -> tuple[dict[str, Agg], dict[str, Agg]]:
     by_name: dict[str, Agg] = {}
     by_cnpj: dict[str, Agg] = {}
@@ -399,7 +398,14 @@ def aggregate_month_dual(gz_path: str) -> tuple[dict[str, Agg], dict[str, Agg]]:
                     by_cnpj[cnpj_key] = a2
                 _apply(a2)
 
-            def download_month_csv_gz(
+    return by_name, by_cnpj
+
+
+# ---------------------------------------------------------------------
+# Back-compat wrappers (para o builder antigo)
+# ---------------------------------------------------------------------
+
+def download_month_csv_gz(
     a: str,
     b: str | None = None,
     *,
@@ -411,7 +417,7 @@ def aggregate_month_dual(gz_path: str) -> tuple[dict[str, Agg], dict[str, Agg]]:
     Formas aceitas:
       1) download_month_csv_gz(ym, url, out_dir=...)
       2) download_month_csv_gz(url, out_gz_path)
-      3) download_month_csv_gz(url)  -> infere ym e salva em out_dir padrão
+      3) download_month_csv_gz(url) -> infere ym e salva em out_dir padrão
     """
     default_out_dir = os.getenv("CONSUMIDOR_GOV_CACHE_DIR", "data/raw/consumidor_gov")
     out_dir = out_dir or default_out_dir
@@ -450,13 +456,14 @@ def aggregate_month_dual_with_stats(
     gz_path: str,
 ) -> tuple[dict[str, Agg], dict[str, Agg], dict[str, Any]]:
     """
-    Back-compat: agrega e devolve estatísticas básicas de parsing em 1 passada.
+    Back-compat: agrega e devolve estatísticas básicas de parsing.
     """
     by_name: dict[str, Agg] = {}
     by_cnpj: dict[str, Agg] = {}
 
     rows_total = 0
     rows_with_cnpj = 0
+    delim = ","
 
     with gzip.open(gz_path, "rt", encoding="latin-1", errors="replace") as f:
         sample = f.read(4096)
@@ -536,14 +543,14 @@ def aggregate_month_dual_with_stats(
                     by_cnpj[cnpj_key] = a2
                 _apply(a2)
 
-                stats = {
-                    "gz_path": gz_path,
-                    "bytes": os.path.getsize(gz_path) if os.path.exists(gz_path) else None,
-                    "sha256": _sha256_file(gz_path) if os.path.exists(gz_path) else None,
-                    "parsed_at": _utc_now(),
-                    "delimiter": delim,
-                    "rows_total": rows_total,
-                    "rows_with_cnpj": rows_with_cnpj,
-                    "cnpj_fill_rate": (rows_with_cnpj / rows_total) if rows_total else None,
-                }
+    stats = {
+        "gz_path": gz_path,
+        "bytes": os.path.getsize(gz_path) if os.path.exists(gz_path) else None,
+        "sha256": _sha256_file(gz_path) if os.path.exists(gz_path) else None,
+        "parsed_at": _utc_now(),
+        "delimiter": delim,
+        "rows_total": rows_total,
+        "rows_with_cnpj": rows_with_cnpj,
+        "cnpj_fill_rate": (rows_with_cnpj / rows_total) if rows_total else None,
+    }
     return by_name, by_cnpj, stats
