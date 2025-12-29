@@ -1,241 +1,173 @@
-# api/build_consumidor_gov.py
-from __future__ import annotations
-
 import json
 import os
-import re
 from dataclasses import asdict
-from datetime import datetime
-from typing import Any
+from pathlib import Path
 
 from api.sources.consumidor_gov import (
     Agg,
-    aggregate_month_dual,
-    discover_basecompleta_urls,
-    download_csv_to_gz,
+    aggregate_month_dual_with_stats,
+    download_month_csv_gz,
+    _utc_now,
 )
 
-CACHE_DIR = "data/.cache/consumidor_gov"
-MONTHLY_DIR = "data/derived/consumidor_gov/monthly"
-OUT_LATEST = "data/derived/consumidor_gov/consumidor_gov_agg_latest.json"
+RAW_DIR = "data/raw/consumidor_gov"
+DERIVED_DIR = "data/derived/consumidor_gov"
+MONTHLY_DIR = f"{DERIVED_DIR}/monthly"
+
+OUT_LATEST = f"{DERIVED_DIR}/consumidor_gov_agg_latest.json"
 
 
-def _utc_now() -> str:
-    return datetime.utcnow().isoformat(timespec="seconds") + "Z"
-
-
-def _ensure_dirs() -> None:
-    os.makedirs(CACHE_DIR, exist_ok=True)
-    os.makedirs(MONTHLY_DIR, exist_ok=True)
-    os.makedirs(os.path.dirname(OUT_LATEST), exist_ok=True)
+def _month_key(dt: str) -> str:
+    # dt pode vir yyyy-mm-dd; a gente usa yyyy-mm
+    return str(dt or "")[:7]
 
 
 def _monthly_path(ym: str) -> str:
     return os.path.join(MONTHLY_DIR, f"consumidor_gov_{ym}.json")
 
 
-def _load_json(path: str) -> dict[str, Any]:
+def _write_json(path: str, obj: dict) -> None:
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(obj, f, ensure_ascii=False, indent=2, sort_keys=False)
+        f.write("\n")
+    os.replace(tmp, path)
+
+
+def _load_json(path: str) -> dict:
     with open(path, "r", encoding="utf-8") as f:
         return json.load(f)
 
 
-def _write_json(path: str, payload: dict[str, Any]) -> None:
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(payload, f, ensure_ascii=False, indent=2)
-
-
-def _read_current_as_of() -> str | None:
-    if not os.path.exists(OUT_LATEST):
-        return None
-    try:
-        meta = _load_json(OUT_LATEST).get("meta", {})
-        as_of = meta.get("as_of")
-        return str(as_of) if as_of else None
-    except Exception:
-        return None
-
-
-def _latest_available_month() -> str | None:
-    try:
-        latest_urls = discover_basecompleta_urls(months=1)
-        return next(iter(latest_urls.keys()), None)
-    except Exception:
-        return None
-
-
-def _agg_from_raw(raw: dict[str, Any]) -> Agg:
-    return Agg(
-        display_name=str(raw.get("display_name") or ""),
-        total=int(raw.get("total", 0) or 0),
-        finalizadas=int(raw.get("finalizadas", 0) or 0),
-        respondidas=int(raw.get("respondidas", 0) or 0),
-        resolvidas_indicador=int(raw.get("resolvidas_indicador", 0) or 0),
-        nota_sum=float(raw.get("nota_sum", 0.0) or 0.0),
-        nota_count=int(raw.get("nota_count", 0) or 0),
-        tempo_sum=float(raw.get("tempo_sum", 0.0) or 0.0),
-        tempo_count=int(raw.get("tempo_count", 0) or 0),
-    )
-
-
-def _merge_raw_into(target: dict[str, Agg], key: str, raw: dict[str, Any]) -> None:
-    cur = _agg_from_raw(raw)
-    if key not in target:
-        target[key] = cur
-        return
-    target[key].merge(cur)
-
-
-def _prune_monthly(retain: int) -> None:
+def _prune_monthly(retain: int = 24) -> None:
     if not os.path.isdir(MONTHLY_DIR):
         return
-    files = sorted(
-        f
-        for f in os.listdir(MONTHLY_DIR)
-        if f.startswith("consumidor_gov_") and f.endswith(".json")
-    )
+    files = sorted(Path(MONTHLY_DIR).glob("consumidor_gov_*.json"))
     if len(files) <= retain:
         return
-    for fname in files[: len(files) - retain]:
+    for p in files[:-retain]:
         try:
-            os.remove(os.path.join(MONTHLY_DIR, fname))
-        except OSError:
+            p.unlink()
+        except Exception:
             pass
 
 
-def _existing_months_from_disk() -> list[str]:
-    if not os.path.isdir(MONTHLY_DIR):
-        return []
-    yms: list[str] = []
-    for fname in os.listdir(MONTHLY_DIR):
-        m = re.match(r"consumidor_gov_(\d{4}-\d{2})\.json$", fname)
-        if m:
-            yms.append(m.group(1))
-    return sorted(set(yms))
+def _merge_raw_into(dst: dict[str, Agg], key: str, raw: dict) -> None:
+    a = dst.get(key)
+    if not a:
+        a = Agg(display_name=str(raw.get("display_name") or ""))
+        dst[key] = a
+    a.merge_raw(raw)
+
+
+def build_month(ym: str, url: str) -> str:
+    os.makedirs(RAW_DIR, exist_ok=True)
+    os.makedirs(MONTHLY_DIR, exist_ok=True)
+
+    gz_path = os.path.join(RAW_DIR, f"consumidor_gov_{ym}.csv.gz")
+    info = download_month_csv_gz(url, gz_path)
+
+    by_name, by_cnpj, stats = aggregate_month_dual_with_stats(gz_path)
+
+    out_path = _monthly_path(ym)
+    payload = {
+        "meta": {
+            "ym": ym,
+            "source": "dados.mj.gov.br",
+            "dataset": "reclamacoes-do-consumidor-gov-br",
+            "source_url": url,
+            "download": info,
+            "generated_at": _utc_now(),
+            "parse": stats,
+        },
+        "by_name_key_raw": {k: asdict(v) for k, v in by_name.items()},
+        "by_cnpj_key_raw": {k: asdict(v) for k, v in by_cnpj.items()},
+    }
+
+    _write_json(out_path, payload)
+    return out_path
 
 
 def main(months: int = 12) -> None:
     """
-    Build de agregados Consumidor.gov (janela móvel, padrão 12 meses).
-
-    Regras de robustez:
-    - Se discovery (CKAN/HTML) falhar, tenta usar meses já existentes em disco.
-    - Se um download/parse gerar agregado vazio, o mês é ignorado (não salva JSON mensal vazio).
-    - A janela final é montada a partir dos meses efetivamente existentes em disco.
-    - Se a janela final ficar vazia mas OUT_LATEST existir, mantém OUT_LATEST e encerra com sucesso.
+    Gera:
+      - monthly/<yyyy-mm>.json (raw aggregates por nome e por CNPJ)
+      - consumidor_gov_agg_latest.json (rolling window consolidado)
     """
-    _ensure_dirs()
+    # A URL base pode ser injetada por env (mantém flexibilidade)
+    base_url = os.environ.get("CONSUMIDOR_GOV_BASE_URL", "").strip()
+    if not base_url:
+        # padrão (ajuste conforme seu discovery atual)
+        base_url = "https://dados.mj.gov.br/dataset/reclamacoes-do-consumidor-gov-br/resource"
 
-    # Fast-path: se estiver em dia, pula.
-    if os.environ.get("CONSUMIDOR_GOV_FORCE") != "1":
-        latest = _latest_available_month()
-        current = _read_current_as_of()
-        if latest and current and latest == current and os.path.exists(_monthly_path(latest)):
-            print(f"OK: Consumidor.gov já atualizado (as_of={current}). Pulando rebuild.")
-            return
-
-    discovery_error: Exception | None = None
-    try:
-        urls = discover_basecompleta_urls(months=months)
-    except Exception as exc:
-        discovery_error = exc
-        urls = {}
-
-    # Se não conseguiu descobrir URLs, tenta usar meses já prontos em disco.
-    yms = sorted(urls.keys())
-    if not urls:
-        local_months = _existing_months_from_disk()
-        if local_months:
-            yms = local_months[-months:]
-            msg = "Aviso: sem rede/descoberta para Consumidor.gov; usando meses já existentes em disco."
-            if discovery_error:
-                msg += f" Motivo original: {discovery_error}"
-            print(msg)
+    # merge_yms pode vir pronto via env; senão assume últimos N meses a partir de as_of
+    env_as_of = os.environ.get("CONSUMIDOR_GOV_AS_OF", "").strip()
+    if env_as_of:
+        as_of = env_as_of[:7]
+    else:
+        # fallback: tenta inferir pelo último arquivo monthly já existente; senão usa mês atual (UTC)
+        existing = sorted(Path(MONTHLY_DIR).glob("consumidor_gov_*.json"))
+        if existing:
+            as_of = existing[-1].stem.replace("consumidor_gov_", "")[:7]
         else:
-            # Sem URLs e sem meses locais: se existe OUT_LATEST, não derruba o refresh.
-            if os.path.exists(OUT_LATEST):
-                msg = "Aviso: sem URLs e sem meses locais; mantendo OUT_LATEST existente e encerrando."
-                if discovery_error:
-                    msg += f" Motivo original: {discovery_error}"
-                print(msg)
-                return
-            detail = f" Motivo original: {discovery_error}" if discovery_error else ""
-            raise SystemExit(f"Nenhuma URL de Base Completa encontrada (Consumidor.gov).{detail}")
+            as_of = _utc_now()[:7]
 
+    # monta lista de meses
+    if os.environ.get("CONSUMIDOR_GOV_MONTHS_LIST", "").strip():
+        merge_yms = [x.strip() for x in os.environ["CONSUMIDOR_GOV_MONTHS_LIST"].split(",") if x.strip()]
+    else:
+        from datetime import date
+
+        y, m = map(int, as_of.split("-"))
+        # últimos N meses incluindo o as_of
+        merge_yms = []
+        yy, mm = y, m
+        for _ in range(months):
+            merge_yms.append(f"{yy:04d}-{mm:02d}")
+            mm -= 1
+            if mm == 0:
+                mm = 12
+                yy -= 1
+        merge_yms = list(reversed(merge_yms))
+
+    # Build monthly (se não existir)
     produced: list[str] = []
-    for ym in yms:
-        out_month = _monthly_path(ym)
-        if os.path.exists(out_month):
+    for ym in merge_yms:
+        out_path = _monthly_path(ym)
+        if os.path.exists(out_path) and os.path.getsize(out_path) > 1000:
             continue
 
-        # Se estamos em modo "disco" (sem urls), não tentamos baixar.
-        if ym not in urls:
-            print(f"Aviso: nenhuma URL nova para {ym}; mantendo arquivo local se existir.")
-            continue
+        # resource_id pode ser injetado por env de forma "ym=uuid,ym=uuid"
+        mapping = os.environ.get("CONSUMIDOR_GOV_RESOURCE_MAP", "").strip()
+        resource_id = ""
+        if mapping:
+            for part in mapping.split(","):
+                part = part.strip()
+                if not part or "=" not in part:
+                    continue
+                k, v = part.split("=", 1)
+                if k.strip() == ym:
+                    resource_id = v.strip()
+                    break
 
-        url = urls[ym]
-        gz_path = os.path.join(CACHE_DIR, f"basecompleta_{ym}.csv.gz")
+        # fallback: assume que url já aponta para o CSV daquele mês (quando base_url for resolvido externamente)
+        if resource_id:
+            url = f"{base_url}/{resource_id}/download?filename=consumidor_gov_{ym}.csv.gz"
+        else:
+            url = os.environ.get(f"CONSUMIDOR_GOV_URL_{ym.replace('-', '_')}", "").strip()
+            if not url:
+                # sem URL definida, pula (não quebra o pipeline; smoke-check cobre tamanho mínimo)
+                continue
 
-        try:
-            info = download_csv_to_gz(url, gz_path)
-        except Exception as exc:
-            print(f"WARN: {ym}: falha ao baixar base ({exc}). Ignorando mês.")
-            try:
-                if os.path.exists(gz_path):
-                    os.remove(gz_path)
-            except OSError:
-                pass
-            continue
-
-        try:
-            by_name, by_cnpj = aggregate_month_dual(gz_path)
-        except Exception as exc:
-            print(f"WARN: {ym}: falha ao agregar CSV ({exc}). Ignorando mês.")
-            try:
-                os.remove(gz_path)
-            except OSError:
-                pass
-            continue
-
-        # Se veio vazio, é sinal de schema/HTML/erro. NÃO salva mês vazio.
-        if not by_name:
-            print(f"WARN: {ym}: agregado vazio (by_name_key_raw). Ignorando mês (não será salvo).")
-            try:
-                os.remove(gz_path)
-            except OSError:
-                pass
-            continue
-
-        payload_month: dict[str, Any] = {
-            "meta": {
-                "ym": ym,
-                "source": "dados.mj.gov.br",
-                "dataset": "reclamacoes-do-consumidor-gov-br",
-                "source_url": url,
-                "download": info,
-                "generated_at": _utc_now(),
-            },
-            "by_name_key_raw": {k: asdict(v) for k, v in by_name.items()},
-            "by_cnpj_key_raw": {k: asdict(v) for k, v in by_cnpj.items()},
-        }
-
-        _write_json(out_month, payload_month)
+        p = build_month(ym, url)
         produced.append(ym)
+        print(f"OK: monthly {ym} => {p}")
 
-        try:
-            os.remove(gz_path)
-        except OSError:
-            pass
-
-    # Monta a janela a partir do que existe em disco (não do que "era esperado" por URLs)
-    merge_yms = _existing_months_from_disk()[-months:]
-    if not merge_yms:
-        if os.path.exists(OUT_LATEST):
-            print("WARN: Nenhum mês válido disponível; mantendo OUT_LATEST existente e encerrando.")
-            return
-        raise SystemExit("Nenhum agregado mensal disponível para montar a janela (nenhum mês em disco).")
-
+    # Merge rolling window
     merged_name: dict[str, Agg] = {}
     merged_cnpj: dict[str, Agg] = {}
+    detected_cnpj_months: list[str] = []
     used_months: list[str] = []
 
     for ym in merge_yms:
@@ -246,6 +178,12 @@ def main(months: int = 12) -> None:
             month = _load_json(p)
         except Exception:
             continue
+
+        meta = month.get("meta") or {}
+        parse = meta.get("parse") or {}
+        cols = (parse.get("columns") or {})
+        if cols.get("cnpj"):
+            detected_cnpj_months.append(ym)
 
         raw_name = month.get("by_name_key_raw") or {}
         raw_cnpj = month.get("by_cnpj_key_raw") or {}
@@ -263,23 +201,17 @@ def main(months: int = 12) -> None:
 
         used_months.append(ym)
 
-    if not merged_name:
-        if os.path.exists(OUT_LATEST):
-            print("WARN: Merge resultou vazio; mantendo OUT_LATEST existente e encerrando.")
-            return
-        raise SystemExit("Nenhum agregado mensal disponível para montar a janela (by_name_key_raw vazio).")
-
-    as_of = used_months[-1] if used_months else merge_yms[-1]
-
-    out: dict[str, Any] = {
+    out = {
         "meta": {
-            "source": "dados.mj.gov.br",
-            "dataset": "reclamacoes-do-consumidor-gov-br",
             "as_of": as_of,
             "window_months": len(used_months) if used_months else len(merge_yms),
             "months": used_months if used_months else merge_yms,
             "generated_at": _utc_now(),
             "produced_months": produced,
+            "cnpj": {
+                "detected_months": detected_cnpj_months,
+                "keys": len(merged_cnpj),
+            },
         },
         "by_name_key": {k: v.to_public() for k, v in merged_name.items()},
         "by_cnpj_key": {k: v.to_public() for k, v in merged_cnpj.items()},
@@ -293,7 +225,6 @@ def main(months: int = 12) -> None:
 
 
 if __name__ == "__main__":
-    # Permite override simples por env var.
     env_months = os.environ.get("CONSUMIDOR_GOV_MONTHS")
     if env_months:
         try:
