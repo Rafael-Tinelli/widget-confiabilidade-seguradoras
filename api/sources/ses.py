@@ -5,10 +5,9 @@ import zipfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from io import BytesIO
-from typing import Any
 
 import requests
-from requests.exceptions import RequestException, SSLError
+from requests.exceptions import SSLError
 
 SES_HOME_DEFAULT = "https://www2.susep.gov.br/menuestatistica/ses/principal.aspx"
 SES_DOWNLOAD_HINTS = [
