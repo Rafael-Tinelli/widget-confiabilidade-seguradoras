@@ -1,840 +1,708 @@
 # api/sources/ses.py
+"""SES (SUSEP) source helpers.
+
+Objetivo
+--------
+Extrair um *mínimo confiável* (e evergreen) do SES para alimentar o widget:
+
+- BaseCompleta.zip (dump oficial do SES) via URL fixa (sem depender de HTML discovery)
+- LISTAEMPRESAS.csv (master com CNPJ por Código FIP)
+
+Saídas
+------
+A função pública `extract_ses_master_and_financials()` mantém compatibilidade com o builder:
+- retorna (meta, companies)
+- companies[sid] contém ao menos: name, cnpj, premiums, claims
+- extras são adicionados sob `ses` (por ramo/UF/solvência) sem quebrar compatibilidade.
+
+Notas
+-----
+- Evita carregar o ZIP inteiro em memória: faz download streaming para disco.
+- Lê apenas arquivos necessários dentro do ZIP.
+- Janela padrão: 12 meses (configurável por env var).
+
+Env vars
+--------
+SES_ZIP_URL
+SES_LISTAEMPRESAS_URL
+SES_ALLOW_INSECURE_SSL=1 (fallback: verify=False quando SSL falhar)
+SES_WINDOW_MONTHS (default: 12)
+SES_CACHE_DIR (default: data/raw/ses)
+"""
+
 from __future__ import annotations
 
 import csv
-import hashlib
 import io
+import json
 import os
 import re
 import unicodedata
 import zipfile
-from dataclasses import dataclass
-from datetime import datetime, timezone
+from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Dict, Iterable, Optional, Tuple
 
 import requests
-from requests.exceptions import SSLError
 
 
-# ----------------------------
-# URLs "evergreen" (sem depender de discovery HTML)
-# ----------------------------
+DEFAULT_SES_ZIP_URL = "https://www2.susep.gov.br/redarq.asp?arq=BaseCompleta%2ezip"
+DEFAULT_LISTAEMPRESAS_URL = "https://www2.susep.gov.br/menuestatistica/ses/download/LISTAEMPRESAS.csv"
 
-# Página informativa (não é fonte estável de download)
-SES_HOME_DEFAULT = "https://www2.susep.gov.br/menuestatistica/ses/principal.aspx"
-
-# Link direto para o BaseCompleta.zip (forma estável; evita depender de HTML)
-SES_ZIP_URL_DEFAULT = "https://www2.susep.gov.br/redarq.asp?arq=BaseCompleta%2ezip"
-
-# Cadastro mestre com CNPJ (fonte crítica para o projeto)
-SES_LISTAEMPRESAS_URL_DEFAULT = "https://www2.susep.gov.br/menuestatistica/ses/download/LISTAEMPRESAS.csv"
+# Dentro do BaseCompleta.zip (nomes variam em caixa; buscamos case-insensitive)
+DEFAULT_SEGUROS_FILE = "Ses_seguros.csv"
+DEFAULT_RAMOS_FILE = "Ses_ramos.csv"
+DEFAULT_PL_MARGEM_FILE = "Ses_pl_margem.csv"
+DEFAULT_UF2_FILE = "SES_UF2.csv"  # costuma vir em caixa alta
 
 
-# ----------------------------
-# Dataclasses
-# ----------------------------
-
-@dataclass
-class SesFetchResult:
-    url: str
-    fetched_at: str
-    bytes_len: int
-    sha256: str
-    saved_to: str
-
-
-@dataclass
-class SesExtractMeta:
-    # Campos esperados por api/build_insurers.py
+@dataclass(frozen=True)
+class SesMeta:
+    source: str
     zip_url: str
+    zip_name: str
     cias_file: str
     seguros_file: str
-    period_from: str  # "YYYY-MM"
-    period_to: str    # "YYYY-MM"
-
-    # Campos adicionais (diagnóstico)
-    fetched_at: str
-    bytes_len: int
-    sha256: str
-    saved_to: str
-    notes: dict[str, Any]
+    as_of: str
+    period_from: str
+    period_to: str
+    window_months: int
+    files: list[str]
 
 
-# ----------------------------
-# Helpers (time/hash/http)
-# ----------------------------
-
-def _utc_now() -> str:
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+# ---------------------------------------------------------------------
+# Pequenas utilidades
+# ---------------------------------------------------------------------
 
 
-def _allow_insecure_ssl() -> bool:
-    return str(os.environ.get("SES_ALLOW_INSECURE_SSL", "")).strip().lower() in {"1", "true", "yes"}
-
-
-def _ua_headers() -> dict[str, str]:
-    ua = os.environ.get("SES_UA", "widget-confiabilidade-seguradoras/1.0")
-    return {"User-Agent": ua}
-
-
-def _clean_url(u: str) -> str:
-    u = u.strip()
-    return u.replace(" ", "%20")
-
-
-def _is_zip_signature(b: bytes) -> bool:
-    return len(b) >= 2 and b[:2] == b"PK"
-
-
-def _requests_get(url: str, *, timeout: float, stream: bool, verify: bool) -> requests.Response:
-    # Centraliza GET para facilitar fallback SSL
-    headers = _ua_headers()
-    r = requests.get(url, headers=headers, timeout=timeout, allow_redirects=True, stream=stream, verify=verify)
-    r.raise_for_status()
-    return r
-
-
-def _fetch_text(url: str) -> str:
-    timeout = float(os.environ.get("SES_HTTP_TIMEOUT", "30"))
+def _env_int(name: str, default: int) -> int:
+    v = os.getenv(name)
+    if not v:
+        return default
     try:
-        r = _requests_get(url, timeout=timeout, stream=False, verify=True)
-        return r.text
-    except SSLError:
-        if not _allow_insecure_ssl():
-            raise
-        # fallback (ambiente com SSL quebrado)
-        r = _requests_get(url, timeout=timeout, stream=False, verify=False)
-        return r.text
+        return int(v)
+    except ValueError:
+        return default
 
 
-# ----------------------------
-# Normalização
-# ----------------------------
+def _env_bool(name: str, default: bool = False) -> bool:
+    v = os.getenv(name)
+    if v is None:
+        return default
+    return v.strip().lower() in {"1", "true", "yes", "y", "on"}
 
-def _norm_key(s: str) -> str:
-    s = (s or "").replace("\ufeff", "").strip().lower()
+
+def _digits(s: Any) -> str:
+    if s is None:
+        return ""
+    return re.sub(r"\D+", "", str(s))
+
+
+def _norm(s: str) -> str:
+    s = s or ""
     s = unicodedata.normalize("NFKD", s)
     s = "".join(ch for ch in s if not unicodedata.combining(ch))
-    s = re.sub(r"\s+", " ", s)
-    s = re.sub(r"[^a-z0-9 ]+", "", s)
-    return s.strip()
+    s = s.upper()
+    s = re.sub(r"[^A-Z0-9]+", " ", s)
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
 
 
-def _norm_header(s: str) -> str:
-    return _norm_key(s).replace(" ", "")
-
-
-def _digits(x: Any) -> str:
-    return re.sub(r"\D+", "", str(x or ""))
-
-
-def _to_float(x: Any) -> float:
-    # típico do SES: 1.234.567,89
+def _to_float(v: Any) -> float:
+    if v is None:
+        return 0.0
+    s = str(v).strip()
+    if not s:
+        return 0.0
+    # Normaliza formatos comuns (1.234,56) e (123,45)
+    neg = False
+    if s.startswith("(") and s.endswith(")"):
+        neg = True
+        s = s[1:-1]
+    s = s.replace(" ", "")
+    # Se tiver '.' e ',', assume '.' milhar e ',' decimal
+    if "." in s and "," in s:
+        s = s.replace(".", "").replace(",", ".")
+    else:
+        s = s.replace(",", ".")
     try:
-        return float(str(x).strip().replace(".", "").replace(",", "."))
-    except Exception:
+        x = float(s)
+        return -x if neg else x
+    except ValueError:
         return 0.0
 
 
-# ----------------------------
-# CSV parsing robusto
-# ----------------------------
-
-def _detect_delim_and_skip_first_line(lines: list[str]) -> tuple[str, int]:
-    """
-    Retorna (delimiter, skip_n).
-
-    Trata caso Excel: primeira linha "sep=;"
-    """
-    for i, ln in enumerate(lines):
-        if not ln:
-            continue
-        t = ln.strip().lower()
-
-        if t.startswith("sep=") and len(t) >= 5:
-            return (t[4:5] or ";"), i + 1
-
-        counts = {d: ln.count(d) for d in [";", "|", ",", "\t"]}
-        best = max(counts, key=counts.get)
-        return (best if counts[best] > 0 else ";"), i
-
-    return ";", 0
+def _month_idx(year: int, month: int) -> int:
+    # idx monotônico (0-based)
+    return year * 12 + (month - 1)
 
 
-def _open_csv_bytes(data: bytes) -> tuple[csv.DictReader, list[str], str]:
-    # tenta encodings comuns
-    last_reader: csv.DictReader | None = None
-    last_fields: list[str] = []
-    last_delim = ";"
-
-    for enc in ("utf-8-sig", "latin-1"):
-        text = io.TextIOWrapper(io.BytesIO(data), encoding=enc, errors="replace", newline="")
-        l1 = text.readline()
-        l2 = text.readline()
-        l3 = text.readline()
-        probe = [l1, l2, l3]
-        delim, skip_n = _detect_delim_and_skip_first_line(probe)
-
-        head_lines = probe[skip_n:]
-        lines_iter: Iterable[str] = iter(head_lines + list(text))
-        reader = csv.DictReader(lines_iter, delimiter=delim)
-        fieldnames = list(reader.fieldnames or [])
-        if len(fieldnames) > 1:
-            return reader, fieldnames, delim
-
-        last_reader = reader
-        last_fields = fieldnames
-        last_delim = delim
-
-    # fallback: devolve o que conseguiu
-    return last_reader, last_fields, last_delim  # type: ignore[return-value]
+def _idx_to_ym(idx: int) -> Tuple[int, int]:
+    year = idx // 12
+    month = (idx % 12) + 1
+    return year, month
 
 
-def _open_csv_from_zip(zf: zipfile.ZipFile, member: str) -> tuple[csv.DictReader, list[str], str]:
-    # abre com sniff de delimiter/encoding sem carregar arquivo inteiro em memória
-    last_reader: csv.DictReader | None = None
-    last_fields: list[str] = []
-    last_delim = ";"
-
-    for enc in ("utf-8-sig", "latin-1"):
-        raw = zf.open(member)
-        text = io.TextIOWrapper(raw, encoding=enc, errors="replace", newline="")
-
-        l1 = text.readline()
-        l2 = text.readline()
-        l3 = text.readline()
-        probe = [l1, l2, l3]
-        delim, skip_n = _detect_delim_and_skip_first_line(probe)
-
-        head_lines = probe[skip_n:]
-        lines_iter = iter(head_lines + list(text))
-
-        reader = csv.DictReader(lines_iter, delimiter=delim)
-        fieldnames = list(reader.fieldnames or [])
-        if len(fieldnames) > 1:
-            return reader, fieldnames, delim
-
-        last_reader = reader
-        last_fields = fieldnames
-        last_delim = delim
-
-    return last_reader, last_fields, last_delim  # type: ignore[return-value]
+def _parse_damesano(val: Any) -> Optional[int]:
+    """Converte DAMESANO (YYYYMM) para month_idx. Retorna None se inválido."""
+    s = _digits(val)
+    if len(s) < 6:
+        return None
+    y = int(s[:4])
+    m = int(s[4:6])
+    if y < 1900 or m < 1 or m > 12:
+        return None
+    return _month_idx(y, m)
 
 
-# ----------------------------
-# Detecção de colunas (robusta para SES)
-# ----------------------------
-
-def _detect_company_id_col(fieldnames: list[str]) -> str | None:
-    """
-    No SES, o código de empresa aparece como:
-      - CodigoFIP (LISTAEMPRESAS.csv)
-      - Coenti (Ses_cias.csv e várias tabelas)
-      - variações com 'cod' + 'cia' etc
-    """
-    best = None
-    best_score = -1e9
-
-    for fn in fieldnames:
-        n = _norm_header(fn)
-        if not n:
-            continue
-
-        score = 0.0
-
-        # Fonte mestre
-        if n in {"codigofip", "codigo_fip"}:
-            score += 50.0
-
-        # Padrões SES
-        if n in {"coenti", "coentidade", "codentidade"}:
-            score += 45.0
-
-        # Padrões legados
-        if n in {"codcia", "cod_cia", "codigo_cia", "codigocia", "cdcia"}:
-            score += 30.0
-        if n in {"cia", "idcia"}:
-            score += 18.0
-        if "cia" in n and ("cod" in n or "codigo" in n or "id" in n):
-            score += 12.0
-
-        # penalidades
-        if "cnpj" in n:
-            score -= 30.0
-
-        score -= len(n) / 100.0
-
-        if score > best_score:
-            best_score = score
-            best = fn
-
-    return best if best_score > 0 else None
-
-
-def _detect_name_col(fieldnames: list[str]) -> str | None:
-    best = None
-    best_score = -1e9
-
-    for fn in fieldnames:
-        n = _norm_header(fn)
-        if not n:
-            continue
-
-        score = 0.0
-
-        # Fonte mestre
-        if n in {"nomeentidade"}:
-            score += 50.0
-
-        # Padrões SES
-        if n in {"noenti"}:
-            score += 45.0
-
-        # gerais
-        if any(t in n for t in ("nomefantasia", "fantasia")):
-            score += 20.0
-        if any(t in n for t in ("razaosocial", "razao", "denominacao")):
-            score += 15.0
-        if n == "nome" or n.startswith("nome"):
-            score += 10.0
-
-        # penalidades
-        if any(t in n for t in ("sigla", "uf", "pais")):
-            score -= 5.0
-        if "cnpj" in n:
-            score -= 10.0
-
-        score -= len(n) / 200.0
-
-        if score > best_score:
-            best_score = score
-            best = fn
-
-    return best if best_score > 0 else None
-
-
-def _detect_cnpj_col(fieldnames: list[str]) -> str | None:
-    for fn in fieldnames:
-        if "cnpj" in _norm_header(fn):
-            return fn
+def _pick_col(fieldnames: Iterable[str], candidates: Iterable[str]) -> Optional[str]:
+    fns = list(fieldnames)
+    norm_map = {_norm(fn): fn for fn in fns}
+    for c in candidates:
+        key = _norm(c)
+        if key in norm_map:
+            return norm_map[key]
+    # fallback por contains
+    for fn in fns:
+        n = _norm(fn)
+        for c in candidates:
+            if _norm(c) in n:
+                return fn
     return None
 
 
-def _detect_amount_cols(fieldnames: list[str]) -> tuple[str | None, str | None]:
-    """
-    Detecta melhor coluna de prêmio e melhor coluna de sinistro.
-    Heurística: combinações de "prem/premio/pr" com "emit/diret/total"
-                e "sinist/indeniz/desp" com "ocorr/pago/total"
-    """
-    prem_best = None
-    prem_score = -1e9
-    sin_best = None
-    sin_score = -1e9
-
-    for fn in fieldnames:
-        n = _norm_header(fn)
-        if not n:
-            continue
-
-        # Premium / Prêmio
-        if ("prem" in n) or ("premio" in n) or (n.startswith("pr") and any(t in n for t in ("emit", "diret", "total"))):
-            s = 10.0
-            if any(t in n for t in ("emit", "diret", "total", "bruto", "contab")):
-                s += 6.0
-            if any(t in n for t in ("ganho", "custo", "tarifa", "taxa")):
-                s -= 4.0
-            s -= len(n) / 120.0
-            if s > prem_score:
-                prem_score = s
-                prem_best = fn
-
-        # Sinistros / Indenizações
-        if ("sinist" in n) or ("indeniz" in n) or (n.startswith("si") and any(t in n for t in ("ocorr", "pago", "total"))):
-            s = 10.0
-            if any(t in n for t in ("ocorr", "pago", "total", "bruto")):
-                s += 5.0
-            if any(t in n for t in ("recup", "ressarc")):
-                s -= 4.0
-            s -= len(n) / 120.0
-            if s > sin_score:
-                sin_score = s
-                sin_best = fn
-
-    if prem_score < 0:
-        prem_best = None
-    if sin_score < 0:
-        sin_best = None
-
-    return prem_best, sin_best
+# ---------------------------------------------------------------------
+# Download + cache em disco (evergreen)
+# ---------------------------------------------------------------------
 
 
-def _parse_ym_from_row(row: dict[str, Any], fieldnames: list[str]) -> str | None:
-    fn = {k: _norm_header(k) for k in fieldnames}
-
-    year_key = None
-    month_key = None
-
-    for k, nk in fn.items():
-        if nk in {"ano", "anocompetencia", "anoref", "anobase"} or nk.endswith("ano"):
-            year_key = year_key or k
-        if nk in {"mes", "mescompetencia", "mesref", "mesbase"} or nk.endswith("mes"):
-            month_key = month_key or k
-
-    if year_key and month_key:
-        y = _digits(row.get(year_key))
-        m = _digits(row.get(month_key))
-        if len(y) == 4 and m.isdigit():
-            mm = int(m)
-            if 1 <= mm <= 12:
-                return f"{int(y):04d}-{mm:02d}"
-
-    # tenta campos tipo "competencia"/"periodo"/"anomes"
-    candidates = []
-    for k, nk in fn.items():
-        if any(t in nk for t in ("competencia", "periodo", "anomes", "mesano", "dataref", "dtref")):
-            candidates.append(k)
-
-    for k in candidates:
-        raw = str(row.get(k) or "").strip()
-
-        d = _digits(raw)
-        if len(d) >= 6:
-            y = d[:4]
-            m = d[4:6]
-            if y.isdigit() and m.isdigit():
-                mm = int(m)
-                if 1 <= mm <= 12:
-                    return f"{int(y):04d}-{mm:02d}"
-
-        m1 = re.search(r"(\d{4})[/-](\d{1,2})", raw)
-        if m1:
-            yy = int(m1.group(1))
-            mm = int(m1.group(2))
-            if 1 <= mm <= 12:
-                return f"{yy:04d}-{mm:02d}"
-
-        m2 = re.search(r"(\d{1,2})[/-](\d{4})", raw)
-        if m2:
-            mm = int(m2.group(1))
-            yy = int(m2.group(2))
-            if 1 <= mm <= 12:
-                return f"{yy:04d}-{mm:02d}"
-
-    return None
+def _cache_dir() -> Path:
+    return Path(os.getenv("SES_CACHE_DIR", "data/raw/ses")).resolve()
 
 
-def _ym_to_index(ym: str) -> int:
-    y, m = ym.split("-", 1)
-    return int(y) * 12 + int(m)
+def _download_to_file(url: str, dest: Path) -> None:
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    allow_insecure = _env_bool("SES_ALLOW_INSECURE_SSL", False)
 
-
-def _months_back(ym: str, months: int) -> str:
-    y, m = map(int, ym.split("-"))
-    idx = (y * 12 + (m - 1)) - months
-    ny = idx // 12
-    nm = (idx % 12) + 1
-    return f"{ny:04d}-{nm:02d}"
-
-
-# ----------------------------
-# Download "evergreen"
-# ----------------------------
-
-def discover_ses_zip_url() -> str:
-    override = str(os.environ.get("SES_ZIP_URL", "")).strip()
-    if override:
-        print(f"SES: usando override SES_ZIP_URL={override}", flush=True)
-        return override
-
-    # default estável (evita discovery HTML)
-    return SES_ZIP_URL_DEFAULT
-
-
-def discover_listaempresas_url() -> str:
-    override = str(os.environ.get("SES_LISTAEMPRESAS_URL", "")).strip()
-    if override:
-        print(f"SES: usando override SES_LISTAEMPRESAS_URL={override}", flush=True)
-        return override
-    return SES_LISTAEMPRESAS_URL_DEFAULT
-
-
-def _download_streaming(url: str, out_path: Path, *, min_bytes: int = 1024) -> SesFetchResult:
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = out_path.with_suffix(out_path.suffix + ".tmp")
-
-    timeout = float(os.environ.get("SES_HTTP_TIMEOUT", "180"))
-
-    def _do_get(verify: bool) -> SesFetchResult:
-        r = _requests_get(url, timeout=timeout, stream=True, verify=verify)
-
-        h = hashlib.sha256()
-        size = 0
-        with tmp.open("wb") as f:
-            for chunk in r.iter_content(chunk_size=1024 * 1024):
-                if not chunk:
-                    continue
-                f.write(chunk)
-                h.update(chunk)
-                size += len(chunk)
-
-        if size < min_bytes:
-            raise RuntimeError(f"SES: download pequeno demais ({size} bytes). url={url!r}")
-
-        tmp.replace(out_path)
-        return SesFetchResult(
-            url=url,
-            fetched_at=_utc_now(),
-            bytes_len=size,
-            sha256=h.hexdigest(),
-            saved_to=str(out_path),
-        )
+    def _do(verify: bool) -> None:
+        with requests.get(url, stream=True, timeout=(15, 180), verify=verify) as r:
+            r.raise_for_status()
+            tmp = dest.with_suffix(dest.suffix + ".part")
+            with open(tmp, "wb") as f:
+                for chunk in r.iter_content(chunk_size=1024 * 1024):
+                    if chunk:
+                        f.write(chunk)
+            tmp.replace(dest)
 
     try:
-        return _do_get(verify=True)
-    except SSLError:
-        if not _allow_insecure_ssl():
+        _do(verify=True)
+    except requests.exceptions.SSLError:
+        if not allow_insecure:
             raise
-        return _do_get(verify=False)
+        _do(verify=False)
 
 
-def download_and_validate_ses_zip() -> SesFetchResult:
-    zip_url = discover_ses_zip_url()
-    cache = Path(os.environ.get("SES_ZIP_CACHE_PATH", "data/raw/ses_basecompleta.zip"))
-    force = str(os.environ.get("SES_FORCE_DOWNLOAD", "")).strip().lower() in {"1", "true", "yes"}
+def _get_or_download(url: str, dest: Path) -> Path:
+    try:
+        _download_to_file(url, dest)
+        return dest
+    except Exception:
+        # fallback: se já houver cache, usa o cache
+        if dest.exists() and dest.stat().st_size > 0:
+            return dest
+        raise
 
-    if cache.exists() and cache.stat().st_size > 1024 * 1024 and not force:
-        with cache.open("rb") as f:
-            head = f.read(4)
-        if _is_zip_signature(head):
-            # ok: usa cache
-            h = hashlib.sha256()
-            with cache.open("rb") as f2:
-                for chunk in iter(lambda: f2.read(1024 * 1024), b""):
-                    h.update(chunk)
-            return SesFetchResult(
-                url=zip_url,
-                fetched_at=_utc_now(),
-                bytes_len=int(cache.stat().st_size),
-                sha256=h.hexdigest(),
-                saved_to=str(cache),
+
+# ---------------------------------------------------------------------
+# Leitura de CSVs (ZIP e externo)
+# ---------------------------------------------------------------------
+
+
+def _open_csv_text(stream: io.BufferedReader, encoding: str = "latin-1") -> io.TextIOWrapper:
+    # SES costuma ser latin-1; errors=replace para nunca quebrar.
+    return io.TextIOWrapper(stream, encoding=encoding, errors="replace", newline="")
+
+
+def _iter_csv_from_zip(zf: zipfile.ZipFile, member: str, delimiter: str = ";") -> Iterable[dict[str, str]]:
+    with zf.open(member, "r") as bf:
+        tf = _open_csv_text(bf)
+        reader = csv.DictReader(tf, delimiter=delimiter)
+        for row in reader:
+            yield row
+
+
+def _iter_csv_from_path(path: Path, delimiter: Optional[str] = None) -> Iterable[dict[str, str]]:
+    raw = path.read_bytes()
+    # tenta UTF-8-sig, senão latin-1
+    try:
+        txt = raw.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        txt = raw.decode("latin-1", errors="replace")
+
+    # detecta delimiter se não informado
+    if delimiter is None:
+        sample = txt[:4096]
+        delimiter = ";" if sample.count(";") >= sample.count(",") else ","
+
+    reader = csv.DictReader(io.StringIO(txt), delimiter=delimiter)
+    for row in reader:
+        yield row
+
+
+def _find_member(zf: zipfile.ZipFile, wanted: str) -> Optional[str]:
+    w = wanted.lower()
+    for name in zf.namelist():
+        if name.lower() == w:
+            return name
+    # fallback: termina com o nome
+    for name in zf.namelist():
+        if name.lower().endswith("/" + w) or name.lower().endswith(w):
+            return name
+    return None
+
+
+# ---------------------------------------------------------------------
+# Master LISTAEMPRESAS (Código FIP -> Nome + CNPJ)
+# ---------------------------------------------------------------------
+
+
+def _load_listaempresas(path: Path) -> dict[str, dict[str, str]]:
+    rows = list(_iter_csv_from_path(path))
+    if not rows:
+        return {}
+
+    fieldnames = rows[0].keys()
+    col_codigo = _pick_col(fieldnames, ["CodigoFIP", "codigo_fip", "coenti", "cod_fip", "codigo"])
+    col_nome = _pick_col(fieldnames, ["NomeEntidade", "nome_entidade", "noenti", "nome"])
+    col_cnpj = _pick_col(fieldnames, ["CNPJ", "cnpj"])
+
+    if not (col_codigo and col_nome and col_cnpj):
+        # Se o layout mudar, ainda tentamos fallback por posição
+        keys = list(fieldnames)
+        col_codigo = col_codigo or (keys[0] if len(keys) > 0 else None)
+        col_nome = col_nome or (keys[1] if len(keys) > 1 else None)
+        col_cnpj = col_cnpj or (keys[2] if len(keys) > 2 else None)
+
+    out: dict[str, dict[str, str]] = {}
+    for r in rows:
+        sid = _digits(r.get(col_codigo))
+        if not sid:
+            continue
+        name = (r.get(col_nome) or "").strip()
+        cnpj = _digits(r.get(col_cnpj))
+        out[sid] = {"name": name, "cnpj": cnpj}
+    return out
+
+
+# ---------------------------------------------------------------------
+# SES: Seguros (prêmios / sinistros / despesas) por mês
+# ---------------------------------------------------------------------
+
+
+def _parse_ses_seguros(
+    zf: zipfile.ZipFile,
+    member: str,
+    company_ids: set[str],
+    window_months: int,
+) -> tuple[int, list[int], dict[str, dict[str, Any]]]:
+    """Retorna (as_of_idx, months_idx_sorted, buckets_por_empresa)."""
+    # Vamos ler header (primeira linha) para detectar colunas
+    with zf.open(member, "r") as bf:
+        tf = _open_csv_text(bf)
+        reader = csv.DictReader(tf, delimiter=";")
+        fieldnames = reader.fieldnames or []
+        id_col = _pick_col(fieldnames, ["coenti", "codigo_fip", "codigofip"])
+        ramo_col = _pick_col(fieldnames, ["coramo", "ramo", "co_ramo"])
+        date_col = _pick_col(fieldnames, ["damesano", "ano_mes", "anomes", "competencia", "dta"])
+        prem_col = _pick_col(
+            fieldnames,
+            [
+                "prem_gan",
+                "premio_ganho",
+                "prem_ret",
+                "premio_retido",
+                "prem_dir",
+                "premio_direto",
+                "premio",
+            ],
+        )
+        sin_col = _pick_col(fieldnames, ["sin_ret", "sinistro_retido", "sin_dir", "sinistro"])
+        desp_col = _pick_col(fieldnames, ["desp_com", "despesa_comercial", "despesas_comerciais", "aquisicao"])
+
+        if not (id_col and date_col and prem_col and sin_col):
+            raise RuntimeError(
+                f"SES: colunas essenciais não encontradas em {member}. "
+                f"id_col={id_col} date_col={date_col} prem_col={prem_col} sin_col={sin_col}"
             )
 
-    info = _download_streaming(zip_url, cache, min_bytes=5 * 1024 * 1024)
+        max_idx = -1
+        window_start = -1
+        # buckets[sid] = {totals..., by_ramo: {coramo: {...}}}
+        buckets: dict[str, dict[str, Any]] = {}
+        months_seen: set[int] = set()
 
-    # sanity: abre zip
-    try:
-        with zipfile.ZipFile(cache) as zf:
-            _ = zf.namelist()[:1]
-    except zipfile.BadZipFile as e:
-        raise RuntimeError(f"SES: BadZipFile ao abrir ZIP baixado. url={zip_url!r}") from e
+        def _prune() -> None:
+            # Nada a fazer aqui porque armazenamos por competência agregada (não por mês).
+            # Mantemos apenas somatórios dentro da janela no próprio loop.
+            return
 
-    return info
+        for row in reader:
+            sid = _digits(row.get(id_col))
+            if not sid or sid not in company_ids:
+                continue
+
+            idx = _parse_damesano(row.get(date_col))
+            if idx is None:
+                continue
+
+            if idx > max_idx:
+                max_idx = idx
+                window_start = max_idx - (window_months - 1)
+                _prune()
+
+            if idx < window_start:
+                continue
+
+            months_seen.add(idx)
+
+            prem = _to_float(row.get(prem_col))
+            sin = _to_float(row.get(sin_col))
+            desp = _to_float(row.get(desp_col)) if desp_col else 0.0
+
+            b = buckets.setdefault(
+                sid,
+                {
+                    "premium": 0.0,
+                    "claims": 0.0,
+                    "acq_expenses": 0.0,
+                    "by_ramo": {},
+                },
+            )
+            b["premium"] += prem
+            b["claims"] += sin
+            b["acq_expenses"] += desp
+
+            if ramo_col:
+                coramo = _digits(row.get(ramo_col))
+                if coramo:
+                    rb = b["by_ramo"].setdefault(coramo, {"premium": 0.0, "claims": 0.0, "acq_expenses": 0.0})
+                    rb["premium"] += prem
+                    rb["claims"] += sin
+                    rb["acq_expenses"] += desp
+
+        if max_idx < 0:
+            raise RuntimeError("SES: não foi possível identificar competência máxima em Ses_seguros")
+
+        months_sorted = sorted(months_seen)
+        return max_idx, months_sorted, buckets
 
 
-def download_listaempresas_csv() -> SesFetchResult:
-    url = discover_listaempresas_url()
-    cache = Path(os.environ.get("SES_LISTAEMPRESAS_CACHE_PATH", "data/raw/ses_listaempresas.csv"))
-    force = str(os.environ.get("SES_FORCE_DOWNLOAD", "")).strip().lower() in {"1", "true", "yes"}
+def _load_ramos_map(zf: zipfile.ZipFile, member: str) -> dict[str, str]:
+    out: dict[str, str] = {}
+    # Ses_ramos costuma ser pequena; iteramos direto
+    for row in _iter_csv_from_zip(zf, member, delimiter=";"):
+        # campos típicos: coramo, noramo
+        # mas pode variar: buscamos por heurística simples
+        if not row:
+            continue
+        if not out:
+            fieldnames = row.keys()
+            col_id = _pick_col(fieldnames, ["coramo", "co_ramo", "ramo"])
+            col_nm = _pick_col(fieldnames, ["noramo", "no_ramo", "nome"])
+            # guardamos em closure
+            _load_ramos_map.col_id = col_id  # type: ignore[attr-defined]
+            _load_ramos_map.col_nm = col_nm  # type: ignore[attr-defined]
+        col_id = getattr(_load_ramos_map, "col_id", None)  # type: ignore[attr-defined]
+        col_nm = getattr(_load_ramos_map, "col_nm", None)  # type: ignore[attr-defined]
+        if not col_id or not col_nm:
+            continue
+        rid = _digits(row.get(col_id))
+        if not rid:
+            continue
+        nm = (row.get(col_nm) or "").strip()
+        if nm:
+            out[rid] = nm
+    return out
 
-    if cache.exists() and cache.stat().st_size > 10_000 and not force:
-        h = hashlib.sha256()
-        with cache.open("rb") as f:
-            data = f.read()
-            h.update(data)
-        return SesFetchResult(
-            url=url,
-            fetched_at=_utc_now(),
-            bytes_len=int(cache.stat().st_size),
-            sha256=h.hexdigest(),
-            saved_to=str(cache),
+
+def _parse_pl_margem(
+    zf: zipfile.ZipFile,
+    member: str,
+    company_ids: set[str],
+    window_start: int,
+    window_end: int,
+) -> dict[str, dict[str, float]]:
+    """Extrai solvência (PL ajustado e margem) para a competência mais recente da janela."""
+    # regra: pega *apenas* o último mês (window_end) para evitar ruído
+    out: dict[str, dict[str, float]] = {}
+
+    with zf.open(member, "r") as bf:
+        tf = _open_csv_text(bf)
+        reader = csv.DictReader(tf, delimiter=";")
+        fieldnames = reader.fieldnames or []
+        id_col = _pick_col(fieldnames, ["coenti", "codigo_fip", "codigofip"])
+        date_col = _pick_col(fieldnames, ["damesano", "anomes", "competencia"])
+        pl_col = _pick_col(fieldnames, ["pl_ajust", "plajust", "pl_ajustado", "pl_ajustado_rs"])
+        margem_col = _pick_col(fieldnames, ["margem", "margem_solv", "margem_solvencia", "margem_requerida"])
+
+        if not (id_col and date_col and pl_col and margem_col):
+            return {}
+
+        for row in reader:
+            sid = _digits(row.get(id_col))
+            if not sid or sid not in company_ids:
+                continue
+            idx = _parse_damesano(row.get(date_col))
+            if idx is None or idx != window_end:
+                continue
+            pl = _to_float(row.get(pl_col))
+            mg = _to_float(row.get(margem_col))
+            out[sid] = {
+                "pl_adjusted": pl,
+                "solvency_margin": mg,
+                "coverage": (pl / mg) if mg else 0.0,
+            }
+    return out
+
+
+def _parse_uf2(
+    zf: zipfile.ZipFile,
+    member: str,
+    company_ids: set[str],
+    window_start: int,
+    window_end: int,
+) -> dict[str, dict[str, dict[str, float]]]:
+    """Agrega por UF (prêmio e sinistro) na janela."""
+    out: dict[str, dict[str, dict[str, float]]] = {}
+
+    with zf.open(member, "r") as bf:
+        tf = _open_csv_text(bf)
+        reader = csv.DictReader(tf, delimiter=";")
+        fieldnames = reader.fieldnames or []
+        id_col = _pick_col(fieldnames, ["coenti", "codigo_fip", "codigofip"])
+        uf_col = _pick_col(fieldnames, ["uf"])
+        date_col = _pick_col(fieldnames, ["damesano", "anomes", "competencia"])
+        prem_col = _pick_col(fieldnames, ["prem_gan", "prem_ret", "prem_dir", "premio"])
+        sin_col = _pick_col(fieldnames, ["sin_ret", "sinistro"])
+
+        if not (id_col and uf_col and date_col and prem_col and sin_col):
+            return {}
+
+        for row in reader:
+            sid = _digits(row.get(id_col))
+            if not sid or sid not in company_ids:
+                continue
+            idx = _parse_damesano(row.get(date_col))
+            if idx is None or idx < window_start or idx > window_end:
+                continue
+            uf = (row.get(uf_col) or "").strip().upper()
+            if not uf or len(uf) != 2:
+                continue
+            prem = _to_float(row.get(prem_col))
+            sin = _to_float(row.get(sin_col))
+
+            byuf = out.setdefault(sid, {})
+            u = byuf.setdefault(uf, {"premium": 0.0, "claims": 0.0})
+            u["premium"] += prem
+            u["claims"] += sin
+    return out
+
+
+# ---------------------------------------------------------------------
+# API pública (usada pelos builders)
+# ---------------------------------------------------------------------
+
+
+def extract_ses_master_and_financials() -> Tuple[SesMeta, Dict[str, Dict[str, Any]]]:
+    """Extrai master (nome/CNPJ) + financeiros do SES.
+
+    Compatibilidade:
+    - premiums / claims = soma na janela em todos os ramos
+    - `ses` contém detalhes adicionais (by_ramo, by_uf, solvency)
+    """
+    window_months = _env_int("SES_WINDOW_MONTHS", 12)
+    zip_url = os.getenv("SES_ZIP_URL", DEFAULT_SES_ZIP_URL)
+    lista_url = os.getenv("SES_LISTAEMPRESAS_URL", DEFAULT_LISTAEMPRESAS_URL)
+
+    cache_dir = _cache_dir()
+    zip_path = cache_dir / "BaseCompleta.zip"
+    lista_path = cache_dir / "LISTAEMPRESAS.csv"
+
+    zip_path = _get_or_download(zip_url, zip_path)
+    lista_path = _get_or_download(lista_url, lista_path)
+
+    master = _load_listaempresas(lista_path)
+    company_ids = set(master.keys())
+    if len(company_ids) < 100:
+        raise RuntimeError(f"SES: master LISTAEMPRESAS pequeno demais ({len(company_ids)})")
+
+    with zipfile.ZipFile(zip_path) as zf:
+        seg_member = _find_member(zf, DEFAULT_SEGUROS_FILE)
+        if not seg_member:
+            raise RuntimeError(f"SES: {DEFAULT_SEGUROS_FILE} não encontrado no ZIP")
+
+        as_of_idx, months_idx, buckets = _parse_ses_seguros(
+            zf,
+            seg_member,
+            company_ids=company_ids,
+            window_months=window_months,
         )
 
-    # LISTAEMPRESAS é pequeno
-    return _download_streaming(url, cache, min_bytes=10_000)
+        window_end = as_of_idx
+        window_start = as_of_idx - (window_months - 1)
 
+        # Ramos map (best-effort)
+        ramos_map: dict[str, str] = {}
+        ramos_member = _find_member(zf, DEFAULT_RAMOS_FILE)
+        if ramos_member:
+            try:
+                ramos_map = _load_ramos_map(zf, ramos_member)
+            except Exception:
+                ramos_map = {}
 
-# ----------------------------
-# Seleção de arquivos financeiros dentro do ZIP
-# (evita varrer 40 CSVs "na força")
-# ----------------------------
+        # Solvência (best-effort)
+        solv: dict[str, dict[str, float]] = {}
+        pl_member = _find_member(zf, DEFAULT_PL_MARGEM_FILE)
+        if pl_member:
+            try:
+                solv = _parse_pl_margem(zf, pl_member, company_ids, window_start, window_end)
+            except Exception:
+                solv = {}
 
-def _iter_csv_members(names: list[str]) -> Iterable[str]:
-    for n in names:
-        if n.lower().endswith(".csv"):
-            yield n
+        # UF2 (best-effort)
+        by_uf: dict[str, dict[str, dict[str, float]]] = {}
+        uf2_member = _find_member(zf, DEFAULT_UF2_FILE)
+        if uf2_member:
+            try:
+                by_uf = _parse_uf2(zf, uf2_member, company_ids, window_start, window_end)
+            except Exception:
+                by_uf = {}
 
+    # Monta saída por empresa
+    companies: Dict[str, Dict[str, Any]] = {}
+    for sid, info in master.items():
+        name = info.get("name") or ""
+        cnpj = info.get("cnpj") or ""
 
-def _score_financial_member(member: str) -> float:
-    nl = member.lower()
-    score = 0.0
+        b = buckets.get(sid) or {}
+        premium = float(b.get("premium") or 0.0)
+        claims = float(b.get("claims") or 0.0)
+        acq = float(b.get("acq_expenses") or 0.0)
 
-    # preferências gerais
-    if "valoresmovramos" in nl or "rmovram" in nl:
-        score += 25.0
-    if "seguros" in nl:
-        score += 15.0
-    if "sinist" in nl:
-        score += 10.0
-    if "prem" in nl:
-        score += 10.0
-    if "ramo" in nl:
-        score += 8.0
+        # detalhes por ramo (com nome, se disponível)
+        by_ramo_out: dict[str, dict[str, Any]] = {}
+        for coramo, rb in (b.get("by_ramo") or {}).items():
+            nm = ramos_map.get(coramo)
+            by_ramo_out[coramo] = {
+                "name": nm,
+                "premium": float(rb.get("premium") or 0.0),
+                "claims": float(rb.get("claims") or 0.0),
+                "acq_expenses": float(rb.get("acq_expenses") or 0.0),
+            }
 
-    # penalidades leves (evita ficar preso só em prev/cap)
-    if "prev" in nl:
-        score -= 3.0
-    if "cap" in nl and "cap_" in nl:
-        score -= 2.0
-
-    # arquivos muito "meta"
-    if any(x in nl for x in ("readme", "leia", "dicion", "doc", "layout", "contatos", "administradores")):
-        score -= 50.0
-
-    score -= len(nl) / 3000.0
-    return score
-
-
-def _probe_member_schema(zf: zipfile.ZipFile, member: str) -> dict[str, Any] | None:
-    try:
-        # leitura leve: header + poucas linhas
-        with zf.open(member) as raw:
-            data = raw.read(200_000)  # suficiente para header + primeiras linhas
-        reader, fields, delim = _open_csv_bytes(data)
-    except Exception:
-        return None
-
-    if not fields or len(fields) < 2:
-        return None
-
-    id_col = _detect_company_id_col(fields)
-    prem_col, sin_col = _detect_amount_cols(fields)
-    if not id_col or (prem_col is None and sin_col is None):
-        return None
-
-    # tenta achar competência com uma linha de amostra
-    ym = None
-    try:
-        for _ in range(5):
-            row = next(reader)
-            if isinstance(row, dict):
-                ym = _parse_ym_from_row(row, fields)
-                if ym:
-                    break
-    except Exception:
-        ym = None
-
-    if not ym:
-        return None
-
-    return {
-        "member": member,
-        "fields": fields,
-        "delim": delim,
-        "id_col": id_col,
-        "prem_col": prem_col,
-        "sin_col": sin_col,
-        "score": _score_financial_member(member) + (15.0 if prem_col and sin_col else 0.0),
-    }
-
-
-def _pick_best_fact_files(zf: zipfile.ZipFile, names: list[str]) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
-    """
-    Retorna (best_prem_file, best_sin_file).
-    Se existir um arquivo "fato" com ambos (prem e sin), ele tende a ser escolhido para ambos.
-    """
-    candidates: list[dict[str, Any]] = []
-    for m in sorted(_iter_csv_members(names), key=_score_financial_member, reverse=True)[:25]:
-        probe = _probe_member_schema(zf, m)
-        if probe:
-            candidates.append(probe)
-
-    if not candidates:
-        return None, None
-
-    # 1) procura "single fact" com prem e sin
-    both = [c for c in candidates if c.get("prem_col") and c.get("sin_col")]
-    if both:
-        both.sort(key=lambda x: float(x["score"]), reverse=True)
-        return both[0], both[0]
-
-    # 2) separa melhor de prem e melhor de sin
-    prem = [c for c in candidates if c.get("prem_col")]
-    sin = [c for c in candidates if c.get("sin_col")]
-
-    prem.sort(key=lambda x: float(x["score"]), reverse=True)
-    sin.sort(key=lambda x: float(x["score"]), reverse=True)
-
-    return (prem[0] if prem else None), (sin[0] if sin else None)
-
-
-# ----------------------------
-# Public: extraction (expected by build_insurers)
-# ----------------------------
-
-def extract_ses_master_and_financials() -> tuple[SesExtractMeta, dict[str, dict[str, Any]]]:
-    """
-    Retorna:
-      meta_ses: SesExtractMeta
-      companies: dict[codigoFIP] => {name, cnpj, premiums, claims}
-
-    Fonte mestre (CNPJ): LISTAEMPRESAS.csv
-    Fonte fatos: BaseCompleta.zip (1 ou 2 tabelas "fato" auto-detectadas)
-    """
-    zip_info = download_and_validate_ses_zip()
-    master_info = download_listaempresas_csv()
-
-    # --- 1) Carrega mestre LISTAEMPRESAS ---
-    master_path = Path(master_info.saved_to)
-    master_bytes = master_path.read_bytes()
-
-    master_reader, master_fields, master_delim = _open_csv_bytes(master_bytes)
-    id_col = _detect_company_id_col(master_fields) or "CodigoFIP"
-    name_col = _detect_name_col(master_fields) or "NomeEntidade"
-    cnpj_col = _detect_cnpj_col(master_fields) or "CNPJ"
-
-    companies: dict[str, dict[str, Any]] = {}
-    master_rows = 0
-
-    for row in master_reader:
-        if not isinstance(row, dict):
-            continue
-        master_rows += 1
-
-        codigo = _digits(row.get(id_col))
-        if not codigo:
-            continue
-
-        nome = str(row.get(name_col) or "").strip() or f"SES_ENTIDADE_{codigo}"
-        cnpj = _digits(row.get(cnpj_col))
-
-        companies[codigo] = {
-            "name": nome,
-            "cnpj": cnpj if len(cnpj) == 14 else None,
-            "premiums": 0.0,
-            "claims": 0.0,
+        companies[sid] = {
+            "name": name,
+            "cnpj": cnpj,
+            # compatibilidade
+            "premiums": premium,
+            "claims": claims,
+            # extensões
+            "ses": {
+                "window_months": window_months,
+                "as_of": "{:04d}-{:02d}".format(*_idx_to_ym(as_of_idx)),
+                "by_ramo": by_ramo_out,
+                "by_uf": by_uf.get(sid) or {},
+                "solvency": solv.get(sid) or {},
+                "acq_expenses": acq,
+            },
         }
 
-    if not companies:
-        raise RuntimeError(
-            f"SES: LISTAEMPRESAS não gerou nenhuma entidade. fields={master_fields[:10]} delim={master_delim!r}"
+    y2, m2 = _idx_to_ym(as_of_idx)
+    y1, m1 = _idx_to_ym(as_of_idx - (window_months - 1))
+    meta = SesMeta(
+        source="SES/SUSEP (BaseCompleta.zip + LISTAEMPRESAS.csv)",
+        zip_url=zip_url,
+        zip_name=zip_path.name,
+        cias_file=lista_path.name,
+        seguros_file=seg_member,
+        as_of=f"{y2:04d}-{m2:02d}",
+        period_from=f"{y1:04d}-{m1:02d}",
+        period_to=f"{y2:04d}-{m2:02d}",
+        window_months=window_months,
+        files=[
+            zip_path.name,
+            lista_path.name,
+        ],
+    )
+    return meta, companies
+
+
+# ---------------------------------------------------------------------
+# Fallback: reaproveitar último insurers_full se SES falhar
+# (mantido para compatibilidade com o workflow atual)
+# ---------------------------------------------------------------------
+
+
+DATA_SNAPSHOTS = Path("data/snapshots")
+DATA_DERIVED = Path("data/derived")
+
+
+def _load_cached_insurers_payload() -> Optional[dict[str, Any]]:
+    # Preferir snapshot (se existir)
+    if DATA_SNAPSHOTS.exists():
+        files = sorted(DATA_SNAPSHOTS.glob("insurers_full_*.json.gz"))
+        if files:
+            latest = files[-1]
+            import gzip
+
+            with gzip.open(latest, "rt", encoding="utf-8") as f:
+                return json.load(f)
+
+    # Fallback: derived (se existir)
+    derived = DATA_DERIVED / "insurers_full_latest.json.gz"
+    if derived.exists():
+        import gzip
+
+        with gzip.open(derived, "rt", encoding="utf-8") as f:
+            return json.load(f)
+
+    return None
+
+
+def extract_ses_master_and_financials_with_fallback() -> Tuple[SesMeta, Dict[str, Dict[str, Any]]]:
+    try:
+        return extract_ses_master_and_financials()
+    except Exception as exc:
+        cached = _load_cached_insurers_payload()
+        if not cached:
+            raise
+
+        # tenta manter formato (meta + companies) do SES
+        meta_dict = (cached.get("meta") or {}).get("ses") or {}
+        companies = cached.get("companies") or cached.get("insurers") or {}
+
+        # meta mínima
+        meta = SesMeta(
+            source=str(meta_dict.get("source") or "SES (cached insurers_full)"),  # type: ignore[arg-type]
+            zip_url=str(meta_dict.get("zip_url") or ""),
+            zip_name=str(meta_dict.get("zip_name") or ""),
+            cias_file=str(meta_dict.get("cias_file") or ""),
+            seguros_file=str(meta_dict.get("seguros_file") or ""),
+            as_of=str(meta_dict.get("as_of") or ""),
+            period_from=str(meta_dict.get("period_from") or ""),
+            period_to=str(meta_dict.get("period_to") or ""),
+            window_months=int(meta_dict.get("window_months") or 12),
+            files=list(meta_dict.get("files") or []),
         )
 
-    # --- 2) Abre zip e escolhe tabelas fato ---
-    cache_path = Path(zip_info.saved_to)
-    with zipfile.ZipFile(cache_path) as zf:
-        names = zf.namelist()
+        # Injeta aviso (sem quebrar o tipo)
+        md = asdict(meta)
+        md["warning"] = f"SES falhou ({exc.__class__.__name__}); usando cache do último insurers_full"
+        # reconstrói meta como dataclass (removendo chave extra)
+        meta = SesMeta(**{k: md[k] for k in SesMeta.__dataclass_fields__.keys()})  # type: ignore[arg-type]
 
-        best_prem, best_sin = _pick_best_fact_files(zf, names)
+        # companies deve ser dict sid->obj
+        if isinstance(companies, list):
+            companies = {str(c.get("id") or ""): c for c in companies if isinstance(c, dict)}
 
-        # Se não detectar nada, não derruba o projeto: mantém mestre com 0, mas registra diagnóstico.
-        # (O guardrail MIN_INSURERS_COUNT + MAX_COUNT_DROP_PCT vai proteger a publicação.)
-        processed_files: list[str] = []
-        processed_rows_total = 0
-        all_months: set[str] = set()
-
-        prem_by_id: dict[str, dict[str, float]] = {}
-        sin_by_id: dict[str, dict[str, float]] = {}
-
-        def ingest(member_info: dict[str, Any], mode: str) -> None:
-            nonlocal processed_rows_total
-
-            member = str(member_info["member"])
-            processed_files.append(member)
-
-            reader, fields, _d = _open_csv_from_zip(zf, member)
-            idc = str(member_info["id_col"])
-            prem_col = member_info.get("prem_col")
-            sin_col = member_info.get("sin_col")
-
-            for row in reader:
-                if not isinstance(row, dict):
-                    continue
-
-                codigo = _digits(row.get(idc))
-                if not codigo:
-                    continue
-
-                ym = _parse_ym_from_row(row, fields)
-                if not ym:
-                    continue
-
-                processed_rows_total += 1
-                all_months.add(ym)
-
-                if mode in {"prem", "both"} and prem_col:
-                    v = _to_float(row.get(prem_col))
-                    if v:
-                        prem_by_id.setdefault(codigo, {}).setdefault(ym, 0.0)
-                        prem_by_id[codigo][ym] += v
-
-                if mode in {"sin", "both"} and sin_col:
-                    v = _to_float(row.get(sin_col))
-                    if v:
-                        sin_by_id.setdefault(codigo, {}).setdefault(ym, 0.0)
-                        sin_by_id[codigo][ym] += v
-
-        if best_prem and best_sin and best_prem["member"] == best_sin["member"]:
-            ingest(best_prem, "both")
-            seguros_file = str(best_prem["member"])
-        else:
-            if best_prem:
-                ingest(best_prem, "prem")
-            if best_sin:
-                ingest(best_sin, "sin")
-            seguros_file = str(best_prem["member"] if best_prem else (best_sin["member"] if best_sin else ""))
-
-        # --- 3) Define janela rolling 12m ---
-        if all_months:
-            latest = max(all_months, key=_ym_to_index)
-            period_to = latest
-            period_from = _months_back(latest, 11)
-        else:
-            # fallback defensivo: evita quebrar o build
-            period_to = _utc_now()[:7]
-            period_from = _months_back(period_to, 11)
-
-        start_idx = _ym_to_index(period_from)
-        end_idx = _ym_to_index(period_to)
-
-        def in_window(ym: str) -> bool:
-            i = _ym_to_index(ym)
-            return start_idx <= i <= end_idx
-
-        # --- 4) Aplica totais no mestre ---
-        for codigo, base in companies.items():
-            p = 0.0
-            s = 0.0
-            for ym, v in prem_by_id.get(codigo, {}).items():
-                if in_window(ym):
-                    p += v
-            for ym, v in sin_by_id.get(codigo, {}).items():
-                if in_window(ym):
-                    s += v
-
-            base["premiums"] = float(p)
-            base["claims"] = float(s)
-
-        meta = SesExtractMeta(
-            zip_url=zip_info.url,
-            cias_file=str(master_path.name),  # mestre real
-            seguros_file=seguros_file or "(auto-detect failed; no fact file processed)",
-            period_from=period_from,
-            period_to=period_to,
-            fetched_at=zip_info.fetched_at,
-            bytes_len=zip_info.bytes_len,
-            sha256=zip_info.sha256,
-            saved_to=zip_info.saved_to,
-            notes={
-                "master_source": master_info.url,
-                "master_cache": master_info.saved_to,
-                "master_rows": master_rows,
-                "master_detected_cols": {"id_col": id_col, "name_col": name_col, "cnpj_col": cnpj_col},
-                "fact_files": processed_files,
-                "fact_rows_processed": processed_rows_total,
-                "auto_detect_best_prem": (best_prem or {}).get("member"),
-                "auto_detect_best_sin": (best_sin or {}).get("member"),
-            },
-        )
-
-        return meta, companies
+        return meta, companies  # type: ignore[return-value]
