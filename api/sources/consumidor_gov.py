@@ -399,4 +399,151 @@ def aggregate_month_dual(gz_path: str) -> tuple[dict[str, Agg], dict[str, Agg]]:
                     by_cnpj[cnpj_key] = a2
                 _apply(a2)
 
-    return by_name, by_cnpj
+            def download_month_csv_gz(
+    a: str,
+    b: str | None = None,
+    *,
+    out_dir: str | None = None,
+) -> tuple[str, dict[str, Any]]:
+    """
+    Back-compat wrapper.
+
+    Formas aceitas:
+      1) download_month_csv_gz(ym, url, out_dir=...)
+      2) download_month_csv_gz(url, out_gz_path)
+      3) download_month_csv_gz(url)  -> infere ym e salva em out_dir padrão
+    """
+    default_out_dir = os.getenv("CONSUMIDOR_GOV_CACHE_DIR", "data/raw/consumidor_gov")
+    out_dir = out_dir or default_out_dir
+
+    # Caso 3: apenas URL
+    if b is None and a.startswith("http"):
+        url = a
+        ym = _extract_ym(url) or "unknown"
+        out_gz_path = str(Path(out_dir) / f"basecompleta_{ym}.csv.gz")
+        meta = download_csv_to_gz(url, out_gz_path)
+        meta["ym"] = ym
+        return out_gz_path, meta
+
+    # Caso 2: (url, out_gz_path)
+    if b is not None and a.startswith("http"):
+        url = a
+        out_gz_path = b
+        ym = _extract_ym(out_gz_path) or _extract_ym(url) or "unknown"
+        meta = download_csv_to_gz(url, out_gz_path)
+        meta["ym"] = ym
+        return out_gz_path, meta
+
+    # Caso 1: (ym, url)
+    if b is not None:
+        ym = a
+        url = b
+        out_gz_path = str(Path(out_dir) / f"basecompleta_{ym}.csv.gz")
+        meta = download_csv_to_gz(url, out_gz_path)
+        meta["ym"] = ym
+        return out_gz_path, meta
+
+    raise ValueError("download_month_csv_gz: parâmetros inválidos")
+
+
+def aggregate_month_dual_with_stats(
+    gz_path: str,
+) -> tuple[dict[str, Agg], dict[str, Agg], dict[str, Any]]:
+    """
+    Back-compat: agrega e devolve estatísticas básicas de parsing em 1 passada.
+    """
+    by_name: dict[str, Agg] = {}
+    by_cnpj: dict[str, Agg] = {}
+
+    rows_total = 0
+    rows_with_cnpj = 0
+
+    with gzip.open(gz_path, "rt", encoding="latin-1", errors="replace") as f:
+        sample = f.read(4096)
+        f.seek(0)
+        delim = _sniff_delimiter(sample)
+        reader = csv.DictReader(f, delimiter=delim)
+
+        for row in reader:
+            if not isinstance(row, dict):
+                continue
+            rows_total += 1
+
+            fornecedor = str(
+                _pick_col(
+                    row,
+                    [
+                        "fornecedor",
+                        "nome_fornecedor",
+                        "razao_social",
+                        "nomefantasia",
+                        "nome_fantasia",
+                        "empresa",
+                        "nomeempresa",
+                        "nome_empresa",
+                    ],
+                )
+                or ""
+            ).strip()
+            if not fornecedor:
+                continue
+
+            name_key = _norm_key(fornecedor)
+            if not name_key:
+                continue
+
+            cnpj_raw = _pick_col(row, ["cnpj", "cnpj_fornecedor", "cnpjempresa", "cnpj_empresa", "documento"])
+            cnpj_key = _digits(cnpj_raw)
+            if len(cnpj_key) != 14:
+                cnpj_key = ""
+
+            finalizada = _pick_col(row, ["finalizada", "foi_finalizada", "status_finalizada"])
+            respondida = _pick_col(row, ["respondida", "foi_respondida", "status_respondida"])
+            resolvida = _pick_col(row, ["resolvida", "foi_resolvida", "status_resolvida"])
+            nota = _pick_col(row, ["nota_consumidor", "nota", "satisfacao"])
+            dias = _pick_col(row, ["tempo_resposta_dias", "dias_resposta", "tempo_resposta"])
+
+            def _apply(a: Agg) -> None:
+                if not a.display_name:
+                    a.display_name = fornecedor
+                a.total += 1
+                if _bool_from_pt(finalizada):
+                    a.finalizadas += 1
+                if _bool_from_pt(respondida):
+                    a.respondidas += 1
+                if _bool_from_pt(resolvida):
+                    a.resolvidas_indicador += 1
+                n = _to_float(nota)
+                if n > 0:
+                    a.nota_sum += n
+                    a.nota_count += 1
+                d = _to_float(dias)
+                if d > 0:
+                    a.tempo_sum += d
+                    a.tempo_count += 1
+
+            a1 = by_name.get(name_key)
+            if not a1:
+                a1 = Agg(display_name=fornecedor)
+                by_name[name_key] = a1
+            _apply(a1)
+
+            if cnpj_key:
+                rows_with_cnpj += 1
+                a2 = by_cnpj.get(cnpj_key)
+                if not a2:
+                    a2 = Agg(display_name=fornecedor)
+                    by_cnpj[cnpj_key] = a2
+                _apply(a2)
+
+                stats = {
+                    "gz_path": gz_path,
+                    "bytes": os.path.getsize(gz_path) if os.path.exists(gz_path) else None,
+                    "sha256": _sha256_file(gz_path) if os.path.exists(gz_path) else None,
+                    "parsed_at": _utc_now(),
+                    "delimiter": delim,
+                    "rows_total": rows_total,
+                    "rows_with_cnpj": rows_with_cnpj,
+                    "cnpj_fill_rate": (rows_with_cnpj / rows_total) if rows_total else None,
+                }
+    return by_name, by_cnpj, stats
