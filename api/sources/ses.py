@@ -21,6 +21,7 @@ Notas
 - Lê apenas arquivos necessários dentro do ZIP.
 - Janela padrão: 12 meses (configurável por env var).
 - Correção (Dez/2025): Robustez na leitura de CSVs mal formatados (linhas com colunas extras).
+- Correção (Dez/2025): Headers e validação anti-HTML no download do LISTAEMPRESAS.
 
 Env vars
 --------
@@ -55,6 +56,16 @@ DEFAULT_SEGUROS_FILE = "Ses_seguros.csv"
 DEFAULT_RAMOS_FILE = "Ses_ramos.csv"
 DEFAULT_PL_MARGEM_FILE = "Ses_pl_margem.csv"
 DEFAULT_UF2_FILE = "SES_UF2.csv"  # costuma vir em caixa alta
+
+
+# (A) Configuração de Sessão e Headers para evitar bloqueios WAF/Bot
+UA = {
+    "User-Agent": "Mozilla/5.0 (compatible; SanidaBot/1.0)",
+    "Accept": "text/csv,application/zip,application/octet-stream;q=0.9,*/*;q=0.8",
+}
+
+_SESSION = requests.Session()
+_SESSION.trust_env = False  # Ignora proxies do ambiente para evitar interferência local/CI
 
 
 @dataclass(frozen=True)
@@ -184,18 +195,36 @@ def _cache_dir() -> Path:
     return Path(os.getenv("SES_CACHE_DIR", "data/raw/ses")).resolve()
 
 
+# (B) Substituição da função _download_to_file para validar CSV vs HTML
 def _download_to_file(url: str, dest: Path) -> None:
     dest.parent.mkdir(parents=True, exist_ok=True)
     allow_insecure = _env_bool("SES_ALLOW_INSECURE_SSL", False)
 
     def _do(verify: bool) -> None:
-        with requests.get(url, stream=True, timeout=(15, 180), verify=verify) as r:
+        with _SESSION.get(url, headers=UA, stream=True, timeout=(15, 180), verify=verify) as r:
             r.raise_for_status()
             tmp = dest.with_suffix(dest.suffix + ".part")
             with open(tmp, "wb") as f:
                 for chunk in r.iter_content(chunk_size=1024 * 1024):
                     if chunk:
                         f.write(chunk)
+
+            # Validação leve: se era para ser CSV e veio HTML, falha (para cair no cache / ou quebrar com mensagem útil)
+            if dest.name.upper().startswith("LISTAEMPRESAS") or dest.suffix.lower() == ".csv":
+                head = tmp.read_bytes()[:8192]
+                try:
+                    head_txt = head.decode("utf-8", errors="ignore").lower()
+                except Exception:
+                    head_txt = head.decode("latin-1", errors="ignore").lower()
+
+                ct = (r.headers.get("content-type") or "").lower()
+                if "text/html" in ct or "<html" in head_txt or "<!doctype" in head_txt:
+                    snippet = head_txt.replace("\n", " ")[:300]
+                    raise RuntimeError(
+                        f"SES: download inválido (HTML) para {dest.name}. "
+                        f"url={url} content-type={ct!r} head={snippet!r}"
+                    )
+
             tmp.replace(dest)
 
     try:
