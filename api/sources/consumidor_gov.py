@@ -20,12 +20,7 @@ DATASET_ID = "reclamacoes-do-consumidor-gov-br"
 UA = {"User-Agent": "Mozilla/5.0 (compatible; SanidaBot/1.0)"}
 
 _SESSION = requests.Session()
-_SESSION.trust_env = False  # bypass proxies/env do runner
-
-
-# ---------------------------------------------------------------------
-# Aggregation model
-# ---------------------------------------------------------------------
+_SESSION.trust_env = False  # garante bypass de proxy do ambiente
 
 
 @dataclass
@@ -53,10 +48,9 @@ class Agg:
         self.tempo_count += other.tempo_count
 
     def merge_raw(self, raw: dict[str, Any]) -> None:
-        """
-        Compatibilidade com o builder: mescla um "raw dict" na agregação.
+        """Mescla um dicionário bruto na agregação (compatibilidade com builders antigos).
 
-        Aceita chaves em dois formatos:
+        Aceita dois formatos:
           - interno: total/finalizadas/respondidas/resolvidas_indicador/nota_sum/nota_count/tempo_sum/tempo_count
           - público: complaints_total/complaints_finalizadas (demais rates não são mescláveis sem denominadores)
         """
@@ -117,11 +111,6 @@ class Agg:
         }
 
 
-# ---------------------------------------------------------------------
-# Utils
-# ---------------------------------------------------------------------
-
-
 def _utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
@@ -142,7 +131,7 @@ def _norm_key(s: str) -> str:
 def _to_float(x: Any) -> float:
     try:
         return float(str(x).strip().replace(",", "."))
-    except (ValueError, TypeError):
+    except Exception:
         return 0.0
 
 
@@ -199,6 +188,7 @@ _STOPWORDS = {
     "sa",
     "s",
     "a",
+    "s a",
     "cia",
     "companhia",
     "ltda",
@@ -232,7 +222,7 @@ def _loose_name_key(name: str) -> str:
 
 def _download_to_file(url: str, dest: Path) -> None:
     dest.parent.mkdir(parents=True, exist_ok=True)
-    with _SESSION.get(url, stream=True, timeout=(15, 180)) as r:
+    with requests.get(url, stream=True, timeout=(15, 180)) as r:
         r.raise_for_status()
         tmp = dest.with_suffix(dest.suffix + ".part")
         with open(tmp, "wb") as f:
@@ -270,8 +260,8 @@ def _load_listaempresas_cnpj_by_name() -> dict[str, str]:
         txt = raw.decode("latin-1", errors="replace")
 
     delim = ";" if txt[:4096].count(";") >= txt[:4096].count(",") else ","
-    reader = csv.DictReader(io.StringIO(txt), delimiter=delim, restkey="__extra__", restval="")
-    fieldnames = [fn for fn in (reader.fieldnames or []) if fn and fn != "__extra__"]
+    reader = csv.DictReader(io.StringIO(txt), delimiter=delim)
+    fieldnames = reader.fieldnames or []
 
     def pick(cands: list[str]) -> str | None:
         norm = {_norm_key(fn): fn for fn in fieldnames}
@@ -281,7 +271,7 @@ def _load_listaempresas_cnpj_by_name() -> dict[str, str]:
                 return norm[k]
         return None
 
-    col_nome = pick(["NomeEntidade", "nome_entidade", "nome", "noenti"])
+    col_nome = pick(["NomeEntidade", "nome_entidade", "nome"])
     col_cnpj = pick(["CNPJ", "cnpj"])
     if not col_nome or not col_cnpj:
         _LISTAEMPRESAS_CNPJ_BY_NAME = {}
@@ -289,7 +279,7 @@ def _load_listaempresas_cnpj_by_name() -> dict[str, str]:
 
     out: dict[str, str] = {}
     for r in reader:
-        nome = str(r.get(col_nome) or "").strip()
+        nome = (r.get(col_nome) or "").strip()
         cnpj = _digits(r.get(col_cnpj))
         if not nome or not cnpj:
             continue
@@ -303,11 +293,7 @@ def _load_listaempresas_cnpj_by_name() -> dict[str, str]:
     return out
 
 
-def map_by_name_to_cnpj(by_name: dict[str, Agg], existing: dict[str, Agg] | None = None) -> dict[str, Agg]:
-    """
-    Utilitário opcional: converte agregação por nome (normalizado) para agregação por CNPJ
-    usando LISTAEMPRESAS como tabela mestre.
-    """
+def _map_by_name_to_cnpj(by_name: dict[str, Agg], existing: dict[str, Agg] | None = None) -> dict[str, Agg]:
     existing = existing or {}
     m = _load_listaempresas_cnpj_by_name()
     if not m:
@@ -323,15 +309,10 @@ def map_by_name_to_cnpj(by_name: dict[str, Agg], existing: dict[str, Agg] | None
 
 
 # ---------------------------------------------------------------------
-# Discovery + download (Consumidor.gov.br)
+# Descoberta de recursos (CKAN) e download/parse
 # ---------------------------------------------------------------------
 
-
 def discover_basecompleta_urls(months: int = 12) -> dict[str, str]:
-    """
-    Retorna dict { 'YYYY-MM': 'url' } para recursos 'BaseCompleta' do dataset CKAN.
-    Tenta API do CKAN e faz fallback em scraping leve do HTML do dataset.
-    """
     api = f"{CKAN_BASE}/api/3/action/package_show"
     found: dict[str, str] = {}
 
@@ -355,8 +336,8 @@ def discover_basecompleta_urls(months: int = 12) -> dict[str, str]:
             if not ym:
                 continue
             found[ym] = url
-    except (requests.RequestException, ValueError, KeyError, TypeError):
-        found = {}
+    except Exception:
+        pass
 
     # 2) fallback HTML
     if not found:
@@ -373,23 +354,17 @@ def discover_basecompleta_urls(months: int = 12) -> dict[str, str]:
                 if not ym:
                     continue
                 found[ym] = u
-        except requests.RequestException:
+        except Exception:
             return {}
 
     if not found:
         return {}
 
-    # mantém só os N meses mais recentes
-    yms_sorted_desc = sorted(found.keys(), reverse=True)[: max(1, months)]
-    # devolve em ordem cronológica (crescente) para merges previsíveis
-    yms_sorted = sorted(yms_sorted_desc)
-    return {ym: found[ym] for ym in yms_sorted}
+    yms_sorted = sorted(found.keys(), reverse=True)[: max(1, months)]
+    return {ym: found[ym] for ym in sorted(yms_sorted)}
 
 
 def download_csv_to_gz(url: str, out_gz_path: str) -> dict[str, Any]:
-    """
-    Baixa um CSV (ou CSV.GZ) e garante que a saída seja .gz.
-    """
     os.makedirs(os.path.dirname(out_gz_path), exist_ok=True)
     with _SESSION.get(url, headers=UA, timeout=600, stream=True) as r:
         r.raise_for_status()
@@ -415,18 +390,7 @@ def download_csv_to_gz(url: str, out_gz_path: str) -> dict[str, Any]:
     }
 
 
-# ---------------------------------------------------------------------
-# Aggregation
-# ---------------------------------------------------------------------
-
-
 def aggregate_month_dual(gz_path: str) -> tuple[dict[str, Agg], dict[str, Agg]]:
-    """
-    Agrega 1 mês (1 arquivo basecompleta_YYYY-MM.csv.gz).
-    Retorna duas visões:
-      - by_name: chave = nome normalizado
-      - by_cnpj: chave = CNPJ (14 dígitos) quando existir na base do mês
-    """
     by_name: dict[str, Agg] = {}
     by_cnpj: dict[str, Agg] = {}
 
@@ -434,7 +398,7 @@ def aggregate_month_dual(gz_path: str) -> tuple[dict[str, Agg], dict[str, Agg]]:
         sample = f.read(4096)
         f.seek(0)
         delim = _sniff_delimiter(sample)
-        reader = csv.DictReader(f, delimiter=delim, restkey="__extra__", restval="")
+        reader = csv.DictReader(f, delimiter=delim)
 
         for row in reader:
             if not isinstance(row, dict):
@@ -484,7 +448,6 @@ def aggregate_month_dual(gz_path: str) -> tuple[dict[str, Agg], dict[str, Agg]]:
                     a.respondidas += 1
                 if _bool_from_pt(resolvida):
                     a.resolvidas_indicador += 1
-
                 n = _to_float(nota)
                 if n > 0:
                     a.nota_sum += n
@@ -511,9 +474,8 @@ def aggregate_month_dual(gz_path: str) -> tuple[dict[str, Agg], dict[str, Agg]]:
 
 
 # ---------------------------------------------------------------------
-# Back-compat wrappers (para o builder)
+# Back-compat wrappers (para o builder antigo)
 # ---------------------------------------------------------------------
-
 
 def download_month_csv_gz(
     a: str,
@@ -568,91 +530,19 @@ def aggregate_month_dual_with_stats(
     """
     Back-compat: agrega e devolve estatísticas básicas de parsing.
     """
-    by_name: dict[str, Agg] = {}
-    by_cnpj: dict[str, Agg] = {}
+    by_name, by_cnpj = aggregate_month_dual(gz_path)
 
-    rows_total = 0
-    rows_with_cnpj = 0
+    # stats leves (sem re-parse completo do arquivo)
+    # Para manter compatibilidade, fazemos apenas hash/size e tentamos recuperar delimitador via sample.
     delim = ","
-
-    with gzip.open(gz_path, "rt", encoding="latin-1", errors="replace") as f:
-        sample = f.read(4096)
-        f.seek(0)
-        delim = _sniff_delimiter(sample)
-        reader = csv.DictReader(f, delimiter=delim, restkey="__extra__", restval="")
-
-        for row in reader:
-            if not isinstance(row, dict):
-                continue
-            rows_total += 1
-
-            fornecedor = str(
-                _pick_col(
-                    row,
-                    [
-                        "fornecedor",
-                        "nome_fornecedor",
-                        "razao_social",
-                        "nomefantasia",
-                        "nome_fantasia",
-                        "empresa",
-                        "nomeempresa",
-                        "nome_empresa",
-                    ],
-                )
-                or ""
-            ).strip()
-            if not fornecedor:
-                continue
-
-            name_key = _norm_key(fornecedor)
-            if not name_key:
-                continue
-
-            cnpj_raw = _pick_col(row, ["cnpj", "cnpj_fornecedor", "cnpjempresa", "cnpj_empresa", "documento"])
-            cnpj_key = _digits(cnpj_raw)
-            if len(cnpj_key) != 14:
-                cnpj_key = ""
-
-            finalizada = _pick_col(row, ["finalizada", "foi_finalizada", "status_finalizada"])
-            respondida = _pick_col(row, ["respondida", "foi_respondida", "status_respondida"])
-            resolvida = _pick_col(row, ["resolvida", "foi_resolvida", "status_resolvida"])
-            nota = _pick_col(row, ["nota_consumidor", "nota", "satisfacao"])
-            dias = _pick_col(row, ["tempo_resposta_dias", "dias_resposta", "tempo_resposta"])
-
-            def _apply(a: Agg) -> None:
-                if not a.display_name:
-                    a.display_name = fornecedor
-                a.total += 1
-                if _bool_from_pt(finalizada):
-                    a.finalizadas += 1
-                if _bool_from_pt(respondida):
-                    a.respondidas += 1
-                if _bool_from_pt(resolvida):
-                    a.resolvidas_indicador += 1
-
-                n = _to_float(nota)
-                if n > 0:
-                    a.nota_sum += n
-                    a.nota_count += 1
-                d = _to_float(dias)
-                if d > 0:
-                    a.tempo_sum += d
-                    a.tempo_count += 1
-
-            a1 = by_name.get(name_key)
-            if not a1:
-                a1 = Agg(display_name=fornecedor)
-                by_name[name_key] = a1
-            _apply(a1)
-
-            if cnpj_key:
-                rows_with_cnpj += 1
-                a2 = by_cnpj.get(cnpj_key)
-                if not a2:
-                    a2 = Agg(display_name=fornecedor)
-                    by_cnpj[cnpj_key] = a2
-                _apply(a2)
+    rows_total = None
+    rows_with_cnpj = None
+    try:
+        with gzip.open(gz_path, "rt", encoding="latin-1", errors="replace") as f:
+            sample = f.read(4096)
+            delim = _sniff_delimiter(sample)
+    except Exception:
+        pass
 
     stats = {
         "gz_path": gz_path,
@@ -662,6 +552,6 @@ def aggregate_month_dual_with_stats(
         "delimiter": delim,
         "rows_total": rows_total,
         "rows_with_cnpj": rows_with_cnpj,
-        "cnpj_fill_rate": (rows_with_cnpj / rows_total) if rows_total else None,
+        "cnpj_fill_rate": None,
     }
     return by_name, by_cnpj, stats
