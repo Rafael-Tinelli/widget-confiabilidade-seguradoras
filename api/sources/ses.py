@@ -6,7 +6,6 @@ import hashlib
 import io
 import os
 import re
-import time
 import unicodedata
 import zipfile
 from dataclasses import dataclass
