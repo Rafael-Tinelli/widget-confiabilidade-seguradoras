@@ -20,6 +20,7 @@ Notas
 - Evita carregar o ZIP inteiro em memória: faz download streaming para disco.
 - Lê apenas arquivos necessários dentro do ZIP.
 - Janela padrão: 12 meses (configurável por env var).
+- Correção (Dez/2025): Robustez na leitura de CSVs mal formatados (linhas com colunas extras).
 
 Env vars
 --------
@@ -41,7 +42,7 @@ import unicodedata
 import zipfile
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Dict, Iterable, Optional, Tuple
+from typing import Any, Dict, Iterable, Optional, Tuple, Union
 
 import requests
 
@@ -95,6 +96,9 @@ def _env_bool(name: str, default: bool = False) -> bool:
 def _digits(s: Any) -> str:
     if s is None:
         return ""
+    # Se vier lista (overflow de CSV), pega o primeiro ou junta tudo
+    if isinstance(s, list):
+        s = "".join(str(x) for x in s)
     return re.sub(r"\D+", "", str(s))
 
 
@@ -231,21 +235,36 @@ def _iter_csv_from_zip(zf: zipfile.ZipFile, member: str, delimiter: str = ";") -
             yield row
 
 
-def _iter_csv_from_path(path: Path, delimiter: Optional[str] = None) -> Iterable[dict[str, str]]:
-    raw = path.read_bytes()
-    # tenta UTF-8-sig, senão latin-1
+def _decode_csv_bytes(raw: bytes) -> Tuple[str, str]:
+    """Decodifica bytes para string e detecta delimitador (';' ou ',')."""
     try:
         txt = raw.decode("utf-8-sig")
     except UnicodeDecodeError:
         txt = raw.decode("latin-1", errors="replace")
 
-    # detecta delimiter se não informado
-    if delimiter is None:
-        sample = txt[:4096]
-        delimiter = ";" if sample.count(";") >= sample.count(",") else ","
+    sample = txt[:4096]
+    delimiter = ";" if sample.count(";") >= sample.count(",") else ","
+    return txt, delimiter
 
-    reader = csv.DictReader(io.StringIO(txt), delimiter=delimiter)
+
+def _iter_csv_from_path(path: Union[str, Path]) -> Iterable[dict[str, Any]]:
+    """
+    Lê CSV do disco com robustez para linhas quebradas/excedentes.
+    Usa restkey='__extra__' para capturar colunas além do header.
+    """
+    raw = Path(path).read_bytes()
+    txt, delimiter = _decode_csv_bytes(raw)
+
+    # Padroniza colunas excedentes em "__extra__" (em vez de key=None)
+    reader = csv.DictReader(
+        io.StringIO(txt),
+        delimiter=delimiter,
+        restkey="__extra__",
+        restval="",
+    )
     for row in reader:
+        if not isinstance(row, dict):
+            continue
         yield row
 
 
@@ -266,31 +285,69 @@ def _find_member(zf: zipfile.ZipFile, wanted: str) -> Optional[str]:
 # ---------------------------------------------------------------------
 
 
-def _load_listaempresas(path: Path) -> dict[str, dict[str, str]]:
+def _load_listaempresas(path: Union[str, Path]) -> dict[str, dict[str, Any]]:
+    """
+    Lê LISTAEMPRESAS.csv e devolve mapa:
+        { codigo_fip: { "name": "...", "cnpj": "00000000000000" } }
+
+    Robustez:
+      - ignora chaves None / "__extra__" do DictReader
+      - trata valores list (overflow) sem quebrar (.strip em lista causava erro)
+    """
     rows = list(_iter_csv_from_path(path))
     if not rows:
         return {}
 
-    fieldnames = rows[0].keys()
-    col_codigo = _pick_col(fieldnames, ["CodigoFIP", "codigo_fip", "coenti", "cod_fip", "codigo"])
-    col_nome = _pick_col(fieldnames, ["NomeEntidade", "nome_entidade", "noenti", "nome"])
-    col_cnpj = _pick_col(fieldnames, ["CNPJ", "cnpj"])
+    # Filtra chaves do header que não sejam strings válidas
+    raw_fieldnames = list(rows[0].keys())
+    fieldnames: list[str] = [
+        str(fn) for fn in raw_fieldnames 
+        if fn and isinstance(fn, str) and fn.strip() and fn != "__extra__"
+    ]
 
+    col_codigo = _pick_col(fieldnames, ["CodigoFIP", "codigo_fip", "coenti", "cod_fip", "codigo"])
+    col_nome = _pick_col(
+        fieldnames, 
+        ["NomeEntidade", "nome_entidade", "noenti", "nome", "Nome Entidade", "nomeentidade"]
+    )
+    col_cnpj = _pick_col(fieldnames, ["CNPJ", "cnpj", "Cnpj"])
+
+    # Se a heurística falhar, tenta fallback posicional
     if not (col_codigo and col_nome and col_cnpj):
-        # Se o layout mudar, ainda tentamos fallback por posição
         keys = list(fieldnames)
         col_codigo = col_codigo or (keys[0] if len(keys) > 0 else None)
         col_nome = col_nome or (keys[1] if len(keys) > 1 else None)
         col_cnpj = col_cnpj or (keys[2] if len(keys) > 2 else None)
 
-    out: dict[str, dict[str, str]] = {}
+    if not col_codigo or not col_nome or not col_cnpj:
+        # Se mesmo assim falhar, retorna vazio (ou poderia dar raise)
+        # Para evitar crash total, logamos aviso ou retornamos vazio.
+        # Aqui optamos por retornar vazio para não parar o processo se o arquivo estiver corrompido.
+        return {}
+
+    out: dict[str, dict[str, Any]] = {}
+
     for r in rows:
-        sid = _digits(r.get(col_codigo))
+        # Codigo
+        sid_val = r.get(col_codigo)
+        sid = _digits(sid_val)
         if not sid:
             continue
-        name = (r.get(col_nome) or "").strip()
-        cnpj = _digits(r.get(col_cnpj))
+
+        # Nome
+        nome_val = r.get(col_nome)
+        if isinstance(nome_val, list):
+            nome_val = " ".join(str(x) for x in nome_val if x)
+        name = str(nome_val or "").strip()
+
+        # CNPJ
+        cnpj_val = r.get(col_cnpj)
+        if isinstance(cnpj_val, list):
+            cnpj_val = "".join(str(x) for x in cnpj_val if x)
+        cnpj = _digits(cnpj_val)
+
         out[sid] = {"name": name, "cnpj": cnpj}
+
     return out
 
 
