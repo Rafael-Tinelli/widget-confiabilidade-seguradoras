@@ -47,6 +47,59 @@ class Agg:
         self.tempo_sum += other.tempo_sum
         self.tempo_count += other.tempo_count
 
+        def merge_raw(self, raw: dict[str, Any]) -> None:
+        """
+        Compatibilidade com o builder: mescla um "raw dict" na agregação.
+
+        Aceita chaves em dois formatos:
+          - interno: total/finalizadas/respondidas/resolvidas_indicador/nota_sum/nota_count/tempo_sum/tempo_count
+          - público: complaints_total/complaints_finalizadas (demais rates não são mescláveis sem denominadores)
+        """
+        if not isinstance(raw, dict):
+            return
+
+        def _as_int(v: Any) -> int:
+            if v is None:
+                return 0
+            s = str(v).strip()
+            if not s:
+                return 0
+            # suporta "10", "10.0", "10,0"
+            s = s.replace(",", ".")
+            try:
+                return int(float(s))
+            except (ValueError, TypeError):
+                return 0
+
+        def _as_float(v: Any) -> float:
+            if v is None:
+                return 0.0
+            s = str(v).strip()
+            if not s:
+                return 0.0
+            s = s.replace(",", ".")
+            try:
+                return float(s)
+            except (ValueError, TypeError):
+                return 0.0
+
+        # display name
+        dn = raw.get("display_name") or raw.get("fornecedor") or raw.get("nome_fornecedor") or ""
+        if not self.display_name and isinstance(dn, str) and dn.strip():
+            self.display_name = dn.strip()
+
+        # contagens (preferir formato interno; cair para o público se vier assim)
+        self.total += _as_int(raw.get("total", raw.get("complaints_total", 0)))
+        self.finalizadas += _as_int(raw.get("finalizadas", raw.get("complaints_finalizadas", 0)))
+        self.respondidas += _as_int(raw.get("respondidas", 0))
+        self.resolvidas_indicador += _as_int(raw.get("resolvidas_indicador", 0))
+
+        # somas/contadores (se existirem no raw)
+        self.nota_sum += _as_float(raw.get("nota_sum", 0.0))
+        self.nota_count += _as_int(raw.get("nota_count", 0))
+        self.tempo_sum += _as_float(raw.get("tempo_sum", 0.0))
+        self.tempo_count += _as_int(raw.get("tempo_count", 0))
+
     def to_public(self) -> dict[str, Any]:
         responded_rate = (self.respondidas / self.finalizadas) if self.finalizadas else None
         resolution_rate = (self.resolvidas_indicador / self.finalizadas) if self.finalizadas else None
