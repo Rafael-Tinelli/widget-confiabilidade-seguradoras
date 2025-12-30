@@ -10,19 +10,17 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-import requests
-from requests.exceptions import SSLError
+# Substituímos requests por curl_cffi para bypass de WAF/TLS Fingerprint
+from curl_cffi import requests as cffi_requests
 
 SES_HOME_DEFAULT = "https://www2.susep.gov.br/menuestatistica/ses/principal.aspx"
 
-SES_UA = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+# Headers reais de navegador
+SES_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36",
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+    "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
 }
-
-_SESSION = requests.Session()
-_SESSION.trust_env = False  # Evita proxies do runner
-
 
 @dataclass
 class SesMeta:
@@ -39,224 +37,133 @@ class SesMeta:
     warning: str = ""
 
 
-def _env_bool(key: str, default: bool = False) -> bool:
-    val = os.getenv(key, str(default)).lower()
-    return val in ("1", "true", "yes", "on")
-
-
-def _read_text_safe(path: Path) -> str:
-    """Lê arquivo tentando encodings comuns."""
-    if not path.exists():
-        return ""
-    raw = path.read_bytes()
-    
-    # Se estiver vazio
-    if not raw:
-        return ""
-
-    for enc in ["utf-8-sig", "latin-1", "cp1252"]:
-        try:
-            return raw.decode(enc)
-        except UnicodeDecodeError:
-            continue
-    
-    # Último recurso: ignorar erros para tentar ler algo
-    return raw.decode("latin-1", errors="ignore")
-
-
-def _download_robust(url: str, dest: Path) -> bool:
-    """Baixa arquivo. Retorna True se baixou, False se falhou."""
+def _download_with_impersonation(url: str, dest: Path) -> None:
+    """
+    Baixa arquivo usando curl_cffi para simular um navegador Chrome real.
+    Isso evita o bloqueio de WAF/Anti-Bot da SUSEP que barra o 'python-requests'.
+    """
     dest.parent.mkdir(parents=True, exist_ok=True)
-    allow_insecure = _env_bool("SES_ALLOW_INSECURE_SSL", True)
-
-    print(f"SES: Baixando {url} ...")
-    try:
-        try:
-            resp = _SESSION.get(url, headers=SES_UA, timeout=60, verify=True)
-        except SSLError:
-            if not allow_insecure:
-                raise
-            print("SES: SSL falhou, tentando insecure...")
-            resp = _SESSION.get(url, headers=SES_UA, timeout=60, verify=False)
-
-        resp.raise_for_status()
-        
-        # Verifica se é HTML de bloqueio
-        snippet = resp.content[:500].lower()
-        if b"<!doctype" in snippet or b"<html" in snippet:
-            print("SES WARNING: Download retornou HTML (Bloqueio WAF). Ignorando.")
-            return False
-
-        with open(dest, "wb") as f:
-            f.write(resp.content)
-        return True
-
-    except Exception as e:
-        print(f"SES WARNING: Falha no download: {e}")
-        return False
-
-
-def _parse_csv_brute_force(text: str) -> dict[str, dict[str, Any]]:
-    """
-    Parser 'Marreta' para o formato específico:
-    CodigoFIP;NomeEntidade;CNPJ
-    """
-    out = {}
-    lines = text.splitlines()
-    print(f"SES DEBUG: Tentando parse bruto em {len(lines)} linhas.")
+    print(f"SES: Baixando {url} (impersonate='chrome110')...")
     
-    for line in lines:
-        line = line.strip()
-        if not line: 
-            continue
+    try:
+        # impersonate="chrome110" gera um TLS Fingerprint idêntico ao Chrome
+        response = cffi_requests.get(
+            url, 
+            headers=SES_HEADERS, 
+            impersonate="chrome110", 
+            timeout=120,
+            verify=False # Frequentemente governos têm cadeias de cert incompletas
+        )
+        response.raise_for_status()
         
-        # Ignora linha de header se parecer header
-        if "codigofip" in line.lower() and "nome" in line.lower():
-            continue
-
-        # Tenta splitar por ponto e vírgula (formato do seu arquivo)
-        parts = line.split(";")
-        if len(parts) < 3:
-            # Tenta vírgula caso tenha sido convertido
-            parts = line.split(",")
-        
-        if len(parts) >= 3:
-            # Assume ordem: FIP, Nome, CNPJ (ou FIP, CNPJ, Nome - tenta inferir)
-            p0 = parts[0].strip() # FIP?
-            p1 = parts[1].strip() # Nome?
-            p2 = parts[2].strip() # CNPJ?
-
-            # Limpa caracteres não numéricos para testar
-            d0 = re.sub(r"\D", "", p0)
-            d2 = re.sub(r"\D", "", p2)
-
-            fip = ""
-            cnpj = ""
-            name = ""
-
-            # Lógica heurística:
-            # FIP tem 4 a 6 dígitos. CNPJ tem 14.
-            if len(d0) in [4, 5, 6] and len(d2) >= 8:
-                fip = d0
-                name = p1
-                cnpj = d2
-            elif len(d0) >= 8 and len(d2) in [4, 5, 6]:
-                # Invertido?
-                cnpj = d0
-                name = p1
-                fip = d2
+        # Validação anti-bloqueio (se retornou HTML de erro 200 OK)
+        content_start = response.content[:1000].lower()
+        if b"<!doctype" in content_start or b"<html" in content_start:
+            raise RuntimeError("Servidor retornou HTML (Bloqueio WAF) em vez de CSV.")
             
-            if fip and cnpj:
-                out[fip.zfill(5)] = {"cnpj": cnpj, "name": name}
-                out[fip.zfill(6)] = {"cnpj": cnpj, "name": name}
-
-    return out
+        with open(dest, "wb") as f:
+            f.write(response.content)
+            
+    except Exception as e:
+        print(f"SES: Erro no download com impersonation: {e}")
+        raise
 
 
 def _parse_csv_content(text: str) -> dict[str, dict[str, Any]]:
-    """Tenta parse estruturado, se falhar, vai pro bruto."""
+    """Parser resiliente para o CSV de empresas."""
     if not text.strip():
         return {}
 
     f = io.StringIO(text)
-    header_line = text.splitlines()[0]
-    delim = ";" if header_line.count(";") > header_line.count(",") else ","
-
+    # Detecta delimitador (Susep usa ; mas as vezes converte)
+    header = text.splitlines()[0]
+    delim = ";" if header.count(";") > header.count(",") else ","
+    
     reader = csv.DictReader(f, delimiter=delim)
     
     # Normaliza headers
     headers_map = {}
     if reader.fieldnames:
         for h in reader.fieldnames:
+            # remove espaços, acentos e deixa minusculo
             norm = h.lower().replace(" ", "").replace("_", "").replace(".", "").strip()
             headers_map[norm] = h
     
+    # Busca colunas chave
     col_cod = headers_map.get("codigofip") or headers_map.get("codfip") or headers_map.get("fip")
     col_cnpj = headers_map.get("cnpj") or headers_map.get("numcnpj")
     col_nome = (
-        headers_map.get("nomeentidade")
-        or headers_map.get("nome")
+        headers_map.get("nomeentidade") 
+        or headers_map.get("nome") 
         or headers_map.get("razaosocial")
-        or headers_map.get("nomerazaosocial")
     )
 
+    if not col_cod or not col_cnpj:
+        print(f"SES DEBUG: Colunas não encontradas. Headers disponíveis: {list(headers_map.keys())}")
+        return {}
+
     out = {}
-    # Se achou as colunas bonitinho, usa o DictReader
-    if col_cod and col_cnpj and col_nome:
-        for row in reader:
-            cod = re.sub(r"\D", "", row.get(col_cod, ""))
-            cnpj = re.sub(r"\D", "", row.get(col_cnpj, ""))
-            nome = (row.get(col_nome) or "").strip()
-            if cod and cnpj:
-                out[cod.zfill(5)] = {"cnpj": cnpj, "name": nome}
-                out[cod.zfill(6)] = {"cnpj": cnpj, "name": nome}
-    
-    # Se o método "elegante" falhou ou retornou vazio, chama a marreta
-    if len(out) < 10:
-        print("SES DEBUG: Parse estruturado falhou ou vazio. Acionando modo Brute Force.")
-        out_brute = _parse_csv_brute_force(text)
-        if len(out_brute) > len(out):
-            return out_brute
+    for row in reader:
+        cod = re.sub(r"\D", "", row.get(col_cod, ""))
+        cnpj = re.sub(r"\D", "", row.get(col_cnpj, ""))
+        nome = (row.get(col_nome) or "").strip()
+        
+        if cod and cnpj:
+            # Normaliza e guarda
+            out[cod.zfill(5)] = {"cnpj": cnpj, "name": nome}
+            out[cod.zfill(6)] = {"cnpj": cnpj, "name": nome}
             
     return out
 
 
 def extract_ses_master_and_financials() -> tuple[SesMeta, dict[str, Any]]:
     """
-    Estratégia Híbrida: Tenta Download -> Tenta Estático -> Falha.
+    Tenta baixar o LISTAEMPRESAS usando bypass de WAF.
+    Se falhar, o pipeline falha (sem false positive).
     """
     lista_url = os.getenv(
         "SES_LISTAEMPRESAS_URL",
         "https://www2.susep.gov.br/menuestatistica/ses/download/LISTAEMPRESAS.csv",
     )
+    zip_url_oficial = "https://www2.susep.gov.br/download/estatisticas/BaseCompleta.zip"
 
-    # Caminho exato para o arquivo que você subiu
-    # api/sources/ses.py -> api/sources -> api -> (static fica em api/static)
-    root_api = Path(__file__).resolve().parent.parent
-    static_path = root_api / "static" / "LISTAEMPRESAS.csv"
-    
-    # Cache path
+    # Define caminho de cache
     cache_dir = Path(os.getenv("SES_CACHE_DIR", "data/raw/ses")).resolve()
     if not cache_dir.is_absolute():
         cache_dir = Path.cwd() / cache_dir
+    
     cache_path = cache_dir / "LISTAEMPRESAS.csv"
 
-    companies: dict[str, dict[str, Any]] = {}
-    source_used = "none"
+    # Tenta baixar
+    try:
+        _download_with_impersonation(lista_url, cache_path)
+    except Exception as e:
+        raise RuntimeError(f"SES: Falha crítica no download (WAF/Rede). Erro: {e}")
 
-    # 1. Tentativa via Download
-    if _download_robust(lista_url, cache_path):
-        content = _read_text_safe(cache_path)
-        data = _parse_csv_content(content)
-        if len(data) > 50:
-            companies = data
-            source_used = "download"
-            print(f"SES: Sucesso via download ({len(companies)} registros).")
-        else:
-            print(f"SES WARNING: Download obteve apenas {len(data)} registros. Descartando.")
+    # Lê e parseia
+    try:
+        # Tenta decodificar (latin1 é o padrão susep, mas tentamos utf-8)
+        raw_bytes = cache_path.read_bytes()
+        text_content = ""
+        for enc in ["utf-8-sig", "latin-1", "cp1252"]:
+            try:
+                text_content = raw_bytes.decode(enc)
+                break
+            except UnicodeDecodeError:
+                continue
+        
+        companies = _parse_csv_content(text_content)
+    except Exception as e:
+        raise RuntimeError(f"SES: Falha no parsing do arquivo baixado. Erro: {e}")
 
-    # 2. Tentativa via Estático (Fallback)
-    if not companies:
-        if static_path.exists():
-            print(f"SES: Tentando fallback estático em {static_path}...")
-            content = _read_text_safe(static_path)
-            # Log do início do arquivo para provar que está lendo o certo
-            print(f"SES DEBUG: Inicio do arquivo estatico: {content[:100]!r}")
-            
-            data = _parse_csv_content(content)
-            if len(data) > 10: # Aceita qualquer coisa > 10 como sucesso no fallback
-                companies = data
-                source_used = "static_repo"
-                print(f"SES: Sucesso via estático ({len(companies)} registros).")
-            else:
-                print("SES ERROR: Arquivo estático existe mas parseou 0 registros.")
-        else:
-            print(f"SES INFO: Arquivo estático não encontrado em {static_path}")
+    if len(companies) < 50:
+        # Dump para debug no log do Actions
+        print(f"SES DUMP (inicio): {text_content[:200]}")
+        raise RuntimeError(f"SES: Arquivo baixado parece inválido (apenas {len(companies)} registros).")
 
-    if not companies:
-        raise RuntimeError("SES: Falha crítica. LISTAEMPRESAS.csv vazio ou inválido em todas as fontes.")
+    print(f"SES: Sucesso. {len(companies)} empresas carregadas.")
 
-    # Formata para output
+    # Formata saída
     final_companies = {}
     for cod, val in companies.items():
         final_companies[cod] = {
@@ -267,9 +174,10 @@ def extract_ses_master_and_financials() -> tuple[SesMeta, dict[str, Any]]:
         }
 
     meta = SesMeta(
-        cias_file=f"LISTAEMPRESAS.csv ({source_used})",
+        cias_file="LISTAEMPRESAS.csv",
         as_of=datetime.now().strftime("%Y-%m"),
-        warning="Apenas dados cadastrais (Fallback Strategy Applied)",
+        zip_url=zip_url_oficial,
+        warning="Dados cadastrais via bypass WAF"
     )
 
     return meta, final_companies
