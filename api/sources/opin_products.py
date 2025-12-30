@@ -3,12 +3,10 @@ from __future__ import annotations
 
 import gzip
 import json
-import os
 import concurrent.futures
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any
 
 # Reutilizamos curl_cffi para consistência e bypass de WAFs eventuais
 from curl_cffi import requests as cffi_requests
@@ -30,6 +28,7 @@ OPIN_HEADERS = {
     "Accept": "application/json",
 }
 
+
 @dataclass
 class OpinProductMeta:
     source: str = "Open Insurance Brasil"
@@ -44,11 +43,9 @@ def _load_participants(json_path: Path) -> list[dict]:
     """Carrega o diretório de participantes gerado na etapa anterior."""
     if not json_path.exists():
         raise RuntimeError(f"Arquivo de participantes não encontrado: {json_path}")
-    
+
     with open(json_path, "r", encoding="utf-8") as f:
         data = json.load(f)
-        # O formato pode variar dependendo do build_json anterior, 
-        # mas geralmente é uma lista ou dict com chave 'participants'
         if isinstance(data, list):
             return data
         return data.get("participants", []) or []
@@ -57,64 +54,53 @@ def _load_participants(json_path: Path) -> list[dict]:
 def _extract_api_base_url(participant: dict) -> str | None:
     """
     Tenta descobrir a URL base do servidor de Produtos e Serviços.
-    A estrutura do diretório OPIN é complexa, procuramos em 'AuthorisationServers' ou 'ApiResources'.
     """
-    # Estratégia 1: Procurar em ApiResources (onde ficam as URLs funcionais)
+    # Estratégia 1: Procurar em ApiResources
     api_resources = participant.get("ApiResources", [])
     for resource in api_resources:
         base_uri = resource.get("ApiDiscoveryUri") or resource.get("ApiFamilyType")
-        # Se a URI parecer válida, usamos a raiz dela
         if base_uri and str(base_uri).startswith("http"):
-            # Simplificação: A maioria expõe na raiz. 
-            # Se a URL for https://api.seguradora.com.br/open-insurance/discovery,
-            # a base é https://api.seguradora.com.br
             parts = str(base_uri).split("/open-insurance/")
             if len(parts) > 0:
                 return parts[0]
-    
-    # Estratégia 2: AuthorisationServers (menos confiável para dados abertos, mas útil)
+
+    # Estratégia 2: AuthorisationServers
     auth_servers = participant.get("AuthorisationServers", [])
     for server in auth_servers:
         config_url = server.get("OpenIDDiscoveryDocument")
         if config_url and str(config_url).startswith("http"):
-             parts = str(config_url).split("/.well-known")
-             return parts[0]
+            parts = str(config_url).split("/.well-known")
+            return parts[0]
 
     return None
 
 
-def _fetch_single_product(participant_name: str, base_url: str, category: str, endpoint: str) -> list[dict]:
-    """
-    Baixa os produtos de uma única seguradora para uma categoria específica.
-    Retorna uma lista de produtos encontrados.
-    """
+def _fetch_single_product(
+    participant_name: str, base_url: str, category: str, endpoint: str
+) -> list[dict]:
+    """Baixa os produtos de uma única seguradora."""
     full_url = f"{base_url.rstrip('/')}{endpoint}"
     results = []
-    
+
     try:
-        # Tenta baixar a primeira página
-        resp = cffi_requests.get(full_url, headers=OPIN_HEADERS, timeout=TIMEOUT_SECONDS, verify=False)
-        
+        resp = cffi_requests.get(
+            full_url, headers=OPIN_HEADERS, timeout=TIMEOUT_SECONDS, verify=False
+        )
+
         if resp.status_code == 200:
             data = resp.json()
-            # A estrutura padrão é {"data": { "brand": ... }}
             payload = data.get("data", {})
             brand = payload.get("brand", {})
             companies = brand.get("companies", [])
-            
+
             for company in companies:
                 products = company.get("products", [])
                 for prod in products:
-                    # Enriquece o produto com o nome da participante original para rastreio
                     prod["_source_participant"] = participant_name
                     prod["_source_url"] = full_url
                     results.append(prod)
-        else:
-            # Muitos 404/500 são esperados se a seguradora não opera naquele ramo
-            pass
-
     except Exception:
-        # Falhas de conexão são comuns em ambientes distribuídos. Ignoramos para não quebrar o lote.
+        # Falhas de conexão pontuais são ignoradas
         pass
 
     return results
@@ -133,8 +119,7 @@ def extract_open_insurance_products() -> OpinProductMeta:
 
     print("OPIN: Carregando participantes...")
     participants = _load_participants(participants_path)
-    print(f"OPIN: {len(participants)} participantes encontrados.")
-
+    
     # Prepara lista de tarefas (Tuplas: Name, Url)
     targets = []
     for p in participants:
@@ -142,7 +127,7 @@ def extract_open_insurance_products() -> OpinProductMeta:
         url = _extract_api_base_url(p)
         if url:
             targets.append((name, url))
-    
+
     print(f"OPIN: {len(targets)} seguradoras com URLs de API identificadas.")
 
     stats = {"auto": 0, "life": 0, "home": 0}
@@ -152,29 +137,30 @@ def extract_open_insurance_products() -> OpinProductMeta:
     for category, endpoint in TARGET_ENDPOINTS.items():
         print(f"OPIN: Baixando produtos de {category.upper()}...")
         all_products = []
-        
-        # Parallel Fetching
+
         with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
             future_to_target = {
-                executor.submit(_fetch_single_product, name, url, category, endpoint): name 
+                executor.submit(
+                    _fetch_single_product, name, url, category, endpoint
+                ): name
                 for name, url in targets
             }
-            
+
             for future in concurrent.futures.as_completed(future_to_target):
                 try:
                     prods = future.result()
                     all_products.extend(prods)
                 except Exception:
                     continue
-        
+
         # Salva consolidado comprimido
         filename = f"products_{category}.json.gz"
         filepath = raw_dir / filename
-        
+
         with gzip.open(filepath, "wt", encoding="utf-8") as f:
             json.dump(all_products, f, ensure_ascii=False)
-            
-        print(f"OPIN: {len(all_products)} produtos de {category} salvos em {filename}.")
+
+        print(f"OPIN: {len(all_products)} produtos de {category} salvos.")
         stats[category] = len(all_products)
         filenames[f"products_{category}_file"] = filename
 
@@ -183,10 +169,5 @@ def extract_open_insurance_products() -> OpinProductMeta:
         products_auto_file=filenames.get("products_auto_file", ""),
         products_life_file=filenames.get("products_life_file", ""),
         products_home_file=filenames.get("products_home_file", ""),
-        stats=stats
+        stats=stats,
     )
-
-# Bloco para teste manual direto
-if __name__ == "__main__":
-    meta = extract_open_insurance_products()
-    print(meta)
