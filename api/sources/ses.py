@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import csv
+import gzip
 import io
 import os
 import re
@@ -71,17 +72,16 @@ def _download_with_impersonation(url: str, dest: Path) -> None:
         raise
 
 
-def _extract_target_files_from_zip(zip_path: Path, output_dir: Path) -> list[str]:
+def _extract_and_compress_files(zip_path: Path, output_dir: Path) -> list[str]:
     """
-    Extrai apenas os CSVs críticos do ZIP da Susep.
-    Retorna lista de arquivos extraídos com sucesso.
+    Extrai CSVs críticos do ZIP e os salva COMPRIMIDOS (.csv.gz) para economizar espaço
+    e permitir commit no GitHub (evita limite de 100MB).
     """
-    # Arquivos alvo (nomes podem variar case, então buscamos por 'contains')
     target_map = {
-        "ses_seguros": "Ses_seguros.csv",  # Operacional (Sinistros/Prêmios)
-        "ses_balanco": "Ses_balanco.csv",  # Financeiro (Despesas)
-        "ses_pl_margem": "Ses_pl_margem.csv",  # Solvência
-        "ses_campos": "Ses_campos.csv",  # Dicionário de Campos (CMPID)
+        "ses_seguros": "Ses_seguros.csv",
+        "ses_balanco": "Ses_balanco.csv",
+        "ses_pl_margem": "Ses_pl_margem.csv",
+        "ses_campos": "Ses_campos.csv",
     }
 
     extracted = []
@@ -91,11 +91,10 @@ def _extract_target_files_from_zip(zip_path: Path, output_dir: Path) -> list[str
             raise RuntimeError("Arquivo baixado não é um ZIP válido.")
 
         with zipfile.ZipFile(zip_path, "r") as z:
-            # Normaliza nomes dentro do ZIP para busca case-insensitive
             name_map = {n.lower(): n for n in z.namelist()}
 
             for _, target_name in target_map.items():
-                # Tenta achar o arquivo no ZIP (ex: SES_SEGUROS.csv ou Ses_Seguros.csv)
+                # Encontra o arquivo no ZIP
                 found_name = None
                 for z_name_lower in name_map:
                     if target_name.lower() in z_name_lower:
@@ -103,39 +102,45 @@ def _extract_target_files_from_zip(zip_path: Path, output_dir: Path) -> list[str
                         break
 
                 if found_name:
-                    # Extrai para o diretório raw
-                    source = z.open(found_name)
-                    target_path = output_dir / target_name
-                    with open(target_path, "wb") as f_out:
-                        shutil.copyfileobj(source, f_out)
-                    extracted.append(target_name)
-                    print(f"SES: Extraído {found_name} -> {target_name}")
+                    # Define saída com .gz
+                    final_name = f"{target_name}.gz"
+                    target_path = output_dir / final_name
+                    
+                    print(f"SES: Extraindo e comprimindo {found_name} -> {final_name} ...")
+                    
+                    # Lê do ZIP (stream) e escreve no GZIP (stream)
+                    with z.open(found_name) as source, gzip.open(target_path, "wb") as dest:
+                        shutil.copyfileobj(source, dest)
+                    
+                    extracted.append(final_name)
                 else:
-                    print(
-                        f"SES WARNING: Arquivo {target_name} não encontrado dentro do ZIP."
-                    )
+                    print(f"SES WARNING: {target_name} não encontrado no ZIP.")
 
     except Exception as e:
-        print(f"SES: Erro na extração do ZIP: {e}")
+        print(f"SES: Erro na extração/compressão: {e}")
         raise
 
     return extracted
 
 
 def _parse_lista_empresas(cache_path: Path) -> dict[str, dict[str, Any]]:
-    """Lê o LISTAEMPRESAS.csv já baixado e retorna dict de empresas."""
+    """Lê o LISTAEMPRESAS.csv (pode estar gz ou não) e retorna dict."""
     text = ""
     try:
-        raw = cache_path.read_bytes()
-        # Tenta decodificar
-        for enc in ["utf-8-sig", "latin-1", "cp1252"]:
-            try:
-                text = raw.decode(enc)
-                break
-            except UnicodeDecodeError:
-                continue
-        if not text:
-            text = raw.decode("latin-1", errors="replace")
+        # Suporta ler direto de GZ ou de texto puro
+        if str(cache_path).endswith(".gz"):
+             with gzip.open(cache_path, "rt", encoding="latin-1", errors="replace") as f:
+                 text = f.read()
+        else:
+            raw = cache_path.read_bytes()
+            for enc in ["utf-8-sig", "latin-1", "cp1252"]:
+                try:
+                    text = raw.decode(enc)
+                    break
+                except UnicodeDecodeError:
+                    continue
+            if not text:
+                text = raw.decode("latin-1", errors="replace")
     except Exception:
         return {}
 
@@ -179,13 +184,8 @@ def _parse_lista_empresas(cache_path: Path) -> dict[str, dict[str, Any]]:
 
 def extract_ses_master_and_financials() -> tuple[SesMeta, dict[str, Any]]:
     """
-    Fluxo Completo de Extração:
-    1. Baixa/Atualiza LISTAEMPRESAS.csv (Cadastro)
-    2. Baixa/Atualiza BaseCompleta.zip (Financeiro/Operacional)
-    3. Extrai CSVs críticos do ZIP
-    4. Retorna metadados e lista de empresas base
+    Fluxo: Baixa ZIP -> Extrai e Comprime (.csv.gz) -> Salva Cache.
     """
-    # URLs
     url_lista = os.getenv(
         "SES_LISTAEMPRESAS_URL",
         "https://www2.susep.gov.br/menuestatistica/ses/download/LISTAEMPRESAS.csv",
@@ -201,18 +201,18 @@ def extract_ses_master_and_financials() -> tuple[SesMeta, dict[str, Any]]:
         cache_dir = Path.cwd() / cache_dir
     cache_dir.mkdir(parents=True, exist_ok=True)
 
-    # --- PASSO 1: LISTAEMPRESAS (Cadastro) ---
+    # --- PASSO 1: LISTAEMPRESAS ---
+    # Tenta manter o LISTAEMPRESAS também comprimido se possível, mas o código atual lê CSV
     path_lista = cache_dir / "LISTAEMPRESAS.csv"
     temp_lista = cache_dir / "LISTAEMPRESAS_TEMP.csv"
 
     try:
         _download_with_impersonation(url_lista, temp_lista)
-        # Valida
         if len(_parse_lista_empresas(temp_lista)) > 50:
             shutil.move(str(temp_lista), str(path_lista))
             print("SES: LISTAEMPRESAS atualizado.")
         else:
-            print("SES WARNING: LISTAEMPRESAS novo inválido. Mantendo antigo.")
+            print("SES WARNING: LISTAEMPRESAS novo inválido.")
     except Exception as e:
         print(f"SES: Falha download LISTAEMPRESAS ({e}). Usando Last-Known-Good.")
 
@@ -221,53 +221,46 @@ def extract_ses_master_and_financials() -> tuple[SesMeta, dict[str, Any]]:
 
     companies = _parse_lista_empresas(path_lista)
     if len(companies) < 50:
-        raise RuntimeError(f"SES: Cadastro de empresas insuficiente ({len(companies)}).")
+        raise RuntimeError(f"SES: Cadastro insuficiente ({len(companies)}).")
 
-    # --- PASSO 2: ZIP FINANCEIRO (BaseCompleta) ---
+    # --- PASSO 2: ZIP FINANCEIRO (GZIP STRATEGY) ---
     path_zip = cache_dir / "BaseCompleta.zip"
     temp_zip = cache_dir / "BaseCompleta_TEMP.zip"
-
+    
+    # Verifica se precisamos baixar (se já temos os GZs recentes, talvez não precise,
+    # mas o conceito Evergreen pede atualização. Vamos baixar.)
     try:
         _download_with_impersonation(url_zip, temp_zip)
-        # Valida se é ZIP
         if zipfile.is_zipfile(temp_zip):
-            shutil.move(str(temp_zip), str(path_zip))
-            print("SES: BaseCompleta.zip atualizado.")
+            # Não movemos o ZIP para o cache final para não comitar o arquivo gigante.
+            # Usamos o temp para extrair e depois apagamos.
+            print("SES: BaseCompleta baixado com sucesso. Extraindo...")
+            extracted_files = _extract_and_compress_files(temp_zip, cache_dir)
+            print(f"SES: Arquivos extraídos e comprimidos: {extracted_files}")
         else:
-            print("SES WARNING: BaseCompleta novo corrompido. Mantendo antigo.")
-            if temp_zip.exists():
-                temp_zip.unlink()
+            print("SES WARNING: BaseCompleta novo corrompido.")
     except Exception as e:
-        print(f"SES: Falha download ZIP ({e}). Usando Last-Known-Good.")
-        if temp_zip.exists():
-            temp_zip.unlink()
+        print(f"SES: Falha processamento ZIP ({e}). Verificando cache existente...")
+    
+    # Limpeza
+    if temp_zip.exists(): temp_zip.unlink()
+    if path_zip.exists(): path_zip.unlink() # Garante que não sobrou lixo antigo
 
-    # --- PASSO 3: EXTRAÇÃO DOS CSVs CRÍTICOS ---
-    extracted_files = []
-    if path_zip.exists():
-        try:
-            print("SES: Iniciando extração dos CSVs financeiros...")
-            extracted_files = _extract_target_files_from_zip(path_zip, cache_dir)
-        except Exception as e:
-            print(f"SES ERROR: Falha ao extrair arquivos do ZIP: {e}")
-    else:
-        print(
-            "SES WARNING: Nenhum BaseCompleta.zip disponível. Análise financeira será impossível."
-        )
+    # Verifica o que temos no cache (GZ)
+    files_in_cache = [f.name for f in cache_dir.glob("*.gz")]
 
-    # Retorno
     meta = SesMeta(
         source="SES/SUSEP",
         zip_url=url_zip,
         cias_file="LISTAEMPRESAS.csv",
-        seguros_file="Ses_seguros.csv" if "Ses_seguros.csv" in extracted_files else "",
-        balanco_file="Ses_balanco.csv" if "Ses_balanco.csv" in extracted_files else "",
+        # Apontamos para os arquivos .gz agora
+        seguros_file="Ses_seguros.csv.gz" if "Ses_seguros.csv.gz" in files_in_cache else "",
+        balanco_file="Ses_balanco.csv.gz" if "Ses_balanco.csv.gz" in files_in_cache else "",
         as_of=datetime.now().strftime("%Y-%m"),
-        # Preenche os campos faltantes com defaults seguros por enquanto
         period_from="",
         period_to="",
         window_months=12,
-        warning="Operando em modo Evergreen (Last-Known-Good)",
+        warning="Arquivos financeiros comprimidos (GZIP)",
     )
 
     return meta, {
