@@ -89,9 +89,25 @@ def _download_robust(url: str, dest: Path) -> None:
             r.raise_for_status()
             tmp = dest.with_suffix(dest.suffix + ".part")
             with open(tmp, "wb") as f:
+                head_chunk = None
                 for chunk in r.iter_content(chunk_size=1024 * 1024):
                     if chunk:
+                        if head_chunk is None:
+                            head_chunk = chunk
                         f.write(chunk)
+            
+            if head_chunk:
+                try:
+                    snippet = head_chunk[:2048].decode("utf-8", errors="ignore").lower()
+                except Exception:
+                    snippet = ""
+                
+                if "<html" in snippet or "<!doctype" in snippet or "request blocked" in snippet:
+                    raise RuntimeError(
+                        f"SES: Download inválido (HTML detectado) para {dest.name}. "
+                        f"URL={url}. Isso indica bloqueio/WAF."
+                    )
+
             tmp.replace(dest)
 
     try:
