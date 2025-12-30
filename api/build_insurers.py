@@ -11,6 +11,8 @@ from typing import Any
 
 from api.matching.consumidor_gov_match import NameMatcher
 from api.sources.ses import extract_ses_master_and_financials
+# NOVO IMPORT
+from api.sources.opin_products import extract_open_insurance_products
 
 # --- Paths ---
 ROOT = Path(__file__).resolve().parents[1]
@@ -177,7 +179,6 @@ def _load_opin_participants_cnpjs() -> tuple[set[str], str | None]:
     """
     Extract CNPJs from api/v1/participants.json (schema can vary).
     Returns: (set_cnpjs, error_note)
-    Uses recursive walk + regex fallback to be extremely robust.
     """
     if not OPIN_PARTICIPANTS.exists() or OPIN_PARTICIPANTS.stat().st_size < 10:
         return set(), "opin: participants.json missing"
@@ -202,7 +203,6 @@ def _load_opin_participants_cnpjs() -> tuple[set[str], str | None]:
             for it in obj:
                 walk(it)
         elif isinstance(obj, str):
-            # captura CNPJ com/sem máscara dentro de strings
             for m in re.findall(r"\b\d{2}\.?\d{3}\.?\d{3}/?\d{4}-?\d{2}\b", obj):
                 n = _normalize_cnpj(m)
                 if n:
@@ -211,7 +211,6 @@ def _load_opin_participants_cnpjs() -> tuple[set[str], str | None]:
     walk(payload)
 
     if not cnpjs:
-        # fallback bruto: procura sequências de 14 dígitos no JSON inteiro serializado
         blob = json.dumps(payload, ensure_ascii=False)
         for m in re.findall(r"\b\d{14}\b", blob):
             n = _normalize_cnpj(m)
@@ -233,15 +232,24 @@ def _write_consumidor_match_report(report: dict[str, Any]) -> None:
 
 
 def build_payload() -> dict[str, Any]:
-    # --- Load SES base ---
+    # --- 1. Load SES base ---
+    print("\n--- INICIANDO COLETA SUSEP (FINANCEIRO) ---")
     meta_ses, companies = extract_ses_master_and_financials()
 
-    # --- Load Consumidor.gov derived ---
+    # --- 2. Load Consumidor.gov derived ---
     cg_meta, cg_by_name, cg_by_cnpj, cg_err = _load_consumidor_gov()
     matcher: NameMatcher | None = _build_consumidor_matcher(cg_by_name) if cg_by_name else None
 
-    # --- Load OPIN participants CNPJs ---
+    # --- 3. Load OPIN participants CNPJs ---
     opin_cnpjs, opin_err = _load_opin_participants_cnpjs()
+
+    # --- 4. Coleta Open Insurance (Produtos) - NOVO ---
+    try:
+        print("\n--- INICIANDO COLETA OPEN INSURANCE (PRODUTOS) ---")
+        meta_opin_prod = extract_open_insurance_products()
+    except Exception as e:
+        print(f"OPIN WARNING: Falha ao baixar produtos: {e}")
+        meta_opin_prod = None
 
     insurers: list[dict[str, Any]] = []
 
@@ -253,10 +261,6 @@ def build_payload() -> dict[str, Any]:
     for ses_id, it in companies.items():
         premiums = float(it.get("premiums") or 0.0)
         claims = float(it.get("claims") or 0.0)
-
-        # HARDENING: Não filtrar empresas com prêmio 0.
-        # Queremos o universo completo (cadastro SES) para evitar queda no count.
-        # if premiums <= 0: continue  <-- REMOVIDO
 
         loss_ratio = round((claims / premiums), 6) if premiums > 0 else 0.0
         segment = _infer_segment_fallback(premiums)
@@ -286,7 +290,6 @@ def build_payload() -> dict[str, Any]:
         # --- B2 (Consumidor.gov reputation) ---
         cg_matched = False
 
-        # 1) Preferência: match por CNPJ (quando disponível no agregado)
         if cnpj and cg_by_cnpj:
             metrics = cg_by_cnpj.get(cnpj)
             if isinstance(metrics, dict):
@@ -326,7 +329,6 @@ def build_payload() -> dict[str, Any]:
                 )
                 cg_matched = True
 
-        # 2) Fallback: match por nome (se não casou por CNPJ)
         if (not cg_matched) and matcher and cg_by_name:
             m = matcher.best(
                 name,
@@ -397,7 +399,7 @@ def build_payload() -> dict[str, Any]:
                 "unmatched": len(unmatched),
                 "low_confidence": len(low_conf),
             },
-            "matched": matched[:500],  # hard cap defensivo
+            "matched": matched[:500],
             "low_confidence": low_conf[:200],
             "unmatched": unmatched[:500],
         }
@@ -422,6 +424,15 @@ def build_payload() -> dict[str, Any]:
             "url": "https://data.directory.opinbrasil.com.br/participants",
             "note": opin_err or "B3 (Open Insurance participants) — flag por CNPJ",
         },
+        "open_insurance_products": {
+            "source": meta_opin_prod.source,
+            "stats": meta_opin_prod.stats,
+            "files": [
+                meta_opin_prod.products_auto_file,
+                meta_opin_prod.products_life_file,
+                meta_opin_prod.products_home_file,
+            ],
+        } if meta_opin_prod else None,
     }
 
     return {
@@ -439,7 +450,7 @@ def build_payload() -> dict[str, Any]:
         "insurers": insurers,
         "meta": {
             "count": len(insurers),
-            "disclaimer": "B1: métricas financeiras (SES). B2: reputação (Consumidor.gov). B3: status OPIN.",
+            "disclaimer": "B1: métricas financeiras (SES). B2: reputação (Consumidor.gov). B3: status OPIN. B4: Produtos OPIN.",
         },
     }
 
