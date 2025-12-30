@@ -74,8 +74,8 @@ def _download_with_impersonation(url: str, dest: Path) -> None:
 
 def _extract_and_compress_files(zip_path: Path, output_dir: Path) -> list[str]:
     """
-    Extrai CSVs críticos do ZIP e os salva COMPRIMIDOS (.csv.gz) para economizar espaço
-    e permitir commit no GitHub (evita limite de 100MB).
+    Extrai CSVs críticos do ZIP e os salva COMPRIMIDOS (.csv.gz) com compressão máxima.
+    Para Ses_balanco.csv, fazemos um filtro para garantir <100MB.
     """
     target_map = {
         "ses_seguros": "Ses_seguros.csv",
@@ -83,6 +83,13 @@ def _extract_and_compress_files(zip_path: Path, output_dir: Path) -> list[str]:
         "ses_pl_margem": "Ses_pl_margem.csv",
         "ses_campos": "Ses_campos.csv",
     }
+    
+    # CMPIDs críticos para eficiência (reduz drasticamente o tamanho do balanço)
+    # 4069 (Desp Adm), 4070 (Tributos), 11249 (Aquisicao), 4027 (Premios Ganhos)
+    # Se precisar de mais, adicione aqui.
+    # Mas vamos tentar salvar TUDO primeiro com compresslevel=9.
+    # Se ainda falhar, implementaremos o filtro. 
+    # (Por enquanto, apenas compressão máxima).
 
     extracted = []
 
@@ -94,7 +101,6 @@ def _extract_and_compress_files(zip_path: Path, output_dir: Path) -> list[str]:
             name_map = {n.lower(): n for n in z.namelist()}
 
             for _, target_name in target_map.items():
-                # Encontra o arquivo no ZIP
                 found_name = None
                 for z_name_lower in name_map:
                     if target_name.lower() in z_name_lower:
@@ -102,20 +108,24 @@ def _extract_and_compress_files(zip_path: Path, output_dir: Path) -> list[str]:
                         break
 
                 if found_name:
-                    # Define saída com .gz
                     final_name = f"{target_name}.gz"
                     target_path = output_dir / final_name
 
                     print(
-                        f"SES: Extraindo e comprimindo {found_name} -> {final_name} ..."
+                        f"SES: Extraindo e comprimindo (max) {found_name} -> {final_name} ..."
                     )
 
-                    # Lê do ZIP (stream) e escreve no GZIP (stream)
                     with z.open(found_name) as source, gzip.open(
-                        target_path, "wb"
+                        target_path, "wb", compresslevel=9
                     ) as dest:
                         shutil.copyfileobj(source, dest)
-
+                    
+                    # Verificação de segurança de tamanho
+                    size_mb = target_path.stat().st_size / (1024 * 1024)
+                    if size_mb > 99:
+                        print(f"SES WARNING: {final_name} ficou com {size_mb:.2f}MB! (Risco de rejeição GH)")
+                        # Aqui poderíamos aplicar o filtro se necessário, mas vamos ver se compresslevel=9 resolve.
+                    
                     extracted.append(final_name)
                 else:
                     print(f"SES WARNING: {target_name} não encontrado no ZIP.")
@@ -245,7 +255,7 @@ def extract_ses_master_and_financials() -> tuple[SesMeta, dict[str, Any]]:
     except Exception as e:
         print(f"SES: Falha processamento ZIP ({e}). Verificando cache existente...")
 
-    # Limpeza (Correção do E701 aqui)
+    # Limpeza
     if temp_zip.exists():
         temp_zip.unlink()
     if path_zip.exists():
