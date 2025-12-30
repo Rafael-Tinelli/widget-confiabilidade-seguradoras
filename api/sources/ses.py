@@ -15,7 +15,6 @@ from requests.exceptions import SSLError
 
 SES_HOME_DEFAULT = "https://www2.susep.gov.br/menuestatistica/ses/principal.aspx"
 
-# User-Agent "camuflado"
 SES_UA = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
@@ -45,57 +44,67 @@ def _env_bool(key: str, default: bool = False) -> bool:
     return val in ("1", "true", "yes", "on")
 
 
-def _validate_and_read(path: Path) -> str:
-    """Lê arquivo e valida se parece um CSV de empresas válido."""
-    if not path.exists() or path.stat().st_size < 100:
-        raise RuntimeError("Arquivo inexistente ou muito pequeno")
-
+def _read_text_safe(path: Path) -> str:
+    """Lê arquivo tentando encodings comuns."""
+    if not path.exists():
+        return ""
     raw = path.read_bytes()
-    # Debug: mostrar o que baixou se for pequeno (HTML de erro)
-    if b"<!doctype" in raw.lower()[:50] or b"<html" in raw.lower()[:50]:
-        raise RuntimeError("Conteúdo é HTML (provável bloqueio WAF/Proxy)")
-
-    # Tenta decodificar
     for enc in ["utf-8-sig", "latin-1", "cp1252"]:
         try:
-            txt = raw.decode(enc)
-            return txt
+            return raw.decode(enc)
         except UnicodeDecodeError:
             continue
+    return ""
 
-    raise RuntimeError("Falha de encoding (não é utf-8 nem latin-1)")
 
-
-def _download_robust(url: str, dest: Path) -> None:
+def _download_robust(url: str, dest: Path) -> bool:
+    """
+    Baixa arquivo. Retorna True se baixou, False se falhou.
+    Não lança exceção para não interromper o fluxo de tentativa.
+    """
     dest.parent.mkdir(parents=True, exist_ok=True)
     allow_insecure = _env_bool("SES_ALLOW_INSECURE_SSL", True)
 
     print(f"SES: Baixando {url} ...")
     try:
-        # Tenta com verify=True
-        resp = _SESSION.get(url, headers=SES_UA, timeout=60, verify=True)
-    except SSLError:
-        if not allow_insecure:
-            raise
-        print("SES: SSL falhou, tentando insecure...")
-        resp = _SESSION.get(url, headers=SES_UA, timeout=60, verify=False)
+        try:
+            resp = _SESSION.get(url, headers=SES_UA, timeout=60, verify=True)
+        except SSLError:
+            if not allow_insecure:
+                raise
+            print("SES: SSL falhou, tentando insecure...")
+            resp = _SESSION.get(url, headers=SES_UA, timeout=60, verify=False)
 
-    resp.raise_for_status()
+        resp.raise_for_status()
+        
+        # Verifica se é HTML de bloqueio antes de salvar
+        snippet = resp.content[:500].lower()
+        if b"<!doctype" in snippet or b"<html" in snippet:
+            print("SES WARNING: Download retornou HTML (Bloqueio WAF). Ignorando.")
+            return False
 
-    # Salva
-    with open(dest, "wb") as f:
-        f.write(resp.content)
+        with open(dest, "wb") as f:
+            f.write(resp.content)
+        return True
+
+    except Exception as e:
+        print(f"SES WARNING: Falha no download: {e}")
+        return False
 
 
 def _parse_csv_content(text: str) -> dict[str, dict[str, Any]]:
+    """Transforma texto CSV em dicionário de empresas."""
+    if not text.strip():
+        return {}
+
     f = io.StringIO(text)
-    # Detecta delimitador na força bruta
+    # Detecta delimitador
     header_line = text.splitlines()[0]
     delim = ";" if header_line.count(";") > header_line.count(",") else ","
 
     reader = csv.DictReader(f, delimiter=delim)
 
-    # Normaliza headers para lower e sem acento
+    # Normaliza headers
     headers_map = {}
     if reader.fieldnames:
         for h in reader.fieldnames:
@@ -111,10 +120,13 @@ def _parse_csv_content(text: str) -> dict[str, dict[str, Any]]:
         headers_map.get("nomeentidade")
         or headers_map.get("nome")
         or headers_map.get("razaosocial")
+        or headers_map.get("nomerazaosocial")
     )
 
     if not col_cod or not col_cnpj:
-        print(f"SES ERROR: Colunas obrigatórias não encontradas. Map: {list(headers_map.keys())}")
+        # Só loga se tiver conteúdo real mas não achou colunas
+        if len(text) > 100:
+            print(f"SES DEBUG: Colunas não encontradas. Headers: {list(headers_map.keys())}")
         return {}
 
     out = {}
@@ -132,7 +144,10 @@ def _parse_csv_content(text: str) -> dict[str, dict[str, Any]]:
 
 def extract_ses_master_and_financials() -> tuple[SesMeta, dict[str, Any]]:
     """
-    Tenta obter o mestre de empresas (Download > Cache > Static Fallback).
+    Estratégia Híbrida Blindada:
+    1. Tenta Download -> Parse. Se > 50 registros, usa.
+    2. Se falhar, Tenta Estático -> Parse. Se > 50 registros, usa.
+    3. Se falhar, ERRO.
     """
     lista_url = os.getenv(
         "SES_LISTAEMPRESAS_URL",
@@ -140,67 +155,56 @@ def extract_ses_master_and_financials() -> tuple[SesMeta, dict[str, Any]]:
     )
 
     # Caminhos
-    root = Path(__file__).resolve().parents[2]  # assumindo api/sources/ses.py -> root
+    # api/sources/ses.py -> api/sources -> api -> (static fica em api/static)
+    root_api = Path(__file__).resolve().parent.parent
+    static_path = root_api / "static" / "LISTAEMPRESAS.csv"
+    
+    # Cache path
     cache_dir = Path(os.getenv("SES_CACHE_DIR", "data/raw/ses")).resolve()
+    # Se cache_dir for relativo, resolve a partir da raiz do repo (assumindo rodar na raiz)
     if not cache_dir.is_absolute():
-        cache_dir = root / cache_dir
-
+        cache_dir = Path.cwd() / cache_dir
     cache_path = cache_dir / "LISTAEMPRESAS.csv"
-    static_path = root / "api" / "static" / "LISTAEMPRESAS.csv"
 
-    text_content = None
+    companies: dict[str, dict[str, Any]] = {}
     source_used = "none"
 
-    # 1. Tenta baixar (se falhar, não quebra, só loga e tenta o próximo)
-    try:
-        _download_robust(lista_url, cache_path)
-        text_content = _validate_and_read(cache_path)
-        source_used = "download"
-    except Exception as e:
-        print(f"SES WARNING: Falha no download direto: {e}")
+    # --- TENTATIVA 1: Download Fresco ---
+    if _download_robust(lista_url, cache_path):
+        content = _read_text_safe(cache_path)
+        data = _parse_csv_content(content)
+        if len(data) > 50:
+            companies = data
+            source_used = "download"
+            print(f"SES: Sucesso via download ({len(companies)} empresas).")
+        else:
+            print(f"SES WARNING: Download obteve apenas {len(data)} registros. Descartando.")
 
-    # 2. Se download falhou (ou veio HTML/vazio), tenta fallback estático no repo
-    if not text_content:
+    # --- TENTATIVA 2: Fallback Estático (Se T1 falhou) ---
+    if not companies:
         if static_path.exists():
-            print(f"SES: Usando fallback estático: {static_path}")
-            try:
-                text_content = _validate_and_read(static_path)
+            print(f"SES: Tentando fallback estático em {static_path}...")
+            content = _read_text_safe(static_path)
+            data = _parse_csv_content(content)
+            if len(data) > 50:
+                companies = data
                 source_used = "static_repo"
-            except Exception as e:
-                print(f"SES ERROR: Arquivo estático inválido: {e}")
+                print(f"SES: Sucesso via estático ({len(companies)} empresas).")
+            else:
+                print(f"SES ERROR: Arquivo estático existe mas tem apenas {len(data)} registros.")
         else:
             print(f"SES INFO: Arquivo estático não encontrado em {static_path}")
 
-    if not text_content:
-        # Última chance: talvez o cache antigo (de um run anterior de sucesso) ainda exista?
-        if cache_path.exists() and cache_path.stat().st_size > 100:
-            try:
-                text_content = _validate_and_read(cache_path)
-                source_used = "stale_cache"
-            except Exception:
-                pass
+    # --- Validação Final ---
+    if not companies:
+        raise RuntimeError("SES: Falha crítica. Nem download nem arquivo estático produziram dados válidos.")
 
-    if not text_content:
-        # Se chegou aqui, não tem jeito.
-        raise RuntimeError(
-            "SES: Impossível obter LISTAEMPRESAS válido (Download falhou, Static não existe, Cache inválido)."
-        )
-
-    # Parse
-    master_data = _parse_csv_content(text_content)
-
-    if len(master_data) < 10:
-        raise RuntimeError(
-            f"SES: LISTAEMPRESAS parseado tem apenas {len(master_data)} registros. Inválido."
-        )
-
-    print(f"SES: Sucesso carregando mestre ({len(master_data)} registros) via {source_used}.")
-
-    companies = {}
-    for cod, data in master_data.items():
-        companies[cod] = {
-            "name": data["name"],
-            "cnpj": data["cnpj"],
+    # Formata saída
+    final_companies = {}
+    for cod, val in companies.items():
+        final_companies[cod] = {
+            "name": val["name"],
+            "cnpj": val["cnpj"],
             "premiums": 0.0,
             "claims": 0.0,
         }
@@ -208,7 +212,7 @@ def extract_ses_master_and_financials() -> tuple[SesMeta, dict[str, Any]]:
     meta = SesMeta(
         cias_file=f"LISTAEMPRESAS.csv ({source_used})",
         as_of=datetime.now().strftime("%Y-%m"),
-        warning="Apenas dados cadastrais (Zero Maintenance Fallback)",
+        warning="Apenas dados cadastrais (Zero Maintenance Strategy)",
     )
 
-    return meta, companies
+    return meta, final_companies
