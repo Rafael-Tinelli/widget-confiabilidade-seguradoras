@@ -105,13 +105,17 @@ def _extract_and_compress_files(zip_path: Path, output_dir: Path) -> list[str]:
                     # Define saída com .gz
                     final_name = f"{target_name}.gz"
                     target_path = output_dir / final_name
-                    
-                    print(f"SES: Extraindo e comprimindo {found_name} -> {final_name} ...")
-                    
+
+                    print(
+                        f"SES: Extraindo e comprimindo {found_name} -> {final_name} ..."
+                    )
+
                     # Lê do ZIP (stream) e escreve no GZIP (stream)
-                    with z.open(found_name) as source, gzip.open(target_path, "wb") as dest:
+                    with z.open(found_name) as source, gzip.open(
+                        target_path, "wb"
+                    ) as dest:
                         shutil.copyfileobj(source, dest)
-                    
+
                     extracted.append(final_name)
                 else:
                     print(f"SES WARNING: {target_name} não encontrado no ZIP.")
@@ -129,8 +133,8 @@ def _parse_lista_empresas(cache_path: Path) -> dict[str, dict[str, Any]]:
     try:
         # Suporta ler direto de GZ ou de texto puro
         if str(cache_path).endswith(".gz"):
-             with gzip.open(cache_path, "rt", encoding="latin-1", errors="replace") as f:
-                 text = f.read()
+            with gzip.open(cache_path, "rt", encoding="latin-1", errors="replace") as f:
+                text = f.read()
         else:
             raw = cache_path.read_bytes()
             for enc in ["utf-8-sig", "latin-1", "cp1252"]:
@@ -226,9 +230,8 @@ def extract_ses_master_and_financials() -> tuple[SesMeta, dict[str, Any]]:
     # --- PASSO 2: ZIP FINANCEIRO (GZIP STRATEGY) ---
     path_zip = cache_dir / "BaseCompleta.zip"
     temp_zip = cache_dir / "BaseCompleta_TEMP.zip"
-    
-    # Verifica se precisamos baixar (se já temos os GZs recentes, talvez não precise,
-    # mas o conceito Evergreen pede atualização. Vamos baixar.)
+
+    # Verifica se precisamos baixar (Evergreen concept)
     try:
         _download_with_impersonation(url_zip, temp_zip)
         if zipfile.is_zipfile(temp_zip):
@@ -241,10 +244,12 @@ def extract_ses_master_and_financials() -> tuple[SesMeta, dict[str, Any]]:
             print("SES WARNING: BaseCompleta novo corrompido.")
     except Exception as e:
         print(f"SES: Falha processamento ZIP ({e}). Verificando cache existente...")
-    
-    # Limpeza
-    if temp_zip.exists(): temp_zip.unlink()
-    if path_zip.exists(): path_zip.unlink() # Garante que não sobrou lixo antigo
+
+    # Limpeza (Correção do E701 aqui)
+    if temp_zip.exists():
+        temp_zip.unlink()
+    if path_zip.exists():
+        path_zip.unlink()
 
     # Verifica o que temos no cache (GZ)
     files_in_cache = [f.name for f in cache_dir.glob("*.gz")]
@@ -254,8 +259,12 @@ def extract_ses_master_and_financials() -> tuple[SesMeta, dict[str, Any]]:
         zip_url=url_zip,
         cias_file="LISTAEMPRESAS.csv",
         # Apontamos para os arquivos .gz agora
-        seguros_file="Ses_seguros.csv.gz" if "Ses_seguros.csv.gz" in files_in_cache else "",
-        balanco_file="Ses_balanco.csv.gz" if "Ses_balanco.csv.gz" in files_in_cache else "",
+        seguros_file=(
+            "Ses_seguros.csv.gz" if "Ses_seguros.csv.gz" in files_in_cache else ""
+        ),
+        balanco_file=(
+            "Ses_balanco.csv.gz" if "Ses_balanco.csv.gz" in files_in_cache else ""
+        ),
         as_of=datetime.now().strftime("%Y-%m"),
         period_from="",
         period_to="",
