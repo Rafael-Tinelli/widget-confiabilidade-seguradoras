@@ -24,6 +24,7 @@ SES_HEADERS = {
     "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
 }
 
+
 @dataclass
 class SesMeta:
     source: str = "SES/SUSEP"
@@ -41,26 +42,26 @@ def _download_with_impersonation(url: str, dest: Path) -> None:
     """
     dest.parent.mkdir(parents=True, exist_ok=True)
     print(f"SES: Baixando {url} (impersonate='chrome110')...")
-    
+
     try:
         # verify=False pois governos as vezes tem cadeia de cert incompleta
         response = cffi_requests.get(
-            url, 
-            headers=SES_HEADERS, 
-            impersonate="chrome110", 
-            timeout=300, # ZIP é grande, aumenta timeout
-            verify=False 
+            url,
+            headers=SES_HEADERS,
+            impersonate="chrome110",
+            timeout=300,  # ZIP é grande, aumenta timeout
+            verify=False,
         )
         response.raise_for_status()
-        
+
         # Validação simples anti-bloqueio
         content_start = response.content[:1000].lower()
         if b"<!doctype" in content_start or b"<html" in content_start:
             raise RuntimeError("Servidor retornou HTML (Bloqueio WAF) em vez de arquivo.")
-            
+
         with open(dest, "wb") as f:
             f.write(response.content)
-            
+
     except Exception as e:
         print(f"SES: Erro no download com impersonation: {e}")
         raise
@@ -72,31 +73,31 @@ def _extract_target_files_from_zip(zip_path: Path, output_dir: Path) -> list[str
     Retorna lista de arquivos extraídos com sucesso.
     """
     # Arquivos alvo (nomes podem variar case, então buscamos por 'contains')
-    TARGETS = {
-        "ses_seguros": "Ses_seguros.csv",   # Operacional (Sinistros/Prêmios)
-        "ses_balanco": "Ses_balanco.csv",   # Financeiro (Despesas)
-        "ses_pl_margem": "Ses_pl_margem.csv", # Solvência
-        "ses_campos": "Ses_campos.csv"      # Dicionário de Campos (CMPID)
+    target_map = {
+        "ses_seguros": "Ses_seguros.csv",  # Operacional (Sinistros/Prêmios)
+        "ses_balanco": "Ses_balanco.csv",  # Financeiro (Despesas)
+        "ses_pl_margem": "Ses_pl_margem.csv",  # Solvência
+        "ses_campos": "Ses_campos.csv",  # Dicionário de Campos (CMPID)
     }
-    
+
     extracted = []
-    
+
     try:
         if not zipfile.is_zipfile(zip_path):
             raise RuntimeError("Arquivo baixado não é um ZIP válido.")
 
-        with zipfile.ZipFile(zip_path, 'r') as z:
+        with zipfile.ZipFile(zip_path, "r") as z:
             # Normaliza nomes dentro do ZIP para busca case-insensitive
             name_map = {n.lower(): n for n in z.namelist()}
-            
-            for key, target_name in TARGETS.items():
+
+            for _, target_name in target_map.items():
                 # Tenta achar o arquivo no ZIP (ex: SES_SEGUROS.csv ou Ses_Seguros.csv)
                 found_name = None
                 for z_name_lower in name_map:
                     if target_name.lower() in z_name_lower:
                         found_name = name_map[z_name_lower]
                         break
-                
+
                 if found_name:
                     # Extrai para o diretório raw
                     source = z.open(found_name)
@@ -106,8 +107,10 @@ def _extract_target_files_from_zip(zip_path: Path, output_dir: Path) -> list[str
                     extracted.append(target_name)
                     print(f"SES: Extraído {found_name} -> {target_name}")
                 else:
-                    print(f"SES WARNING: Arquivo {target_name} não encontrado dentro do ZIP.")
-                    
+                    print(
+                        f"SES WARNING: Arquivo {target_name} não encontrado dentro do ZIP."
+                    )
+
     except Exception as e:
         print(f"SES: Erro na extração do ZIP: {e}")
         raise
@@ -128,27 +131,35 @@ def _parse_lista_empresas(cache_path: Path) -> dict[str, dict[str, Any]]:
             except UnicodeDecodeError:
                 continue
         if not text:
-             text = raw.decode("latin-1", errors="replace")
+            text = raw.decode("latin-1", errors="replace")
     except Exception:
         return {}
 
-    # Parser resiliente (copiado da versão anterior)
+    # Parser resiliente
     text = text.strip()
-    if not text: return {}
+    if not text:
+        return {}
+
     f = io.StringIO(text)
     header_line = text.splitlines()[0]
     delim = ";" if header_line.count(";") > header_line.count(",") else ","
     reader = csv.DictReader(f, delimiter=delim)
-    
+
     headers_map = {}
     if reader.fieldnames:
         for h in reader.fieldnames:
             norm = h.lower().replace(" ", "").replace("_", "").replace(".", "").strip()
             headers_map[norm] = h
 
-    col_cod = headers_map.get("codigofip") or headers_map.get("codfip") or headers_map.get("fip")
+    col_cod = (
+        headers_map.get("codigofip") or headers_map.get("codfip") or headers_map.get("fip")
+    )
     col_cnpj = headers_map.get("cnpj") or headers_map.get("numcnpj")
-    col_nome = headers_map.get("nomeentidade") or headers_map.get("nome") or headers_map.get("razaosocial")
+    col_nome = (
+        headers_map.get("nomeentidade")
+        or headers_map.get("nome")
+        or headers_map.get("razaosocial")
+    )
 
     out = {}
     if col_cod and col_cnpj:
@@ -171,18 +182,25 @@ def extract_ses_master_and_financials() -> tuple[SesMeta, dict[str, Any]]:
     4. Retorna metadados e lista de empresas base
     """
     # URLs
-    url_lista = os.getenv("SES_LISTAEMPRESAS_URL", "https://www2.susep.gov.br/menuestatistica/ses/download/LISTAEMPRESAS.csv")
-    url_zip = os.getenv("SES_ZIP_URL", "https://www2.susep.gov.br/download/estatisticas/BaseCompleta.zip")
+    url_lista = os.getenv(
+        "SES_LISTAEMPRESAS_URL",
+        "https://www2.susep.gov.br/menuestatistica/ses/download/LISTAEMPRESAS.csv",
+    )
+    url_zip = os.getenv(
+        "SES_ZIP_URL",
+        "https://www2.susep.gov.br/download/estatisticas/BaseCompleta.zip",
+    )
 
     # Diretórios
     cache_dir = Path(os.getenv("SES_CACHE_DIR", "data/raw/ses")).resolve()
-    if not cache_dir.is_absolute(): cache_dir = Path.cwd() / cache_dir
+    if not cache_dir.is_absolute():
+        cache_dir = Path.cwd() / cache_dir
     cache_dir.mkdir(parents=True, exist_ok=True)
 
     # --- PASSO 1: LISTAEMPRESAS (Cadastro) ---
     path_lista = cache_dir / "LISTAEMPRESAS.csv"
     temp_lista = cache_dir / "LISTAEMPRESAS_TEMP.csv"
-    
+
     try:
         _download_with_impersonation(url_lista, temp_lista)
         # Valida
@@ -204,21 +222,21 @@ def extract_ses_master_and_financials() -> tuple[SesMeta, dict[str, Any]]:
     # --- PASSO 2: ZIP FINANCEIRO (BaseCompleta) ---
     path_zip = cache_dir / "BaseCompleta.zip"
     temp_zip = cache_dir / "BaseCompleta_TEMP.zip"
-    zip_ok = False
 
     try:
         _download_with_impersonation(url_zip, temp_zip)
         # Valida se é ZIP
         if zipfile.is_zipfile(temp_zip):
             shutil.move(str(temp_zip), str(path_zip))
-            zip_ok = True
             print("SES: BaseCompleta.zip atualizado.")
         else:
             print("SES WARNING: BaseCompleta novo corrompido. Mantendo antigo.")
-            if temp_zip.exists(): temp_zip.unlink()
+            if temp_zip.exists():
+                temp_zip.unlink()
     except Exception as e:
         print(f"SES: Falha download ZIP ({e}). Usando Last-Known-Good.")
-        if temp_zip.exists(): temp_zip.unlink()
+        if temp_zip.exists():
+            temp_zip.unlink()
 
     # --- PASSO 3: EXTRAÇÃO DOS CSVs CRÍTICOS ---
     # Só tentamos extrair se tivermos um ZIP válido (novo ou antigo)
@@ -230,9 +248,10 @@ def extract_ses_master_and_financials() -> tuple[SesMeta, dict[str, Any]]:
         except Exception as e:
             print(f"SES ERROR: Falha ao extrair arquivos do ZIP: {e}")
             # Não quebra o pipeline, pois ainda temos o cadastro de empresas
-            # Mas a "inteligência" futura vai falhar se não tiver Ses_seguros.csv
     else:
-        print("SES WARNING: Nenhum BaseCompleta.zip disponível. Análise financeira será impossível.")
+        print(
+            "SES WARNING: Nenhum BaseCompleta.zip disponível. Análise financeira será impossível."
+        )
 
     # Retorno
     meta = SesMeta(
@@ -242,7 +261,10 @@ def extract_ses_master_and_financials() -> tuple[SesMeta, dict[str, Any]]:
         seguros_file="Ses_seguros.csv" if "Ses_seguros.csv" in extracted_files else "",
         balanco_file="Ses_balanco.csv" if "Ses_balanco.csv" in extracted_files else "",
         as_of=datetime.now().strftime("%Y-%m"),
-        warning="Operando em modo Evergreen (Last-Known-Good)"
+        warning="Operando em modo Evergreen (Last-Known-Good)",
     )
 
-    return meta, {k: {"name": v["name"], "cnpj": v["cnpj"], "premiums": 0.0, "claims": 0.0} for k, v in companies.items()}
+    return meta, {
+        k: {"name": v["name"], "cnpj": v["cnpj"], "premiums": 0.0, "claims": 0.0}
+        for k, v in companies.items()
+    }
