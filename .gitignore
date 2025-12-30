@@ -213,3 +213,7 @@ data/raw/ses/*.zip
 
 # Permitir arquivos comprimidos (Nosso Cache Evergreen)
 !data/raw/ses/*.csv.gz
+
+# Open Insurance
+data/raw/opin/*.json
+!data/raw/opin/*.json.gz
