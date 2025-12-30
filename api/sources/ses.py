@@ -54,7 +54,9 @@ def _download_with_impersonation(url: str, dest: Path) -> None:
 
         content_start = response.content[:1000].lower()
         if b"<!doctype" in content_start or b"<html" in content_start:
-            raise RuntimeError("Servidor retornou HTML (Bloqueio WAF) em vez de arquivo.")
+            raise RuntimeError(
+                "Servidor retornou HTML (Bloqueio WAF) em vez de arquivo."
+            )
 
         with open(dest, "wb") as f:
             f.write(response.content)
@@ -71,28 +73,30 @@ def _filter_and_compress_balanco(source_stream, dest_path: Path):
     """
     # Wrapper de texto para ler o ZIP stream (latin-1 é padrão susep)
     text_reader = io.TextIOWrapper(source_stream, encoding="latin-1", newline="")
-    
+
     # Detecção de delimitador e header
     sample = text_reader.read(1024)
     text_reader.seek(0)
     delim = ";" if sample.count(";") > sample.count(",") else ","
-    
+
     reader = csv.DictReader(text_reader, delimiter=delim)
     if not reader.fieldnames:
         return
 
-    # Procura coluna de valor
+    # Procura coluna de valor (pode variar maiuscula/minuscula)
     col_valor = next((h for h in reader.fieldnames if "valor" in h.lower()), None)
-    
+
     print(f"SES: Otimizando Balanço (removendo zeros)... Coluna valor: {col_valor}")
 
-    with gzip.open(dest_path, "wt", encoding="latin-1", newline="", compresslevel=9) as f_out:
+    with gzip.open(
+        dest_path, "wt", encoding="latin-1", newline="", compresslevel=9
+    ) as f_out:
         writer = csv.DictWriter(f_out, fieldnames=reader.fieldnames, delimiter=delim)
         writer.writeheader()
-        
+
         kept = 0
         skipped = 0
-        
+
         for row in reader:
             should_keep = True
             if col_valor:
@@ -102,15 +106,17 @@ def _filter_and_compress_balanco(source_stream, dest_path: Path):
                     if float(val_str) == 0:
                         should_keep = False
                 except ValueError:
-                    pass # Se não for número, mantém por segurança
-            
+                    pass  # Se não for número, mantém por segurança
+
             if should_keep:
                 writer.writerow(row)
                 kept += 1
             else:
                 skipped += 1
-                
-        print(f"SES: Balanço otimizado. Mantidos: {kept}, Removidos (Zeros): {skipped}")
+
+        print(
+            f"SES: Balanço otimizado. Mantidos: {kept}, Removidos (Zeros): {skipped}"
+        )
 
 
 def _extract_and_compress_files(zip_path: Path, output_dir: Path) -> list[str]:
@@ -220,8 +226,14 @@ def _parse_lista_empresas(cache_path: Path) -> dict[str, dict[str, Any]]:
 
 
 def extract_ses_master_and_financials() -> tuple[SesMeta, dict[str, Any]]:
-    url_lista = os.getenv("SES_LISTAEMPRESAS_URL", "https://www2.susep.gov.br/menuestatistica/ses/download/LISTAEMPRESAS.csv")
-    url_zip = os.getenv("SES_ZIP_URL", "https://www2.susep.gov.br/download/estatisticas/BaseCompleta.zip")
+    url_lista = os.getenv(
+        "SES_LISTAEMPRESAS_URL",
+        "https://www2.susep.gov.br/menuestatistica/ses/download/LISTAEMPRESAS.csv",
+    )
+    url_zip = os.getenv(
+        "SES_ZIP_URL",
+        "https://www2.susep.gov.br/download/estatisticas/BaseCompleta.zip",
+    )
 
     cache_dir = Path(os.getenv("SES_CACHE_DIR", "data/raw/ses")).resolve()
     if not cache_dir.is_absolute():
@@ -261,8 +273,10 @@ def extract_ses_master_and_financials() -> tuple[SesMeta, dict[str, Any]]:
     except Exception as e:
         print(f"SES: Falha processamento ZIP ({e}).")
 
-    if temp_zip.exists(): temp_zip.unlink()
-    if path_zip.exists(): path_zip.unlink()
+    if temp_zip.exists():
+        temp_zip.unlink()
+    if path_zip.exists():
+        path_zip.unlink()
 
     files_in_cache = [f.name for f in cache_dir.glob("*.gz")]
 
@@ -270,11 +284,23 @@ def extract_ses_master_and_financials() -> tuple[SesMeta, dict[str, Any]]:
         source="SES/SUSEP",
         zip_url=url_zip,
         cias_file="LISTAEMPRESAS.csv",
-        seguros_file="Ses_seguros.csv.gz" if "Ses_seguros.csv.gz" in files_in_cache else "",
-        balanco_file="Ses_balanco.csv.gz" if "Ses_balanco.csv.gz" in files_in_cache else "",
+        seguros_file=(
+            "Ses_seguros.csv.gz" if "Ses_seguros.csv.gz" in files_in_cache else ""
+        ),
+        balanco_file=(
+            "Ses_balanco.csv.gz" if "Ses_balanco.csv.gz" in files_in_cache else ""
+        ),
         as_of=datetime.now().strftime("%Y-%m"),
-        period_from="", period_to="", window_months=12,
-        warning="Arquivos financeiros otimizados (GZIP + ZeroFilter)"
+        period_from="",
+        period_to="",
+        window_months=12,
+        warning="Arquivos financeiros otimizados (GZIP + ZeroFilter)",
     )
 
-    return meta, {k: {"name": v["name"], "cnpj": v["cnpj"], "premiums": 0.0, "claims": 0.0} for k, v in companies.items()}
+    return (
+        meta,
+        {
+            k: {"name": v["name"], "cnpj": v["cnpj"], "premiums": 0.0, "claims": 0.0}
+            for k, v in companies.items()
+        },
+    )
