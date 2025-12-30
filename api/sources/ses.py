@@ -5,20 +5,21 @@ import csv
 import io
 import os
 import re
-import shutil
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-# Biblioteca que fura o bloqueio WAF (TLS Fingerprint)
 from curl_cffi import requests as cffi_requests
 
 SES_HOME_DEFAULT = "https://www2.susep.gov.br/menuestatistica/ses/principal.aspx"
 
-# Headers idênticos ao Chrome para passar pelo firewall
 SES_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/120.0.0.0 Safari/537.36"
+    ),
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
     "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
 }
@@ -39,87 +40,115 @@ class SesMeta:
     warning: str = ""
 
 
+def _env_bool(key: str, default: bool = False) -> bool:
+    v = str(os.getenv(key, str(int(default)))).strip().lower()
+    return v in {"1", "true", "yes", "on"}
+
+
+def _looks_like_html_or_block(content: bytes) -> bool:
+    head = content[:2000].lower()
+    if b"<!doctype" in head or b"<html" in head:
+        return True
+    # padrões comuns de WAF/bloqueio (varia por vendor)
+    needles = [
+        b"access denied",
+        b"forbidden",
+        b"captcha",
+        b"cloudflare",
+        b"attention required",
+        b"waf",
+        b"incapsula",
+        b"akamai",
+    ]
+    return any(n in head for n in needles)
+
+
 def _download_with_impersonation(url: str, dest: Path) -> None:
     """
     Baixa arquivo usando curl_cffi para simular um navegador Chrome real.
+    Estratégia: tenta verify=True; se falhar e SES_ALLOW_INSECURE_SSL=1, tenta verify=False.
     """
     dest.parent.mkdir(parents=True, exist_ok=True)
-    print(f"SES: Baixando {url} (impersonate='chrome110')...")
+    allow_insecure = _env_bool("SES_ALLOW_INSECURE_SSL", True)
 
-    try:
-        # verify=False pois governos as vezes tem cadeia de cert incompleta/antiga
-        response = cffi_requests.get(
+    print("SES: Baixando %s (impersonate='chrome110')..." % url)
+
+    def _do(verify: bool) -> bytes:
+        r = cffi_requests.get(
             url,
             headers=SES_HEADERS,
             impersonate="chrome110",
             timeout=120,
-            verify=False,
+            verify=verify,
         )
-        response.raise_for_status()
+        r.raise_for_status()
+        return r.content
 
-        # Validação simples anti-bloqueio (se retornou HTML de erro 200 OK)
-        content_start = response.content[:1000].lower()
-        if b"<!doctype" in content_start or b"<html" in content_start:
-            raise RuntimeError("Servidor retornou HTML (Bloqueio WAF) em vez de CSV.")
-
-        with open(dest, "wb") as f:
-            f.write(response.content)
-
+    try:
+        content = _do(verify=True)
     except Exception as e:
-        print(f"SES: Erro no download com impersonation: {e}")
-        raise
+        if not allow_insecure:
+            raise
+        print(f"SES: SSL/handshake falhou com verify=True ({e}). Tentando verify=False...")
+        content = _do(verify=False)
+
+    if _looks_like_html_or_block(content):
+        raise RuntimeError("Servidor retornou HTML/página de bloqueio em vez de CSV (WAF).")
+
+    dest.write_bytes(content)
+
+
+def _first_non_empty_line(text: str) -> str:
+    for line in text.splitlines():
+        if line.strip():
+            return line
+    return ""
 
 
 def _parse_csv_content(text: str) -> dict[str, dict[str, Any]]:
-    """Parser resiliente para o CSV de empresas."""
+    """
+    Parser resiliente para o CSV de empresas.
+    - detecta delimitador
+    - normaliza headers
+    - extrai cod_fip + cnpj + nome
+    """
     text = text.strip()
     if not text:
         return {}
 
-    f = io.StringIO(text)
-
-    # Detecção de delimitador na primeira linha VÁLIDA
-    header_line = text.splitlines()[0]
-    delim = ";" if header_line.count(";") > header_line.count(",") else ","
-
-    reader = csv.DictReader(f, delimiter=delim)
-
-    # Normaliza headers
-    headers_map = {}
-    if reader.fieldnames:
-        for h in reader.fieldnames:
-            norm = h.lower().replace(" ", "").replace("_", "").replace(".", "").strip()
-            headers_map[norm] = h
-    else:
-        print(f"SES DEBUG: Fieldnames vazio. Header line: {header_line[:50]}")
+    header_line = _first_non_empty_line(text)
+    if not header_line:
         return {}
 
-    # Busca colunas chave
-    col_cod = (
-        headers_map.get("codigofip") or headers_map.get("codfip") or headers_map.get("fip")
-    )
+    delim = ";" if header_line.count(";") > header_line.count(",") else ","
+    reader = csv.DictReader(io.StringIO(text), delimiter=delim)
+
+    if not reader.fieldnames:
+        print(f"SES DEBUG: fieldnames vazio. Header line: {header_line[:80]}")
+        return {}
+
+    headers_map: dict[str, str] = {}
+    for h in reader.fieldnames:
+        norm = h.lower().replace(" ", "").replace("_", "").replace(".", "").strip()
+        headers_map[norm] = h
+
+    col_cod = headers_map.get("codigofip") or headers_map.get("codfip") or headers_map.get("fip")
     col_cnpj = headers_map.get("cnpj") or headers_map.get("numcnpj")
-    col_nome = (
-        headers_map.get("nomeentidade")
-        or headers_map.get("nome")
-        or headers_map.get("razaosocial")
-    )
+    col_nome = headers_map.get("nomeentidade") or headers_map.get("nome") or headers_map.get("razaosocial")
 
     if not col_cod or not col_cnpj:
-        print(
-            f"SES DEBUG: Colunas não encontradas. Headers disponíveis: {list(headers_map.keys())}"
-        )
+        print(f"SES DEBUG: colunas-chave ausentes. Headers: {list(headers_map.keys())}")
         return {}
 
-    out = {}
+    out: dict[str, dict[str, str]] = {}
     for row in reader:
-        cod_val = row.get(col_cod, "")
-        cnpj_val = row.get(col_cnpj, "")
-        nome_val = row.get(col_nome, "") if col_nome else ""
+        cod_raw = str(row.get(col_cod, "") or "")
+        cnpj_raw = str(row.get(col_cnpj, "") or "")
+        nome_raw = str(row.get(col_nome, "") or "") if col_nome else ""
 
-        cod = re.sub(r"\D", "", cod_val)
-        cnpj = re.sub(r"\D", "", cnpj_val)
-        nome = nome_val.strip()
+        cod = re.sub(r"\D", "", cod_raw)
+        cnpj = re.sub(r"\D", "", cnpj_raw)
+        nome = nome_raw.strip()
 
         if cod and cnpj:
             out[cod.zfill(5)] = {"cnpj": cnpj, "name": nome}
@@ -128,94 +157,83 @@ def _parse_csv_content(text: str) -> dict[str, dict[str, Any]]:
     return out
 
 
+def _decode_best_effort(raw: bytes) -> str:
+    for enc in ("utf-8-sig", "latin-1", "cp1252"):
+        try:
+            return raw.decode(enc)
+        except UnicodeDecodeError:
+            continue
+    return raw.decode("latin-1", errors="replace")
+
+
 def extract_ses_master_and_financials() -> tuple[SesMeta, dict[str, Any]]:
     """
-    Estratégia Evergreen: Tenta Download -> Falha? -> Usa Last-Known-Good do Cache.
+    Estratégia Evergreen:
+    - tenta baixar LISTAEMPRESAS.csv via curl_cffi (bypass WAF)
+    - valida parsing antes de substituir o cache
+    - se falhar, usa Last-Known-Good (arquivo versionado no repo / data/raw/ses)
     """
     lista_url = os.getenv(
         "SES_LISTAEMPRESAS_URL",
         "https://www2.susep.gov.br/menuestatistica/ses/download/LISTAEMPRESAS.csv",
     )
-    zip_url_oficial = "https://www2.susep.gov.br/download/estatisticas/BaseCompleta.zip"
+    zip_url_oficial = os.getenv(
+        "SES_ZIP_URL",
+        "https://www2.susep.gov.br/download/estatisticas/BaseCompleta.zip",
+    )
 
-    # Define caminho de cache (Last Known Good)
-    cache_dir = Path(os.getenv("SES_CACHE_DIR", "data/raw/ses")).resolve()
+    # Cache dir: respeita env; relativo -> relativo ao root do repo (cwd no Actions)
+    cache_dir = Path(os.getenv("SES_CACHE_DIR", "data/raw/ses"))
     if not cache_dir.is_absolute():
-        cache_dir = Path.cwd() / cache_dir
+        cache_dir = (Path.cwd() / cache_dir).resolve()
+    else:
+        cache_dir = cache_dir.resolve()
+
+    cache_dir.mkdir(parents=True, exist_ok=True)
 
     cache_path = cache_dir / "LISTAEMPRESAS.csv"
     temp_path = cache_dir / "LISTAEMPRESAS_TEMP.csv"
 
     source_used = "none"
 
-    # 1. Tenta Download para arquivo TEMPORÁRIO
-    # Se falhar aqui, não estraga o arquivo bom que já existe no cache_path
+    # 1) tenta baixar para TEMP e só promove se passar na validação
     try:
         _download_with_impersonation(lista_url, temp_path)
 
-        # Valida se o download novo é parseável antes de substituir o antigo
-        raw_bytes = temp_path.read_bytes()
-        text_temp = raw_bytes.decode("latin-1", errors="replace")
-        data_temp = _parse_csv_content(text_temp)
+        raw = temp_path.read_bytes()
+        txt = _decode_best_effort(raw)
+        parsed = _parse_csv_content(txt)
 
-        if len(data_temp) > 50:
-            # Sucesso! Substitui o cache oficial pelo novo
-            shutil.move(str(temp_path), str(cache_path))
+        if len(parsed) > 50:
+            # replace é atômico (mesmo filesystem)
+            temp_path.replace(cache_path)
             source_used = "download_fresh"
-            print(
-                f"SES: Download novo com sucesso ({len(data_temp)} registros). Cache atualizado."
-            )
+            print(f"SES: Download novo OK ({len(parsed)} registros). Cache atualizado.")
         else:
-            print(
-                "SES WARNING: Download novo veio vazio ou inválido. Mantendo cache antigo."
-            )
-            if temp_path.exists():
-                temp_path.unlink()
+            print("SES WARNING: Download novo inválido/pequeno. Mantendo Last-Known-Good.")
+            temp_path.unlink(missing_ok=True)
 
     except Exception as e:
-        print(
-            f"SES WARNING: Falha no download ou validação ({e}). Tentando usar Last-Known-Good..."
-        )
-        if temp_path.exists():
-            temp_path.unlink()
+        print(f"SES WARNING: Falha no download/validação ({e}). Usando Last-Known-Good...")
+        temp_path.unlink(missing_ok=True)
 
-    # 2. Carrega do Cache (Seja ele o novo que acabamos de baixar, ou o antigo do repo)
+    # 2) garante que existe algum LKG
     if not cache_path.exists():
-        # Se não tem nem download novo nem arquivo antigo, é falha crítica
-        raise RuntimeError(
-            "SES: Falha crítica. Sem download e sem cache (Last-Known-Good) disponível."
-        )
+        raise RuntimeError("SES: Sem download e sem Last-Known-Good disponível (cache ausente).")
 
-    try:
-        raw_bytes = cache_path.read_bytes()
-        text_content = ""
-        for enc in ["utf-8-sig", "latin-1", "cp1252"]:
-            try:
-                text_content = raw_bytes.decode(enc)
-                break
-            except UnicodeDecodeError:
-                continue
+    # 3) carrega do cache e valida
+    raw = cache_path.read_bytes()
+    txt = _decode_best_effort(raw)
+    companies = _parse_csv_content(txt)
 
-        if not text_content:
-            text_content = raw_bytes.decode("latin-1", errors="replace")
+    if source_used == "none":
+        source_used = "last_known_good_cache"
+        print(f"SES: Usando cache/repo ({len(companies)} registros).")
 
-        companies = _parse_csv_content(text_content)
-
-        if source_used == "none":
-            source_used = "last_known_good_cache"
-            print(f"SES: Usando dados do cache/repo ({len(companies)} registros).")
-
-    except Exception as e:
-        raise RuntimeError(f"SES: Cache local corrompido. Erro: {e}")
-
-    # 3. Validação Final
     if len(companies) < 50:
-        raise RuntimeError(
-            f"SES: Dados finais inválidos (apenas {len(companies)} registros)."
-        )
+        raise RuntimeError(f"SES: Dados finais inválidos (apenas {len(companies)} registros).")
 
-    # Formata saída
-    final_companies = {}
+    final_companies: dict[str, Any] = {}
     for cod, val in companies.items():
         final_companies[cod] = {
             "name": val["name"],
@@ -228,7 +246,6 @@ def extract_ses_master_and_financials() -> tuple[SesMeta, dict[str, Any]]:
         cias_file=f"LISTAEMPRESAS.csv ({source_used})",
         as_of=datetime.now().strftime("%Y-%m"),
         zip_url=zip_url_oficial,
-        warning="Dados via estratégia Evergreen",
+        warning="Dados via estratégia Evergreen (download + last-known-good).",
     )
-
     return meta, final_companies
