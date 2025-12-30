@@ -206,3 +206,10 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# Dados brutos massivos (Ignorar, pois subiremos apenas os comprimidos .gz)
+data/raw/ses/*.csv
+data/raw/ses/*.zip
+
+# Permitir arquivos comprimidos (Nosso Cache Evergreen)
+!data/raw/ses/*.csv.gz
