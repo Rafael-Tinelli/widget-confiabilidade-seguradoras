@@ -284,7 +284,8 @@ def aggregate_month_dual_with_stats(gz_path: str) -> tuple[dict[str, Agg], dict[
 
 # Alias para compatibilidade
 def aggregate_month_dual(p: str) -> tuple[dict[str, Agg], dict[str, Agg]]:
-    return aggregate_month_dual_with_stats(p)[:2]
+    res = aggregate_month_dual_with_stats(p)
+    return res[0], res[1]
 
 
 def discover_basecompleta_urls(months: int = 12) -> dict[str, str]:
