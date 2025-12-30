@@ -1,4 +1,5 @@
 # api/build_insurers.py
+from api.intelligence import run_scoring_pipeline
 from __future__ import annotations
 
 import gzip
