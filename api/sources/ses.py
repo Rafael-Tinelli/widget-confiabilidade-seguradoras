@@ -33,6 +33,10 @@ class SesMeta:
     seguros_file: str = ""
     balanco_file: str = ""
     as_of: str = ""
+    # Campos restaurados para compatibilidade com build_insurers.py
+    period_from: str = ""
+    period_to: str = ""
+    window_months: int = 12
     warning: str = ""
 
 
@@ -239,7 +243,6 @@ def extract_ses_master_and_financials() -> tuple[SesMeta, dict[str, Any]]:
             temp_zip.unlink()
 
     # --- PASSO 3: EXTRAÇÃO DOS CSVs CRÍTICOS ---
-    # Só tentamos extrair se tivermos um ZIP válido (novo ou antigo)
     extracted_files = []
     if path_zip.exists():
         try:
@@ -247,7 +250,6 @@ def extract_ses_master_and_financials() -> tuple[SesMeta, dict[str, Any]]:
             extracted_files = _extract_target_files_from_zip(path_zip, cache_dir)
         except Exception as e:
             print(f"SES ERROR: Falha ao extrair arquivos do ZIP: {e}")
-            # Não quebra o pipeline, pois ainda temos o cadastro de empresas
     else:
         print(
             "SES WARNING: Nenhum BaseCompleta.zip disponível. Análise financeira será impossível."
@@ -261,6 +263,10 @@ def extract_ses_master_and_financials() -> tuple[SesMeta, dict[str, Any]]:
         seguros_file="Ses_seguros.csv" if "Ses_seguros.csv" in extracted_files else "",
         balanco_file="Ses_balanco.csv" if "Ses_balanco.csv" in extracted_files else "",
         as_of=datetime.now().strftime("%Y-%m"),
+        # Preenche os campos faltantes com defaults seguros por enquanto
+        period_from="",
+        period_to="",
+        window_months=12,
         warning="Operando em modo Evergreen (Last-Known-Good)",
     )
 
