@@ -17,18 +17,18 @@ import requests
 CKAN_BASE = "https://dados.mj.gov.br"
 DATASET_ID = "reclamacoes-do-consumidor-gov-br"
 
-# UA que imita navegador para evitar bloqueios simples, mas identifica o bot
+# UA que imita navegador para evitar bloqueios simples
 UA = {
     "User-Agent": "Mozilla/5.0 (compatible; SanidaBot/1.0; +https://github.com/exemplo)",
     "Accept": "text/csv,application/octet-stream;q=0.9,*/*;q=0.8",
 }
 
 _SESSION = requests.Session()
-_SESSION.trust_env = False  # bypass de proxies do ambiente (essencial para GitHub Actions)
+_SESSION.trust_env = False  # bypass de proxies do ambiente
 
 
 # ---------------------------------------------------------------------
-# Modelo de agregação (compatível com builder)
+# Modelo de agregação
 # ---------------------------------------------------------------------
 
 @dataclass
@@ -76,7 +76,6 @@ class Agg:
         if not self.display_name and isinstance(dn, str) and dn.strip():
             self.display_name = dn.strip()
 
-        # Suporta chaves do formato interno e do formato público (complaints_total)
         self.total += _as_int(raw.get("total") or raw.get("complaints_total"))
         self.finalizadas += _as_int(raw.get("finalizadas") or raw.get("complaints_finalizadas"))
         self.respondidas += _as_int(raw.get("respondidas"))
@@ -200,7 +199,7 @@ def download_csv_to_gz(url: str, out_gz_path: str) -> dict[str, Any]:
 
 
 def download_month_csv_gz(a: str, b: str | None = None, *, out_dir: str | None = None) -> tuple[str, dict[str, Any]]:
-    # Wrapper de compatibilidade para diferentes assinaturas de chamada
+    # Wrapper de compatibilidade
     default_out_dir = os.getenv("CONSUMIDOR_GOV_CACHE_DIR", "data/raw/consumidor_gov")
     out_dir = out_dir or default_out_dir
 
@@ -289,4 +288,4 @@ def aggregate_month_dual(p: str) -> tuple[dict[str, Agg], dict[str, Agg]]:
 
 
 def discover_basecompleta_urls(months: int = 12) -> dict[str, str]:
-    return {}  # Placeholder se necessário, mas geralmente o builder usa URLs fixas ou scan prévio
+    return {}
