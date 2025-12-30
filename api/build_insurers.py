@@ -1,5 +1,4 @@
 # api/build_insurers.py
-from api.intelligence import run_scoring_pipeline
 from __future__ import annotations
 
 import gzip
@@ -13,6 +12,7 @@ from typing import Any
 from api.matching.consumidor_gov_match import NameMatcher
 from api.sources.ses import extract_ses_master_and_financials
 from api.sources.opin_products import extract_open_insurance_products
+from api.intelligence import run_scoring_pipeline
 
 # --- Paths ---
 ROOT = Path(__file__).resolve().parents[1]
@@ -68,17 +68,21 @@ def _methodology_stub() -> dict[str, Any]:
         "score": {
             "range": [0, 100],
             "weights": {
-                "complaintsIndex": 0.40,
-                "resolutionRate": 0.25,
+                "solvency": 0.35,
+                "reputation": 0.40,
+                "product": 0.15,
+                "friction": 0.10,
             },
             "formula": (
-                "B1: lista mestre + prêmios/sinistros rolling_12m (SES). "
-                "B2: reputação (Consumidor.gov). B3: status Open Insurance (OPIN). "
-                "Score final será calibrado em versão futura."
+                "Score Composto Multidimensional: "
+                "1. Solvência suavizada (Bühlmann-Straub). "
+                "2. Reputação ajustada (Bayes + Lei de Potência). "
+                "3. Densidade de Produto (OPIN). "
+                "4. Atrito (LAE)."
             ),
             "notes": [
-                "O campo segment usa fallback por porte (prêmios) até termos um mapeamento oficial do SES.",
-                "B2 (Consumidor.gov) entra como bloco de reputação e evidência de match (não força score ainda).",
+                "B1: Dados financeiros SUSEP suavizados para evitar volatilidade em pequenas seguradoras.",
+                "B2: Reputação Consumidor.gov normalizada por volume (não-linear) e qualidade (bayesiana).",
             ],
         }
     }
@@ -309,7 +313,7 @@ def build_payload() -> dict[str, Any]:
                 "claims": round(claims, 2),
                 "lossRatio": loss_ratio,
                 "complaints": None,
-                "score": None,
+                "score": None,  # Será calculado abaixo
             },
         }
 
@@ -412,6 +416,16 @@ def build_payload() -> dict[str, Any]:
                 )
 
         insurers.append(insurer_obj)
+
+    # --- 5. INTELIGÊNCIA: Cálculo de Scores ---
+    # Aplica Bühlmann-Straub, Bayes e Leis de Potência
+    print("\n--- CALCULANDO SCORES (INTELIGÊNCIA) ---")
+    try:
+        insurers = run_scoring_pipeline(insurers)
+        print("Scores calculados com sucesso.")
+    except Exception as e:
+        print(f"ERRO CRÍTICO no cálculo de scores: {e}")
+        # Não aborta, mas os scores ficarão null
 
     # --- Match report (auditável) ---
     if cg_by_name or cg_by_cnpj:
