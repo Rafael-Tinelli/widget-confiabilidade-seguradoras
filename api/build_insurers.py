@@ -11,7 +11,6 @@ from typing import Any
 
 from api.matching.consumidor_gov_match import NameMatcher
 from api.sources.ses import extract_ses_master_and_financials
-# NOVO IMPORT
 from api.sources.opin_products import extract_open_insurance_products
 
 # --- Paths ---
@@ -24,8 +23,12 @@ API_V1 = ROOT / "api" / "v1"
 API_INSURERS = API_V1 / "insurers.json"
 FULL_RAW_GZ = DATA_RAW / "insurers_full.json.gz"
 
-CONSUMIDOR_GOV_LATEST = DATA_DERIVED / "consumidor_gov" / "consumidor_gov_agg_latest.json"
-CONSUMIDOR_GOV_MATCH_REPORT = DATA_DERIVED / "consumidor_gov" / "match_report_insurers.json"
+CONSUMIDOR_GOV_LATEST = (
+    DATA_DERIVED / "consumidor_gov" / "consumidor_gov_agg_latest.json"
+)
+CONSUMIDOR_GOV_MATCH_REPORT = (
+    DATA_DERIVED / "consumidor_gov" / "match_report_insurers.json"
+)
 
 OPIN_PARTICIPANTS = API_V1 / "participants.json"
 
@@ -102,10 +105,14 @@ def _read_existing_count(path: Path) -> int | None:
 
 def _guard_count_regression(new_count: int, old_count: int | None) -> None:
     if new_count <= 0:
-        raise RuntimeError("CRITICAL: meta.count=0. Abortando para preservar dados existentes.")
+        raise RuntimeError(
+            "CRITICAL: meta.count=0. Abortando para preservar dados existentes."
+        )
 
     if new_count < MIN_COUNT:
-        raise RuntimeError(f"CRITICAL: meta.count={new_count} < MIN_COUNT={MIN_COUNT}. Abortando.")
+        raise RuntimeError(
+            f"CRITICAL: meta.count={new_count} < MIN_COUNT={MIN_COUNT}. Abortando."
+        )
 
     if old_count and old_count > 0:
         drop_pct = (old_count - new_count) / float(old_count)
@@ -142,7 +149,10 @@ def _load_consumidor_gov() -> tuple[
     """
     Returns: (meta, by_name_key, by_cnpj_key, error_note)
     """
-    if not CONSUMIDOR_GOV_LATEST.exists() or CONSUMIDOR_GOV_LATEST.stat().st_size < 10:
+    if (
+        not CONSUMIDOR_GOV_LATEST.exists()
+        or CONSUMIDOR_GOV_LATEST.stat().st_size < 10
+    ):
         return None, None, None, "consumidorGov: derived file missing"
 
     try:
@@ -158,7 +168,12 @@ def _load_consumidor_gov() -> tuple[
             by_cnpj_key = {}
 
         if not by_name_key and not by_cnpj_key:
-            return meta, None, None, "consumidorGov: both by_name_key and by_cnpj_key empty/invalid"
+            return (
+                meta,
+                None,
+                None,
+                "consumidorGov: both by_name_key and by_cnpj_key empty/invalid",
+            )
 
         return meta, (by_name_key or None), (by_cnpj_key or None), None
 
@@ -194,7 +209,15 @@ def _load_opin_participants_cnpjs() -> tuple[set[str], str | None]:
         if isinstance(obj, dict):
             for k, v in obj.items():
                 lk = str(k).lower()
-                if any(t in lk for t in ("cnpj", "registrationnumber", "document", "documentnumber")):
+                if any(
+                    t in lk
+                    for t in (
+                        "cnpj",
+                        "registrationnumber",
+                        "document",
+                        "documentnumber",
+                    )
+                ):
                     n = _normalize_cnpj(v)
                     if n:
                         cnpjs.add(n)
@@ -238,7 +261,9 @@ def build_payload() -> dict[str, Any]:
 
     # --- 2. Load Consumidor.gov derived ---
     cg_meta, cg_by_name, cg_by_cnpj, cg_err = _load_consumidor_gov()
-    matcher: NameMatcher | None = _build_consumidor_matcher(cg_by_name) if cg_by_name else None
+    matcher: NameMatcher | None = (
+        _build_consumidor_matcher(cg_by_name) if cg_by_name else None
+    )
 
     # --- 3. Load OPIN participants CNPJs ---
     opin_cnpjs, opin_err = _load_opin_participants_cnpjs()
@@ -303,7 +328,8 @@ def build_payload() -> dict[str, Any]:
                     "metrics": {
                         "complaints_total": metrics.get("complaints_total"),
                         "complaints_finalizadas": metrics.get("complaints_finalizadas"),
-                        "responded_rate": metrics.get("responded_rate") or metrics.get("response_rate"),
+                        "responded_rate": metrics.get("responded_rate")
+                        or metrics.get("response_rate"),
                         "resolution_rate": metrics.get("resolution_rate"),
                         "satisfaction_avg": metrics.get("satisfaction_avg"),
                         "avg_response_days": metrics.get("avg_response_days"),
@@ -348,7 +374,8 @@ def build_payload() -> dict[str, Any]:
                         "metrics": {
                             "complaints_total": metrics.get("complaints_total"),
                             "complaints_finalizadas": metrics.get("complaints_finalizadas"),
-                            "responded_rate": metrics.get("responded_rate") or metrics.get("response_rate"),
+                            "responded_rate": metrics.get("responded_rate")
+                            or metrics.get("response_rate"),
                             "resolution_rate": metrics.get("resolution_rate"),
                             "satisfaction_avg": metrics.get("satisfaction_avg"),
                             "avg_response_days": metrics.get("avg_response_days"),
@@ -375,9 +402,13 @@ def build_payload() -> dict[str, Any]:
                     if float(m.score) < (CONSUMIDOR_MATCH_THRESHOLD + 0.03):
                         low_conf.append(rec)
                 else:
-                    unmatched.append({"insurer_id": insurer_obj["id"], "insurer_name": name})
+                    unmatched.append(
+                        {"insurer_id": insurer_obj["id"], "insurer_name": name}
+                    )
             else:
-                unmatched.append({"insurer_id": insurer_obj["id"], "insurer_name": name})
+                unmatched.append(
+                    {"insurer_id": insurer_obj["id"], "insurer_name": name}
+                )
 
         insurers.append(insurer_obj)
 
@@ -432,7 +463,9 @@ def build_payload() -> dict[str, Any]:
                 meta_opin_prod.products_life_file,
                 meta_opin_prod.products_home_file,
             ],
-        } if meta_opin_prod else None,
+        }
+        if meta_opin_prod
+        else None,
     }
 
     return {
