@@ -23,6 +23,7 @@ SES_HEADERS = {
     "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
 }
 
+
 @dataclass
 class SesMeta:
     source: str = "SES/SUSEP"
@@ -44,26 +45,26 @@ def _download_with_impersonation(url: str, dest: Path) -> None:
     """
     dest.parent.mkdir(parents=True, exist_ok=True)
     print(f"SES: Baixando {url} (impersonate='chrome110')...")
-    
+
     try:
         # verify=False pois governos as vezes tem cadeia de cert incompleta/antiga
         response = cffi_requests.get(
-            url, 
-            headers=SES_HEADERS, 
-            impersonate="chrome110", 
+            url,
+            headers=SES_HEADERS,
+            impersonate="chrome110",
             timeout=120,
-            verify=False 
+            verify=False,
         )
         response.raise_for_status()
-        
+
         # Validação simples anti-bloqueio (se retornou HTML de erro 200 OK)
         content_start = response.content[:1000].lower()
         if b"<!doctype" in content_start or b"<html" in content_start:
             raise RuntimeError("Servidor retornou HTML (Bloqueio WAF) em vez de CSV.")
-            
+
         with open(dest, "wb") as f:
             f.write(response.content)
-            
+
     except Exception as e:
         print(f"SES: Erro no download com impersonation: {e}")
         raise
@@ -76,13 +77,13 @@ def _parse_csv_content(text: str) -> dict[str, dict[str, Any]]:
         return {}
 
     f = io.StringIO(text)
-    
+
     # Detecção de delimitador na primeira linha VÁLIDA
     header_line = text.splitlines()[0]
     delim = ";" if header_line.count(";") > header_line.count(",") else ","
-    
+
     reader = csv.DictReader(f, delimiter=delim)
-    
+
     # Normaliza headers
     headers_map = {}
     if reader.fieldnames:
@@ -92,18 +93,22 @@ def _parse_csv_content(text: str) -> dict[str, dict[str, Any]]:
     else:
         print(f"SES DEBUG: Fieldnames vazio. Header line: {header_line[:50]}")
         return {}
-    
+
     # Busca colunas chave
-    col_cod = headers_map.get("codigofip") or headers_map.get("codfip") or headers_map.get("fip")
+    col_cod = (
+        headers_map.get("codigofip") or headers_map.get("codfip") or headers_map.get("fip")
+    )
     col_cnpj = headers_map.get("cnpj") or headers_map.get("numcnpj")
     col_nome = (
-        headers_map.get("nomeentidade") 
-        or headers_map.get("nome") 
+        headers_map.get("nomeentidade")
+        or headers_map.get("nome")
         or headers_map.get("razaosocial")
     )
 
     if not col_cod or not col_cnpj:
-        print(f"SES DEBUG: Colunas não encontradas. Headers disponíveis: {list(headers_map.keys())}")
+        print(
+            f"SES DEBUG: Colunas não encontradas. Headers disponíveis: {list(headers_map.keys())}"
+        )
         return {}
 
     out = {}
@@ -115,11 +120,11 @@ def _parse_csv_content(text: str) -> dict[str, dict[str, Any]]:
         cod = re.sub(r"\D", "", cod_val)
         cnpj = re.sub(r"\D", "", cnpj_val)
         nome = nome_val.strip()
-        
+
         if cod and cnpj:
             out[cod.zfill(5)] = {"cnpj": cnpj, "name": nome}
             out[cod.zfill(6)] = {"cnpj": cnpj, "name": nome}
-            
+
     return out
 
 
@@ -137,7 +142,7 @@ def extract_ses_master_and_financials() -> tuple[SesMeta, dict[str, Any]]:
     cache_dir = Path(os.getenv("SES_CACHE_DIR", "data/raw/ses")).resolve()
     if not cache_dir.is_absolute():
         cache_dir = Path.cwd() / cache_dir
-    
+
     cache_path = cache_dir / "LISTAEMPRESAS.csv"
     temp_path = cache_dir / "LISTAEMPRESAS_TEMP.csv"
 
@@ -147,29 +152,39 @@ def extract_ses_master_and_financials() -> tuple[SesMeta, dict[str, Any]]:
     # Se falhar aqui, não estraga o arquivo bom que já existe no cache_path
     try:
         _download_with_impersonation(lista_url, temp_path)
-        
+
         # Valida se o download novo é parseável antes de substituir o antigo
         raw_bytes = temp_path.read_bytes()
         text_temp = raw_bytes.decode("latin-1", errors="replace")
         data_temp = _parse_csv_content(text_temp)
-        
+
         if len(data_temp) > 50:
             # Sucesso! Substitui o cache oficial pelo novo
             shutil.move(str(temp_path), str(cache_path))
             source_used = "download_fresh"
-            print(f"SES: Download novo com sucesso ({len(data_temp)} registros). Cache atualizado.")
+            print(
+                f"SES: Download novo com sucesso ({len(data_temp)} registros). Cache atualizado."
+            )
         else:
-            print("SES WARNING: Download novo veio vazio ou inválido. Mantendo cache antigo.")
-            if temp_path.exists(): temp_path.unlink()
-            
+            print(
+                "SES WARNING: Download novo veio vazio ou inválido. Mantendo cache antigo."
+            )
+            if temp_path.exists():
+                temp_path.unlink()
+
     except Exception as e:
-        print(f"SES WARNING: Falha no download ou validação ({e}). Tentando usar Last-Known-Good...")
-        if temp_path.exists(): temp_path.unlink()
+        print(
+            f"SES WARNING: Falha no download ou validação ({e}). Tentando usar Last-Known-Good..."
+        )
+        if temp_path.exists():
+            temp_path.unlink()
 
     # 2. Carrega do Cache (Seja ele o novo que acabamos de baixar, ou o antigo do repo)
     if not cache_path.exists():
-        # Se não tem nem download novo nem arquivo antigo, é falha crítica (primeiro run da história falhou?)
-        raise RuntimeError("SES: Falha crítica. Sem download e sem cache (Last-Known-Good) disponível.")
+        # Se não tem nem download novo nem arquivo antigo, é falha crítica
+        raise RuntimeError(
+            "SES: Falha crítica. Sem download e sem cache (Last-Known-Good) disponível."
+        )
 
     try:
         raw_bytes = cache_path.read_bytes()
@@ -180,12 +195,12 @@ def extract_ses_master_and_financials() -> tuple[SesMeta, dict[str, Any]]:
                 break
             except UnicodeDecodeError:
                 continue
-        
+
         if not text_content:
-             text_content = raw_bytes.decode("latin-1", errors="replace")
+            text_content = raw_bytes.decode("latin-1", errors="replace")
 
         companies = _parse_csv_content(text_content)
-        
+
         if source_used == "none":
             source_used = "last_known_good_cache"
             print(f"SES: Usando dados do cache/repo ({len(companies)} registros).")
@@ -195,7 +210,9 @@ def extract_ses_master_and_financials() -> tuple[SesMeta, dict[str, Any]]:
 
     # 3. Validação Final
     if len(companies) < 50:
-        raise RuntimeError(f"SES: Dados finais inválidos (apenas {len(companies)} registros).")
+        raise RuntimeError(
+            f"SES: Dados finais inválidos (apenas {len(companies)} registros)."
+        )
 
     # Formata saída
     final_companies = {}
@@ -211,7 +228,7 @@ def extract_ses_master_and_financials() -> tuple[SesMeta, dict[str, Any]]:
         cias_file=f"LISTAEMPRESAS.csv ({source_used})",
         as_of=datetime.now().strftime("%Y-%m"),
         zip_url=zip_url_oficial,
-        warning="Dados via estratégia Evergreen"
+        warning="Dados via estratégia Evergreen",
     )
 
     return meta, final_companies
