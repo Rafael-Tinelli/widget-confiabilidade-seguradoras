@@ -6,11 +6,9 @@ import time
 import re
 from dataclasses import dataclass
 from datetime import datetime
-from pathlib import Path
 from typing import Any, List, Dict
 
 import requests
-import pandas as pd
 import urllib3
 
 # Desabilita warnings de SSL inseguro (necessário para OPIN muitas vezes)
@@ -58,12 +56,14 @@ def _recursive_find_endpoints(data: Any, target_keywords: List[str]) -> str | No
         # Continua descendo na árvore
         for key, value in data.items():
             found = _recursive_find_endpoints(value, target_keywords)
-            if found: return found
+            if found:
+                return found
             
     elif isinstance(data, list):
         for item in data:
             found = _recursive_find_endpoints(item, target_keywords)
-            if found: return found
+            if found:
+                return found
             
     return None
 
@@ -79,7 +79,6 @@ def _crawl_products(discovery_url: str, family_key: str) -> List[Dict]:
     base_url = _get_api_base(discovery_url)
     
     # Endpoint padrão de listagem (pode variar, mas geralmente é apenas GET na base)
-    # Alguns pedem /, outros não. Vamos tentar a base limpa.
     target_url = base_url 
     
     print(f"    -> Crawling {family_key} em: {target_url} ...")
@@ -98,8 +97,6 @@ def _crawl_products(discovery_url: str, family_key: str) -> List[Dict]:
             )
             
             if resp.status_code != 200:
-                # Tenta endpoint alternativo (ex: adicionar /plans ou /commercial) se falhar
-                # Mas por enquanto, apenas loga e sai
                 if page == 1: 
                     print(f"    -> Falha {resp.status_code} na pág 1. Ignorando.")
                 break
@@ -176,7 +173,8 @@ def extract_opin_products() -> tuple[OpinMeta, dict[str, list[dict]]]:
                     cnpj = nums
                     break
         
-        if not cnpj: continue
+        if not cnpj:
+            continue
         
         # Nome da empresa para log
         name = next((n.get("OrganisationName") for n in p.get("AuthorisationServers", []) if "OrganisationName" in n), p.get("OrganisationName", "Unknown"))
@@ -189,8 +187,6 @@ def extract_opin_products() -> tuple[OpinMeta, dict[str, list[dict]]]:
             discovery_url = _recursive_find_endpoints(p, keywords)
             
             if discovery_url:
-                # 2. Crawla os produtos
-                # print(f"OPIN: [{name}] URL encontrada para {family}") 
                 prods = _crawl_products(discovery_url, family)
                 if prods:
                     participant_products.extend(prods)
