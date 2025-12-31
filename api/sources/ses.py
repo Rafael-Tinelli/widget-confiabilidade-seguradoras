@@ -63,7 +63,7 @@ def _extract_and_compress_files(zip_path: Path, output_dir: Path) -> list[str]:
     target_map = {
         "ses_seguros": "Ses_seguros.csv",
         "ses_balanco": "Ses_balanco.csv",
-        "ses_pl_margem": "Ses_pl_margem.csv", # CRÍTICO: Solvência
+        "ses_pl_margem": "Ses_pl_margem.csv",
     }
     extracted = []
     
@@ -137,8 +137,8 @@ def _parse_lista_empresas(cache_path: Path) -> dict[str, dict[str, Any]]:
                             "name": nome, 
                             "premiums": 0.0, 
                             "claims": 0.0,
-                            "net_worth": 0.0, # Patrimônio Líquido
-                            "solvency_margin": 0.0 # Margem Solvência
+                            "net_worth": 0.0,
+                            "solvency_margin": 0.0
                         }
                         companies[cod.zfill(5)] = data
                         companies[cod.zfill(6)] = data
@@ -171,7 +171,6 @@ def _enrich_with_solvency(companies: dict, cache_dir: Path) -> dict:
 
         norm_headers = [_normalize_col(h) for h in header_line]
         
-        # Mapeamento Solvência
         idx_id = next((i for i, h in enumerate(norm_headers) if "coenti" in h), -1)
         # Patrimônio Líquido Ajustado (plajustado)
         idx_pl = next((i for i, h in enumerate(norm_headers) if "pla" in h or "patrimonio" in h), -1)
@@ -189,12 +188,14 @@ def _enrich_with_solvency(companies: dict, cache_dir: Path) -> dict:
             next(f)
             reader = csv.reader(f, delimiter=delim)
             for row in reader:
-                if len(row) <= max(idx_id, idx_pl): continue
+                if len(row) <= max(idx_id, idx_pl):
+                    continue
                 try:
                     cod = re.sub(r"\D", "", row[idx_id]).zfill(5)
                     
                     def parse_br(val):
-                        if not val: return 0.0
+                        if not val:
+                            return 0.0
                         return float(val.replace('.', '').replace(',', '.'))
 
                     pl = parse_br(row[idx_pl])
@@ -202,11 +203,11 @@ def _enrich_with_solvency(companies: dict, cache_dir: Path) -> dict:
 
                     comp = companies.get(cod) or companies.get(cod.zfill(6))
                     if comp:
-                        # Pega o último valor disponível (não soma, pois é balanço)
                         comp["net_worth"] = pl
                         comp["solvency_margin"] = margem
                         count += 1
-                except: continue
+                except Exception:
+                    continue
         
         print(f"SES: Solvência atualizada para {count} registros.")
 
@@ -217,7 +218,8 @@ def _enrich_with_solvency(companies: dict, cache_dir: Path) -> dict:
 
 def _enrich_with_financials(companies: dict, cache_dir: Path) -> dict:
     fin_file = cache_dir / "Ses_seguros.csv.gz"
-    if not fin_file.exists(): return companies
+    if not fin_file.exists():
+        return companies
 
     print("SES: Processando Financeiro (Prêmios/Sinistros)...")
     try:
@@ -251,12 +253,14 @@ def _enrich_with_financials(companies: dict, cache_dir: Path) -> dict:
             next(f)
             reader = csv.reader(f, delimiter=delim)
             for row in reader:
-                if len(row) <= max(idx_id, idx_prem, idx_claim): continue
+                if len(row) <= max(idx_id, idx_prem, idx_claim):
+                    continue
                 try:
                     cod = re.sub(r"\D", "", row[idx_id]).zfill(5)
                     
                     def parse_br(val):
-                        if not val: return 0.0
+                        if not val:
+                            return 0.0
                         return float(val.replace('.', '').replace(',', '.'))
 
                     prem = parse_br(row[idx_prem])
@@ -267,7 +271,8 @@ def _enrich_with_financials(companies: dict, cache_dir: Path) -> dict:
                         comp["premiums"] += prem
                         comp["claims"] += claim
                         count += 1
-                except: continue
+                except Exception:
+                    continue
         print(f"SES: Financeiro somado para {count} registros.")
     except Exception as e:
         print(f"SES: Erro financeiro: {e}")
@@ -292,18 +297,19 @@ def extract_ses_master_and_financials() -> tuple[SesMeta, dict[str, Any]]:
     if not (cache_dir / "Ses_seguros.csv.gz").exists() or not (cache_dir / "Ses_pl_margem.csv.gz").exists():
         _download_with_impersonation(url_zip, path_zip)
         _extract_and_compress_files(path_zip, cache_dir)
-        if path_zip.exists(): path_zip.unlink()
+        if path_zip.exists():
+            path_zip.unlink()
     
     if companies:
         companies = _enrich_with_financials(companies, cache_dir)
-        companies = _enrich_with_solvency(companies, cache_dir) # NOVO PASSO
+        companies = _enrich_with_solvency(companies, cache_dir)
 
     files = [f.name for f in cache_dir.glob("*.gz")]
     meta = SesMeta(
         zip_url=url_zip,
         cias_file="LISTAEMPRESAS.csv",
-        seguros_file="Ses_seguros.csv.gz",
-        balanco_file="Ses_pl_margem.csv.gz",
+        seguros_file="Ses_seguros.csv.gz" if "Ses_seguros.csv.gz" in files else "",
+        balanco_file="Ses_pl_margem.csv.gz" if "Ses_pl_margem.csv.gz" in files else "",
         as_of=datetime.now().strftime("%Y-%m"),
         warning="Pandas/ETL v8 - Full Solvency"
     )
