@@ -1,173 +1,212 @@
 # api/sources/opin_products.py
 from __future__ import annotations
 
-import gzip
-import json
-import concurrent.futures
+import os
+import time
+import re
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import Any, List, Dict
 
-# Reutilizamos curl_cffi para consistência e bypass de WAFs eventuais
-from curl_cffi import requests as cffi_requests
+import requests
+import pandas as pd
+import urllib3
+
+# Desabilita warnings de SSL inseguro (necessário para OPIN muitas vezes)
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # Configurações
-MAX_WORKERS = 10  # Número de downloads simultâneos
-TIMEOUT_SECONDS = 15
+OPIN_PARTICIPANTS_URL = os.getenv(
+    "OPIN_PARTICIPANTS_URL", 
+    "https://data.directory.opinbrasil.com.br/participants"
+)
 
-# Endpoints definidos no estudo "Inteligência de Mercado Segurador"
-TARGET_ENDPOINTS = {
-    "auto": "/open-insurance/products-services/v1/auto-insurance",
-    "life": "/open-insurance/products-services/v1/life-pension",
-    "home": "/open-insurance/products-services/v1/home-insurance",
+# Mapeamento: Chave interna -> Trecho da URL ou FamilyType que identifica o produto
+FAMILY_KEYWORDS = {
+    "auto": ["products-auto", "auto-insurance"],
+    "home": ["products-residential", "residential-insurance", "housing"],
+    "life": ["products-life", "life-pension", "life-insurance"],
+    "patrimonial": ["products-patrimonial"],
+    "travel": ["products-travel"],
 }
-
-# Headers padrão para Open Insurance
-OPIN_HEADERS = {
-    "User-Agent": "MarketIntelligenceBot/1.0 (Open Source Research)",
-    "Accept": "application/json",
-}
-
 
 @dataclass
-class OpinProductMeta:
+class OpinMeta:
     source: str = "Open Insurance Brasil"
     as_of: str = ""
-    products_auto_file: str = ""
-    products_life_file: str = ""
-    products_home_file: str = ""
-    stats: dict[str, int] | None = None
+    products_count: int = 0
+    families_scanned: List[str] = None
 
-
-def _load_participants(json_path: Path) -> list[dict]:
-    """Carrega o diretório de participantes gerado na etapa anterior."""
-    if not json_path.exists():
-        raise RuntimeError(f"Arquivo de participantes não encontrado: {json_path}")
-
-    with open(json_path, "r", encoding="utf-8") as f:
-        data = json.load(f)
-        if isinstance(data, list):
-            return data
-        return data.get("participants", []) or []
-
-
-def _extract_api_base_url(participant: dict) -> str | None:
+def _recursive_find_endpoints(data: Any, target_keywords: List[str]) -> str | None:
     """
-    Tenta descobrir a URL base do servidor de Produtos e Serviços.
+    Busca forense: varre recursivamente o JSON do participante procurando 
+    uma URL em 'ApiDiscoveryEndpoints' que contenha uma das palavras-chave.
     """
-    # Estratégia 1: Procurar em ApiResources
-    api_resources = participant.get("ApiResources", [])
-    for resource in api_resources:
-        base_uri = resource.get("ApiDiscoveryUri") or resource.get("ApiFamilyType")
-        if base_uri and str(base_uri).startswith("http"):
-            parts = str(base_uri).split("/open-insurance/")
-            if len(parts) > 0:
-                return parts[0]
-
-    # Estratégia 2: AuthorisationServers
-    auth_servers = participant.get("AuthorisationServers", [])
-    for server in auth_servers:
-        config_url = server.get("OpenIDDiscoveryDocument")
-        if config_url and str(config_url).startswith("http"):
-            parts = str(config_url).split("/.well-known")
-            return parts[0]
-
+    if isinstance(data, dict):
+        # Se achou o campo de endpoints, verifica se a URL bate
+        if "ApiDiscoveryEndpoints" in data:
+            endpoints = data["ApiDiscoveryEndpoints"]
+            if isinstance(endpoints, list):
+                for ep in endpoints:
+                    if isinstance(ep, dict) and "ApiDiscoveryId" in ep:
+                        url = ep.get("ApiDiscoveryId", "")
+                        # Verifica se alguma keyword está na URL
+                        if any(k in url.lower() for k in target_keywords):
+                            return url
+        
+        # Continua descendo na árvore
+        for key, value in data.items():
+            found = _recursive_find_endpoints(value, target_keywords)
+            if found: return found
+            
+    elif isinstance(data, list):
+        for item in data:
+            found = _recursive_find_endpoints(item, target_keywords)
+            if found: return found
+            
     return None
 
+def _get_api_base(discovery_url: str) -> str:
+    """Limpa a URL de discovery para pegar a base da API."""
+    # Ex: .../products-auto/v1/personal/discovery -> .../products-auto/v1/personal
+    # Remove /discovery ou /open-insurance-discovery
+    return re.sub(r'/(open-insurance-)?discovery$', '', discovery_url)
 
-def _fetch_single_product(
-    participant_name: str, base_url: str, category: str, endpoint: str
-) -> list[dict]:
-    """Baixa os produtos de uma única seguradora."""
-    full_url = f"{base_url.rstrip('/')}{endpoint}"
-    results = []
-
-    try:
-        resp = cffi_requests.get(
-            full_url, headers=OPIN_HEADERS, timeout=TIMEOUT_SECONDS, verify=False
-        )
-
-        if resp.status_code == 200:
-            data = resp.json()
-            payload = data.get("data", {})
-            brand = payload.get("brand", {})
-            companies = brand.get("companies", [])
-
-            for company in companies:
-                products = company.get("products", [])
-                for prod in products:
-                    prod["_source_participant"] = participant_name
-                    prod["_source_url"] = full_url
-                    results.append(prod)
-    except Exception:
-        # Falhas de conexão pontuais são ignoradas
-        pass
-
-    return results
-
-
-def extract_open_insurance_products() -> OpinProductMeta:
-    """
-    Orquestra o download paralelo dos produtos de Auto, Vida e Residencial.
-    Salva em JSONs comprimidos (GZIP).
-    """
-    # Caminhos
-    root = Path(__file__).resolve().parents[2]
-    participants_path = root / "api" / "v1" / "participants.json"
-    raw_dir = root / "data" / "raw" / "opin"
-    raw_dir.mkdir(parents=True, exist_ok=True)
-
-    print("OPIN: Carregando participantes...")
-    participants = _load_participants(participants_path)
+def _crawl_products(discovery_url: str, family_key: str) -> List[Dict]:
+    """Baixa os produtos paginados de uma URL base."""
+    products = []
+    base_url = _get_api_base(discovery_url)
     
-    # Prepara lista de tarefas (Tuplas: Name, Url)
-    targets = []
-    for p in participants:
-        name = p.get("RegisteredName") or p.get("OrganisationName") or "Unknown"
-        url = _extract_api_base_url(p)
-        if url:
-            targets.append((name, url))
+    # Endpoint padrão de listagem (pode variar, mas geralmente é apenas GET na base)
+    # Alguns pedem /, outros não. Vamos tentar a base limpa.
+    target_url = base_url 
+    
+    print(f"    -> Crawling {family_key} em: {target_url} ...")
+    
+    page = 1
+    total_pages = 1
+    
+    while page <= total_pages and page <= 20: # Limite de segurança
+        try:
+            # Tenta pegar a página
+            resp = requests.get(
+                target_url, 
+                params={"page": page, "page-size": 100},
+                timeout=15,
+                verify=False # SSL do OPIN costuma falhar
+            )
+            
+            if resp.status_code != 200:
+                # Tenta endpoint alternativo (ex: adicionar /plans ou /commercial) se falhar
+                # Mas por enquanto, apenas loga e sai
+                if page == 1: 
+                    print(f"    -> Falha {resp.status_code} na pág 1. Ignorando.")
+                break
 
-    print(f"OPIN: {len(targets)} seguradoras com URLs de API identificadas.")
+            data = resp.json()
+            
+            # Normaliza estrutura de resposta (Data vs data)
+            payload = data.get("data") or data.get("Data") or {}
+            brand = payload.get("brand") or {}
+            companies = brand.get("companies") or []
+            
+            for comp in companies:
+                # Extrai produtos de cada empresa listada
+                prods = comp.get("products") or []
+                for p in prods:
+                    # Salva dados essenciais
+                    products.append({
+                        "name": p.get("name"),
+                        "code": p.get("code"),
+                        "company_cnpj": comp.get("cnpjNumber"),
+                        "company_name": comp.get("name"),
+                        "family": family_key,
+                        "coverages": [c.get("coverage") for c in p.get("coverages", [])] if "coverages" in p else []
+                    })
 
-    stats = {"auto": 0, "life": 0, "home": 0}
-    filenames = {}
+            # Paginação
+            meta = data.get("meta") or data.get("Meta") or {}
+            total_pages = meta.get("totalPages") or 1
+            
+            if total_pages > 1:
+                print(f"       Pág {page}/{total_pages} - {len(products)} produtos acumulados...")
+            
+            page += 1
+            time.sleep(0.1) # Politeness
 
-    # Executa download por categoria
-    for category, endpoint in TARGET_ENDPOINTS.items():
-        print(f"OPIN: Baixando produtos de {category.upper()}...")
-        all_products = []
+        except Exception as e:
+            print(f"    -> Erro crawling {family_key}: {str(e)[:100]}")
+            break
+            
+    return products
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-            future_to_target = {
-                executor.submit(
-                    _fetch_single_product, name, url, category, endpoint
-                ): name
-                for name, url in targets
-            }
+def extract_opin_products() -> tuple[OpinMeta, dict[str, list[dict]]]:
+    print("OPIN: Baixando lista de participantes...")
+    
+    try:
+        resp = requests.get(OPIN_PARTICIPANTS_URL, timeout=30, verify=False)
+        resp.raise_for_status()
+        participants = resp.json()
+    except Exception as e:
+        print(f"OPIN: Falha fatal ao baixar participantes: {e}")
+        # Retorna vazio mas estruturado para não quebrar o pipeline
+        return OpinMeta(warning="Falha Download Participantes"), {}
 
-            for future in concurrent.futures.as_completed(future_to_target):
-                try:
-                    prods = future.result()
-                    all_products.extend(prods)
-                except Exception:
-                    continue
+    # Filtra apenas ativos
+    active_parts = [
+        p for p in participants 
+        if p.get("Status") == "Active" or p.get("status") == "Active"
+    ]
+    
+    print(f"OPIN: {len(active_parts)} participantes ativos encontrados.")
+    
+    products_by_cnpj = {}
+    total_products = 0
+    
+    # Para cada participante, busca URLs de cada família
+    for p in active_parts:
+        # Tenta achar CNPJ em vários campos
+        cnpj = None
+        for field in ["RegistrationNumber", "OrganisationId", "CnpjNumber"]:
+            val = p.get(field)
+            if val and isinstance(val, str):
+                nums = re.sub(r"\D", "", val)
+                if len(nums) == 14:
+                    cnpj = nums
+                    break
+        
+        if not cnpj: continue
+        
+        # Nome da empresa para log
+        name = next((n.get("OrganisationName") for n in p.get("AuthorisationServers", []) if "OrganisationName" in n), p.get("OrganisationName", "Unknown"))
 
-        # Salva consolidado comprimido
-        filename = f"products_{category}.json.gz"
-        filepath = raw_dir / filename
+        # Busca produtos para este participante
+        participant_products = []
+        
+        for family, keywords in FAMILY_KEYWORDS.items():
+            # 1. Encontra a URL de Discovery para essa família
+            discovery_url = _recursive_find_endpoints(p, keywords)
+            
+            if discovery_url:
+                # 2. Crawla os produtos
+                # print(f"OPIN: [{name}] URL encontrada para {family}") 
+                prods = _crawl_products(discovery_url, family)
+                if prods:
+                    participant_products.extend(prods)
+        
+        if participant_products:
+            if cnpj not in products_by_cnpj:
+                products_by_cnpj[cnpj] = []
+            products_by_cnpj[cnpj].extend(participant_products)
+            total_products += len(participant_products)
+            print(f"OPIN: +{len(participant_products)} produtos de {name} ({cnpj})")
 
-        with gzip.open(filepath, "wt", encoding="utf-8") as f:
-            json.dump(all_products, f, ensure_ascii=False)
-
-        print(f"OPIN: {len(all_products)} produtos de {category} salvos.")
-        stats[category] = len(all_products)
-        filenames[f"products_{category}_file"] = filename
-
-    return OpinProductMeta(
+    meta = OpinMeta(
         as_of=datetime.now().strftime("%Y-%m-%d"),
-        products_auto_file=filenames.get("products_auto_file", ""),
-        products_life_file=filenames.get("products_life_file", ""),
-        products_home_file=filenames.get("products_home_file", ""),
-        stats=stats,
+        products_count=total_products,
+        families_scanned=list(FAMILY_KEYWORDS.keys())
     )
+    
+    print(f"OPIN: Total final -> {total_products} produtos coletados de {len(products_by_cnpj)} seguradoras.")
+    return meta, products_by_cnpj
