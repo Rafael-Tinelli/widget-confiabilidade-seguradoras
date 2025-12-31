@@ -180,7 +180,8 @@ def _enrich_with_solvency(companies: dict, cache_dir: Path) -> dict:
         idx_id = next((i for i, h in enumerate(norm_headers) if "coenti" in h), -1)
         # Patrimônio Líquido Ajustado (plajustado)
         idx_pl = next((i for i, h in enumerate(norm_headers) if "plajustado" in h or "patrimonioliquido" in h), -1)
-        if idx_pl == -1: idx_pl = next((i for i, h in enumerate(norm_headers) if "pla" in h), -1)
+        if idx_pl == -1:
+            idx_pl = next((i for i, h in enumerate(norm_headers) if "pla" in h), -1)
         
         # Margem de Solvência
         idx_margem = next((i for i, h in enumerate(norm_headers) if "margem" in h), -1)
@@ -202,7 +203,8 @@ def _enrich_with_solvency(companies: dict, cache_dir: Path) -> dict:
                     cod = re.sub(r"\D", "", row[idx_id]).zfill(5)
                     
                     def parse_br(val):
-                        if not val: return 0.0
+                        if not val:
+                            return 0.0
                         return float(val.replace('.', '').replace(',', '.'))
 
                     pl = parse_br(row[idx_pl])
@@ -265,7 +267,8 @@ def _enrich_with_financials(companies: dict, cache_dir: Path) -> dict:
                     cod = re.sub(r"\D", "", row[idx_id]).zfill(5)
                     
                     def parse_br(val):
-                        if not val: return 0.0
+                        if not val:
+                            return 0.0
                         return float(val.replace('.', '').replace(',', '.'))
 
                     prem = parse_br(row[idx_prem])
@@ -322,8 +325,8 @@ def extract_ses_master_and_financials() -> tuple[SesMeta, dict[str, Any]]:
     meta = SesMeta(
         zip_url=url_zip,
         cias_file="LISTAEMPRESAS.csv",
-        seguros_file="Ses_seguros.csv.gz",
-        balanco_file="Ses_pl_margem.csv.gz",
+        seguros_file="Ses_seguros.csv.gz" if "Ses_seguros.csv.gz" in files else "",
+        balanco_file="Ses_pl_margem.csv.gz" if "Ses_pl_margem.csv.gz" in files else "",
         as_of=datetime.now().strftime("%Y-%m"),
         warning="Pandas/ETL v9 - Solvency Forced"
     )
