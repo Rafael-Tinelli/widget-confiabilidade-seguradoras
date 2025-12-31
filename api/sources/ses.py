@@ -63,6 +63,7 @@ def _extract_and_compress_files(zip_path: Path, output_dir: Path) -> list[str]:
     target_map = {
         "ses_seguros": "Ses_seguros.csv",
         "ses_balanco": "Ses_balanco.csv",
+        "ses_pl_margem": "Ses_pl_margem.csv", # CRÍTICO: Solvência
     }
     extracted = []
     
@@ -77,6 +78,7 @@ def _extract_and_compress_files(zip_path: Path, output_dir: Path) -> list[str]:
         with zipfile.ZipFile(zip_path, "r") as z:
             name_map = {n.lower(): n for n in z.namelist()}
             for target_key, target_name in target_map.items():
+                # Busca parcial
                 found_name = next((name_map[n] for n in name_map if target_name.lower().replace(".csv", "") in n), None)
                 
                 if found_name:
@@ -100,26 +102,15 @@ def _parse_lista_empresas(cache_path: Path) -> dict[str, dict[str, Any]]:
         return {}
 
     try:
-        # CORREÇÃO: Força separador ';' e encoding 'latin-1' (Padrão SUSEP)
-        # O modo 'python' com sep=None estava falhando.
+        # Tenta ler com engine python que é mais tolerante
         try:
             df = pd.read_csv(cache_path, sep=';', encoding="latin-1", dtype=str, on_bad_lines='skip')
         except Exception:
-            # Tenta UTF-8 se falhar
-            df = pd.read_csv(cache_path, sep=';', encoding="utf-8", dtype=str, on_bad_lines='skip')
-
-        # Se ainda assim tiver 1 coluna só, tenta vírgula
-        if len(df.columns) < 2:
-             print("SES: Aviso - Separador ';' falhou, tentando ','...")
-             df = pd.read_csv(cache_path, sep=',', encoding="latin-1", dtype=str, on_bad_lines='skip')
+            df = pd.read_csv(cache_path, sep=',', encoding="utf-8", dtype=str, on_bad_lines='skip')
 
         df.columns = [_normalize_col(c) for c in df.columns]
-        print(f"DEBUG: Colunas da Lista Normalizadas: {list(df.columns)}")
-
-        # Busca Inteligente (Broad Match)
-        # Procura por 'cod' E ('fip' OU 'ent') -> Pega 'CodigoFip', 'Coenti', etc.
+        
         col_cod = next((c for c in df.columns if "cod" in c and ("fip" in c or "ent" in c)), None)
-        # Fallback explícito para 'coenti'
         if not col_cod:
             col_cod = next((c for c in df.columns if "coenti" in c), None)
 
@@ -129,7 +120,7 @@ def _parse_lista_empresas(cache_path: Path) -> dict[str, dict[str, Any]]:
         if not col_nome:
             col_nome = next((c for c in df.columns if "noenti" in c), None)
 
-        print(f"DEBUG: Mapeado -> ID: {col_cod}, CNPJ: {col_cnpj}, Nome: {col_nome}")
+        print(f"DEBUG: Mapeado Lista -> ID: {col_cod}, CNPJ: {col_cnpj}, Nome: {col_nome}")
 
         if col_cod and col_cnpj:
             count = 0
@@ -140,7 +131,15 @@ def _parse_lista_empresas(cache_path: Path) -> dict[str, dict[str, Any]]:
                     nome = str(row[col_nome]).strip() if col_nome else ""
                     
                     if cod and cnpj:
-                        data = {"cnpj": cnpj, "name": nome, "premiums": 0.0, "claims": 0.0}
+                        # Inicializa com ZEROS para evitar erro de cálculo depois
+                        data = {
+                            "cnpj": cnpj, 
+                            "name": nome, 
+                            "premiums": 0.0, 
+                            "claims": 0.0,
+                            "net_worth": 0.0, # Patrimônio Líquido
+                            "solvency_margin": 0.0 # Margem Solvência
+                        }
                         companies[cod.zfill(5)] = data
                         companies[cod.zfill(6)] = data
                         count += 1
@@ -152,17 +151,17 @@ def _parse_lista_empresas(cache_path: Path) -> dict[str, dict[str, Any]]:
     
     return companies
 
-def _enrich_with_financials(companies: dict, cache_dir: Path) -> dict:
-    fin_file = cache_dir / "Ses_seguros.csv.gz"
-    if not fin_file.exists():
-        print("SES: Arquivo financeiro não encontrado.")
+def _enrich_with_solvency(companies: dict, cache_dir: Path) -> dict:
+    """Lê Ses_pl_margem.csv.gz e preenche Patrimônio Líquido e Margem."""
+    solv_file = cache_dir / "Ses_pl_margem.csv.gz"
+    if not solv_file.exists():
+        print("SES: Arquivo de Solvência (PL/Margem) não encontrado.")
         return companies
 
-    print("SES: Processando Financeiro (Modo Cirúrgico)...")
+    print("SES: Processando Solvência (PL/Margem)...")
     try:
-        with gzip.open(fin_file, 'rt', encoding='latin-1') as f:
+        with gzip.open(solv_file, 'rt', encoding='latin-1') as f:
             header_line = f.readline().strip().split(';')
-            
             if len(header_line) < 2:
                 f.seek(0)
                 header_line = f.readline().strip().split(',')
@@ -172,66 +171,106 @@ def _enrich_with_financials(companies: dict, cache_dir: Path) -> dict:
 
         norm_headers = [_normalize_col(h) for h in header_line]
         
-        # 1. ID da Empresa (coenti)
+        # Mapeamento Solvência
         idx_id = next((i for i, h in enumerate(norm_headers) if "coenti" in h), -1)
+        # Patrimônio Líquido Ajustado (plajustado)
+        idx_pl = next((i for i, h in enumerate(norm_headers) if "pla" in h or "patrimonio" in h), -1)
+        # Margem de Solvência (margem)
+        idx_margem = next((i for i, h in enumerate(norm_headers) if "margem" in h), -1)
+
+        print(f"DEBUG: Solvência Índices -> ID: {idx_id}, PL: {idx_pl}, Margem: {idx_margem}")
+
+        if idx_id == -1 or idx_pl == -1:
+            print("SES: ERRO - Colunas de Solvência não encontradas.")
+            return companies
+
+        count = 0
+        with gzip.open(solv_file, 'rt', encoding='latin-1') as f:
+            next(f)
+            reader = csv.reader(f, delimiter=delim)
+            for row in reader:
+                if len(row) <= max(idx_id, idx_pl): continue
+                try:
+                    cod = re.sub(r"\D", "", row[idx_id]).zfill(5)
+                    
+                    def parse_br(val):
+                        if not val: return 0.0
+                        return float(val.replace('.', '').replace(',', '.'))
+
+                    pl = parse_br(row[idx_pl])
+                    margem = parse_br(row[idx_margem]) if idx_margem != -1 else 0.0
+
+                    comp = companies.get(cod) or companies.get(cod.zfill(6))
+                    if comp:
+                        # Pega o último valor disponível (não soma, pois é balanço)
+                        comp["net_worth"] = pl
+                        comp["solvency_margin"] = margem
+                        count += 1
+                except: continue
         
-        # 2. Prêmios: Prioridade para "premio_ganho"
+        print(f"SES: Solvência atualizada para {count} registros.")
+
+    except Exception as e:
+        print(f"SES: Erro processando solvência: {e}")
+
+    return companies
+
+def _enrich_with_financials(companies: dict, cache_dir: Path) -> dict:
+    fin_file = cache_dir / "Ses_seguros.csv.gz"
+    if not fin_file.exists(): return companies
+
+    print("SES: Processando Financeiro (Prêmios/Sinistros)...")
+    try:
+        with gzip.open(fin_file, 'rt', encoding='latin-1') as f:
+            header_line = f.readline().strip().split(';')
+            if len(header_line) < 2:
+                f.seek(0)
+                header_line = f.readline().strip().split(',')
+                delim = ','
+            else:
+                delim = ';'
+
+        norm_headers = [_normalize_col(h) for h in header_line]
+        
+        idx_id = next((i for i, h in enumerate(norm_headers) if "coenti" in h), -1)
         idx_prem = next((i for i, h in enumerate(norm_headers) if "premioganho" in h), -1)
         if idx_prem == -1: 
             idx_prem = next((i for i, h in enumerate(norm_headers) if "premioemitido" in h), -1)
             
-        # 3. Sinistros: Prioriza 'sinistroretido'
         idx_claim = next((i for i, h in enumerate(norm_headers) if "sinistroretido" in h), -1)
         if idx_claim == -1:
             idx_claim = next((i for i, h in enumerate(norm_headers) if "sinistrodireto" in h), -1)
-        if idx_claim == -1:
-            idx_claim = next((i for i, h in enumerate(norm_headers) if "sinistro" in h), -1)
 
-        print(f"SES: Índices encontrados -> ID: {idx_id}, Prêmio: {idx_prem}, Sinistro: {idx_claim}")
+        print(f"DEBUG: Fin Índices -> ID: {idx_id}, Prêmio: {idx_prem}, Sinistro: {idx_claim}")
 
         if idx_id == -1 or idx_prem == -1:
-            print("SES: ERRO - Colunas financeiras críticas não encontradas.")
             return companies
 
         count = 0
         with gzip.open(fin_file, 'rt', encoding='latin-1') as f:
-            next(f) # Pula header
+            next(f)
             reader = csv.reader(f, delimiter=delim)
-            
             for row in reader:
-                if len(row) <= max(idx_id, idx_prem, idx_claim):
-                    continue
-                
+                if len(row) <= max(idx_id, idx_prem, idx_claim): continue
                 try:
-                    cod_raw = row[idx_id].strip()
-                    cod = re.sub(r"\D", "", cod_raw).zfill(5)
+                    cod = re.sub(r"\D", "", row[idx_id]).zfill(5)
                     
                     def parse_br(val):
-                        if not val:
-                            return 0.0
-                        clean = val.replace('.', '').replace(',', '.')
-                        try:
-                            return float(clean)
-                        except ValueError:
-                            return 0.0
+                        if not val: return 0.0
+                        return float(val.replace('.', '').replace(',', '.'))
 
                     prem = parse_br(row[idx_prem])
                     claim = parse_br(row[idx_claim]) if idx_claim != -1 else 0.0
 
-                    # Tenta encontrar a empresa no dicionário
-                    comp = companies.get(cod) or companies.get(cod.zfill(6)) or companies.get(str(int(cod)))
-                    
+                    comp = companies.get(cod) or companies.get(cod.zfill(6))
                     if comp:
                         comp["premiums"] += prem
                         comp["claims"] += claim
                         count += 1
-                except Exception:
-                    continue
-        
+                except: continue
         print(f"SES: Financeiro somado para {count} registros.")
-
     except Exception as e:
-        print(f"SES: Erro no processamento financeiro: {e}")
+        print(f"SES: Erro financeiro: {e}")
 
     return companies
 
@@ -242,28 +281,30 @@ def extract_ses_master_and_financials() -> tuple[SesMeta, dict[str, Any]]:
     cache_dir = Path(os.getenv("SES_CACHE_DIR", "data/raw/ses")).resolve()
     cache_dir.mkdir(parents=True, exist_ok=True)
 
-    # 1. Lista Empresas
+    # 1. Lista
     path_lista = cache_dir / "LISTAEMPRESAS.csv"
     _download_with_impersonation(url_lista, path_lista)
     companies = _parse_lista_empresas(path_lista)
 
-    # 2. Dados Financeiros
+    # 2. Dados (ZIP)
     path_zip = cache_dir / "BaseCompleta.zip"
-    if not (cache_dir / "Ses_seguros.csv.gz").exists():
+    # Se não tiver os 2 arquivos processados, baixa de novo
+    if not (cache_dir / "Ses_seguros.csv.gz").exists() or not (cache_dir / "Ses_pl_margem.csv.gz").exists():
         _download_with_impersonation(url_zip, path_zip)
         _extract_and_compress_files(path_zip, cache_dir)
-        if path_zip.exists():
-            path_zip.unlink()
+        if path_zip.exists(): path_zip.unlink()
     
     if companies:
         companies = _enrich_with_financials(companies, cache_dir)
+        companies = _enrich_with_solvency(companies, cache_dir) # NOVO PASSO
 
     files = [f.name for f in cache_dir.glob("*.gz")]
     meta = SesMeta(
         zip_url=url_zip,
         cias_file="LISTAEMPRESAS.csv",
-        seguros_file="Ses_seguros.csv.gz" if "Ses_seguros.csv.gz" in files else "",
+        seguros_file="Ses_seguros.csv.gz",
+        balanco_file="Ses_pl_margem.csv.gz",
         as_of=datetime.now().strftime("%Y-%m"),
-        warning="Pandas/ETL v7 - Force Semi-Colon"
+        warning="Pandas/ETL v8 - Full Solvency"
     )
     return meta, companies
