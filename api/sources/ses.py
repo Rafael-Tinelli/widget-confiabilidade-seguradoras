@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import csv
 import gzip
+import io
 import os
 import re
 import shutil
@@ -107,9 +108,17 @@ def _parse_lista_empresas(cache_path: Path) -> dict[str, dict[str, Any]]:
 
         df.columns = [_normalize_col(c) for c in df.columns]
         
-        col_cod = next((c for c in df.columns if c in ["coenti", "codigofip"]), None)
+        # DEBUG IMPORTANTE: Ver o que estamos lendo
+        print(f"DEBUG: Colunas da Lista Normalizadas: {list(df.columns)}")
+
+        # Lógica de Mapeamento "Permissiva" (Busca por substring)
+        col_cod = next((c for c in df.columns if "cod" in c and ("fip" in c or "ent" in c)), None)
+        if not col_cod: col_cod = next((c for c in df.columns if "coenti" in c), None) # Fallback Ses_cias
+
         col_cnpj = next((c for c in df.columns if "cnpj" in c), None)
-        col_nome = next((c for c in df.columns if c in ["noenti", "nomeentidade", "razaosocial"]), None)
+        
+        col_nome = next((c for c in df.columns if "nome" in c or "razao" in c), None)
+        if not col_nome: col_nome = next((c for c in df.columns if "noenti" in c), None) # Fallback Ses_cias
 
         print(f"DEBUG: Mapeado -> ID: {col_cod}, CNPJ: {col_cnpj}, Nome: {col_nome}")
 
@@ -153,8 +162,7 @@ def _enrich_with_financials(companies: dict, cache_dir: Path) -> dict:
                 delim = ';'
 
         norm_headers = [_normalize_col(h) for h in header_line]
-        print(f"DEBUG: Headers Normalizados (primeiros 15): {norm_headers[:15]}...")
-
+        
         # 1. ID da Empresa (coenti)
         idx_id = next((i for i, h in enumerate(norm_headers) if "coenti" in h), -1)
         
@@ -201,6 +209,7 @@ def _enrich_with_financials(companies: dict, cache_dir: Path) -> dict:
                     prem = parse_br(row[idx_prem])
                     claim = parse_br(row[idx_claim]) if idx_claim != -1 else 0.0
 
+                    # Tenta encontrar a empresa no dicionário
                     comp = companies.get(cod) or companies.get(cod.zfill(6)) or companies.get(str(int(cod)))
                     
                     if comp:
@@ -224,10 +233,12 @@ def extract_ses_master_and_financials() -> tuple[SesMeta, dict[str, Any]]:
     cache_dir = Path(os.getenv("SES_CACHE_DIR", "data/raw/ses")).resolve()
     cache_dir.mkdir(parents=True, exist_ok=True)
 
+    # 1. Lista Empresas
     path_lista = cache_dir / "LISTAEMPRESAS.csv"
     _download_with_impersonation(url_lista, path_lista)
     companies = _parse_lista_empresas(path_lista)
 
+    # 2. Dados Financeiros
     path_zip = cache_dir / "BaseCompleta.zip"
     if not (cache_dir / "Ses_seguros.csv.gz").exists():
         _download_with_impersonation(url_zip, path_zip)
@@ -235,7 +246,8 @@ def extract_ses_master_and_financials() -> tuple[SesMeta, dict[str, Any]]:
         if path_zip.exists():
             path_zip.unlink()
     
-    companies = _enrich_with_financials(companies, cache_dir)
+    if companies:
+        companies = _enrich_with_financials(companies, cache_dir)
 
     files = [f.name for f in cache_dir.glob("*.gz")]
     meta = SesMeta(
@@ -243,6 +255,6 @@ def extract_ses_master_and_financials() -> tuple[SesMeta, dict[str, Any]]:
         cias_file="LISTAEMPRESAS.csv",
         seguros_file="Ses_seguros.csv.gz" if "Ses_seguros.csv.gz" in files else "",
         as_of=datetime.now().strftime("%Y-%m"),
-        warning="Pandas/ETL v5 - Manual Match"
+        warning="Pandas/ETL v6 - Broad Match"
     )
     return meta, companies
