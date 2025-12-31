@@ -35,7 +35,9 @@ def calculate_reputation_score(reputation_data: dict) -> float:
         return 50.0 
     metrics = reputation_data.get("metrics", {})
     resolucao = metrics.get("resolution_rate") or 0.0
-    if resolucao > 1.0: resolucao /= 100.0
+    
+    if resolucao > 1.0:
+        resolucao /= 100.0
     
     satisfacao = metrics.get("satisfaction_avg") or 0.0
     satisfacao_norm = (satisfacao - 1) * 25
@@ -53,10 +55,14 @@ def calculate_opin_score(products: list) -> float:
 
 def determine_segment(data: dict) -> str:
     prem = data.get("premiums", 0.0)
-    if prem > 1_000_000_000: return "S1"
-    elif prem > 100_000_000: return "S2"
-    elif prem > 0: return "S3"
-    else: return "S4"
+    if prem > 1_000_000_000:
+        return "S1"
+    elif prem > 100_000_000:
+        return "S2"
+    elif prem > 0:
+        return "S3"
+    else:
+        return "S4"
 
 def calculate_score(insurer_obj: dict) -> dict:
     data = insurer_obj.get("data", {})
