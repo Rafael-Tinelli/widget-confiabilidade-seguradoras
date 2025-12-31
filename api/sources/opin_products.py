@@ -4,8 +4,11 @@ from __future__ import annotations
 import os
 import time
 import re
+import json
+import gzip
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 from typing import Any, List, Dict
 
 import requests
@@ -19,6 +22,10 @@ OPIN_PARTICIPANTS_URL = os.getenv(
     "OPIN_PARTICIPANTS_URL", 
     "https://data.directory.opinbrasil.com.br/participants"
 )
+
+# Diretório para salvar os arquivos que o build_insurers.py exige
+CACHE_DIR = Path("data/raw/opin")
+CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 FAMILY_KEYWORDS = {
     "auto": ["products-auto", "auto-insurance", "automovel", "vehicle"],
@@ -34,19 +41,27 @@ class OpinMeta:
     as_of: str = ""
     products_count: int = 0
     families_scanned: List[str] = None
+    # Campos exigidos pelo build_insurers.py
+    products_auto_file: str = ""
+    products_life_file: str = ""
+    products_home_file: str = ""
 
 class OpinResult(OpinMeta):
     """
-    Objeto híbrido para compatibilidade total com build_insurers.py.
+    Objeto híbrido que satisfaz TODAS as exigências do script legado.
     """
-    def __init__(self, meta: OpinMeta, data: dict):
+    def __init__(self, meta: OpinMeta, data: dict, stats: dict):
         super().__init__(
             source=meta.source,
             as_of=meta.as_of,
             products_count=meta.products_count,
-            families_scanned=meta.families_scanned
+            families_scanned=meta.families_scanned,
+            products_auto_file=meta.products_auto_file,
+            products_life_file=meta.products_life_file,
+            products_home_file=meta.products_home_file
         )
         self._data = data
+        self._stats = stats
 
     def __iter__(self):
         yield self
@@ -56,14 +71,9 @@ class OpinResult(OpinMeta):
     def data(self):
         return self._data
 
-    # --- A CORREÇÃO ESTÁ AQUI ---
     @property
     def stats(self) -> dict:
-        """Retorna estatísticas para satisfazer o build_insurers.py"""
-        return {
-            "products_count": self.products_count,
-            "families_scanned": self.families_scanned
-        }
+        return self._stats
 
 def _recursive_find_endpoints(data: Any, target_keywords: List[str]) -> str | None:
     if isinstance(data, dict):
@@ -98,10 +108,8 @@ def _crawl_products(discovery_url: str, family_key: str) -> List[Dict]:
     base_url = _get_api_base(discovery_url)
     target_url = base_url 
     
-    # print(f"    -> Crawling {family_key} em: {target_url}")
-    
     page = 1
-    # Reduzi para 5 páginas para ser mais rápido neste teste
+    # Limite conservador para garantir execução rápida
     while page <= 5: 
         try:
             resp = requests.get(
@@ -147,16 +155,34 @@ def _crawl_products(discovery_url: str, family_key: str) -> List[Dict]:
             
     return products
 
+def _save_category_file(products: List[Dict], category: str) -> str:
+    """Salva lista de produtos em JSON.GZ e retorna o nome do arquivo."""
+    filename = f"products_{category}.json.gz"
+    filepath = CACHE_DIR / filename
+    
+    try:
+        with gzip.open(filepath, "wt", encoding="utf-8") as f:
+            json.dump(products, f, ensure_ascii=False)
+        return filename
+    except Exception as e:
+        print(f"OPIN: Erro ao salvar {filename}: {e}")
+        return ""
+
 def extract_open_insurance_products() -> OpinResult:
     print("OPIN: Baixando lista de participantes...")
     
+    # 1. Busca Participantes
     try:
         resp = requests.get(OPIN_PARTICIPANTS_URL, timeout=30, verify=False)
         resp.raise_for_status()
         participants = resp.json()
     except Exception as e:
         print(f"OPIN: Falha fatal ao baixar participantes: {e}")
-        return OpinResult(OpinMeta(warning="Falha Download Participantes"), {})
+        # Retorna estrutura vazia válida
+        empty_meta = OpinMeta(
+            source="Open Insurance Brasil", products_auto_file="", products_life_file="", products_home_file=""
+        )
+        return OpinResult(empty_meta, {}, {"auto": 0, "life": 0, "home": 0})
 
     active_parts = [
         p for p in participants 
@@ -166,9 +192,11 @@ def extract_open_insurance_products() -> OpinResult:
     print(f"OPIN: {len(active_parts)} participantes ativos encontrados.")
     
     products_by_cnpj = {}
-    total_products = 0
+    all_products_flat = [] # Lista plana para separar por categoria depois
     
+    # 2. Crawling
     for p in active_parts:
+        # Extração CNPJ
         cnpj = None
         candidates = [
             p.get("RegistrationNumber"), 
@@ -187,8 +215,6 @@ def extract_open_insurance_products() -> OpinResult:
         if not cnpj:
             continue
         
-        name = next((n.get("OrganisationName") for n in p.get("AuthorisationServers", []) if "OrganisationName" in n), p.get("OrganisationName", "Unknown"))
-
         participant_products = []
         
         for family, keywords in FAMILY_KEYWORDS.items():
@@ -203,14 +229,38 @@ def extract_open_insurance_products() -> OpinResult:
             if cnpj not in products_by_cnpj:
                 products_by_cnpj[cnpj] = []
             products_by_cnpj[cnpj].extend(participant_products)
-            total_products += len(participant_products)
-            print(f"OPIN: +{len(participant_products)} produtos de {name} ({cnpj})")
+            all_products_flat.extend(participant_products)
+            # print(f"OPIN: +{len(participant_products)} produtos de {cnpj}")
 
+    # 3. Separação e Salvamento de Arquivos (Exigência do build_insurers.py)
+    stats = {}
+    files_map = {}
+    
+    for cat in ["auto", "life", "home"]:
+        # Filtra produtos da categoria
+        cat_prods = [p for p in all_products_flat if p.get("family") == cat]
+        
+        # Salva no disco
+        fname = _save_category_file(cat_prods, cat)
+        
+        # Registra estatísticas e nomes de arquivo
+        stats[cat] = len(cat_prods)
+        files_map[f"products_{cat}_file"] = fname
+        
+        if len(cat_prods) > 0:
+            print(f"OPIN: {len(cat_prods)} produtos de {cat} salvos em {fname}.")
+
+    total_products = len(all_products_flat)
+
+    # 4. Construção do Retorno
     meta = OpinMeta(
         as_of=datetime.now().strftime("%Y-%m-%d"),
         products_count=total_products,
-        families_scanned=list(FAMILY_KEYWORDS.keys())
+        families_scanned=list(FAMILY_KEYWORDS.keys()),
+        products_auto_file=files_map.get("products_auto_file", ""),
+        products_life_file=files_map.get("products_life_file", ""),
+        products_home_file=files_map.get("products_home_file", "")
     )
     
-    print(f"OPIN: Total final -> {total_products} produtos coletados de {len(products_by_cnpj)} seguradoras.")
-    return OpinResult(meta, products_by_cnpj)
+    print(f"OPIN: Total final -> {total_products} produtos coletados.")
+    return OpinResult(meta, products_by_cnpj, stats)
