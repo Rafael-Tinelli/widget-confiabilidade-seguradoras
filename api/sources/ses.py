@@ -59,11 +59,10 @@ def _download_with_impersonation(url: str, dest: Path) -> None:
         print(f"SES: Erro download: {e}")
 
 def _extract_and_compress_files(zip_path: Path, output_dir: Path) -> list[str]:
-    # Lista explícita do que precisamos
     target_map = {
         "ses_seguros": "Ses_seguros.csv",
         "ses_balanco": "Ses_balanco.csv",
-        "ses_pl_margem": "Ses_pl_margem.csv", # OBRIGATÓRIO PARA SOLVÊNCIA
+        "ses_pl_margem": "Ses_pl_margem.csv",
     }
     extracted = []
     
@@ -83,15 +82,11 @@ def _extract_and_compress_files(zip_path: Path, output_dir: Path) -> list[str]:
                 if found_name:
                     final_name = f"{target_name}.gz"
                     target_path = output_dir / final_name
-                    
-                    # Extrai sempre para garantir (sobreescreve)
                     print(f"SES: Extraindo {found_name} -> {final_name} ...")
                     with z.open(found_name) as source:
                         with gzip.open(target_path, "wb", compresslevel=9) as dest:
                             shutil.copyfileobj(source, dest)
                     extracted.append(final_name)
-                else:
-                    print(f"SES: AVISO - Arquivo {target_name} não encontrado no ZIP.")
     except Exception as e:
         print(f"SES: Erro extração ZIP: {e}")
         
@@ -111,7 +106,6 @@ def _parse_lista_empresas(cache_path: Path) -> dict[str, dict[str, Any]]:
             df = pd.read_csv(cache_path, sep=',', encoding="utf-8", dtype=str, on_bad_lines='skip')
 
         if len(df.columns) < 2:
-             # Fallback agressivo se o separador falhar
              df = pd.read_csv(cache_path, sep=None, engine='python', encoding="latin-1", dtype=str, on_bad_lines='skip')
 
         df.columns = [_normalize_col(c) for c in df.columns]
@@ -142,7 +136,8 @@ def _parse_lista_empresas(cache_path: Path) -> dict[str, dict[str, Any]]:
                             "premiums": 0.0, 
                             "claims": 0.0,
                             "net_worth": 0.0, 
-                            "solvency_margin": 0.0
+                            "solvency_margin": 0.0,
+                            "last_date": 0 # Rastreia a data do balanço
                         }
                         companies[cod.zfill(5)] = data
                         companies[cod.zfill(6)] = data
@@ -156,15 +151,13 @@ def _parse_lista_empresas(cache_path: Path) -> dict[str, dict[str, Any]]:
     return companies
 
 def _enrich_with_solvency(companies: dict, cache_dir: Path) -> dict:
-    """Lê Ses_pl_margem.csv.gz e preenche Patrimônio Líquido."""
+    """Lê Ses_pl_margem.csv.gz e preenche Patrimônio Líquido com lógica de data."""
     solv_file = cache_dir / "Ses_pl_margem.csv.gz"
     
-    # Se arquivo não existe, avisa mas não crasha
     if not solv_file.exists():
-        print(f"SES: ERRO - Arquivo {solv_file} não encontrado. Solvência será 0.")
         return companies
 
-    print("SES: Processando Solvência (PL/Margem)...")
+    print("SES: Processando Solvência (PL/Margem) com verificação de data...")
     try:
         with gzip.open(solv_file, 'rt', encoding='latin-1') as f:
             header_line = f.readline().strip().split(';')
@@ -178,18 +171,18 @@ def _enrich_with_solvency(companies: dict, cache_dir: Path) -> dict:
         norm_headers = [_normalize_col(h) for h in header_line]
         
         idx_id = next((i for i, h in enumerate(norm_headers) if "coenti" in h), -1)
-        # Patrimônio Líquido Ajustado (plajustado)
+        # Data (damesano)
+        idx_date = next((i for i, h in enumerate(norm_headers) if "damesano" in h or "data" in h), -1)
+        
         idx_pl = next((i for i, h in enumerate(norm_headers) if "plajustado" in h or "patrimonioliquido" in h), -1)
         if idx_pl == -1:
             idx_pl = next((i for i, h in enumerate(norm_headers) if "pla" in h), -1)
         
-        # Margem de Solvência
         idx_margem = next((i for i, h in enumerate(norm_headers) if "margem" in h), -1)
 
-        print(f"DEBUG: Solvência Índices -> ID: {idx_id}, PL: {idx_pl}, Margem: {idx_margem}")
+        print(f"DEBUG: Solvência Índices -> ID: {idx_id}, Data: {idx_date}, PL: {idx_pl}")
 
         if idx_id == -1 or idx_pl == -1:
-            print("SES: ERRO - Colunas de Solvência não mapeadas.")
             return companies
 
         count = 0
@@ -202,6 +195,14 @@ def _enrich_with_solvency(companies: dict, cache_dir: Path) -> dict:
                 try:
                     cod = re.sub(r"\D", "", row[idx_id]).zfill(5)
                     
+                    # Pega a data da linha (ex: 202312)
+                    current_date = 0
+                    if idx_date != -1 and len(row) > idx_date:
+                        try:
+                            current_date = int(re.sub(r"\D", "", row[idx_date]))
+                        except ValueError:
+                            current_date = 0
+
                     def parse_br(val):
                         if not val:
                             return 0.0
@@ -210,17 +211,19 @@ def _enrich_with_solvency(companies: dict, cache_dir: Path) -> dict:
                     pl = parse_br(row[idx_pl])
                     margem = parse_br(row[idx_margem]) if idx_margem != -1 else 0.0
 
-                    # Tenta encontrar a empresa e atualizar
-                    # (Sobrescreve o valor 0.0 inicial)
                     comp = companies.get(cod) or companies.get(cod.zfill(6))
                     if comp:
-                        comp["net_worth"] = pl
-                        comp["solvency_margin"] = margem
-                        count += 1
+                        # SÓ ATUALIZA SE A DATA FOR MAIOR OU IGUAL À QUE JÁ TEMOS
+                        # Isso garante que pegamos o balanço mais recente
+                        if current_date >= comp.get("last_date", 0):
+                            comp["net_worth"] = pl
+                            comp["solvency_margin"] = margem
+                            comp["last_date"] = current_date
+                            count += 1
                 except Exception:
                     continue
         
-        print(f"SES: Solvência atualizada para {count} registros.")
+        print(f"SES: Solvência atualizada para {count} registros (última data).")
 
     except Exception as e:
         print(f"SES: Erro processando solvência: {e}")
@@ -302,8 +305,6 @@ def extract_ses_master_and_financials() -> tuple[SesMeta, dict[str, Any]]:
     # 2. Dados (ZIP)
     path_zip = cache_dir / "BaseCompleta.zip"
     
-    # VERIFICAÇÃO RIGOROSA: Se faltar qualquer um dos 2 arquivos, baixa de novo
-    # Isso garante que 'Ses_pl_margem.csv.gz' será criado se não existir
     missing_financial = not (cache_dir / "Ses_seguros.csv.gz").exists()
     missing_solvency = not (cache_dir / "Ses_pl_margem.csv.gz").exists()
     
@@ -325,9 +326,9 @@ def extract_ses_master_and_financials() -> tuple[SesMeta, dict[str, Any]]:
     meta = SesMeta(
         zip_url=url_zip,
         cias_file="LISTAEMPRESAS.csv",
-        seguros_file="Ses_seguros.csv.gz" if "Ses_seguros.csv.gz" in files else "",
-        balanco_file="Ses_pl_margem.csv.gz" if "Ses_pl_margem.csv.gz" in files else "",
+        seguros_file="Ses_seguros.csv.gz",
+        balanco_file="Ses_pl_margem.csv.gz",
         as_of=datetime.now().strftime("%Y-%m"),
-        warning="Pandas/ETL v9 - Solvency Forced"
+        warning="Pandas/ETL v10 - Date Aware Solvency"
     )
     return meta, companies
