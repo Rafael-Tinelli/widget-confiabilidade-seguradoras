@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import csv
 import gzip
-import io
 import os
 import re
 import shutil
@@ -113,12 +112,14 @@ def _parse_lista_empresas(cache_path: Path) -> dict[str, dict[str, Any]]:
 
         # Lógica de Mapeamento "Permissiva" (Busca por substring)
         col_cod = next((c for c in df.columns if "cod" in c and ("fip" in c or "ent" in c)), None)
-        if not col_cod: col_cod = next((c for c in df.columns if "coenti" in c), None) # Fallback Ses_cias
+        if not col_cod:
+            col_cod = next((c for c in df.columns if "coenti" in c), None)
 
         col_cnpj = next((c for c in df.columns if "cnpj" in c), None)
         
         col_nome = next((c for c in df.columns if "nome" in c or "razao" in c), None)
-        if not col_nome: col_nome = next((c for c in df.columns if "noenti" in c), None) # Fallback Ses_cias
+        if not col_nome:
+            col_nome = next((c for c in df.columns if "noenti" in c), None)
 
         print(f"DEBUG: Mapeado -> ID: {col_cod}, CNPJ: {col_cnpj}, Nome: {col_nome}")
 
