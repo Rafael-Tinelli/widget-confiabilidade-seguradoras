@@ -77,12 +77,14 @@ def _recursive_find_endpoints(data: Any, target_keywords: List[str]) -> str | No
         for key, value in data.items():
             if isinstance(value, (dict, list)):
                 found = _recursive_find_endpoints(value, target_keywords)
-                if found: return found
+                if found:
+                    return found
             
     elif isinstance(data, list):
         for item in data:
             found = _recursive_find_endpoints(item, target_keywords)
-            if found: return found
+            if found:
+                return found
             
     return None
 
@@ -187,7 +189,8 @@ def extract_open_insurance_products() -> OpinResult:
                     cnpj = nums
                     break
         
-        if not cnpj: continue
+        if not cnpj:
+            continue
         
         # Busca produtos
         participant_products = []
