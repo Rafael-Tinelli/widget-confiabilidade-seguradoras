@@ -8,6 +8,7 @@ import os
 import re
 import shutil
 import zipfile
+import unicodedata
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -19,7 +20,6 @@ from curl_cffi import requests as cffi_requests
 SES_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-    "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
 }
 
 @dataclass
@@ -35,204 +35,205 @@ class SesMeta:
     window_months: int = 12
     warning: str = ""
 
+def _normalize_col(col_name: str) -> str:
+    """Padroniza nomes de colunas: remove acentos, espaços e underscores."""
+    if not isinstance(col_name, str):
+        return str(col_name)
+    nfkd = unicodedata.normalize('NFKD', col_name)
+    ascii_text = "".join([c for c in nfkd if not unicodedata.combining(c)])
+    return re.sub(r'[^a-z0-9]', '', ascii_text.lower())
+
 def _download_with_impersonation(url: str, dest: Path) -> None:
-    """Baixa arquivos tentando simular um browser real para evitar bloqueio WAF."""
     dest.parent.mkdir(parents=True, exist_ok=True)
     print(f"SES: Baixando {url}...")
     try:
         response = cffi_requests.get(
-            url,
-            headers=SES_HEADERS,
-            impersonate="chrome110",
-            timeout=600,
-            verify=False,
+            url, headers=SES_HEADERS, impersonate="chrome110", timeout=600, verify=False
         )
         response.raise_for_status()
-
-        content_start = response.content[:1000].lower()
-        if b"<!doctype" in content_start or b"<html" in content_start:
-            raise RuntimeError("Servidor retornou HTML (Bloqueio WAF) em vez de arquivo.")
-
+        
+        if b"<!doctype" in response.content[:500].lower():
+            raise RuntimeError("WAF Blocked (HTML returned)")
+            
         with open(dest, "wb") as f:
             f.write(response.content)
     except Exception as e:
-        print(f"SES: Erro no download: {e}")
-        raise
-
-def _filter_and_compress_balanco(source_stream, dest_path: Path):
-    """Lê o CSV linha a linha, descarta valores 0,00 e salva comprimido."""
-    text_reader = io.TextIOWrapper(source_stream, encoding="latin-1", newline="")
-    try:
-        sample = text_reader.read(1024)
-        text_reader.seek(0)
-        delim = ";" if sample.count(";") > sample.count(",") else ","
-    except Exception:
-        delim = ";"
-
-    reader = csv.DictReader(text_reader, delimiter=delim)
-    if not reader.fieldnames:
-        return
-
-    col_valor = next((h for h in reader.fieldnames if "valor" in h.lower()), None)
-    
-    if not col_valor:
-        print("SES: Coluna de valor não identificada no Balanço. Ignorando filtro.")
-        return 
-
-    print(f"SES: Otimizando Balanço... Coluna valor: {col_valor}")
-
-    with gzip.open(dest_path, "wt", encoding="latin-1", newline="", compresslevel=9) as f_out:
-        writer = csv.DictWriter(f_out, fieldnames=reader.fieldnames, delimiter=delim)
-        writer.writeheader()
-        kept = 0
-        for row in reader:
-            try:
-                val_str = row[col_valor].replace(".", "").replace(",", ".")
-                if float(val_str) != 0:
-                    writer.writerow(row)
-                    kept += 1
-            except ValueError:
-                writer.writerow(row)
-                kept += 1
-    print(f"SES: Balanço otimizado. Linhas mantidas: {kept}")
+        print(f"SES: Erro download: {e}")
 
 def _extract_and_compress_files(zip_path: Path, output_dir: Path) -> list[str]:
     target_map = {
         "ses_seguros": "Ses_seguros.csv",
         "ses_balanco": "Ses_balanco.csv",
-        "ses_pl_margem": "Ses_pl_margem.csv",
-        "ses_campos": "Ses_campos.csv",
     }
     extracted = []
+    
+    if not zip_path.exists():
+        return []
+
     try:
-        if not zipfile.is_zipfile(zip_path):
+        if not zipfile.is_zipfile(zip_path): 
+            print("SES: Arquivo ZIP inválido.")
             return []
+            
         with zipfile.ZipFile(zip_path, "r") as z:
             name_map = {n.lower(): n for n in z.namelist()}
             for target_key, target_name in target_map.items():
-                found_name = next((name_map[n] for n in name_map if target_name.lower() in n), None)
+                # Busca parcial para achar o arquivo certo dentro do ZIP
+                found_name = next((name_map[n] for n in name_map if target_name.lower().replace(".csv", "") in n), None)
+                
                 if found_name:
                     final_name = f"{target_name}.gz"
                     target_path = output_dir / final_name
-                    if target_path.exists() and target_path.stat().st_size > 1000:
-                         extracted.append(final_name)
-                         continue
                     print(f"SES: Extraindo {found_name} -> {final_name} ...")
                     with z.open(found_name) as source:
-                        if target_key == "ses_balanco":
-                            _filter_and_compress_balanco(source, target_path)
-                        else:
-                            with gzip.open(target_path, "wb", compresslevel=9) as dest:
-                                shutil.copyfileobj(source, dest)
+                        with gzip.open(target_path, "wb", compresslevel=9) as dest:
+                            shutil.copyfileobj(source, dest)
                     extracted.append(final_name)
     except Exception as e:
-        print(f"SES: Erro na extração: {e}")
+        print(f"SES: Erro extração ZIP: {e}")
+        
     return extracted
 
 def _parse_lista_empresas(cache_path: Path) -> dict[str, dict[str, Any]]:
-    """Lê o arquivo de cadastro de empresas."""
     companies = {}
-    print(f"SES: Lendo Lista de Empresas em {cache_path}...")
+    print(f"SES: Lendo Lista de Empresas ({cache_path.name})...")
     
+    if not cache_path.exists():
+        return {}
+
     try:
+        # Tenta ler com engine python que é mais tolerante
         try:
-            df = pd.read_csv(cache_path, sep=';', encoding="cp1252", dtype=str, on_bad_lines='skip')
+            df = pd.read_csv(cache_path, sep=None, engine='python', encoding="latin-1", dtype=str, on_bad_lines='skip')
         except Exception:
-            df = pd.read_csv(cache_path, sep=';', encoding="latin-1", dtype=str, on_bad_lines='skip')
+            df = pd.read_csv(cache_path, sep=None, engine='python', encoding="utf-8", dtype=str, on_bad_lines='skip')
 
-        df.columns = [c.lower().strip().replace("_", "").replace(" ", "").replace(".", "") for c in df.columns]
+        df.columns = [_normalize_col(c) for c in df.columns]
         
-        possible_cods = ["codigofip", "codfip", "fip", "coenti"]
-        possible_cnpjs = ["cnpj", "numcnpj", "nucnpj"]
-        possible_names = ["nomeentidade", "nome", "razaosocial", "noenti"]
+        # Mapeamento conforme PDF e Arquivos Manuais (Coenti, Noenti)
+        col_cod = next((c for c in df.columns if c in ["coenti", "codigofip"]), None)
+        col_cnpj = next((c for c in df.columns if "cnpj" in c), None)
+        col_nome = next((c for c in df.columns if c in ["noenti", "nomeentidade", "razaosocial"]), None)
 
-        col_cod = next((c for c in df.columns if c in possible_cods), None)
-        col_cnpj = next((c for c in df.columns if c in possible_cnpjs), None)
-        col_nome = next((c for c in df.columns if c in possible_names), None)
+        print(f"DEBUG: Mapeado -> ID: {col_cod}, CNPJ: {col_cnpj}, Nome: {col_nome}")
 
-        if not (col_cod and col_cnpj):
-            print(f"SES: ERRO - Colunas não identificadas na Lista de Empresas. Encontradas: {list(df.columns)}")
-            return {}
-
-        for _, row in df.iterrows():
-            try:
-                cod = re.sub(r"\D", "", str(row[col_cod]))
-                cnpj = re.sub(r"\D", "", str(row[col_cnpj]))
-                nome = str(row[col_nome]).strip() if col_nome else ""
-                
-                if cod and cnpj:
-                    data = {"cnpj": cnpj, "name": nome, "premiums": 0.0, "claims": 0.0}
-                    companies[cod.zfill(5)] = data
-                    companies[cod.zfill(6)] = data
-            except Exception:
-                continue
-                
+        if col_cod and col_cnpj:
+            count = 0
+            for _, row in df.iterrows():
+                try:
+                    cod = re.sub(r"\D", "", str(row[col_cod]))
+                    cnpj = re.sub(r"\D", "", str(row[col_cnpj]))
+                    nome = str(row[col_nome]).strip() if col_nome else ""
+                    
+                    if cod and cnpj:
+                        data = {"cnpj": cnpj, "name": nome, "premiums": 0.0, "claims": 0.0}
+                        companies[cod.zfill(5)] = data
+                        companies[cod.zfill(6)] = data
+                        count += 1
+                except Exception:
+                    continue
+            print(f"SES: {count} empresas carregadas.")
     except Exception as e:
-        print(f"SES: Erro crítico ao ler Lista de Empresas: {e}")
+        print(f"SES: Erro crítico ao ler Lista: {e}")
     
     return companies
 
 def _enrich_with_financials(companies: dict, cache_dir: Path) -> dict:
     fin_file = cache_dir / "Ses_seguros.csv.gz"
     if not fin_file.exists():
+        print("SES: Arquivo financeiro não encontrado.")
         return companies
 
-    print("SES: Calculando métricas financeiras...")
+    print("SES: Processando Financeiro (Modo Cirúrgico)...")
     try:
-        df = pd.read_csv(
-            fin_file, 
-            compression='gzip', 
-            encoding='latin-1', 
-            sep=';', 
-            decimal=',',
-            low_memory=False,
-            on_bad_lines='skip'
-        )
-        
-        df.columns = [c.lower().strip() for c in df.columns]
-        
-        col_id = next((c for c in df.columns if c.startswith("co_enti") or c == "coenti"), None)
-        
-        col_prem = next((c for c in df.columns if "premio" in c and "ganho" in c), None)
-        if not col_prem:
-            col_prem = next((c for c in df.columns if "premio" in c and "emitido" in c), None)
-        
-        col_claim = next((c for c in df.columns if "sinistro" in c and "ocorrido" in c), None)
-        if not col_claim:
-            col_claim = next((c for c in df.columns if "sinistro" in c), None)
-
-        print(f"SES: Colunas Financeiras -> ID: {col_id} | Prêmio: {col_prem} | Sinistro: {col_claim}")
-
-        if col_id and col_prem:
-            df[col_id] = df[col_id].astype(str).str.replace(r'\D', '', regex=True)
+        # Lê apenas o cabeçalho para mapear índices
+        with gzip.open(fin_file, 'rt', encoding='latin-1') as f:
+            header_line = f.readline().strip().split(';')
             
-            for c in [col_prem, col_claim]:
-                if c:
-                    df[c] = pd.to_numeric(df[c], errors='coerce').fillna(0)
+            # Fallback se separador for vírgula
+            if len(header_line) < 2:
+                f.seek(0)
+                header_line = f.readline().strip().split(',')
+                delim = ','
+            else:
+                delim = ';'
 
-            cols = [col_prem]
-            if col_claim:
-                cols.append(col_claim)
+        # Normaliza os nomes das colunas (remove acentos e espaços)
+        norm_headers = [_normalize_col(h) for h in header_line]
+        print(f"DEBUG: Headers Normalizados (primeiros 15): {norm_headers[:15]}...")
+
+        # --- MAPEAMENTO CRÍTICO (BASEADO NO SEU DIAGNÓSTICO) ---
+        
+        # 1. ID da Empresa (coenti)
+        idx_id = next((i for i, h in enumerate(norm_headers) if "coenti" in h), -1)
+        
+        # 2. Prêmios: Prioridade para "premio_ganho"
+        idx_prem = next((i for i, h in enumerate(norm_headers) if "premioganho" in h), -1)
+        if idx_prem == -1: 
+            idx_prem = next((i for i, h in enumerate(norm_headers) if "premioemitido" in h), -1)
             
-            grouped = df.groupby(col_id)[cols].sum()
+        # 3. Sinistros: AQUI ESTÁ A CORREÇÃO PRINCIPAL
+        # Prioriza 'sinistroretido' porque 'sinistroocorrido' vem zerado
+        idx_claim = next((i for i, h in enumerate(norm_headers) if "sinistroretido" in h), -1)
+        
+        # Fallback apenas se não achar o retido
+        if idx_claim == -1:
+            idx_claim = next((i for i, h in enumerate(norm_headers) if "sinistrodireto" in h), -1)
+        if idx_claim == -1:
+            idx_claim = next((i for i, h in enumerate(norm_headers) if "sinistro" in h), -1)
 
-            updated = 0
-            for code, row in grouped.iterrows():
-                code_str = str(code).zfill(5)
-                comp = companies.get(code_str) or companies.get(str(code)) or companies.get(str(code).zfill(6))
+        print(f"SES: Índices encontrados -> ID: {idx_id}, Prêmio: {idx_prem}, Sinistro: {idx_claim}")
+
+        if idx_id == -1 or idx_prem == -1:
+            print("SES: ERRO - Colunas financeiras críticas não encontradas.")
+            return companies
+
+        # Leitura linha a linha (não usa Pandas para evitar memory overflow)
+        count = 0
+        with gzip.open(fin_file, 'rt', encoding='latin-1') as f:
+            # Pula o header que já lemos
+            next(f)
+            reader = csv.reader(f, delimiter=delim)
+            
+            for row in reader:
+                # Pula linhas quebradas
+                if len(row) <= max(idx_id, idx_prem, idx_claim):
+                    continue
                 
-                if comp:
-                    comp["premiums"] = float(row[col_prem])
-                    if col_claim:
-                        comp["claims"] = float(row[col_claim])
-                    updated += 1
-            
-            print(f"SES: Dados financeiros atribuídos para {updated} empresas.")
-        else:
-            print(f"SES: ERRO - Colunas não encontradas. Headers disponíveis: {list(df.columns)}")
+                try:
+                    # Normaliza código da empresa
+                    cod_raw = row[idx_id].strip()
+                    cod = re.sub(r"\D", "", cod_raw).zfill(5)
+                    
+                    # Parser Brasileiro Manual (1.000,00 -> 1000.00)
+                    def parse_br(val):
+                        if not val: return 0.0
+                        clean = val.replace('.', '').replace(',', '.')
+                        try:
+                            return float(clean)
+                        except:
+                            return 0.0
+
+                    prem = parse_br(row[idx_prem])
+                    
+                    # Se achou coluna de sinistro, pega o valor, senão 0
+                    claim = parse_br(row[idx_claim]) if idx_claim != -1 else 0.0
+
+                    # Tenta encontrar a empresa no dicionário
+                    # Tenta com 5 digitos, 6 digitos ou numérico
+                    comp = companies.get(cod) or companies.get(cod.zfill(6)) or companies.get(str(int(cod)))
+                    
+                    if comp:
+                        comp["premiums"] += prem
+                        comp["claims"] += claim
+                        count += 1
+                except:
+                    continue
+        
+        print(f"SES: Financeiro somado para {count} registros.")
 
     except Exception as e:
-        print(f"SES: Erro ao processar financeiro: {e}")
+        print(f"SES: Erro no processamento financeiro: {e}")
 
     return companies
 
@@ -245,11 +246,8 @@ def extract_ses_master_and_financials() -> tuple[SesMeta, dict[str, Any]]:
 
     # 1. Lista Empresas
     path_lista = cache_dir / "LISTAEMPRESAS.csv"
-    if not path_lista.exists() or path_lista.stat().st_size < 100:
-        _download_with_impersonation(url_lista, path_lista)
-    
+    _download_with_impersonation(url_lista, path_lista)
     companies = _parse_lista_empresas(path_lista)
-    print(f"SES: {len(companies)} empresas identificadas na lista mestre.")
 
     # 2. Dados Financeiros
     path_zip = cache_dir / "BaseCompleta.zip"
@@ -267,7 +265,6 @@ def extract_ses_master_and_financials() -> tuple[SesMeta, dict[str, Any]]:
         cias_file="LISTAEMPRESAS.csv",
         seguros_file="Ses_seguros.csv.gz" if "Ses_seguros.csv.gz" in files else "",
         as_of=datetime.now().strftime("%Y-%m"),
-        warning="Pandas/ETL v2"
+        warning="Pandas/ETL v5 - Manual Match"
     )
-
     return meta, companies
