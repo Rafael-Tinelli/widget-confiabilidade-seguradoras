@@ -100,18 +100,26 @@ def _parse_lista_empresas(cache_path: Path) -> dict[str, dict[str, Any]]:
         return {}
 
     try:
+        # CORREÇÃO: Força separador ';' e encoding 'latin-1' (Padrão SUSEP)
+        # O modo 'python' com sep=None estava falhando.
         try:
-            df = pd.read_csv(cache_path, sep=None, engine='python', encoding="latin-1", dtype=str, on_bad_lines='skip')
+            df = pd.read_csv(cache_path, sep=';', encoding="latin-1", dtype=str, on_bad_lines='skip')
         except Exception:
-            df = pd.read_csv(cache_path, sep=None, engine='python', encoding="utf-8", dtype=str, on_bad_lines='skip')
+            # Tenta UTF-8 se falhar
+            df = pd.read_csv(cache_path, sep=';', encoding="utf-8", dtype=str, on_bad_lines='skip')
+
+        # Se ainda assim tiver 1 coluna só, tenta vírgula
+        if len(df.columns) < 2:
+             print("SES: Aviso - Separador ';' falhou, tentando ','...")
+             df = pd.read_csv(cache_path, sep=',', encoding="latin-1", dtype=str, on_bad_lines='skip')
 
         df.columns = [_normalize_col(c) for c in df.columns]
-        
-        # DEBUG IMPORTANTE: Ver o que estamos lendo
         print(f"DEBUG: Colunas da Lista Normalizadas: {list(df.columns)}")
 
-        # Lógica de Mapeamento "Permissiva" (Busca por substring)
+        # Busca Inteligente (Broad Match)
+        # Procura por 'cod' E ('fip' OU 'ent') -> Pega 'CodigoFip', 'Coenti', etc.
         col_cod = next((c for c in df.columns if "cod" in c and ("fip" in c or "ent" in c)), None)
+        # Fallback explícito para 'coenti'
         if not col_cod:
             col_cod = next((c for c in df.columns if "coenti" in c), None)
 
@@ -256,6 +264,6 @@ def extract_ses_master_and_financials() -> tuple[SesMeta, dict[str, Any]]:
         cias_file="LISTAEMPRESAS.csv",
         seguros_file="Ses_seguros.csv.gz" if "Ses_seguros.csv.gz" in files else "",
         as_of=datetime.now().strftime("%Y-%m"),
-        warning="Pandas/ETL v6 - Broad Match"
+        warning="Pandas/ETL v7 - Force Semi-Colon"
     )
     return meta, companies
