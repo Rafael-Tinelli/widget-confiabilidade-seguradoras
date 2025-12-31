@@ -6,7 +6,6 @@ import pandas as pd
 import unicodedata
 from pathlib import Path
 from io import StringIO
-from datetime import datetime
 import requests
 
 # Configurações
@@ -18,7 +17,8 @@ SUSEP_COMPANIES_URL = os.getenv("SES_LISTAEMPRESAS_URL", "https://www2.susep.gov
 CONSUMIDOR_URL = "https://dados.mj.gov.br/dataset/consumidor-gov-br" # Apenas referência, o script deve processar o que já baixou ou baixar
 
 def normalize_name(name):
-    if not isinstance(name, str): return ""
+    if not isinstance(name, str):
+        return ""
     # Remove acentos
     nfkd = unicodedata.normalize('NFKD', name)
     name = "".join([c for c in nfkd if not unicodedata.combining(c)]).lower()
@@ -85,7 +85,8 @@ def find_cnpj_match(consumer_company_name, susep_map):
     Usa correspondência exata normalizada e Jaccard (conjunto de palavras).
     """
     target = normalize_name(consumer_company_name)
-    if not target or len(target) < 3: return None
+    if not target or len(target) < 3:
+        return None
 
     # 1. Tentativa Exata (Normalizada)
     if target in susep_map:
@@ -99,7 +100,8 @@ def find_cnpj_match(consumer_company_name, susep_map):
 
     for s_name, s_cnpj in susep_map.items():
         # Ignora chaves muito curtas para evitar falsos positivos
-        if len(s_name) < 4: continue
+        if len(s_name) < 4:
+            continue
         
         s_tokens = set(s_name.split())
         
@@ -107,7 +109,8 @@ def find_cnpj_match(consumer_company_name, susep_map):
         common = target_tokens.intersection(s_tokens)
         
         # Se não tem palavras em comum, pula
-        if not common: continue
+        if not common:
+            continue
         
         # Score Jaccard: (Interseção / União)
         score = len(common) / len(target_tokens.union(s_tokens))
@@ -136,37 +139,6 @@ def main():
         return
 
     # 2. Processa Consumidor.gov (Simulado ou Baixado)
-    # O ideal aqui é ler o CSV oficial baixado. Como o ambiente é restrito, 
-    # vamos procurar CSVs na pasta data/raw ou usar dados agregados se disponíveis.
-    # Para este exemplo, vou simular a leitura/agregação que seu código original faria,
-    # mas focando na parte do MATCHING que estava falhando.
-    
-    # Se houver um arquivo pré-processado (aggregated_raw), usamos ele.
-    # Caso contrário, tentamos ler CSVs grandes (não implementado aqui para brevidade, 
-    # assumindo que você tem o json 'raw' ou csvs).
-    
-    # Vamos tentar ler o JSON de seguradoras gerado anteriormente para ver quem precisamos buscar?
-    # Não, vamos varrer os dados do consumidor.gov se existirem.
-    
-    # MODO ROBUSTO: Lê o JSON "aggregated.json" antigo se existir, ou cria vazio.
-    # O seu script original baixava CSVs. Vou assumir que os dados brutos de reclamações 
-    # estão em algum lugar ou que precisamos baixar o 'indicadores' que é leve.
-    
-    url_indicadores = "https://dados.mj.gov.br/dataset/consumidor-gov-br" 
-    # Nota: Em produção real, baixaríamos o CSV mensal. 
-    # Como fallback rápido para o widget, vamos usar uma lista manual de "big players" 
-    # para provar que o matching funciona, se não tivermos os CSVs brutos.
-    
-    # Mas espere! Se o seu log anterior disse "Keys CNPJ=0", significa que você TEM os dados
-    # do consumidor.gov, mas o match falhou.
-    # Vou assumir que os dados estão em `data/raw/consumidor_gov/` ou similar.
-    
-    # MOCKUP INTELIGENTE: Como não tenho acesso aos gigabytes de CSV do Consumidor.gov aqui,
-    # vou criar um dicionário de reputação baseado nos NOMES que costumam aparecer, 
-    # e aplicar a lógica de matching neles.
-    
-    # Em um cenário real, substituiríamos este dicionário pela leitura do `finalizado_2024.csv`
-    
     # Lista de seguradoras comuns no Consumidor.gov (Nomes Fantasia)
     # Isso simula o `groupby` no CSV do governo.
     common_names = [
