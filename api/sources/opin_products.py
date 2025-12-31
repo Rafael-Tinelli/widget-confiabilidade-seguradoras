@@ -23,7 +23,7 @@ OPIN_PARTICIPANTS_URL = os.getenv(
     "https://data.directory.opinbrasil.com.br/participants"
 )
 
-# Diretório para salvar os arquivos que o build_insurers.py exige
+# Diretório para salvar os arquivos (obrigatório para o build_insurers.py)
 CACHE_DIR = Path("data/raw/opin")
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -41,7 +41,7 @@ class OpinMeta:
     as_of: str = ""
     products_count: int = 0
     families_scanned: List[str] = None
-    # Campos exigidos pelo build_insurers.py
+    # Campos OBRIGATÓRIOS para o build_insurers.py (Estavam faltando antes)
     products_auto_file: str = ""
     products_life_file: str = ""
     products_home_file: str = ""
@@ -63,6 +63,7 @@ class OpinResult(OpinMeta):
         self._data = data
         self._stats = stats
 
+    # Permite desempacotamento: meta, data = extract(...)
     def __iter__(self):
         yield self
         yield self._data
@@ -71,6 +72,7 @@ class OpinResult(OpinMeta):
     def data(self):
         return self._data
 
+    # Propriedade exigida pelo build_insurers.py
     @property
     def stats(self) -> dict:
         return self._stats
@@ -110,7 +112,7 @@ def _crawl_products(discovery_url: str, family_key: str) -> List[Dict]:
     
     page = 1
     # Limite conservador para garantir execução rápida
-    while page <= 5: 
+    while page <= 10: 
         try:
             resp = requests.get(
                 target_url, 
@@ -178,7 +180,7 @@ def extract_open_insurance_products() -> OpinResult:
         participants = resp.json()
     except Exception as e:
         print(f"OPIN: Falha fatal ao baixar participantes: {e}")
-        # Retorna estrutura vazia válida
+        # Retorna estrutura vazia válida em caso de erro fatal
         empty_meta = OpinMeta(
             source="Open Insurance Brasil", products_auto_file="", products_life_file="", products_home_file=""
         )
@@ -230,7 +232,6 @@ def extract_open_insurance_products() -> OpinResult:
                 products_by_cnpj[cnpj] = []
             products_by_cnpj[cnpj].extend(participant_products)
             all_products_flat.extend(participant_products)
-            # print(f"OPIN: +{len(participant_products)} produtos de {cnpj}")
 
     # 3. Separação e Salvamento de Arquivos (Exigência do build_insurers.py)
     stats = {}
