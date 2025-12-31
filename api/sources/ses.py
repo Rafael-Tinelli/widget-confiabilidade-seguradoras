@@ -35,7 +35,6 @@ class SesMeta:
     warning: str = ""
 
 def _normalize_col(col_name: str) -> str:
-    """Padroniza nomes de colunas: remove acentos, espaços e underscores."""
     if not isinstance(col_name, str):
         return str(col_name)
     nfkd = unicodedata.normalize('NFKD', col_name)
@@ -60,10 +59,11 @@ def _download_with_impersonation(url: str, dest: Path) -> None:
         print(f"SES: Erro download: {e}")
 
 def _extract_and_compress_files(zip_path: Path, output_dir: Path) -> list[str]:
+    # Lista explícita do que precisamos
     target_map = {
         "ses_seguros": "Ses_seguros.csv",
         "ses_balanco": "Ses_balanco.csv",
-        "ses_pl_margem": "Ses_pl_margem.csv",
+        "ses_pl_margem": "Ses_pl_margem.csv", # OBRIGATÓRIO PARA SOLVÊNCIA
     }
     extracted = []
     
@@ -78,17 +78,20 @@ def _extract_and_compress_files(zip_path: Path, output_dir: Path) -> list[str]:
         with zipfile.ZipFile(zip_path, "r") as z:
             name_map = {n.lower(): n for n in z.namelist()}
             for target_key, target_name in target_map.items():
-                # Busca parcial
                 found_name = next((name_map[n] for n in name_map if target_name.lower().replace(".csv", "") in n), None)
                 
                 if found_name:
                     final_name = f"{target_name}.gz"
                     target_path = output_dir / final_name
+                    
+                    # Extrai sempre para garantir (sobreescreve)
                     print(f"SES: Extraindo {found_name} -> {final_name} ...")
                     with z.open(found_name) as source:
                         with gzip.open(target_path, "wb", compresslevel=9) as dest:
                             shutil.copyfileobj(source, dest)
                     extracted.append(final_name)
+                else:
+                    print(f"SES: AVISO - Arquivo {target_name} não encontrado no ZIP.")
     except Exception as e:
         print(f"SES: Erro extração ZIP: {e}")
         
@@ -102,11 +105,14 @@ def _parse_lista_empresas(cache_path: Path) -> dict[str, dict[str, Any]]:
         return {}
 
     try:
-        # Tenta ler com engine python que é mais tolerante
         try:
             df = pd.read_csv(cache_path, sep=';', encoding="latin-1", dtype=str, on_bad_lines='skip')
         except Exception:
             df = pd.read_csv(cache_path, sep=',', encoding="utf-8", dtype=str, on_bad_lines='skip')
+
+        if len(df.columns) < 2:
+             # Fallback agressivo se o separador falhar
+             df = pd.read_csv(cache_path, sep=None, engine='python', encoding="latin-1", dtype=str, on_bad_lines='skip')
 
         df.columns = [_normalize_col(c) for c in df.columns]
         
@@ -115,7 +121,6 @@ def _parse_lista_empresas(cache_path: Path) -> dict[str, dict[str, Any]]:
             col_cod = next((c for c in df.columns if "coenti" in c), None)
 
         col_cnpj = next((c for c in df.columns if "cnpj" in c), None)
-        
         col_nome = next((c for c in df.columns if "nome" in c or "razao" in c), None)
         if not col_nome:
             col_nome = next((c for c in df.columns if "noenti" in c), None)
@@ -131,13 +136,12 @@ def _parse_lista_empresas(cache_path: Path) -> dict[str, dict[str, Any]]:
                     nome = str(row[col_nome]).strip() if col_nome else ""
                     
                     if cod and cnpj:
-                        # Inicializa com ZEROS para evitar erro de cálculo depois
                         data = {
                             "cnpj": cnpj, 
                             "name": nome, 
                             "premiums": 0.0, 
                             "claims": 0.0,
-                            "net_worth": 0.0,
+                            "net_worth": 0.0, 
                             "solvency_margin": 0.0
                         }
                         companies[cod.zfill(5)] = data
@@ -152,10 +156,12 @@ def _parse_lista_empresas(cache_path: Path) -> dict[str, dict[str, Any]]:
     return companies
 
 def _enrich_with_solvency(companies: dict, cache_dir: Path) -> dict:
-    """Lê Ses_pl_margem.csv.gz e preenche Patrimônio Líquido e Margem."""
+    """Lê Ses_pl_margem.csv.gz e preenche Patrimônio Líquido."""
     solv_file = cache_dir / "Ses_pl_margem.csv.gz"
+    
+    # Se arquivo não existe, avisa mas não crasha
     if not solv_file.exists():
-        print("SES: Arquivo de Solvência (PL/Margem) não encontrado.")
+        print(f"SES: ERRO - Arquivo {solv_file} não encontrado. Solvência será 0.")
         return companies
 
     print("SES: Processando Solvência (PL/Margem)...")
@@ -173,14 +179,16 @@ def _enrich_with_solvency(companies: dict, cache_dir: Path) -> dict:
         
         idx_id = next((i for i, h in enumerate(norm_headers) if "coenti" in h), -1)
         # Patrimônio Líquido Ajustado (plajustado)
-        idx_pl = next((i for i, h in enumerate(norm_headers) if "pla" in h or "patrimonio" in h), -1)
-        # Margem de Solvência (margem)
+        idx_pl = next((i for i, h in enumerate(norm_headers) if "plajustado" in h or "patrimonioliquido" in h), -1)
+        if idx_pl == -1: idx_pl = next((i for i, h in enumerate(norm_headers) if "pla" in h), -1)
+        
+        # Margem de Solvência
         idx_margem = next((i for i, h in enumerate(norm_headers) if "margem" in h), -1)
 
         print(f"DEBUG: Solvência Índices -> ID: {idx_id}, PL: {idx_pl}, Margem: {idx_margem}")
 
         if idx_id == -1 or idx_pl == -1:
-            print("SES: ERRO - Colunas de Solvência não encontradas.")
+            print("SES: ERRO - Colunas de Solvência não mapeadas.")
             return companies
 
         count = 0
@@ -194,13 +202,14 @@ def _enrich_with_solvency(companies: dict, cache_dir: Path) -> dict:
                     cod = re.sub(r"\D", "", row[idx_id]).zfill(5)
                     
                     def parse_br(val):
-                        if not val:
-                            return 0.0
+                        if not val: return 0.0
                         return float(val.replace('.', '').replace(',', '.'))
 
                     pl = parse_br(row[idx_pl])
                     margem = parse_br(row[idx_margem]) if idx_margem != -1 else 0.0
 
+                    # Tenta encontrar a empresa e atualizar
+                    # (Sobrescreve o valor 0.0 inicial)
                     comp = companies.get(cod) or companies.get(cod.zfill(6))
                     if comp:
                         comp["net_worth"] = pl
@@ -245,9 +254,6 @@ def _enrich_with_financials(companies: dict, cache_dir: Path) -> dict:
 
         print(f"DEBUG: Fin Índices -> ID: {idx_id}, Prêmio: {idx_prem}, Sinistro: {idx_claim}")
 
-        if idx_id == -1 or idx_prem == -1:
-            return companies
-
         count = 0
         with gzip.open(fin_file, 'rt', encoding='latin-1') as f:
             next(f)
@@ -259,8 +265,7 @@ def _enrich_with_financials(companies: dict, cache_dir: Path) -> dict:
                     cod = re.sub(r"\D", "", row[idx_id]).zfill(5)
                     
                     def parse_br(val):
-                        if not val:
-                            return 0.0
+                        if not val: return 0.0
                         return float(val.replace('.', '').replace(',', '.'))
 
                     prem = parse_br(row[idx_prem])
@@ -293,24 +298,33 @@ def extract_ses_master_and_financials() -> tuple[SesMeta, dict[str, Any]]:
 
     # 2. Dados (ZIP)
     path_zip = cache_dir / "BaseCompleta.zip"
-    # Se não tiver os 2 arquivos processados, baixa de novo
-    if not (cache_dir / "Ses_seguros.csv.gz").exists() or not (cache_dir / "Ses_pl_margem.csv.gz").exists():
+    
+    # VERIFICAÇÃO RIGOROSA: Se faltar qualquer um dos 2 arquivos, baixa de novo
+    # Isso garante que 'Ses_pl_margem.csv.gz' será criado se não existir
+    missing_financial = not (cache_dir / "Ses_seguros.csv.gz").exists()
+    missing_solvency = not (cache_dir / "Ses_pl_margem.csv.gz").exists()
+    
+    if missing_financial or missing_solvency:
+        print("SES: Arquivos de cache incompletos. Baixando ZIP...")
         _download_with_impersonation(url_zip, path_zip)
         _extract_and_compress_files(path_zip, cache_dir)
         if path_zip.exists():
             path_zip.unlink()
     
     if companies:
+        print("DEBUG: Iniciando enriquecimento de dados...")
         companies = _enrich_with_financials(companies, cache_dir)
+        
+        print("DEBUG: Chamando enriquecimento de solvência...")
         companies = _enrich_with_solvency(companies, cache_dir)
 
     files = [f.name for f in cache_dir.glob("*.gz")]
     meta = SesMeta(
         zip_url=url_zip,
         cias_file="LISTAEMPRESAS.csv",
-        seguros_file="Ses_seguros.csv.gz" if "Ses_seguros.csv.gz" in files else "",
-        balanco_file="Ses_pl_margem.csv.gz" if "Ses_pl_margem.csv.gz" in files else "",
+        seguros_file="Ses_seguros.csv.gz",
+        balanco_file="Ses_pl_margem.csv.gz",
         as_of=datetime.now().strftime("%Y-%m"),
-        warning="Pandas/ETL v8 - Full Solvency"
+        warning="Pandas/ETL v9 - Solvency Forced"
     )
     return meta, companies
