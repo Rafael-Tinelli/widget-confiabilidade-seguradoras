@@ -1,6 +1,5 @@
 # api/intelligence.py
 import math
-import numpy as np
 
 def calculate_solvency_score(data: dict) -> float:
     """
@@ -56,7 +55,8 @@ def calculate_reputation_score(reputation_data: dict) -> float:
     
     # 1. Índice de Solução (Peso 60%)
     resolucao = metrics.get("resolution_rate") or 0.0
-    if resolucao > 1.0: resolucao /= 100.0 # Normaliza se vier 80.0
+    if resolucao > 1.0:
+        resolucao /= 100.0 # Normaliza se vier 80.0
     
     # 2. Satisfação (Peso 40%)
     satisfacao = metrics.get("satisfaction_avg") or 0.0
