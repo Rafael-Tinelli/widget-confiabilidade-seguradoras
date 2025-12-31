@@ -67,7 +67,7 @@ def _filter_and_compress_balanco(source_stream, dest_path: Path):
         text_reader.seek(0)
         delim = ";" if sample.count(";") > sample.count(",") else ","
     except Exception:
-        delim = ";" # Fallback seguro para SUSEP
+        delim = ";"
 
     reader = csv.DictReader(text_reader, delimiter=delim)
     if not reader.fieldnames:
@@ -135,17 +135,13 @@ def _parse_lista_empresas(cache_path: Path) -> dict[str, dict[str, Any]]:
     print(f"SES: Lendo Lista de Empresas em {cache_path}...")
     
     try:
-        # Tenta ler forçando separador ; e encoding cp1252 (padrão Excel BR)
         try:
             df = pd.read_csv(cache_path, sep=';', encoding="cp1252", dtype=str, on_bad_lines='skip')
         except Exception:
-            # Fallback para latin-1
             df = pd.read_csv(cache_path, sep=';', encoding="latin-1", dtype=str, on_bad_lines='skip')
 
-        # Normaliza colunas
         df.columns = [c.lower().strip().replace("_", "").replace(" ", "").replace(".", "") for c in df.columns]
         
-        # Debug: Mostra colunas encontradas se der erro
         possible_cods = ["codigofip", "codfip", "fip", "coenti"]
         possible_cnpjs = ["cnpj", "numcnpj", "nucnpj"]
         possible_names = ["nomeentidade", "nome", "razaosocial", "noenti"]
@@ -166,8 +162,8 @@ def _parse_lista_empresas(cache_path: Path) -> dict[str, dict[str, Any]]:
                 
                 if cod and cnpj:
                     data = {"cnpj": cnpj, "name": nome, "premiums": 0.0, "claims": 0.0}
-                    companies[cod.zfill(5)] = data # Ex: 01234
-                    companies[cod.zfill(6)] = data # Ex: 001234
+                    companies[cod.zfill(5)] = data
+                    companies[cod.zfill(6)] = data
             except Exception:
                 continue
                 
@@ -183,7 +179,6 @@ def _enrich_with_financials(companies: dict, cache_dir: Path) -> dict:
 
     print("SES: Calculando métricas financeiras...")
     try:
-        # Lê o CSV financeiro
         df = pd.read_csv(
             fin_file, 
             compression='gzip', 
@@ -196,10 +191,8 @@ def _enrich_with_financials(companies: dict, cache_dir: Path) -> dict:
         
         df.columns = [c.lower().strip() for c in df.columns]
         
-        # Procura coluna de ID da entidade
         col_id = next((c for c in df.columns if c.startswith("co_enti") or c == "coenti"), None)
         
-        # Procura colunas de valor
         col_prem = next((c for c in df.columns if "premio" in c and "ganho" in c), None)
         if not col_prem:
             col_prem = next((c for c in df.columns if "premio" in c and "emitido" in c), None)
@@ -211,23 +204,21 @@ def _enrich_with_financials(companies: dict, cache_dir: Path) -> dict:
         print(f"SES: Colunas Financeiras -> ID: {col_id} | Prêmio: {col_prem} | Sinistro: {col_claim}")
 
         if col_id and col_prem:
-            # Limpa ID
             df[col_id] = df[col_id].astype(str).str.replace(r'\D', '', regex=True)
             
-            # Converte valores
             for c in [col_prem, col_claim]:
                 if c:
                     df[c] = pd.to_numeric(df[c], errors='coerce').fillna(0)
 
             cols = [col_prem]
-            if col_claim: cols.append(col_claim)
+            if col_claim:
+                cols.append(col_claim)
             
             grouped = df.groupby(col_id)[cols].sum()
 
             updated = 0
             for code, row in grouped.iterrows():
                 code_str = str(code).zfill(5)
-                # Tenta chaves variadas
                 comp = companies.get(code_str) or companies.get(str(code)) or companies.get(str(code).zfill(6))
                 
                 if comp:
@@ -265,7 +256,8 @@ def extract_ses_master_and_financials() -> tuple[SesMeta, dict[str, Any]]:
     if not (cache_dir / "Ses_seguros.csv.gz").exists():
         _download_with_impersonation(url_zip, path_zip)
         _extract_and_compress_files(path_zip, cache_dir)
-        if path_zip.exists(): path_zip.unlink()
+        if path_zip.exists():
+            path_zip.unlink()
     
     companies = _enrich_with_financials(companies, cache_dir)
 
