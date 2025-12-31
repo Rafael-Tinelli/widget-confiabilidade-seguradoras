@@ -77,7 +77,6 @@ def _filter_and_compress_balanco(source_stream, dest_path: Path):
     # Se não achar coluna valor, copia tudo
     if not col_valor:
         print("SES: Coluna de valor não identificada no Balanço. Copiando integralmente.")
-        # Reset stream logic would be complex here, simplifying to standard copy if structure unknown
         return 
 
     print(f"SES: Otimizando Balanço (removendo zeros)... Coluna valor: {col_valor}")
@@ -171,7 +170,7 @@ def _parse_lista_empresas(cache_path: Path) -> dict[str, dict[str, Any]]:
                         data = {"cnpj": cnpj, "name": nome, "premiums": 0.0, "claims": 0.0}
                         companies[cod.zfill(5)] = data
                         companies[cod.zfill(6)] = data # Fallback
-                except:
+                except Exception: # <-- AQUI ESTAVA O ERRO (bare except)
                     continue
     except Exception as e:
         print(f"SES: Erro ao ler Lista de Empresas: {e}")
