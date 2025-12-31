@@ -35,8 +35,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'npm'
-          cache-dependency-path: widget-ui/package-lock.json
+          # CACHE REMOVIDO INTENCIONALMENTE para evitar erro de lockfile inexistente
 
       # --- CONFIGURAÇÃO DE REDE ---
       - name: Configure Network Proxy Bypass
@@ -110,9 +109,7 @@ jobs:
           import re
           from datetime import datetime, timezone
           from pathlib import Path
-          import requests
-          from requests.exceptions import SSLError, RequestException
-
+          
           def fail(msg: str) -> None:
               raise SystemExit(f"SMOKE FAIL: {msg}")
 
@@ -134,13 +131,9 @@ jobs:
 
           # 2) Frontend Assets
           widget_js = Path("widget-ui/dist/assets/widget.js")
-          widget_css = Path("widget-ui/dist/assets/widget.css")
           
           if not widget_js.exists():
              fail(f"Frontend Build falhou: {widget_js} não encontrado")
-          if not widget_css.exists():
-             # CSS pode não existir se não houver estilos extraídos, mas no nosso caso deve existir
-             print(f"AVISO: {widget_css} não encontrado (pode estar injetado no JS)")
           
           print("SMOKE OK: Dados e Frontend gerados.")
           PY
@@ -167,7 +160,7 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           
           # Adiciona Dados + Frontend (widget-ui/dist)
-          # O flag -f (force) garante que adiciona mesmo que esteja no .gitignore
+          # O flag -f (force) garante que adiciona mesmo que a pasta dist esteja no .gitignore
           git add -f api/v1 data/raw data/snapshots data/derived widget-ui/dist
           
           if git diff --cached --quiet; then
