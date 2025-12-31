@@ -54,7 +54,7 @@ def main():
         # Dados Financeiros
         premiums = comp_data.get("premiums", 0.0)
         claims = comp_data.get("claims", 0.0)
-        net_worth = comp_data.get("net_worth", 0.0) # AGORA LÊ O PATRIMÔNIO
+        net_worth = comp_data.get("net_worth", 0.0)
         
         # Open Insurance
         products = opin_products.get(cnpj, [])
@@ -67,17 +67,20 @@ def main():
             "id": f"ses:{ses_id}",
             "name": name,
             "cnpj": cnpj,
+            # CAMPO REINSERIDO PARA PASSAR NOS TESTES
+            "flags": {
+                "openInsuranceParticipant": len(products) > 0
+            },
             "data": {
                 "premiums": premiums,
                 "claims": claims,
-                "net_worth": net_worth # Passa para o cálculo
+                "net_worth": net_worth
             },
             "products": products,
             "reputation": reputation
         }
         
         # Calcula Score e Segmento
-        # A função calculate_score precisa ser capaz de ler net_worth
         scored_insurer = calculate_score(insurer_obj)
         final_insurers.append(scored_insurer)
 
