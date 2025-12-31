@@ -214,7 +214,6 @@ def _enrich_with_solvency(companies: dict, cache_dir: Path) -> dict:
                     comp = companies.get(cod) or companies.get(cod.zfill(6))
                     if comp:
                         # SÓ ATUALIZA SE A DATA FOR MAIOR OU IGUAL À QUE JÁ TEMOS
-                        # Isso garante que pegamos o balanço mais recente
                         if current_date >= comp.get("last_date", 0):
                             comp["net_worth"] = pl
                             comp["solvency_margin"] = margem
@@ -322,7 +321,7 @@ def extract_ses_master_and_financials() -> tuple[SesMeta, dict[str, Any]]:
         print("DEBUG: Chamando enriquecimento de solvência...")
         companies = _enrich_with_solvency(companies, cache_dir)
 
-    files = [f.name for f in cache_dir.glob("*.gz")]
+    # REMOVIDO: files = [f.name for f in cache_dir.glob("*.gz")]
     meta = SesMeta(
         zip_url=url_zip,
         cias_file="LISTAEMPRESAS.csv",
