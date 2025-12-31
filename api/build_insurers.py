@@ -1,14 +1,10 @@
 # api/build_insurers.py
 import json
-import gzip
-import os
-import shutil
 from pathlib import Path
 from datetime import datetime
 
 # Importa extratores
 from api.sources.ses import extract_ses_master_and_financials
-from api.sources.consumidor_gov import extract_consumidor_gov_aggregated
 from api.sources.opin_products import extract_open_insurance_products
 from api.intelligence import calculate_score
 
@@ -42,13 +38,10 @@ def main():
         if cons_gov_file.exists():
             with open(cons_gov_file, "r") as f:
                 consumidor_gov_data = json.load(f)
-            meta_consumidor = {"as_of": "derived", "source": "Consumidor.gov.br"}
         else:
             consumidor_gov_data = {}
-            meta_consumidor = {}
     except Exception:
         consumidor_gov_data = {}
-        meta_consumidor = {}
 
     print("\n--- CONSOLIDANDO DADOS ---")
     
@@ -65,7 +58,6 @@ def main():
         
         # Open Insurance
         products = opin_products.get(cnpj, [])
-        is_opin = len(products) > 0
         
         # Consumidor.gov
         reputation = consumidor_gov_data.get(cnpj)
