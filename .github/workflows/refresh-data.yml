@@ -35,7 +35,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          # CACHE REMOVIDO INTENCIONALMENTE para evitar erro de lockfile inexistente
+          # Cache removido para evitar erros de setup inicial
 
       # --- CONFIGURAÇÃO DE REDE ---
       - name: Configure Network Proxy Bypass
@@ -44,6 +44,18 @@ jobs:
           echo "NO_PROXY=${NO_PROXY:+$NO_PROXY,}dados.mj.gov.br,data.directory.opinbrasil.com.br" >> "$GITHUB_ENV"
           echo "no_proxy=${no_proxy:+$no_proxy,}dados.mj.gov.br,data.directory.opinbrasil.com.br" >> "$GITHUB_ENV"
 
+      # --- INSTALAÇÃO DEPS (MOVIDO PARA CIMA) ---
+      # Instalamos primeiro para garantir que o 'certifi' exista
+      - name: Install Python deps
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          # Garante certifi explicitamente caso não esteja no requirements
+          pip install certifi 
+          pip install -r requirements.txt
+          if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
+
+      # --- PIN CA BUNDLE (AGORA VAI FUNCIONAR) ---
       - name: Pin CA bundle for requests
         run: |
           set -euo pipefail
@@ -54,14 +66,6 @@ jobs:
           )"
           echo "REQUESTS_CA_BUNDLE=$CA" >> "$GITHUB_ENV"
           echo "SSL_CERT_FILE=$CA" >> "$GITHUB_ENV"
-
-      # --- INSTALAÇÃO DEPS ---
-      - name: Install Python deps
-        run: |
-          set -euo pipefail
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
 
       # --- PIPELINE DE DADOS (PYTHON) ---
       - name: Build JSON (participants)
@@ -160,7 +164,6 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           
           # Adiciona Dados + Frontend (widget-ui/dist)
-          # O flag -f (force) garante que adiciona mesmo que a pasta dist esteja no .gitignore
           git add -f api/v1 data/raw data/snapshots data/derived widget-ui/dist
           
           if git diff --cached --quiet; then
