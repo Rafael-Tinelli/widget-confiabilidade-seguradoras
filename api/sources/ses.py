@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import csv
 import gzip
-import io
 import os
 import re
 import shutil
@@ -78,7 +77,6 @@ def _extract_and_compress_files(zip_path: Path, output_dir: Path) -> list[str]:
         with zipfile.ZipFile(zip_path, "r") as z:
             name_map = {n.lower(): n for n in z.namelist()}
             for target_key, target_name in target_map.items():
-                # Busca parcial para achar o arquivo certo dentro do ZIP
                 found_name = next((name_map[n] for n in name_map if target_name.lower().replace(".csv", "") in n), None)
                 
                 if found_name:
@@ -102,7 +100,6 @@ def _parse_lista_empresas(cache_path: Path) -> dict[str, dict[str, Any]]:
         return {}
 
     try:
-        # Tenta ler com engine python que é mais tolerante
         try:
             df = pd.read_csv(cache_path, sep=None, engine='python', encoding="latin-1", dtype=str, on_bad_lines='skip')
         except Exception:
@@ -110,7 +107,6 @@ def _parse_lista_empresas(cache_path: Path) -> dict[str, dict[str, Any]]:
 
         df.columns = [_normalize_col(c) for c in df.columns]
         
-        # Mapeamento conforme PDF e Arquivos Manuais (Coenti, Noenti)
         col_cod = next((c for c in df.columns if c in ["coenti", "codigofip"]), None)
         col_cnpj = next((c for c in df.columns if "cnpj" in c), None)
         col_nome = next((c for c in df.columns if c in ["noenti", "nomeentidade", "razaosocial"]), None)
@@ -146,11 +142,9 @@ def _enrich_with_financials(companies: dict, cache_dir: Path) -> dict:
 
     print("SES: Processando Financeiro (Modo Cirúrgico)...")
     try:
-        # Lê apenas o cabeçalho para mapear índices
         with gzip.open(fin_file, 'rt', encoding='latin-1') as f:
             header_line = f.readline().strip().split(';')
             
-            # Fallback se separador for vírgula
             if len(header_line) < 2:
                 f.seek(0)
                 header_line = f.readline().strip().split(',')
@@ -158,12 +152,9 @@ def _enrich_with_financials(companies: dict, cache_dir: Path) -> dict:
             else:
                 delim = ';'
 
-        # Normaliza os nomes das colunas (remove acentos e espaços)
         norm_headers = [_normalize_col(h) for h in header_line]
         print(f"DEBUG: Headers Normalizados (primeiros 15): {norm_headers[:15]}...")
 
-        # --- MAPEAMENTO CRÍTICO (BASEADO NO SEU DIAGNÓSTICO) ---
-        
         # 1. ID da Empresa (coenti)
         idx_id = next((i for i, h in enumerate(norm_headers) if "coenti" in h), -1)
         
@@ -172,11 +163,8 @@ def _enrich_with_financials(companies: dict, cache_dir: Path) -> dict:
         if idx_prem == -1: 
             idx_prem = next((i for i, h in enumerate(norm_headers) if "premioemitido" in h), -1)
             
-        # 3. Sinistros: AQUI ESTÁ A CORREÇÃO PRINCIPAL
-        # Prioriza 'sinistroretido' porque 'sinistroocorrido' vem zerado
+        # 3. Sinistros: Prioriza 'sinistroretido'
         idx_claim = next((i for i, h in enumerate(norm_headers) if "sinistroretido" in h), -1)
-        
-        # Fallback apenas se não achar o retido
         if idx_claim == -1:
             idx_claim = next((i for i, h in enumerate(norm_headers) if "sinistrodireto" in h), -1)
         if idx_claim == -1:
@@ -188,46 +176,38 @@ def _enrich_with_financials(companies: dict, cache_dir: Path) -> dict:
             print("SES: ERRO - Colunas financeiras críticas não encontradas.")
             return companies
 
-        # Leitura linha a linha (não usa Pandas para evitar memory overflow)
         count = 0
         with gzip.open(fin_file, 'rt', encoding='latin-1') as f:
-            # Pula o header que já lemos
-            next(f)
+            next(f) # Pula header
             reader = csv.reader(f, delimiter=delim)
             
             for row in reader:
-                # Pula linhas quebradas
                 if len(row) <= max(idx_id, idx_prem, idx_claim):
                     continue
                 
                 try:
-                    # Normaliza código da empresa
                     cod_raw = row[idx_id].strip()
                     cod = re.sub(r"\D", "", cod_raw).zfill(5)
                     
-                    # Parser Brasileiro Manual (1.000,00 -> 1000.00)
                     def parse_br(val):
-                        if not val: return 0.0
+                        if not val:
+                            return 0.0
                         clean = val.replace('.', '').replace(',', '.')
                         try:
                             return float(clean)
-                        except:
+                        except ValueError:
                             return 0.0
 
                     prem = parse_br(row[idx_prem])
-                    
-                    # Se achou coluna de sinistro, pega o valor, senão 0
                     claim = parse_br(row[idx_claim]) if idx_claim != -1 else 0.0
 
-                    # Tenta encontrar a empresa no dicionário
-                    # Tenta com 5 digitos, 6 digitos ou numérico
                     comp = companies.get(cod) or companies.get(cod.zfill(6)) or companies.get(str(int(cod)))
                     
                     if comp:
                         comp["premiums"] += prem
                         comp["claims"] += claim
                         count += 1
-                except:
+                except Exception:
                     continue
         
         print(f"SES: Financeiro somado para {count} registros.")
@@ -244,12 +224,10 @@ def extract_ses_master_and_financials() -> tuple[SesMeta, dict[str, Any]]:
     cache_dir = Path(os.getenv("SES_CACHE_DIR", "data/raw/ses")).resolve()
     cache_dir.mkdir(parents=True, exist_ok=True)
 
-    # 1. Lista Empresas
     path_lista = cache_dir / "LISTAEMPRESAS.csv"
     _download_with_impersonation(url_lista, path_lista)
     companies = _parse_lista_empresas(path_lista)
 
-    # 2. Dados Financeiros
     path_zip = cache_dir / "BaseCompleta.zip"
     if not (cache_dir / "Ses_seguros.csv.gz").exists():
         _download_with_impersonation(url_zip, path_zip)
