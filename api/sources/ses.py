@@ -63,7 +63,7 @@ def _extract_zip_financials() -> pd.DataFrame:
 
             print(f"SES: Extraindo {csv_name}...")
             with z.open(csv_name) as f:
-                # MUDANÇA: Lê apenas o cabeçalho primeiro para validar colunas
+                # Lê apenas o cabeçalho primeiro para validar colunas
                 header = pd.read_csv(f, sep=';', encoding='latin1', nrows=0).columns.tolist()
                 header = [c.lower().strip() for c in header]
                 
@@ -75,18 +75,20 @@ def _extract_zip_financials() -> pd.DataFrame:
                 f.seek(0)
                 
                 if col_premio and col_sinistro:
-                    # Usa colunas detectadas
-                    usecols = ['damesano', 'coenti', col_premio, col_sinistro]
-                    # Garante que usecols existam no arquivo original (case sensitive matching seria ideal, mas latin1 ajuda)
-                    # Simplificação: Lemos tudo e filtramos no Pandas para evitar erro de 'Usecols'
+                    # Lê o arquivo completo e renomeia as colunas depois
+                    # Evita o uso de 'usecols' que pode falhar se o case não bater exato
                     df = pd.read_csv(
                         f, sep=';', encoding='latin1', thousands='.', decimal=',', on_bad_lines='skip'
                     )
-                    # Renomeia para padrão
+                    # Normaliza colunas para lower case e strip
                     df.columns = [c.lower().strip() for c in df.columns]
+                    
+                    # Renomeia para o padrão esperado pelo script
+                    # Nota: col_premio/sinistro já estão em lower() pois vieram da lista header tratada
                     df.rename(columns={col_premio: 'premio_ganho', col_sinistro: 'sinistro_corrido'}, inplace=True)
                     return df
                 else:
+                    print(f"SES WARNING: Colunas financeiras não identificadas no cabeçalho: {header}")
                     # Fallback: Lê tudo e torce
                     return pd.read_csv(f, sep=';', encoding='latin1', on_bad_lines='skip')
 
@@ -144,6 +146,9 @@ def extract_ses_master_and_financials():
     df_fin = _extract_zip_financials()
     
     if not df_fin.empty:
+        # Garante que as colunas estejam limpas após a leitura
+        df_fin.columns = [c.lower().strip() for c in df_fin.columns]
+        
         # Filtros de data
         if 'damesano' in df_fin.columns:
             df_fin['date'] = pd.to_datetime(df_fin['damesano'].astype(str), format='%Y%m', errors='coerce')
@@ -156,7 +161,14 @@ def extract_ses_master_and_financials():
         # Agregação
         # Verifica colunas necessárias antes de somar
         req = ['premio_ganho', 'sinistro_corrido']
-        if all(c in df_fin.columns for c in req):
+        # Se 'coenti' não existir, tenta achar a coluna de ID
+        if 'coenti' not in df_fin.columns:
+             # Tenta achar alguma coluna que pareça código
+             col_id = next((c for c in df_fin.columns if 'cod' in c or 'fip' in c or 'enti' in c), None)
+             if col_id:
+                 df_fin.rename(columns={col_id: 'coenti'}, inplace=True)
+
+        if 'coenti' in df_fin.columns and all(c in df_fin.columns for c in req):
             # Limpeza numérica
             for c in req:
                 if df_fin[c].dtype == object:
@@ -174,6 +186,6 @@ def extract_ses_master_and_financials():
                     count += 1
             print(f"SES: Financeiro vinculado a {count} empresas.")
         else:
-            print(f"SES WARNING: Colunas financeiras {req} não encontradas no CSV processado.")
+            print(f"SES WARNING: Colunas financeiras {req} ou ID não encontradas no CSV processado. Colunas disponíveis: {df_fin.columns.tolist()}")
 
     return SesMeta(), companies
