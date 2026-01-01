@@ -6,7 +6,6 @@ import os
 import zipfile
 import requests
 import pandas as pd
-import numpy as np
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -45,7 +44,7 @@ def _download_and_read_csv(url: str, separator: str = ';') -> pd.DataFrame:
             encoding='latin1', # Padrão do governo
             thousands='.',
             decimal=',',
-            on_bad_lines='skip', # <--- A CORREÇÃO CRÍTICA
+            on_bad_lines='skip',
             dtype=str  # Lê como string para evitar erros de conversão iniciais
         )
         return df
@@ -57,7 +56,7 @@ def _extract_zip_financials() -> pd.DataFrame:
     """
     Baixa o ZIP gigante da SUSEP e extrai os dados financeiros.
     """
-    print(f"SES: Baixando Base Completa (ZIP)...")
+    print("SES: Baixando Base Completa (ZIP)...")
     try:
         response = requests.get(SES_ZIP_URL, headers=SES_HEADERS, verify=False, timeout=180)
         response.raise_for_status()
@@ -102,8 +101,6 @@ def extract_ses_master_and_financials():
     # Normaliza nomes de colunas
     df_cias.columns = [c.lower().strip() for c in df_cias.columns]
     
-    # Valida colunas esperadas (fallback para índices se nomes mudarem)
-    col_map = {'codigofip': 'codigofip', 'cnpj': 'cnpj', 'nomeentidade': 'nomeentidade'}
     if 'codigofip' not in df_cias.columns:
         # Tenta pegar por índice (0=id, 1=cnpj, 2=nome)
         df_cias.rename(columns={
@@ -133,7 +130,7 @@ def extract_ses_master_and_financials():
                 try:
                     val = str(row['patrimonioliquido']).replace('.', '').replace(',', '.')
                     net_worth = float(val)
-                except:
+                except (ValueError, TypeError):
                     pass
 
             companies[ses_id] = {
@@ -166,7 +163,8 @@ def extract_ses_master_and_financials():
         # Tratamento de Nulos e Conversão Numérica
         cols_to_sum = ['premio_ganho', 'sinistro_corrido']
         for col in cols_to_sum:
-            if col not in df_fin.columns: continue
+            if col not in df_fin.columns:
+                continue
             if df_fin[col].dtype == object:
                  df_fin[col] = df_fin[col].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False)
             df_fin[col] = pd.to_numeric(df_fin[col], errors='coerce').fillna(0.0)
