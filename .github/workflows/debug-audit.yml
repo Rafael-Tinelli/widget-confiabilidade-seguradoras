@@ -1,0 +1,142 @@
+name: Debug Audit
+
+on:
+  workflow_dispatch: # Permite rodar manualmente pelo botão
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install pandas requests textdistance
+
+      - name: Run Audit Script
+        run: |
+          python - <<EOF
+          import json
+          import re
+          import unicodedata
+          from pathlib import Path
+          
+          # --- 1. SIMULAÇÃO DO ALGORITMO DE MATCH (Cópia da sua lógica atual) ---
+          def _norm(s):
+              s = unicodedata.normalize("NFKD", str(s or "")).encode("ASCII", "ignore").decode("ASCII")
+              s = s.lower().strip()
+              s = re.sub(r"[^a-z0-9\s]", " ", s)
+              s = re.sub(r"\s+", " ", s)
+              return s.strip()
+
+          # SUAS STOPWORDS ATUAIS (Para vermos se elas estão atrapalhando)
+          STOPWORDS = {
+              "s", "sa", "s.a", "cia", "companhia", "comp", "ltda", "me", "epp", 
+              "de", "da", "do", "das", "dos", "em", "para", "por", "e", "the", "of",
+              "grupo", "holding", "participacoes"
+              # "seguro", "seguros" -> REMOVIDOS no último fix, certo?
+          }
+
+          def _tokens(s):
+              return {t for t in _norm(s).split() if t not in STOPWORDS and len(t) >= 2}
+
+          def _jaccard(a, b):
+              if not a or not b: return 0.0
+              return len(a & b) / len(a | b)
+
+          # --- 2. CARREGAR DADOS ---
+          print("\n🔎 --- AUDITORIA DE REPUTAÇÃO (MATCHING) ---")
+          
+          # Carrega JSON final (Insurers)
+          try:
+              with open("api/v1/insurers.json") as f:
+                  insurers = json.load(f).get("insurers", [])
+          except FileNotFoundError:
+              print("❌ api/v1/insurers.json não encontrado. O deploy anterior falhou totalmente?")
+              exit(1)
+
+          # Carrega Base Consumidor.gov (Tenta achar o arquivo gerado)
+          cons_data = {}
+          cons_path = Path("data/derived/consumidor_gov/aggregated.json")
+          if cons_path.exists():
+              with open(cons_path) as f:
+                  cons_data = json.load(f)
+          else:
+              print("⚠️ Base Consumidor.gov não encontrada no repo. Baixando amostra para teste...")
+              # (Aqui poderíamos baixar, mas vamos assumir que o refresh-data gerou isso)
+              print("❌ Sem a base do Consumidor.gov, não consigo simular o match.")
+              exit(0)
+
+          # Prepara base de busca
+          cons_tokens = {name: _tokens(name) for name in cons_data.keys()}
+
+          # --- 3. ANÁLISE DOS FALHOS ---
+          # Pega as 10 maiores empresas que ficaram sem reputação (N/A)
+          failed_matches = [
+              i for i in insurers 
+              if i.get("data", {}).get("components", {}).get("reputation") is None
+          ]
+          # Ordena por Patrimônio (Net Worth) para ver as importantes
+          failed_matches.sort(key=lambda x: x.get("data", {}).get("net_worth", 0), reverse=True)
+
+          print(f"Total de empresas: {len(insurers)}")
+          print(f"Total sem Match: {len(failed_matches)}")
+          print("\nTOP 10 EMPRESAS QUE FALHARAM NO MATCH (E POR QUÊ):")
+          print("-" * 60)
+
+          for ins in failed_matches[:10]:
+              susep_name = ins.get("name")
+              susep_tok = _tokens(susep_name)
+              
+              print(f"\n🏢 SUSEP: '{susep_name}'")
+              print(f"   Tokens: {susep_tok}")
+              
+              # Tenta encontrar o melhor candidato na força bruta
+              best_match = None
+              best_score = 0.0
+              
+              for cons_name, c_tok in cons_tokens.items():
+                  score = _jaccard(susep_tok, c_tok)
+                  if score > best_score:
+                      best_score = score
+                      best_match = cons_name
+              
+              print(f"   🎯 Melhor Candidato (Consumidor.gov): '{best_match}'")
+              print(f"   📊 Score Calculado: {best_score:.2f}")
+              
+              if best_score > 0.85:
+                  print("   ✅ Deveria ter dado match! Verifique se o CNPJ/Nome mudou.")
+              elif best_score > 0.50:
+                  print("   ⚠️ Score MÉDIO. Talvez baixar o threshold para 0.60 resolva?")
+              else:
+                  print("   ❌ Score MUITO BAIXO. O nome no Consumidor.gov deve ser totalmente diferente.")
+
+          # --- 4. AUDITORIA OPIN ---
+          print("\n\n📱 --- AUDITORIA OPEN INSURANCE (PRODUTOS) ---")
+          
+          # Verifica arquivo de participantes
+          try:
+              with open("api/v1/participants.json") as f:
+                  parts = json.load(f)
+              print(f"Participantes OPIN listados: {len(parts)}")
+          except:
+              print("Arquivo de participantes não encontrado.")
+
+          # Verifica quem tem produtos
+          with_products = [i for i in insurers if len(i.get("products", [])) > 0]
+          print(f"Seguradoras com produtos baixados: {len(with_products)}")
+          
+          if with_products:
+              print("Exemplos de sucesso:")
+              for i in with_products[:3]:
+                  print(f" - {i['name']}: {len(i['products'])} produtos")
+          else:
+              print("❌ Nenhuma seguradora tem produtos vinculados.")
+              print("   Dica: Verifique se o 'opin_products.py' está salvando o campo '_source_cnpj' corretamente.")
+
+          EOF
