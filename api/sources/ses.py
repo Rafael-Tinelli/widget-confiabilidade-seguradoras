@@ -15,16 +15,9 @@ SES_HEADERS = {
 }
 
 # URLs
-SES_LISTAEMPRESAS_URL = os.getenv(
-    "SES_LISTAEMPRESAS_URL",
-    "https://www2.susep.gov.br/menuestatistica/ses/download/LISTAEMPRESAS.csv"
-)
-SES_ZIP_URL = os.getenv(
-    "SES_ZIP_URL",
-    "https://www2.susep.gov.br/redarq.asp?arq=BaseCompleta%2ezip"
-)
+SES_LISTAEMPRESAS_URL = os.getenv("SES_LISTAEMPRESAS_URL", "https://www2.susep.gov.br/menuestatistica/ses/download/LISTAEMPRESAS.csv")
+SES_ZIP_URL = os.getenv("SES_ZIP_URL", "https://www2.susep.gov.br/redarq.asp?arq=BaseCompleta%2ezip")
 CACHE_DIR = Path("data/raw/ses")
-
 
 @dataclass
 class SesMeta:
@@ -33,246 +26,189 @@ class SesMeta:
     cias_file: str = "LISTAEMPRESAS.csv"
     seguros_file: str = "SES_Seguros.csv"
 
+def _normalize_id(val) -> str:
+    """Remove zeros à esquerda e espaços para garantir match de IDs."""
+    if pd.isna(val):
+        return ""
+    # Converte 512.0 -> 512 -> "512"
+    s = str(val).split('.')[0].strip()
+    return s.lstrip('0')
 
-def _smart_read_csv(content: bytes) -> pd.DataFrame:
-    """
-    Tenta ler o CSV com diferentes estratégias para lidar com a inconsistência da SUSEP.
-    Restaura a robustez do código original.
-    """
-    # Estratégia 1: Padrão esperado (Ponto e vírgula, Latin1)
-    try:
-        return pd.read_csv(
-            io.BytesIO(content),
-            sep=';',
-            encoding='latin1',
-            thousands='.',
-            decimal=',',
-            dtype=str,
-            on_bad_lines='skip'
-        )
-    except Exception:
-        pass
+def _parse_br_float(series: pd.Series) -> pd.Series:
+    """Converte formato brasileiro (1.000,00) para float."""
+    if series.dtype == object:
+        return pd.to_numeric(
+            series.astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False),
+            errors='coerce'
+        ).fillna(0.0)
+    return pd.to_numeric(series, errors='coerce').fillna(0.0)
 
-    # Estratégia 2: Separador Vírgula
-    try:
-        return pd.read_csv(
-            io.BytesIO(content),
-            sep=',',
-            encoding='latin1',
-            dtype=str,
-            on_bad_lines='skip'
-        )
-    except Exception:
-        pass
-
-    # Estratégia 3: Engine Python (mais lento, mas detecta separador automaticamente)
-    try:
-        return pd.read_csv(
-            io.BytesIO(content),
-            sep=None,
-            engine='python',
-            encoding='latin1',
-            dtype=str,
-            on_bad_lines='skip'
-        )
-    except Exception:
-        # Se tudo falhar, retorna vazio
-        return pd.DataFrame()
-
-
-def _download_master_data(url: str) -> pd.DataFrame:
-    """Baixa o arquivo mestre de empresas."""
+def _download_and_read_csv_list(url: str) -> pd.DataFrame:
+    """Lê a lista de empresas com múltiplas tentativas de encoding/separador."""
     print(f"SES: Baixando {url}...")
     try:
         response = requests.get(url, headers=SES_HEADERS, verify=False, timeout=60)
         response.raise_for_status()
-        return _smart_read_csv(response.content)
-    except Exception as e:
-        print(f"SES CRITICAL: Falha ao baixar lista de empresas: {e}")
+        content = response.content
+        
+        # Tentativa 1: Padrão SUSEP (Ponto e virgula, Latin1)
+        try:
+            return pd.read_csv(io.BytesIO(content), sep=';', encoding='latin1', dtype=str, on_bad_lines='skip')
+        except Exception:
+            pass
+            
+        # Tentativa 2: Vírgula
+        try:
+            return pd.read_csv(io.BytesIO(content), sep=',', encoding='latin1', dtype=str, on_bad_lines='skip')
+        except Exception:
+            pass
+            
         return pd.DataFrame()
-
-
-def _extract_zip_financials() -> pd.DataFrame:
-    """Extrai financeiro com busca dinâmica de colunas."""
-    print("SES: Baixando Base Completa (ZIP)...")
-    try:
-        response = requests.get(SES_ZIP_URL, headers=SES_HEADERS, verify=False, timeout=180)
-        response.raise_for_status()
-
-        with zipfile.ZipFile(io.BytesIO(response.content)) as z:
-            csv_name = next((n for n in z.namelist() if 'ses_seguros' in n.lower()), None)
-
-            if not csv_name:
-                print("SES WARNING: Arquivo de seguros não encontrado no ZIP.")
-                return pd.DataFrame()
-
-            print(f"SES: Extraindo {csv_name}...")
-            with z.open(csv_name) as f:
-                # Lê cabeçalho para identificar colunas
-                header = pd.read_csv(f, sep=';', encoding='latin1', nrows=0).columns.tolist()
-                header = [c.lower().strip() for c in header]
-
-                col_premio = next(
-                    (c for c in header if 'premio' in c and ('ganho' in c or 'emitido' in c)), None
-                )
-                col_sinistro = next(
-                    (c for c in header if 'sinistro' in c and ('corrido' in c or 'retido' in c)), None
-                )
-
-                f.seek(0)
-
-                if col_premio and col_sinistro:
-                    # Lê tudo
-                    df = pd.read_csv(
-                        f,
-                        sep=';',
-                        encoding='latin1',
-                        thousands='.',
-                        decimal=',',
-                        on_bad_lines='skip'
-                    )
-                    df.columns = [c.lower().strip() for c in df.columns]
-                    df.rename(
-                        columns={col_premio: 'premio_ganho', col_sinistro: 'sinistro_corrido'},
-                        inplace=True
-                    )
-                    return df
-                else:
-                    print(f"SES WARNING: Colunas financeiras não identificadas: {header}")
-                    return pd.read_csv(f, sep=';', encoding='latin1', on_bad_lines='skip')
-
     except Exception as e:
-        print(f"SES CRITICAL: Erro no processamento do ZIP Financeiro: {e}")
+        print(f"SES CRITICAL: Falha lista empresas: {e}")
         return pd.DataFrame()
-
 
 def extract_ses_master_and_financials():
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
-
-    # 1. Cadastro (Lista de Empresas)
-    df_cias = _download_master_data(SES_LISTAEMPRESAS_URL)
-    if df_cias.empty:
-        return SesMeta(), {}
-
-    # Normalização de colunas
-    df_cias.columns = [c.lower().strip() for c in df_cias.columns]
-
-    if 'codigofip' not in df_cias.columns:
-        # Fallback posicional se os nomes mudaram
-        if len(df_cias.columns) >= 3:
-            df_cias.rename(
-                columns={
-                    df_cias.columns[0]: 'codigofip',
-                    df_cias.columns[1]: 'cnpj',
-                    df_cias.columns[2]: 'nomeentidade'
-                },
-                inplace=True
-            )
-
+    
+    # --- 1. Cadastro ---
+    df_cias = _download_and_read_csv_list(SES_LISTAEMPRESAS_URL)
     companies = {}
-    print("SES: Processando dados cadastrais...")
-
-    for _, row in df_cias.iterrows():
-        try:
-            # Captura dados brutos
-            raw_id = str(row.get('codigofip', '')).strip()
-            raw_cnpj = str(row.get('cnpj', ''))
-            raw_nome = str(row.get('nomeentidade', ''))
-
-            # Limpa ID (remove não numéricos)
-            clean_id = "".join(filter(str.isdigit, raw_id))
-            if not clean_id:
-                continue
-
-            # Formata CNPJ
-            cnpj_nums = "".join(filter(str.isdigit, raw_cnpj))
-            if len(cnpj_nums) == 14:
-                cnpj = f"{cnpj_nums[:2]}.{cnpj_nums[2:5]}.{cnpj_nums[5:8]}/{cnpj_nums[8:12]}-{cnpj_nums[12:]}"
-            else:
-                cnpj = cnpj_nums
-
-            # Patrimônio Líquido
-            nw = 0.0
-            if 'patrimonioliquido' in row:
-                try:
-                    val = str(row['patrimonioliquido']).replace('.', '').replace(',', '.')
-                    nw = float(val)
-                except (ValueError, TypeError):
-                    pass
-
-            data_obj = {
-                "cnpj": cnpj,
-                "name": raw_nome.strip().title(),
-                "net_worth": nw,
-                "premiums": 0.0,
-                "claims": 0.0
-            }
-
-            # Indexação Redundante (Chave do sucesso do script antigo)
-            # Guarda ID puro "512", "00512" e "000512" para garantir match
-            # O build_insurers vai iterar sobre values(), então duplicatas de chave não duplicam o JSON final
-            # desde que tratemos isso lá ou aqui.
-            # CORREÇÃO: O build_insurers itera sobre items().
-            # Para evitar duplicidade no JSON final, vamos usar apenas o ID normalizado (int) como chave principal.
-            # Mas vamos criar um mapa auxiliar de lookup para o financeiro.
-            
-            sid = str(int(clean_id)) # "512"
-            companies[sid] = data_obj
-
-        except Exception:
-            continue
-
-    print(f"SES: {len(companies)} empresas cadastradas.")
-
-    # 2. Financeiro
-    df_fin = _extract_zip_financials()
-
-    if not df_fin.empty:
-        df_fin.columns = [c.lower().strip() for c in df_fin.columns]
-
-        # Tenta achar a coluna de ID no financeiro
-        col_id_fin = 'coenti'
-        if col_id_fin not in df_fin.columns:
-            # Busca heurística
-            col_id_fin = next((c for c in df_fin.columns if 'cod' in c or 'fip' in c), None)
-
-        # Filtro de Data
-        if 'damesano' in df_fin.columns:
-            df_fin['date'] = pd.to_datetime(
-                df_fin['damesano'].astype(str), format='%Y%m', errors='coerce'
-            )
-            latest = df_fin['date'].max()
-            if pd.notnull(latest):
-                start = latest - pd.DateOffset(months=12)
-                print(f"SES: Filtrando financeiro de {start.date()} a {latest.date()}")
-                df_fin = df_fin[df_fin['date'] > start]
-
-        req = ['premio_ganho', 'sinistro_corrido']
+    
+    if not df_cias.empty:
+        df_cias.columns = [c.lower().strip() for c in df_cias.columns]
         
-        if col_id_fin and all(c in df_fin.columns for c in req):
-            # Limpeza e Conversão
-            for c in req:
-                if df_fin[c].dtype == object:
-                    df_fin[c] = df_fin[c].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False)
-                df_fin[c] = pd.to_numeric(df_fin[c], errors='coerce').fillna(0.0)
+        # Mapeamento dinâmico de colunas
+        col_id = next((c for c in df_cias.columns if 'cod' in c and ('fip' in c or 'ent' in c)), df_cias.columns[0])
+        col_cnpj = next((c for c in df_cias.columns if 'cnpj' in c), df_cias.columns[1])
+        col_nome = next((c for c in df_cias.columns if 'nome' in c or 'razao' in c), df_cias.columns[2])
+        
+        print("SES: Processando cadastro...")
+        for _, row in df_cias.iterrows():
+            try:
+                sid = _normalize_id(row[col_id])
+                if not sid: continue
+                
+                # CNPJ Limpo
+                raw_cnpj = str(row[col_cnpj])
+                cnpj_nums = ''.join(filter(str.isdigit, raw_cnpj))
+                
+                if len(cnpj_nums) == 14:
+                    cnpj = f"{cnpj_nums[:2]}.{cnpj_nums[2:5]}.{cnpj_nums[5:8]}/{cnpj_nums[8:12]}-{cnpj_nums[12:]}"
+                else:
+                    cnpj = cnpj_nums # Fallback
 
-            # Normaliza ID para bater com a chave do dicionário
-            # Remove zeros à esquerda e converte para string
-            df_fin['id_match'] = df_fin[col_id_fin].astype(str).str.replace(r'\D', '', regex=True).str.lstrip('0')
+                # Tenta pegar PL se estiver na lista (backup)
+                nw = 0.0
+                if 'patrimonioliquido' in row:
+                    try:
+                        nw = float(str(row['patrimonioliquido']).replace('.', '').replace(',', '.'))
+                    except (ValueError, TypeError):
+                        pass
 
-            # Agrupa
-            grouped = df_fin.groupby('id_match')[req].sum()
+                companies[sid] = {
+                    "cnpj": cnpj,
+                    "name": str(row[col_nome]).strip().title(),
+                    "net_worth": nw,
+                    "premiums": 0.0,
+                    "claims": 0.0
+                }
+            except Exception:
+                continue
+    
+    print(f"SES: {len(companies)} empresas no cadastro base.")
 
-            count_match = 0
-            for sid, row in grouped.iterrows():
-                if sid in companies:
-                    companies[sid]['premiums'] = float(row['premio_ganho'])
-                    companies[sid]['claims'] = float(row['sinistro_corrido'])
-                    count_match += 1
+    # --- 2. ZIP Financeiro (Agora lendo PL E Seguros) ---
+    print("SES: Baixando e processando ZIP Completo...")
+    try:
+        response = requests.get(SES_ZIP_URL, headers=SES_HEADERS, verify=False, timeout=180)
+        response.raise_for_status()
+        zip_bytes = io.BytesIO(response.content)
+        
+        with zipfile.ZipFile(zip_bytes) as z:
+            all_files = [n.lower() for n in z.namelist()]
             
-            print(f"SES: Financeiro vinculado a {count_match} empresas.")
-        else:
-            cols = df_fin.columns.tolist()
-            print(f"SES WARNING: Colunas financeiras não encontradas. ID={col_id_fin}, Cols={cols}")
+            # A. Processa Patrimônio Líquido (CRUCIAL PARA O SCORE NÃO SER 20)
+            file_pl = next((n for n in all_files if 'pl_margem' in n or 'balanco' in n), None)
+            if file_pl:
+                print(f"SES: Lendo Patrimônio Líquido de {file_pl}...")
+                with z.open(z.namelist()[all_files.index(file_pl)]) as f:
+                    # Lê cabeçalho
+                    header = pd.read_csv(f, sep=';', encoding='latin1', nrows=0).columns.tolist()
+                    header = [c.lower().strip() for c in header]
+                    
+                    # Colunas
+                    c_id = next((c for c in header if 'coenti' in c), None)
+                    c_data = next((c for c in header if 'damesano' in c), None)
+                    c_pl = next((c for c in header if 'pla' in c or 'patrimonio' in c), None)
+                    
+                    if c_id and c_pl:
+                        f.seek(0)
+                        df_pl = pd.read_csv(f, sep=';', encoding='latin1', on_bad_lines='skip')
+                        df_pl.columns = [c.lower().strip() for c in df_pl.columns]
+                        
+                        # Filtra data recente se possível
+                        if c_data:
+                            df_pl['dt'] = pd.to_numeric(df_pl[c_data], errors='coerce').fillna(0)
+                            max_date = df_pl['dt'].max()
+                            if max_date > 0:
+                                df_pl = df_pl[df_pl['dt'] == max_date]
+                        
+                        # Atualiza companies
+                        df_pl['sid'] = df_pl[c_id].apply(_normalize_id)
+                        df_pl['val_pl'] = _parse_br_float(df_pl[c_pl])
+                        
+                        count_pl = 0
+                        for _, row in df_pl.iterrows():
+                            if row['sid'] in companies:
+                                # Prioriza valor do arquivo de balanço sobre a lista
+                                if row['val_pl'] > 0:
+                                    companies[row['sid']]['net_worth'] = row['val_pl']
+                                    count_pl += 1
+                        print(f"SES: Patrimônio Líquido atualizado para {count_pl} empresas.")
+
+            # B. Processa Seguros (Prêmios e Sinistros)
+            file_seg = next((n for n in all_files if 'ses_seguros' in n), None)
+            if file_seg:
+                print(f"SES: Lendo Operações de {file_seg}...")
+                with z.open(z.namelist()[all_files.index(file_seg)]) as f:
+                    header = pd.read_csv(f, sep=';', encoding='latin1', nrows=0).columns.tolist()
+                    header = [c.lower().strip() for c in header]
+                    
+                    c_id = next((c for c in header if 'coenti' in c), None)
+                    c_prem = next((c for c in header if 'premio' in c and ('ganho' in c or 'emitido' in c)), None)
+                    c_sin = next((c for c in header if 'sinistro' in c and ('corrido' in c or 'retido' in c)), None)
+                    c_data = next((c for c in header if 'damesano' in c), None)
+                    
+                    if c_id and c_prem and c_sin:
+                        f.seek(0)
+                        df_seg = pd.read_csv(f, sep=';', encoding='latin1', on_bad_lines='skip')
+                        df_seg.columns = [c.lower().strip() for c in df_seg.columns]
+                        
+                        # Filtro 12 meses
+                        if c_data:
+                            df_seg['dt'] = pd.to_datetime(df_seg[c_data].astype(str), format='%Y%m', errors='coerce')
+                            latest = df_seg['dt'].max()
+                            if pd.notnull(latest):
+                                start = latest - pd.DateOffset(months=12)
+                                df_seg = df_seg[df_seg['dt'] > start]
+                        
+                        # Agrega
+                        df_seg['sid'] = df_seg[c_id].apply(_normalize_id)
+                        df_seg['v_prem'] = _parse_br_float(df_seg[c_prem])
+                        df_seg['v_sin'] = _parse_br_float(df_seg[c_sin])
+                        
+                        grouped = df_seg.groupby('sid')[['v_prem', 'v_sin']].sum()
+                        
+                        count_fin = 0
+                        for sid, row in grouped.iterrows():
+                            if sid in companies:
+                                companies[sid]['premiums'] = float(row['v_prem'])
+                                companies[sid]['claims'] = float(row['v_sin'])
+                                count_fin += 1
+                        print(f"SES: Financeiro (Prêmio/Sinistro) vinculado a {count_fin} empresas.")
+
+    except Exception as e:
+        print(f"SES CRITICAL: Erro no ZIP: {e}")
 
     return SesMeta(), companies
