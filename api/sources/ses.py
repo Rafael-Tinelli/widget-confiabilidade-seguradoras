@@ -1,4 +1,5 @@
 # api/sources/ses.py
+# api/sources/ses.py
 from __future__ import annotations
 
 import io
@@ -28,7 +29,8 @@ class SesMeta:
 
 def _normalize_id(val) -> str:
     """Remove zeros à esquerda e espaços para garantir match de IDs (ex: '00512' -> '512')."""
-    if pd.isna(val): return ""
+    if pd.isna(val):
+        return ""
     return str(val).strip().lstrip('0')
 
 def _download_and_read_csv(url: str, separator: str = ';') -> pd.DataFrame:
@@ -114,7 +116,8 @@ def extract_ses_master_and_financials():
         try:
             # Normaliza ID para chave do dicionário (remove zeros à esquerda)
             sid = _normalize_id(row['codigofip'])
-            if not sid: continue
+            if not sid:
+                continue
 
             cnpj_nums = ''.join(filter(str.isdigit, str(row['cnpj'])))
             if len(cnpj_nums) == 14:
