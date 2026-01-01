@@ -8,8 +8,7 @@ def calculate_solvency_score(data: dict) -> float:
     net_worth = data.get("net_worth", 0.0)
 
     # 1. Score de Patrimônio (Logarítmico Suavizado)
-    # Antes: piso de 1M (muito alto). Novo: piso de 100k.
-    # A curva agora atinge 100 mais cedo para não privilegiar apenas bancos gigantes.
+    # Piso de 100k para não zerar pequenas corretoras viáveis.
     if net_worth <= 100_000:
         net_worth_score = 0.0
     else:
@@ -42,7 +41,7 @@ def calculate_reputation_score(reputation_data: dict) -> float | None:
     evitando o 'Phantom Score' de 50.0.
     """
     if not reputation_data:
-        return None # MUDANÇA CRÍTICA
+        return None
         
     metrics = reputation_data.get("metrics", {})
     
@@ -51,7 +50,10 @@ def calculate_reputation_score(reputation_data: dict) -> float | None:
         return None
 
     resolucao = metrics.get("resolution_rate") or 0.0
-    if resolucao > 1.0: resolucao /= 100.0 # Normaliza %
+    
+    # Correção do linter: quebra de linha
+    if resolucao > 1.0:
+        resolucao /= 100.0
     
     satisfacao = metrics.get("satisfaction_avg") or 0.0
     # Satisfação (1 a 5) -> Normaliza para 0-100
@@ -76,10 +78,16 @@ def calculate_opin_score(products: list, is_participant: bool) -> float:
 
 def determine_segment(data: dict) -> str:
     prem = data.get("premiums", 0.0)
-    if prem > 1_000_000_000: return "S1"
-    elif prem > 100_000_000: return "S2"
-    elif prem > 0: return "S3"
-    else: return "S4"
+    
+    # Correção do linter: quebra de linhas nos returns
+    if prem > 1_000_000_000:
+        return "S1"
+    elif prem > 100_000_000:
+        return "S2"
+    elif prem > 0:
+        return "S3"
+    else:
+        return "S4"
 
 def calculate_score(insurer_obj: dict) -> dict:
     data = insurer_obj.get("data", {})
