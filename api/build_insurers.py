@@ -13,9 +13,16 @@ OUTPUT_DIR = Path("api/v1")
 SNAPSHOTS_DIR = Path("data/snapshots")
 
 def _guard_count_regression(new_count, old_count):
-    if old_count > 0 and new_count < (old_count * 0.8):
-        # Apenas ignorando erro crítico por enquanto para garantir build
-        pass
+    """
+    Impede deploy se houver perda massiva de dados (Safety Switch).
+    Se a nova contagem for < 80% da antiga, aborta o script.
+    """
+    if old_count > 0:
+        drop_threshold = 0.8  # 20% de tolerância
+        if new_count < (old_count * drop_threshold):
+            msg = f"CRITICAL: Data regression detected! Old: {old_count}, New: {new_count}. Aborting deploy."
+            print(f"::error::{msg}")  # Formato de erro do GitHub Actions
+            raise ValueError(msg)
 
 def main():
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
@@ -30,7 +37,7 @@ def main():
     
     # Extrai metadados e dados do resultado híbrido
     meta_opin_prod = opin_result
-    opin_products = opin_result.data # Dicionário {CNPJ: [produtos]}
+    opin_products = opin_result.data  # Dicionário {CNPJ: [produtos]}
     
     print("\n--- INICIANDO COLETA CONSUMIDOR.GOV ---")
     # Carrega dados já processados do consumidor.gov
@@ -58,8 +65,7 @@ def main():
         net_worth = comp_data.get("net_worth", 0.0)
         
         # Open Insurance
-        # Lógica corrigida: Participante é quem tem a chave no dicionário,
-        # independente de ter produtos baixados ou não.
+        # Lógica: Participante é quem tem a chave no dicionário
         is_opin_participant = cnpj in opin_products
         products = opin_products.get(cnpj, [])
         
@@ -83,7 +89,7 @@ def main():
             "reputation": reputation
         }
         
-        # Calcula Score, Segmento e formata dados para o Frontend
+        # Calcula Score usando a nova lógica do intelligence.py
         scored_insurer = calculate_score(insurer_obj)
         final_insurers.append(scored_insurer)
 
@@ -96,9 +102,21 @@ def main():
         "generatedAt": datetime.now().isoformat(),
         "period": {"type": "rolling_12m", "currency": "BRL"},
         "sources": {
-            "ses": {"dataset": meta_ses.source, "url": meta_ses.zip_url, "files": [meta_ses.cias_file, meta_ses.seguros_file]},
-            "consumidorGov": {"dataset": "Consumidor.gov.br", "url": "https://dados.mj.gov.br/", "note": "B2 (reputação)"},
-            "opin": {"dataset": "OPIN Participants", "url": "https://data.directory.opinbrasil.com.br/participants", "note": "B3 (flag)"},
+            "ses": {
+                "dataset": meta_ses.source,
+                "url": meta_ses.zip_url,
+                "files": [meta_ses.cias_file, meta_ses.seguros_file]
+            },
+            "consumidorGov": {
+                "dataset": "Consumidor.gov.br",
+                "url": "https://dados.mj.gov.br/",
+                "note": "B2 (reputação)"
+            },
+            "opin": {
+                "dataset": "OPIN Participants",
+                "url": "https://data.directory.opinbrasil.com.br/participants",
+                "note": "B3 (flag)"
+            },
             "open_insurance_products": {
                 "source": meta_opin_prod.source,
                 "stats": meta_opin_prod.stats,
@@ -137,9 +155,16 @@ def main():
             with open(old_file) as f:
                 old_data = json.load(f)
                 old_count = old_data.get("meta", {}).get("count", 0)
+                
+                # CHAMA A NOVA GUARDA
                 _guard_count_regression(len(final_insurers), old_count)
+                
                 print(f"Stats Check: Count {old_count} -> {len(final_insurers)} (OK)")
     except Exception as e:
+        # Se for o nosso ValueError de regressão, deixamos subir para falhar o build
+        if "Data regression" in str(e):
+            raise e
+        # Outros erros de leitura do arquivo antigo são avisos apenas
         print(f"Warning na validação: {e}")
 
     # Escreve arquivos
