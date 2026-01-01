@@ -87,7 +87,8 @@ def extract_ses_master_and_financials():
         for _, row in df_cias.iterrows():
             try:
                 sid = _normalize_id(row[col_id])
-                if not sid: continue
+                if not sid:
+                    continue
                 
                 # CNPJ Limpo
                 raw_cnpj = str(row[col_cnpj])
