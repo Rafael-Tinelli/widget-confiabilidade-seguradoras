@@ -26,6 +26,11 @@ class SesMeta:
     cias_file: str = "LISTAEMPRESAS.csv"
     seguros_file: str = "SES_Seguros.csv"
 
+def _normalize_id(val) -> str:
+    """Remove zeros à esquerda e espaços para garantir match de IDs (ex: '00512' -> '512')."""
+    if pd.isna(val): return ""
+    return str(val).strip().lstrip('0')
+
 def _download_and_read_csv(url: str, separator: str = ';') -> pd.DataFrame:
     """Baixa e lê CSV com robustez."""
     print(f"SES: Baixando {url}...")
@@ -63,33 +68,25 @@ def _extract_zip_financials() -> pd.DataFrame:
 
             print(f"SES: Extraindo {csv_name}...")
             with z.open(csv_name) as f:
-                # Lê apenas o cabeçalho primeiro para validar colunas
+                # Lê cabeçalho para identificar colunas
                 header = pd.read_csv(f, sep=';', encoding='latin1', nrows=0).columns.tolist()
                 header = [c.lower().strip() for c in header]
                 
-                # Identifica colunas dinamicamente
                 col_premio = next((c for c in header if 'premio' in c and ('ganho' in c or 'emitido' in c)), None)
                 col_sinistro = next((c for c in header if 'sinistro' in c and ('corrido' in c or 'retido' in c)), None)
                 
-                # Reabre o arquivo para leitura completa
                 f.seek(0)
                 
                 if col_premio and col_sinistro:
-                    # Lê o arquivo completo e renomeia as colunas depois
-                    # Evita o uso de 'usecols' que pode falhar se o case não bater exato
+                    # Lê tudo
                     df = pd.read_csv(
                         f, sep=';', encoding='latin1', thousands='.', decimal=',', on_bad_lines='skip'
                     )
-                    # Normaliza colunas para lower case e strip
                     df.columns = [c.lower().strip() for c in df.columns]
-                    
-                    # Renomeia para o padrão esperado pelo script
-                    # Nota: col_premio/sinistro já estão em lower() pois vieram da lista header tratada
                     df.rename(columns={col_premio: 'premio_ganho', col_sinistro: 'sinistro_corrido'}, inplace=True)
                     return df
                 else:
-                    print(f"SES WARNING: Colunas financeiras não identificadas no cabeçalho: {header}")
-                    # Fallback: Lê tudo e torce
+                    print(f"SES WARNING: Colunas financeiras não identificadas: {header}")
                     return pd.read_csv(f, sep=';', encoding='latin1', on_bad_lines='skip')
 
     except Exception as e:
@@ -106,8 +103,8 @@ def extract_ses_master_and_financials():
 
     df_cias.columns = [c.lower().strip() for c in df_cias.columns]
     
-    # Mapping colunas (Cadastro)
     if 'codigofip' not in df_cias.columns:
+        # Tenta fallback por posição
         df_cias.rename(columns={df_cias.columns[0]: 'codigofip', df_cias.columns[1]: 'cnpj', df_cias.columns[2]: 'nomeentidade'}, inplace=True)
 
     companies = {}
@@ -115,9 +112,11 @@ def extract_ses_master_and_financials():
     
     for _, row in df_cias.iterrows():
         try:
-            sid = str(row['codigofip']).strip()
+            # Normaliza ID para chave do dicionário (remove zeros à esquerda)
+            sid = _normalize_id(row['codigofip'])
+            if not sid: continue
+
             cnpj_nums = ''.join(filter(str.isdigit, str(row['cnpj'])))
-            
             if len(cnpj_nums) == 14:
                 cnpj = f"{cnpj_nums[:2]}.{cnpj_nums[2:5]}.{cnpj_nums[5:8]}/{cnpj_nums[8:12]}-{cnpj_nums[12:]}"
             else:
@@ -127,7 +126,7 @@ def extract_ses_master_and_financials():
             if 'patrimonioliquido' in row:
                 try:
                     nw = float(str(row['patrimonioliquido']).replace('.', '').replace(',', '.'))
-                except ValueError:
+                except (ValueError, TypeError):
                     pass
 
             companies[sid] = {
@@ -146,10 +145,15 @@ def extract_ses_master_and_financials():
     df_fin = _extract_zip_financials()
     
     if not df_fin.empty:
-        # Garante que as colunas estejam limpas após a leitura
         df_fin.columns = [c.lower().strip() for c in df_fin.columns]
         
-        # Filtros de data
+        # Garante que temos 'coenti' (Código FIP)
+        if 'coenti' not in df_fin.columns:
+             col_id = next((c for c in df_fin.columns if 'cod' in c or 'fip' in c or 'enti' in c), None)
+             if col_id:
+                 df_fin.rename(columns={col_id: 'coenti'}, inplace=True)
+
+        # Filtro de Data
         if 'damesano' in df_fin.columns:
             df_fin['date'] = pd.to_datetime(df_fin['damesano'].astype(str), format='%Y%m', errors='coerce')
             latest = df_fin['date'].max()
@@ -158,34 +162,28 @@ def extract_ses_master_and_financials():
                 print(f"SES: Filtrando financeiro de {start.date()} a {latest.date()}")
                 df_fin = df_fin[df_fin['date'] > start]
 
-        # Agregação
-        # Verifica colunas necessárias antes de somar
         req = ['premio_ganho', 'sinistro_corrido']
-        # Se 'coenti' não existir, tenta achar a coluna de ID
-        if 'coenti' not in df_fin.columns:
-             # Tenta achar alguma coluna que pareça código
-             col_id = next((c for c in df_fin.columns if 'cod' in c or 'fip' in c or 'enti' in c), None)
-             if col_id:
-                 df_fin.rename(columns={col_id: 'coenti'}, inplace=True)
-
         if 'coenti' in df_fin.columns and all(c in df_fin.columns for c in req):
-            # Limpeza numérica
+            # Normaliza ID no DataFrame para bater com o dicionário
+            df_fin['coenti_norm'] = df_fin['coenti'].apply(_normalize_id)
+            
             for c in req:
                 if df_fin[c].dtype == object:
                     df_fin[c] = df_fin[c].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False)
                 df_fin[c] = pd.to_numeric(df_fin[c], errors='coerce').fillna(0.0)
 
-            grouped = df_fin.groupby('coenti')[req].sum()
+            # Agrupa pelo ID normalizado
+            grouped = df_fin.groupby('coenti_norm')[req].sum()
             
             count = 0
-            for sid, row in grouped.iterrows():
-                sid_str = str(sid).strip()
-                if sid_str in companies:
-                    companies[sid_str]['premiums'] = float(row['premio_ganho'])
-                    companies[sid_str]['claims'] = float(row['sinistro_corrido'])
+            for sid_norm, row in grouped.iterrows():
+                # A chave do dicionário companies já está normalizada (sem zeros à esquerda)
+                if sid_norm in companies:
+                    companies[sid_norm]['premiums'] = float(row['premio_ganho'])
+                    companies[sid_norm]['claims'] = float(row['sinistro_corrido'])
                     count += 1
             print(f"SES: Financeiro vinculado a {count} empresas.")
         else:
-            print(f"SES WARNING: Colunas financeiras {req} ou ID não encontradas no CSV processado. Colunas disponíveis: {df_fin.columns.tolist()}")
+            print(f"SES WARNING: Colunas necessárias não encontradas. Cols: {df_fin.columns.tolist()}")
 
     return SesMeta(), companies
