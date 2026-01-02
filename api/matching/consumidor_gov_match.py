@@ -6,16 +6,53 @@ import unicodedata
 from dataclasses import dataclass
 from typing import Dict, Optional, Set
 
-# Palavras que NÃO definem a identidade da empresa (Ruído)
+# --- 1. REDE DE SEGURANÇA (ALIASES MANUAIS) ---
+# Garante que os grandes players tenham match imediato, ignorando limpeza de tokens.
+# Chave: Parte única do nome na SUSEP (normalizado) -> Valor: Nome exato no Consumidor.gov (ou parte dele)
+MANUAL_ALIASES = {
+    "porto seguro": "Porto Seguro",
+    "itaú": "Itaú",
+    "itau": "Itaú",
+    "bradesco": "Bradesco",
+    "sul america": "SulAmérica",
+    "sulamerica": "SulAmérica",
+    "caixa vida": "Caixa Seguradora",
+    "caixa seguradora": "Caixa Seguradora",
+    "brasilprev": "Brasilprev",
+    "brasilseg": "Brasilseg",
+    "mapfre": "Mapfre",
+    "santander": "Santander",
+    "azul": "Azul Seguros",
+    "allianz": "Allianz",
+    "liberty": "Liberty",
+    "tokio": "Tokio Marine",
+    "zurich": "Zurich",
+    "chubb": "Chubb",
+    "hdi": "HDI",
+    "sompo": "Sompo",
+    "generali": "Generali",
+    "metlife": "MetLife",
+    "prudential": "Prudential",
+    "mag": "MAG Seguros",
+    "mongeral": "MAG Seguros",
+    "icatú": "Icatu",
+    "icatu": "Icatu",
+    "unimed": "Seguros Unimed",
+    "cardif": "BNP Paribas Cardif",
+    "bnp": "BNP Paribas Cardif",
+    "suhai": "Suhai",
+}
+
+# --- 2. CONFIGURAÇÃO DO ALGORITMO ---
 GENERIC_TERMS = {
     # Jurídico
     "s", "sa", "s/a", "s.a", "ltda", "ltd", "inc", "corp", "corporation", 
     "limitada", "me", "epp", "cia", "companhia", "comp", "sociedade",
     "grupo", "holding", "participacoes", "participacao", "do", "da", "de", "e",
     
-    # Setor Seguros/Financeiro (Essenciais para remover!)
+    # Setor
     "seguros", "seguro", "seguradora", "seguridade",
-    "previdencia", "vida", "saude", "capitalizacao", "consocrio",
+    "previdencia", "vida", "saude", "capitalizacao", "consorcio",
     "resseguros", "resseguradora", "auto", "automovel", "patrimonial",
     "habitacional", "riscos", "especiais", "gerais", "corporativos",
     "brasil", "nacional", "internacional", "global", "servicos",
@@ -23,23 +60,16 @@ GENERIC_TERMS = {
 }
 
 def _normalize(s: str) -> str:
-    """Remove acentos, lowercase e caracteres especiais."""
     s = str(s or "").lower()
     s = unicodedata.normalize("NFKD", s).encode("ASCII", "ignore").decode("ASCII")
     s = re.sub(r"[^a-z0-9\s]", " ", s)
     return re.sub(r"\s+", " ", s).strip()
 
 def _extract_brand_tokens(name: str) -> Set[str]:
-    """
-    Extrai apenas os tokens que provavemente são a MARCA.
-    Ex: 'Bradesco Vida e Previdência S.A.' -> {'bradesco'}
-    Ex: 'Tokio Marine Seguradora' -> {'tokio', 'marine'}
-    """
     normalized = _normalize(name)
     tokens = set(normalized.split())
-    # Remove palavras genéricas e tokens muito curtos (1 letra)
-    brand_tokens = {t for t in tokens if t not in GENERIC_TERMS and len(t) > 1}
-    return brand_tokens
+    # Mantém apenas tokens que NÃO são genéricos
+    return {t for t in tokens if t not in GENERIC_TERMS and len(t) > 1}
 
 @dataclass(frozen=True)
 class Match:
@@ -48,65 +78,80 @@ class Match:
 
 class NameMatcher:
     def __init__(self, candidates: Dict[str, str]) -> None:
-        # candidates = {NomeOficial: Dados...}
+        # candidates = {NomeOficialConsumidorGov: Dados...}
         self.candidates = candidates
-        # Pré-processa os tokens de marca de todos os candidatos (SUSEP)
+        # Mapa reverso para busca manual rápida
+        self._candidates_norm = {_normalize(k): k for k in candidates.keys()}
+        
+        # Pré-processa tokens para busca algorítmica
         self._cand_brands = {
             k: _extract_brand_tokens(k) for k in candidates.keys()
         }
 
     def best(self, query: str, threshold: float = 0.0) -> Optional[Match]:
-        """
-        Encontra o melhor match baseando-se na intersecção de MARCAS.
-        Threshold é ignorado aqui pois usamos lógica booleana de conjuntos.
-        """
-        q_brands = _extract_brand_tokens(query)
+        q_norm = _normalize(query)
         
-        # Se não sobrou nada (ex: o nome era só "Seguradora S.A."), aborta
+        # 1. BUSCA POR ALIAS (Prioridade Máxima)
+        for alias, target_keyword in MANUAL_ALIASES.items():
+            # Se o alias (ex: "porto seguro") está contido no nome da SUSEP
+            if alias in q_norm:
+                # Tenta encontrar o alvo na lista do Consumidor.gov
+                target_match = self._find_target_by_keyword(target_keyword)
+                if target_match:
+                    return Match(key=target_match, score=1.0)
+
+        # 2. BUSCA ALGORÍTMICA (Brand Stemming)
+        q_brands = _extract_brand_tokens(query)
         if not q_brands:
             return None
 
         best_key = None
         best_overlap = 0
-        min_len_diff = float('inf') # Para desempatar pelo tamanho do nome
+        min_len_diff = float('inf')
 
         for cand_name, cand_brands in self._cand_brands.items():
             if not cand_brands:
                 continue
 
-            # Intersecção: Quantas palavras da marca coincidem?
-            # Ex: {tokio, marine} & {tokio, marine} = 2
             intersection = q_brands.intersection(cand_brands)
             overlap = len(intersection)
             
-            # Regra de Ouro:
-            # Para dar match, todos os tokens de marca extraídos de um lado 
-            # devem estar presentes no outro, ou vice-versa (subset).
-            # Isso evita que "Porto Seguro" dê match com "Azul Seguros" (zero overlap)
-            
+            # Regra de Match: Todos os tokens de um lado devem estar no outro (Subset)
             is_strong_match = (
                 overlap > 0 and (
-                    overlap == len(q_brands) or   # Query está contida no Candidato
-                    overlap == len(cand_brands)   # Candidato está contido na Query
+                    overlap == len(q_brands) or 
+                    overlap == len(cand_brands)
                 )
             )
 
             if is_strong_match:
-                # Se temos um match forte, usamos heurística para escolher o "melhor"
-                # (Geralmente o que tem o tamanho mais próximo ou maior overlap)
+                # Desempate por tamanho do nome (preferência pelo nome mais próximo em comprimento)
+                len_diff = abs(len(cand_name) - len(query))
+                
                 if overlap > best_overlap:
                     best_overlap = overlap
                     best_key = cand_name
-                    min_len_diff = abs(len(cand_name) - len(query))
+                    min_len_diff = len_diff
                 elif overlap == best_overlap:
-                    # Desempate: pega o que tem tamanho de nome mais parecido
-                    len_diff = abs(len(cand_name) - len(query))
                     if len_diff < min_len_diff:
                         min_len_diff = len_diff
                         best_key = cand_name
 
         if best_key:
-            # Score 1.0 pois é um match semântico, não estatístico
             return Match(key=best_key, score=1.0)
             
+        return None
+
+    def _find_target_by_keyword(self, keyword: str) -> Optional[str]:
+        """Encontra o nome real no Consumidor.gov que contém a keyword."""
+        kw_norm = _normalize(keyword)
+        # 1. Tenta match exato primeiro
+        for norm_name, real_name in self._candidates_norm.items():
+            if norm_name == kw_norm:
+                return real_name
+        
+        # 2. Tenta match parcial (keyword contida no nome)
+        for norm_name, real_name in self._candidates_norm.items():
+            if kw_norm in norm_name:
+                return real_name
         return None
