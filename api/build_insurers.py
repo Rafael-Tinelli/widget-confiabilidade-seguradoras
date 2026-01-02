@@ -14,19 +14,11 @@ CONSUMIDOR_GOV_FILE = Path("data/derived/consumidor_gov/aggregated.json")
 OUTPUT_FILE = Path("api/v1/insurers.json")
 
 def calculate_segment(net_worth: float) -> str:
-    """
-    Calcula o segmento (S1-S4) baseado no Patrimônio Líquido (aproximação da regulação SUSEP).
-    Garante que o campo 'segment' nunca seja nulo para passar nos testes.
-    """
-    # Valores de referência aproximados (em Reais)
-    if net_worth >= 15_000_000_000: # 15 Bilhões (Grandes Bancos/Seguradoras)
-        return "S1"
-    elif net_worth >= 1_000_000_000: # 1 Bilhão (Grandes Independentes)
-        return "S2"
-    elif net_worth >= 100_000_000:   # 100 Milhões (Médias)
-        return "S3"
-    else:
-        return "S4"                  # Pequenas/Nicho
+    """Calcula o segmento (S1-S4) baseado no Patrimônio Líquido."""
+    if net_worth >= 15_000_000_000: return "S1"
+    elif net_worth >= 1_000_000_000: return "S2"
+    elif net_worth >= 100_000_000:   return "S3"
+    else: return "S4"
 
 def main():
     # --- 1. SUSEP (Financeiro + Cadastro) ---
@@ -68,16 +60,15 @@ def main():
         premiums = comp_data.get("premiums", 0.0)
         claims = comp_data.get("claims", 0.0)
         
-        # CORREÇÃO: Define o segmento
         segment = calculate_segment(net_worth)
 
-        # Score Financeiro (Logarítmico)
+        # Score Financeiro
         fin_score = 0.0
         if premiums > 0:
             log_val = math.log10(premiums)
             fin_score = min(100.0, max(0.0, (log_val - 6.0) * 22))
         
-        # Produtos (CNPJ com e sem pontuação)
+        # Produtos
         cnpj_clean = "".join(filter(str.isdigit, cnpj))
         prods = opin_products.get(cnpj, [])
         if not prods:
@@ -93,7 +84,8 @@ def main():
             "id": susep_id,
             "cnpj": cnpj,
             "name": name,
-            "segment": segment,  # <--- CAMPO REINSERIDO AQUI
+            "segment": segment,
+            "flags": [],  # <--- CORREÇÃO: Campo 'flags' adicionado para passar no teste
             "data": {
                 "net_worth": net_worth,
                 "premiums": premiums,
@@ -110,10 +102,8 @@ def main():
             "products": prods
         })
 
-    # Ordena pelo score financeiro
     insurers_list.sort(key=lambda x: x["data"]["financial_score"], reverse=True)
 
-    # Output Final
     output = {
         "schemaVersion": "1.0.0",
         "generatedAt": datetime.now(timezone.utc).isoformat(),
