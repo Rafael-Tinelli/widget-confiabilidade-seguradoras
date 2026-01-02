@@ -9,9 +9,8 @@ import requests
 # Configuração
 CACHE_DIR = Path("data/raw/opin")
 PARTICIPANTS_FILE = Path("api/v1/participants.json")
-TIMEOUT = 10  # segundos
+TIMEOUT = 10 
 
-# Mapeamento de interesse (Resource Name -> Tipo Amigável)
 INTERESTING_RESOURCES = {
     "auto-insurance": "Auto",
     "home-insurance": "Residencial",
@@ -21,14 +20,13 @@ INTERESTING_RESOURCES = {
     "business-insurance": "Empresarial"
 }
 
-# Headers padrão
 HEADERS = {
-    "User-Agent": "WidgetSeguradoras/1.0 (Open Source Data Project)",
+    "User-Agent": "WidgetSeguradoras/1.0",
     "Accept": "application/json"
 }
 
 def load_participants() -> List[Dict[str, Any]]:
-    """Carrega a lista de participantes, tratando envelope JSON API (dict) ou lista direta."""
+    """Carrega a lista de participantes de forma robusta (case-insensitive)."""
     if not PARTICIPANTS_FILE.exists():
         print(f"OPIN ERROR: Arquivo {PARTICIPANTS_FILE} não encontrado.")
         return []
@@ -37,28 +35,31 @@ def load_participants() -> List[Dict[str, Any]]:
         with open(PARTICIPANTS_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
             
-            # Estrutura 1: Dicionário com chave 'data' (Padrão Open Insurance Brasil)
-            if isinstance(data, dict):
-                # Tenta 'data' ou 'participants'
-                for key in ["data", "participants"]:
-                    if key in data and isinstance(data[key], list):
-                        return data[key]
-                return []
-            
-            # Estrutura 2: Lista direta
+            # Caso 1: Lista direta
             if isinstance(data, list):
                 return data
+            
+            # Caso 2: Dicionário envelope
+            if isinstance(data, dict):
+                # Procura por chaves comuns de dados, ignorando case se possível
+                keys = data.keys()
+                print(f"OPIN DEBUG: Chaves encontradas no JSON raiz: {list(keys)}")
+                
+                for candidate in ["data", "Data", "participants", "Participants"]:
+                    if candidate in data and isinstance(data[candidate], list):
+                        return data[candidate]
+                
+                print("OPIN ERROR: Nenhuma lista de participantes encontrada dentro do dicionário.")
+                return []
                 
             return []
     except Exception as e:
-        print(f"OPIN ERROR: Falha ao ler JSON de participantes: {e}")
+        print(f"OPIN ERROR: Falha ao ler JSON: {e}")
         return []
 
 def extract_api_endpoints(participant: Dict[str, Any]) -> List[Dict[str, str]]:
-    """Lê o manifesto da seguradora para descobrir a URL correta da versão atual."""
     endpoints = []
     
-    # Busca CNPJ com fallbacks
     org_profile = participant.get("OrganisationProfile", {})
     cnpj = "N/A"
     if "LegalEntity" in org_profile:
@@ -87,7 +88,6 @@ def extract_api_endpoints(participant: Dict[str, Any]) -> List[Dict[str, str]]:
             
             for res_code in api_resources_list:
                 if res_code in INTERESTING_RESOURCES:
-                    # Monta URL baseada no padrão de Discovery
                     path = f"/open-insurance/products-services/{version}/{res_code}"
                     
                     if "/open-insurance" in base_url:
@@ -106,26 +106,23 @@ def extract_api_endpoints(participant: Dict[str, Any]) -> List[Dict[str, str]]:
     return endpoints
 
 def extract_open_insurance_products():
-    """Função principal: Discovery -> Crawling -> Dicionário de Produtos."""
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     
     print("OPIN: Carregando diretório de participantes...")
     participants = load_participants()
     print(f"OPIN: {len(participants)} participantes carregados.")
 
-    # 1. Discovery
     all_endpoints = []
     for p in participants:
         if isinstance(p, dict) and p.get("Status") == "Active":
             all_endpoints.extend(extract_api_endpoints(p))
     
-    print(f"OPIN: Discovery completo. {len(all_endpoints)} endpoints de produtos encontrados.")
+    print(f"OPIN: Discovery completo. {len(all_endpoints)} endpoints encontrados.")
     
     products_db = {}
     success_count = 0
     error_count = 0
 
-    # 2. Crawling
     import urllib3
     urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -142,7 +139,6 @@ def extract_open_insurance_products():
             
             if resp.status_code == 200:
                 data = resp.json()
-                # A estrutura padrão é { "data": { "brand": [...] } }
                 payload = data.get("data", {})
                 brand_list = payload.get("brand", [])
                 
