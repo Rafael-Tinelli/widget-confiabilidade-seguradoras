@@ -47,44 +47,56 @@ class NameMatcher:
             self.key = key
             self.score = score
 
-    def best(self, susep_name: str) -> Optional[MatchResult]:
-        """Tenta encontrar o melhor match no Consumidor.gov."""
+    def best(self, susep_name: str, threshold: float = 0.6) -> Optional[MatchResult]:
+        """
+        Tenta encontrar o melhor match no Consumidor.gov.
+        Aceita 'threshold' para compatibilidade, mas usa lógica interna de pontuação.
+        """
         clean_susep = self._simplify_name(susep_name)
+        result = None
         
         # Tentativa 1: Match Exato (após limpeza)
         if clean_susep in self.normalized_keys:
             real_key = self.normalized_keys[clean_susep]
-            return self.MatchResult(real_key, 1.0)
+            result = self.MatchResult(real_key, 1.0)
             
         # Tentativa 2: Contém (Substring)
-        for clean_cons, real_key in self.normalized_keys.items():
-            # Proteção: ignora matches muito curtos
-            if len(clean_cons) < 4:
-                continue
-                
-            if clean_cons in clean_susep:
-                return self.MatchResult(real_key, 0.9)
-                
-            if clean_susep in clean_cons:
-                return self.MatchResult(real_key, 0.9)
+        if not result:
+            for clean_cons, real_key in self.normalized_keys.items():
+                # Proteção: ignora matches muito curtos
+                if len(clean_cons) < 4:
+                    continue
+                    
+                if clean_cons in clean_susep:
+                    result = self.MatchResult(real_key, 0.9)
+                    break
+                    
+                if clean_susep in clean_cons:
+                    result = self.MatchResult(real_key, 0.9)
+                    break
 
         # Tentativa 3: Tokenização (Palavras em comum)
-        susep_tokens = set(clean_susep.split())
-        best_key = None
-        max_overlap = 0
-        
-        for clean_cons, real_key in self.normalized_keys.items():
-            if len(clean_cons) < 4:
-                continue
+        if not result:
+            susep_tokens = set(clean_susep.split())
+            best_key = None
+            max_overlap = 0
             
-            cons_tokens = set(clean_cons.split())
-            overlap = len(susep_tokens & cons_tokens)
+            for clean_cons, real_key in self.normalized_keys.items():
+                if len(clean_cons) < 4:
+                    continue
+                
+                cons_tokens = set(clean_cons.split())
+                overlap = len(susep_tokens & cons_tokens)
+                
+                if overlap > max_overlap and overlap >= 1:
+                    max_overlap = overlap
+                    best_key = real_key
             
-            if overlap > max_overlap and overlap >= 1:
-                max_overlap = overlap
-                best_key = real_key
-        
-        if best_key and max_overlap >= 1:
-             return self.MatchResult(best_key, 0.8)
+            if best_key and max_overlap >= 1:
+                 result = self.MatchResult(best_key, 0.8)
 
+        # Filtra pelo threshold solicitado
+        if result and result.score >= threshold:
+            return result
+            
         return None
