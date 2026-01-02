@@ -74,7 +74,8 @@ def _tokens(s: str, stopwords: Set[str]) -> Set[str]:
     return {t for t in toks if t and t not in stopwords and len(t) >= 2}
 
 def _jaccard(a: Set[str], b: Set[str]) -> float:
-    if not a or not b: return 0.0
+    if not a or not b:
+        return 0.0
     return len(a & b) / len(a | b)
 
 @dataclass(frozen=True)
@@ -104,7 +105,8 @@ class NameMatcher:
 
         # 2. ALGORITMO AUTOMÁTICO
         qtok = _tokens(query, self.stopwords)
-        if not qtok: return None
+        if not qtok:
+            return None
 
         best_key = None
         best_score = 0.0
