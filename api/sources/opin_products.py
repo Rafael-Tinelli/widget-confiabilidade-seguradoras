@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import json
 import logging
-import time
 from pathlib import Path
 from typing import Dict, List, Any
 import requests
@@ -186,7 +185,7 @@ def fetch_products():
                 # print(f"Erro {resp.status_code} em {url}")
                 error_count += 1
                 
-        except Exception as e:
+        except Exception:
             # print(f"Exception em {url}: {e}")
             error_count += 1
 
