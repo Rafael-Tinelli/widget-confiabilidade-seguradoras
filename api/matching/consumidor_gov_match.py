@@ -17,7 +17,8 @@ class NameMatcher:
 
     def _simplify_name(self, name: str) -> str:
         """Remove sufixos, acentos e caracteres especiais para facilitar o match."""
-        if not name: return ""
+        if not name:
+            return ""
         
         # 1. Normaliza Unicode (remove acentos)
         s = unicodedata.normalize("NFKD", name).encode("ASCII", "ignore").decode("ASCII")
@@ -51,47 +52,39 @@ class NameMatcher:
         clean_susep = self._simplify_name(susep_name)
         
         # Tentativa 1: Match Exato (após limpeza)
-        # Ex: "Brasilprev" == "Brasilprev"
         if clean_susep in self.normalized_keys:
             real_key = self.normalized_keys[clean_susep]
             return self.MatchResult(real_key, 1.0)
             
         # Tentativa 2: Contém (Substring)
-        # Ex: "Itau" está contido em "Itau Vida e Previdencia"
-        # Verifica se alguma chave do Consumidor.gov está CONTIDA no nome da SUSEP
         for clean_cons, real_key in self.normalized_keys.items():
-            # Proteção: ignora matches muito curtos (ex: "S.A.") para evitar falsos positivos
-            if len(clean_cons) < 4: 
+            # Proteção: ignora matches muito curtos
+            if len(clean_cons) < 4:
                 continue
                 
             if clean_cons in clean_susep:
                 return self.MatchResult(real_key, 0.9)
                 
-            # O inverso também: Se o nome SUSEP for curto ("Porto Seguro") e Consumidor for longo
             if clean_susep in clean_cons:
                 return self.MatchResult(real_key, 0.9)
 
         # Tentativa 3: Tokenização (Palavras em comum)
-        # Útil para "Zurich Santander" vs "Santander Zurich"
         susep_tokens = set(clean_susep.split())
         best_key = None
         max_overlap = 0
         
         for clean_cons, real_key in self.normalized_keys.items():
-            if len(clean_cons) < 4: continue
+            if len(clean_cons) < 4:
+                continue
             
             cons_tokens = set(clean_cons.split())
             overlap = len(susep_tokens & cons_tokens)
             
-            # Se tem sobreposição relevante e não é só "seguros" ou "brasil"
             if overlap > max_overlap and overlap >= 1:
-                # Validar se a palavra coincidente não é genérica demais seria ideal,
-                # mas o _simplify_name já removeu a maioria.
                 max_overlap = overlap
                 best_key = real_key
         
         if best_key and max_overlap >= 1:
-             # Match por palavra chave forte
              return self.MatchResult(best_key, 0.8)
 
         return None
