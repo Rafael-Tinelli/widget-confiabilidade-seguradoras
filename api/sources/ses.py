@@ -98,10 +98,10 @@ def extract_ses_master_and_financials():
                 companies[sid] = {
                     "cnpj": cnpj,
                     "name": str(row[col_nome]).strip().title(),
-                    "net_worth": 0.0, # Será preenchido pelo arquivo de Balanço
+                    "net_worth": 0.0,
                     "premiums": 0.0,
                     "claims": 0.0,
-                    "sources_found": [] # Debug: saber de onde veio o dado
+                    "sources_found": []
                 }
             except Exception:
                 continue
@@ -119,14 +119,13 @@ def extract_ses_master_and_financials():
             all_files = [n for n in z.namelist()]
             
             # Mapeamento de arquivos para processar
-            # (Palavra chave no nome do arquivo, Tipo de Dado)
             targets = [
                 ('pl_margem', 'PATRIMONIO'), 
                 ('balanco', 'PATRIMONIO'),
                 ('ses_seguros', 'SEGUROS'),
-                ('ses_eapc', 'PREVIDENCIA'),          # <-- PREVIDÊNCIA (Evidence, Gboex)
-                ('ses_capitalizacao', 'CAPITALIZACAO'), # <-- CAPITALIZAÇÃO
-                ('ses_ressegurador', 'RESSEGURO')     # <-- RESSEGURO (Axa)
+                ('ses_eapc', 'PREVIDENCIA'),
+                ('ses_capitalizacao', 'CAPITALIZACAO'),
+                ('ses_ressegurador', 'RESSEGURO')
             ]
 
             processed_files = set()
@@ -139,7 +138,6 @@ def extract_ses_master_and_financials():
                 for keyword, ftype in targets:
                     if keyword in filename_lower and keyword not in processed_files:
                         file_type = ftype
-                        # processed_files.add(keyword)
                         break
                 
                 if not file_type:
@@ -148,7 +146,6 @@ def extract_ses_master_and_financials():
                 print(f"SES: Processando {filename} como {file_type}...")
                 
                 with z.open(filename) as f:
-                    # Lê cabeçalho
                     header = pd.read_csv(f, sep=';', encoding='latin1', nrows=0).columns.tolist()
                     header = [c.lower().strip() for c in header]
                     
@@ -158,46 +155,38 @@ def extract_ses_master_and_financials():
                     if not c_id:
                         continue
 
-                    # Identifica colunas de VALOR baseado no tipo
+                    # Identifica colunas
                     c_receita = None
                     c_despesa = None
                     c_patrimonio = None
 
                     if file_type == 'PATRIMONIO':
                         c_patrimonio = _find_column_by_keyword(header, ['pla', 'patrimonio', 'liquido'])
-                    
                     elif file_type == 'SEGUROS':
                         c_receita = _find_column_by_keyword(header, ['premio_ganho', 'premio_emitido', 'premios'])
                         c_despesa = _find_column_by_keyword(header, ['sinistro_corrido', 'sinistros', 'sinistro_retido'])
-
                     elif file_type == 'PREVIDENCIA':
-                        # EAPC usa "Contribuição" e "Benefício"
                         c_receita = _find_column_by_keyword(header, ['contribuicao', 'arrecadacao', 'receita'])
                         c_despesa = _find_column_by_keyword(header, ['beneficio', 'resgate', 'despesa'])
-
                     elif file_type == 'CAPITALIZACAO':
                         c_receita = _find_column_by_keyword(header, ['arrecadacao', 'receita'])
                         c_despesa = _find_column_by_keyword(header, ['resgate', 'sorteio'])
-
                     elif file_type == 'RESSEGURO':
                         c_receita = _find_column_by_keyword(header, ['premio', 'receita'])
                         c_despesa = _find_column_by_keyword(header, ['sinistro', 'despesa'])
 
-                    # Se não achou colunas vitais, pula
                     if not (c_patrimonio or (c_receita and c_despesa)):
                         continue
 
-                    # Lê o arquivo
                     f.seek(0)
                     df = pd.read_csv(f, sep=';', encoding='latin1', on_bad_lines='skip')
                     df.columns = [c.lower().strip() for c in df.columns]
                     
-                    # Filtra Data (Últimos 12 meses)
+                    # Filtra Data
                     if c_data:
                         df['dt'] = pd.to_numeric(df[c_data], errors='coerce').fillna(0)
                         max_date = df['dt'].max()
                         if max_date > 0:
-                            # Para patrimônio pega só o último mês. Para fluxo, pega 12 meses.
                             if file_type == 'PATRIMONIO':
                                 df = df[df['dt'] == max_date]
                             else:
@@ -207,22 +196,22 @@ def extract_ses_master_and_financials():
 
                     df['sid'] = df[c_id].apply(_normalize_id)
 
-                    # Agrega
                     count_upd = 0
                     for _, row in df.iterrows():
                         sid = row['sid']
                         if sid in companies:
                             updated = False
                             
+                            # CRUCIAL: Convertemos para float nativo para evitar erro de JSON serializable
                             if file_type == 'PATRIMONIO' and c_patrimonio:
-                                val = _parse_br_float(pd.Series([row[c_patrimonio]]))[0]
+                                val = float(_parse_br_float(pd.Series([row[c_patrimonio]]))[0])
                                 if val > 0:
                                     companies[sid]['net_worth'] = val
                                     updated = True
                             
                             elif c_receita and c_despesa:
-                                val_rec = _parse_br_float(pd.Series([row[c_receita]]))[0]
-                                val_desp = _parse_br_float(pd.Series([row[c_despesa]]))[0]
+                                val_rec = float(_parse_br_float(pd.Series([row[c_receita]]))[0])
+                                val_desp = float(_parse_br_float(pd.Series([row[c_despesa]]))[0])
                                 if val_rec > 0 or val_desp > 0:
                                     companies[sid]['premiums'] += val_rec
                                     companies[sid]['claims'] += val_desp
