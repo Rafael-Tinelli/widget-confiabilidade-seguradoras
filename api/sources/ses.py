@@ -27,7 +27,8 @@ class SesMeta:
     seguros_file: str = "BaseCompleta.zip"
 
 def _normalize_id(val) -> str:
-    if pd.isna(val): return ""
+    if pd.isna(val):
+        return ""
     return str(val).split('.')[0].strip().lstrip('0')
 
 def _parse_br_float(series: pd.Series) -> pd.Series:
@@ -83,7 +84,8 @@ def extract_ses_master_and_financials():
         for _, row in df_cias.iterrows():
             try:
                 sid = _normalize_id(row[col_id])
-                if not sid: continue
+                if not sid:
+                    continue
                 
                 raw_cnpj = str(row[col_cnpj])
                 cnpj_nums = ''.join(filter(str.isdigit, raw_cnpj))
@@ -122,9 +124,9 @@ def extract_ses_master_and_financials():
                 ('pl_margem', 'PATRIMONIO'), 
                 ('balanco', 'PATRIMONIO'),
                 ('ses_seguros', 'SEGUROS'),
-                ('ses_eapc', 'PREVIDENCIA'),          # <-- AQUI ESTÃO GBOEX, EVIDENCE, BTG
-                ('ses_capitalizacao', 'CAPITALIZACAO'), # <-- BRASILCAP, ETC
-                ('ses_ressegurador', 'RESSEGURO')     # <-- AXA, IRB
+                ('ses_eapc', 'PREVIDENCIA'),          # <-- PREVIDÊNCIA (Evidence, Gboex)
+                ('ses_capitalizacao', 'CAPITALIZACAO'), # <-- CAPITALIZAÇÃO
+                ('ses_ressegurador', 'RESSEGURO')     # <-- RESSEGURO (Axa)
             ]
 
             processed_files = set()
@@ -137,7 +139,7 @@ def extract_ses_master_and_financials():
                 for keyword, ftype in targets:
                     if keyword in filename_lower and keyword not in processed_files:
                         file_type = ftype
-                        # processed_files.add(keyword) # Não marca processado para permitir múltiplos arquivos se houver
+                        # processed_files.add(keyword)
                         break
                 
                 if not file_type:
@@ -199,9 +201,6 @@ def extract_ses_master_and_financials():
                             if file_type == 'PATRIMONIO':
                                 df = df[df['dt'] == max_date]
                             else:
-                                # Aproximação simplificada: pega tudo do arquivo se for recente
-                                # ou implementa lógica de data se necessário. 
-                                # Como o ZIP geralmente é o "base completa", vamos filtrar o último ano do arquivo
                                 target_year = str(max_date)[:4]
                                 df['year'] = df['dt'].astype(str).str[:4]
                                 df = df[df['year'] == target_year]
