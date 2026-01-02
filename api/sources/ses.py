@@ -117,15 +117,17 @@ def extract_ses_master_and_financials():
         
         with zipfile.ZipFile(zip_bytes) as z:
             all_files = [n for n in z.namelist()]
+            print(f"SES INFO: Arquivos encontrados no ZIP: {all_files}")
             
-            # Mapeamento de arquivos para processar
+            # Mapeamento de arquivos (Palavra chave, Tipo)
+            # Ordem importa: Mais específico primeiro
             targets = [
                 ('pl_margem', 'PATRIMONIO'), 
                 ('balanco', 'PATRIMONIO'),
                 ('ses_seguros', 'SEGUROS'),
                 ('ses_eapc', 'PREVIDENCIA'),
-                ('ses_capitalizacao', 'CAPITALIZACAO'),
-                ('ses_ressegurador', 'RESSEGURO')
+                ('capitaliza', 'CAPITALIZACAO'), # Pega ses_capitalizacao.csv
+                ('resseg', 'RESSEGURO')          # Pega ses_ressegurador.csv
             ]
 
             processed_files = set()
@@ -143,7 +145,7 @@ def extract_ses_master_and_financials():
                 if not file_type:
                     continue
 
-                print(f"SES: Processando {filename} como {file_type}...")
+                print(f"SES: Analisando {filename} como {file_type}...")
                 
                 with z.open(filename) as f:
                     header = pd.read_csv(f, sep=';', encoding='latin1', nrows=0).columns.tolist()
@@ -153,6 +155,7 @@ def extract_ses_master_and_financials():
                     c_data = next((c for c in header if 'damesano' in c), None)
                     
                     if not c_id:
+                        print(f"SES SKIP: {filename} sem coluna de ID (coenti).")
                         continue
 
                     # Identifica colunas
@@ -162,20 +165,28 @@ def extract_ses_master_and_financials():
 
                     if file_type == 'PATRIMONIO':
                         c_patrimonio = _find_column_by_keyword(header, ['pla', 'patrimonio', 'liquido'])
+                    
                     elif file_type == 'SEGUROS':
                         c_receita = _find_column_by_keyword(header, ['premio_ganho', 'premio_emitido', 'premios'])
-                        c_despesa = _find_column_by_keyword(header, ['sinistro_corrido', 'sinistros', 'sinistro_retido'])
+                        c_despesa = _find_column_by_keyword(header, ['sinistro_corrido', 'sinistros'])
+
                     elif file_type == 'PREVIDENCIA':
-                        c_receita = _find_column_by_keyword(header, ['contribuicao', 'arrecadacao', 'receita'])
-                        c_despesa = _find_column_by_keyword(header, ['beneficio', 'resgate', 'despesa'])
+                        c_receita = _find_column_by_keyword(header, ['contribuicao', 'arrecadacao'])
+                        c_despesa = _find_column_by_keyword(header, ['beneficio', 'resgate'])
+
                     elif file_type == 'CAPITALIZACAO':
+                        # Tenta achar 'arrecadacao' (mais comum)
                         c_receita = _find_column_by_keyword(header, ['arrecadacao', 'receita'])
                         c_despesa = _find_column_by_keyword(header, ['resgate', 'sorteio'])
-                    elif file_type == 'RESSEGURO':
-                        c_receita = _find_column_by_keyword(header, ['premio', 'receita'])
-                        c_despesa = _find_column_by_keyword(header, ['sinistro', 'despesa'])
 
+                    elif file_type == 'RESSEGURO':
+                        # Resseguro usa 'premio_aceito' ou 'premio_ganho'
+                        c_receita = _find_column_by_keyword(header, ['premio_aceito', 'premio_ganho', 'receita'])
+                        c_despesa = _find_column_by_keyword(header, ['sinistro_pago', 'sinistro_corrido', 'despesa'])
+
+                    # Valida se achou as colunas
                     if not (c_patrimonio or (c_receita and c_despesa)):
+                        print(f"SES SKIP: {filename} colunas não encontradas. Header: {header}")
                         continue
 
                     f.seek(0)
@@ -202,7 +213,6 @@ def extract_ses_master_and_financials():
                         if sid in companies:
                             updated = False
                             
-                            # CRUCIAL: Convertemos para float nativo para evitar erro de JSON serializable
                             if file_type == 'PATRIMONIO' and c_patrimonio:
                                 val = float(_parse_br_float(pd.Series([row[c_patrimonio]]))[0])
                                 if val > 0:
@@ -221,7 +231,7 @@ def extract_ses_master_and_financials():
                                 companies[sid]['sources_found'].append(file_type)
                                 count_upd += 1
                                 
-                    print(f"SES: {count_upd} empresas atualizadas com {file_type}.")
+                    print(f"SES: {count_upd} empresas processadas em {filename}.")
 
     except Exception as e:
         print(f"SES CRITICAL: Erro no ZIP: {e}")
