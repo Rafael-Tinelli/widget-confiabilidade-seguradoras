@@ -84,12 +84,17 @@ def main():
         if rep_match:
             rep_data = reputation_data.get(rep_match.key)
 
+        # CORREÇÃO: Flags agora é um dicionário com a chave exigida pelo teste
+        flags = {
+            "openInsuranceParticipant": len(prods) > 0
+        }
+
         insurers_list.append({
             "id": susep_id,
             "cnpj": cnpj,
             "name": name,
             "segment": segment,
-            "flags": [],
+            "flags": flags,
             "data": {
                 "net_worth": net_worth,
                 "premiums": premiums,
