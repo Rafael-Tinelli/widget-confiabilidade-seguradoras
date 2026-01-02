@@ -120,18 +120,17 @@ def extract_ses_master_and_financials():
             print(f"SES INFO: Arquivos encontrados no ZIP: {all_files}")
             
             # Mapeamento de arquivos para processar
+            # ATENÇÃO: Nomes corrigidos baseados na lista real de arquivos
             targets = [
                 ('pl_margem', 'PATRIMONIO'), 
                 ('balanco', 'PATRIMONIO'),
                 ('ses_seguros', 'SEGUROS'),
-                ('ses_eapc', 'PREVIDENCIA'),          # <-- PREVIDÊNCIA
-                ('ses_capitalizacao', 'CAPITALIZACAO'), # <-- CAPITALIZAÇÃO
-                ('ses_dados_cap', 'CAPITALIZACAO'),     # <-- CAPITALIZAÇÃO (Nome alternativo)
-                ('ses_ressegurador', 'RESSEGURO'),    # <-- RESSEGURO
-                ('ses_cessoes_recebidas', 'RESSEGURO')# <-- RESSEGURO (Nome oficial)
+                ('contrib_benef', 'PREVIDENCIA'),     # CORRIGIDO: Ses_Contrib_Benef.csv
+                ('ses_dados_cap', 'CAPITALIZACAO'),   # CORRIGIDO: Ses_Dados_Cap.csv
+                ('ses_cessoes_recebidas', 'RESSEGURO')# Ses_Cessoes_Recebidas.csv
             ]
 
-            processed_files = set() # Agora será usada para evitar duplicidade de processamento do mesmo tipo
+            processed_files = set() 
 
             for filename in all_files:
                 filename_lower = filename.lower()
@@ -140,8 +139,6 @@ def extract_ses_master_and_financials():
                 file_type = None
                 for keyword, ftype in targets:
                     if keyword in filename_lower:
-                        # Evita processar o mesmo tipo de arquivo várias vezes se não for necessário
-                        # Mas como os nomes mudam, vamos permitir todos que derem match
                         file_type = ftype
                         break
                 
@@ -174,17 +171,15 @@ def extract_ses_master_and_financials():
                         c_despesa = _find_column_by_keyword(header, ['sinistro_corrido', 'sinistros'])
 
                     elif file_type == 'PREVIDENCIA':
-                        c_receita = _find_column_by_keyword(header, ['contribuicao', 'arrecadacao'])
-                        c_despesa = _find_column_by_keyword(header, ['beneficio', 'resgate'])
+                        # CORREÇÃO CRÍTICA: A coluna é 'contrib' e não 'contribuicao'
+                        c_receita = _find_column_by_keyword(header, ['contrib', 'arrecadacao'])
+                        c_despesa = _find_column_by_keyword(header, ['benef', 'resgate'])
 
                     elif file_type == 'CAPITALIZACAO':
                         c_receita = _find_column_by_keyword(header, ['arrecadacao', 'receita', 'receitascap'])
                         c_despesa = _find_column_by_keyword(header, ['resgate', 'valorresg'])
-                        # Capitalização pode ter sorteios também, mas vamos focar no principal
 
                     elif file_type == 'RESSEGURO':
-                        # Para resseguradoras, 'cessao' é receita e 'recuperacao' é despesa (na visão de quem recebe)
-                        # Mas no arquivo Ses_Cessoes_Recebidas, a coluna 'cessao' é o valor cedido (receita da resseguradora)
                         c_receita = _find_column_by_keyword(header, ['cessao', 'premio_aceito', 'receita'])
                         c_despesa = _find_column_by_keyword(header, ['recuperacao', 'sinistro_pago', 'despesa'])
 
@@ -216,7 +211,6 @@ def extract_ses_master_and_financials():
                         if sid in companies:
                             updated = False
                             
-                            # CRUCIAL: Conversão para float Python puro
                             if file_type == 'PATRIMONIO' and c_patrimonio:
                                 val = float(_parse_br_float(pd.Series([row[c_patrimonio]]))[0])
                                 if val > 0:
@@ -238,7 +232,7 @@ def extract_ses_master_and_financials():
                                 count_upd += 1
                                 
                     print(f"SES: {count_upd} empresas processadas em {filename}.")
-                    processed_files.add(filename) # Marca como processado para controle futuro
+                    processed_files.add(filename)
 
     except Exception as e:
         print(f"SES CRITICAL: Erro no ZIP: {e}")
