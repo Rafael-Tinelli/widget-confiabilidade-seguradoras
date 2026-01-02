@@ -1,4 +1,5 @@
 # api/sources/opin_products.py
+# api/sources/opin_products.py
 from __future__ import annotations
 
 import json
@@ -30,12 +31,26 @@ HEADERS = {
 }
 
 def load_participants() -> List[Dict[str, Any]]:
+    """Carrega a lista de participantes, tratando estruturas de envelope (dict) ou lista direta."""
     if not PARTICIPANTS_FILE.exists():
         logging.error(f"Arquivo de participantes não encontrado: {PARTICIPANTS_FILE}")
         return []
     try:
         with open(PARTICIPANTS_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
+            data = json.load(f)
+            
+            # Caso 1: O JSON é um dicionário com uma chave 'data' (Padrão API OPIN)
+            if isinstance(data, dict):
+                if "data" in data and isinstance(data["data"], list):
+                    return data["data"]
+                # Se for dict mas não tiver 'data', talvez seja uma estrutura diferente, retorna vazio ou tenta achar lista
+                return []
+            
+            # Caso 2: O JSON já é a lista direta
+            if isinstance(data, list):
+                return data
+                
+            return []
     except Exception:
         return []
 
@@ -71,6 +86,8 @@ def extract_api_endpoints(participant: Dict[str, Any]) -> List[Dict[str, str]]:
             for res_code in api_resources_list:
                 if res_code in INTERESTING_RESOURCES:
                     path = f"/open-insurance/products-services/{version}/{res_code}"
+                    
+                    # Evita duplicação de path se a BaseURL já incluir
                     if "/open-insurance" in base_url:
                          full_url = f"{base_url}/products-services/{version}/{res_code}"
                     else:
@@ -100,7 +117,8 @@ def extract_open_insurance_products():
     # Discovery
     all_endpoints = []
     for p in participants:
-        if p.get("Status") == "Active":
+        # Garante que p é um dicionário antes de acessar .get
+        if isinstance(p, dict) and p.get("Status") == "Active":
             all_endpoints.extend(extract_api_endpoints(p))
     
     print(f"OPIN: Discovery completo. {len(all_endpoints)} endpoints encontrados.")
@@ -110,7 +128,6 @@ def extract_open_insurance_products():
     error_count = 0
 
     # Crawling
-    # Importante: Desabilitar warnings de SSL aqui para não poluir o log
     import urllib3
     urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
