@@ -4,9 +4,7 @@ import os
 import io
 import requests
 import pandas as pd
-import gzip
 from pathlib import Path
-from datetime import datetime
 
 # Importa o Matcher corrigido
 from api.matching.consumidor_gov_match import NameMatcher
@@ -15,8 +13,6 @@ from api.matching.consumidor_gov_match import NameMatcher
 SES_LISTAEMPRESAS_URL = os.getenv("SES_LISTAEMPRESAS_URL", "https://www2.susep.gov.br/menuestatistica/ses/download/LISTAEMPRESAS.csv")
 # URL fixa do Consumidor.gov (Dados Abertos - Reclamações Finalizadas)
 # Usamos um endpoint estável ou arquivos locais se disponíveis.
-# Para este script, assumimos que os dados JSON.GZ do Consumidor.gov já estão em data/raw/consumidor_gov
-# ou baixamos uma amostra se não existirem.
 DATA_DIR = Path("data/raw/consumidor_gov")
 OUTPUT_FILE = Path("data/derived/consumidor_gov/aggregated.json")
 
@@ -59,25 +55,15 @@ def _download_susep_map():
 def load_consumidor_gov_data():
     """Carrega dados brutos do Consumidor.gov (arquivos locais ou download)."""
     # Para simplificar, vamos simular o carregamento ou ler de snapshots se você tiver
-    # Se o pipeline rodou 'refresh-data', ele espera que os dados estejam lá ou baixa.
-    # AQUI: Implementação simplificada que agrega o que tiver na pasta raw
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    
-    # Se a pasta estiver vazia, tenta baixar o último mês (exemplo)
-    # Na prática, seu workflow de 'Build Consumidor.gov Data' deve cuidar disso.
-    # Vamos focar em processar o que existe.
     
     aggregated = {} # {NomeEmpresa: {metrics...}}
     
     files = list(DATA_DIR.glob("*.json")) + list(DATA_DIR.glob("*.json.gz"))
-    if not files:
-        # Fallback: Tenta ler do snapshot se existir
-        snap_dir = Path("data/snapshots")
-        files = list(snap_dir.glob("opin_participants_*.json.gz")) # Apenas exemplo, ajustável
     
     # MOCK TEMPORÁRIO PARA GARANTIR DADOS SE NÃO HOUVER ARQUIVOS
     # Isso garante que pelo menos os grandes bancos tenham nota se o download falhar
-    if not aggregated:
+    if not aggregated and not files:
         print("CG: Nenhum arquivo bruto encontrado. Usando dados semente para Grandes Seguradoras.")
         return {
             "Bradesco Seguros": {"metrics": {"resolution_rate": 85.0, "satisfaction_avg": 4.2}},
@@ -145,17 +131,14 @@ def main():
 
     for cons_name, data in cons_data.items():
         # Tenta achar o CNPJ da SUSEP correspondente a este nome do Consumidor.gov
-        # O Matcher agora usa o dicionário MANUAL_ALIASES internamente se você atualizou o arquivo anterior
         match = matcher.best(cons_name, threshold=0.60) 
         
         if match:
-            # match.key é o nome oficial da SUSEP (que usamos como chave no NameMatcher)
-            # Precisamos recuperar o CNPJ associado a esse nome
+            # match.key é o nome oficial da SUSEP
             cnpj = susep_targets.get(match.key)
             if cnpj:
                 final_mapping[cnpj] = data
                 matches_found += 1
-                # print(f"MATCH: {cons_name} -> {match.key} ({match.score:.2f})")
 
     print(f"CG: Total de vínculos realizados: {matches_found}")
 
