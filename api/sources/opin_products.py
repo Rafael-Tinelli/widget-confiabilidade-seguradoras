@@ -1,173 +1,113 @@
-# api/sources/opin_products.py
+# api/build_insurers.py
 from __future__ import annotations
 
 import json
-import logging
+import math
 from pathlib import Path
-from typing import Dict, List, Any
-import requests
+from api.sources.ses import extract_ses_master_and_financials
+from api.sources.opin_products import extract_open_insurance_products
+from api.matching.consumidor_gov_match import NameMatcher
 
-# Configuração
-CACHE_DIR = Path("data/raw/opin")
-PARTICIPANTS_FILE = Path("api/v1/participants.json")
-TIMEOUT = 10  # segundos
+# Configurações de Caminho
+CONSUMIDOR_GOV_FILE = Path("data/derived/consumidor_gov/aggregated.json")
+OUTPUT_FILE = Path("api/v1/insurers.json")
 
-# Mapeamento de interesse (Resource Name -> Tipo Amigável)
-INTERESTING_RESOURCES = {
-    "auto-insurance": "Auto",
-    "home-insurance": "Residencial",
-    "life-pension": "Vida/Prev",
-    "condominium-insurance": "Condomínio",
-    "rural-insurance": "Rural",
-    "business-insurance": "Empresarial"
-}
+def main():
+    # --- 1. SUSEP (Financeiro + Cadastro) ---
+    print("\n--- INICIANDO COLETA SUSEP (FINANCEIRO) ---")
+    ses_meta, companies = extract_ses_master_and_financials()
 
-# Headers padrão
-HEADERS = {
-    "User-Agent": "WidgetSeguradoras/1.0 (Open Source Data Project)",
-    "Accept": "application/json"
-}
-
-def load_participants() -> List[Dict[str, Any]]:
-    """Carrega a lista de participantes, tratando estruturas de envelope (dict) ou lista direta."""
-    if not PARTICIPANTS_FILE.exists():
-        logging.error(f"Arquivo de participantes não encontrado: {PARTICIPANTS_FILE}")
-        return []
-    try:
-        with open(PARTICIPANTS_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-            
-            # Caso 1: O JSON é um dicionário com uma chave 'data'
-            if isinstance(data, dict):
-                if "data" in data and isinstance(data["data"], list):
-                    return data["data"]
-                return []
-            
-            # Caso 2: O JSON já é a lista direta
-            if isinstance(data, list):
-                return data
-                
-            return []
-    except Exception:
-        return []
-
-def extract_api_endpoints(participant: Dict[str, Any]) -> List[Dict[str, str]]:
-    endpoints = []
+    # --- 2. OPIN (Produtos) ---
+    print("\n--- INICIANDO COLETA OPEN INSURANCE (PRODUTOS) ---")
+    # CORREÇÃO: A função retorna o dicionário {CNPJ: [Produtos]} diretamente.
+    opin_products = extract_open_insurance_products()
     
-    org_profile = participant.get("OrganisationProfile", {})
-    cnpj = "N/A"
-    if "LegalEntity" in org_profile:
-         cnpj = org_profile["LegalEntity"].get("RegistrationNumber", "N/A")
-    if cnpj == "N/A":
-        cnpj = participant.get("OrganisationId", "N/A")
+    # Debug rápido
+    print(f"OPIN DEBUG: {len(opin_products)} seguradoras com produtos mapeados.")
 
-    servers = participant.get("AuthorisationServers", [])
-    
-    for server in servers:
-        base_url = server.get("ApiBaseUrl", "").rstrip("/")
-        if not base_url:
-            continue
-
-        resources = server.get("ApiResources", [])
-        for resource in resources:
-            family = resource.get("ApiFamilyType")
-            if family != "products-services":
-                continue
-            
-            api_resources_list = resource.get("ApiResource", [])
-            if isinstance(api_resources_list, str):
-                api_resources_list = [api_resources_list]
-
-            version = resource.get("ApiVersion", "1.0.0")
-            
-            for res_code in api_resources_list:
-                if res_code in INTERESTING_RESOURCES:
-                    path = f"/open-insurance/products-services/{version}/{res_code}"
-                    
-                    if "/open-insurance" in base_url:
-                         full_url = f"{base_url}/products-services/{version}/{res_code}"
-                    else:
-                        full_url = f"{base_url}{path}"
-                    
-                    full_url = full_url.replace("///", "/").replace("//open-insurance", "/open-insurance")
-                    
-                    endpoints.append({
-                        "type": INTERESTING_RESOURCES[res_code],
-                        "url": full_url,
-                        "cnpj": cnpj,
-                        "name": participant.get("OrganisationName", "Unknown")
-                    })
-    return endpoints
-
-def extract_open_insurance_products():
-    """
-    Função principal chamada pelo build_insurers.py.
-    Retorna um dicionário {CNPJ: [Lista de Produtos]}.
-    """
-    CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    
-    print("OPIN: Carregando diretório de participantes...")
-    participants = load_participants()
-    print(f"OPIN: {len(participants)} participantes carregados.")
-
-    # Discovery
-    all_endpoints = []
-    for p in participants:
-        if isinstance(p, dict) and p.get("Status") == "Active":
-            all_endpoints.extend(extract_api_endpoints(p))
-    
-    print(f"OPIN: Discovery completo. {len(all_endpoints)} endpoints encontrados.")
-    
-    products_db = {}
-    success_count = 0
-    error_count = 0
-
-    # Crawling
-    import urllib3
-    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-
-    for i, ep in enumerate(all_endpoints):
-        cnpj = ep["cnpj"]
-        url = ep["url"]
-        p_type = ep["type"]
-        
-        if i % 10 == 0:
-            print(f"OPIN: Progresso {i}/{len(all_endpoints)}...")
-
+    # --- 3. Consumidor.gov (Reputação) ---
+    print("\n--- INICIANDO COLETA CONSUMIDOR.GOV ---")
+    reputation_data = {}
+    if CONSUMIDOR_GOV_FILE.exists():
         try:
-            resp = requests.get(url, headers=HEADERS, timeout=TIMEOUT, verify=False)
-            
-            if resp.status_code == 200:
-                data = resp.json()
-                payload = data.get("data", {})
-                brand_list = payload.get("brand", [])
-                
-                count_prods = 0
-                for brand in brand_list:
-                    companies = brand.get("companies", [])
-                    for comp in companies:
-                        prods = comp.get("products", [])
-                        for prod in prods:
-                            if cnpj not in products_db:
-                                products_db[cnpj] = []
-                            
-                            products_db[cnpj].append({
-                                "type": p_type,
-                                "name": prod.get("name", "Produto sem nome"),
-                                "code": prod.get("code", "")
-                            })
-                            count_prods += 1
-                
-                if count_prods > 0:
-                    success_count += 1
-            else:
-                error_count += 1
-                
-        except Exception:
-            error_count += 1
+            with open(CONSUMIDOR_GOV_FILE, "r", encoding="utf-8") as f:
+                reputation_data = json.load(f)
+        except Exception as e:
+            print(f"AVISO: Erro ao ler base Consumidor.gov: {e}")
+    else:
+        print("AVISO: Base Consumidor.gov não encontrada (arquivo data/derived/... ausente).")
 
-    print(f"OPIN: Download concluído. Sucessos: {success_count}, Erros: {error_count}.")
-    return products_db
+    # Prepara o Matcher de Nomes
+    matcher = NameMatcher(reputation_data)
+
+    # --- 4. Consolidação ---
+    print("\n--- CONSOLIDANDO DADOS ---")
+    
+    insurers_list = []
+    
+    for susep_id, comp_data in companies.items():
+        name = comp_data["name"]
+        cnpj = comp_data["cnpj"]
+        
+        # Métricas Financeiras
+        net_worth = comp_data.get("net_worth", 0.0)
+        premiums = comp_data.get("premiums", 0.0)
+        claims = comp_data.get("claims", 0.0)
+        
+        # Score Financeiro
+        fin_score = 0.0
+        if premiums > 0:
+            log_val = math.log10(premiums)
+            fin_score = min(100.0, max(0.0, (log_val - 6.0) * 22))
+        
+        # Vinculação de Produtos (Open Insurance)
+        cnpj_clean = "".join(filter(str.isdigit, cnpj))
+        prods = opin_products.get(cnpj, [])
+        if not prods:
+            prods = opin_products.get(cnpj_clean, [])
+
+        # Vinculação de Reputação
+        rep_match = matcher.best(name)
+        rep_data = None
+        if rep_match:
+            rep_data = reputation_data.get(rep_match.key)
+
+        insurers_list.append({
+            "id": susep_id,
+            "cnpj": cnpj,
+            "name": name,
+            "data": {
+                "net_worth": net_worth,
+                "premiums": premiums,
+                "claims": claims,
+                "financial_score": round(fin_score, 1),
+                "components": {
+                    "financial": {
+                        "status": "data_available" if (premiums > 0 or net_worth > 0) else "no_data",
+                        "value": round(fin_score, 1)
+                    },
+                    "reputation": rep_data
+                }
+            },
+            "products": prods
+        })
+
+    insurers_list.sort(key=lambda x: x["data"]["financial_score"], reverse=True)
+
+    output = {
+        "meta": {
+            "count": len(insurers_list),
+            "sources": ["SUSEP (SES)", "Open Insurance Brasil", "Consumidor.gov.br"]
+        },
+        "insurers": insurers_list
+    }
+
+    OUTPUT_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
+        json.dump(output, f, ensure_ascii=False, separators=(',', ':'))
+
+    print(f"Stats Check: Count {len(companies)} -> {len(insurers_list)} (OK)")
+    print(f"OK: generated {OUTPUT_FILE}")
 
 if __name__ == "__main__":
-    extract_open_insurance_products()
+    main()
