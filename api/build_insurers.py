@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import math
+from datetime import datetime, timezone
 from pathlib import Path
 from api.sources.ses import extract_ses_master_and_financials
 from api.sources.opin_products import extract_open_insurance_products
@@ -19,7 +20,6 @@ def main():
 
     # --- 2. OPIN (Produtos) ---
     print("\n--- INICIANDO COLETA OPEN INSURANCE (PRODUTOS) ---")
-    # Retorna o dicionário {CNPJ: [Produtos]} diretamente
     opin_products = extract_open_insurance_products()
     
     print(f"OPIN DEBUG: {len(opin_products)} seguradoras com produtos mapeados.")
@@ -94,7 +94,10 @@ def main():
     # Ordena pelo score financeiro
     insurers_list.sort(key=lambda x: x["data"]["financial_score"], reverse=True)
 
+    # CORREÇÃO: Adicionando schemaVersion e generatedAt exigidos pelos testes
     output = {
+        "schemaVersion": "1.0.0",
+        "generatedAt": datetime.now(timezone.utc).isoformat(),
         "meta": {
             "count": len(insurers_list),
             "sources": ["SUSEP (SES)", "Open Insurance Brasil", "Consumidor.gov.br"]
