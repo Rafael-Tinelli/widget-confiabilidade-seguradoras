@@ -94,14 +94,14 @@ def main():
     # Ordena pelo score financeiro
     insurers_list.sort(key=lambda x: x["data"]["financial_score"], reverse=True)
 
-    # CORREÇÃO: Adicionado o campo "period" que o teste exige
+    # CORREÇÃO: "sources" movido para a raiz para satisfazer o teste
     output = {
         "schemaVersion": "1.0.0",
         "generatedAt": datetime.now(timezone.utc).isoformat(),
-        "period": "2024", 
+        "period": "2024",
+        "sources": ["SUSEP (SES)", "Open Insurance Brasil", "Consumidor.gov.br"],
         "meta": {
-            "count": len(insurers_list),
-            "sources": ["SUSEP (SES)", "Open Insurance Brasil", "Consumidor.gov.br"]
+            "count": len(insurers_list)
         },
         "insurers": insurers_list
     }
