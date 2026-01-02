@@ -6,112 +6,132 @@ import unicodedata
 from dataclasses import dataclass
 from typing import Dict, Optional, Set
 
+# --- DICIONÁRIO DE MATCH MANUAL (EXPANDIDO) ---
+# Mapeia: Parte do nome SUSEP (normalizado) -> Nome Exato no Consumidor.gov
+# Chaves devem ser minúsculas e sem acentos.
+MANUAL_ALIASES = {
+    # Grupo Bradesco
+    "bradesco vida": "Bradesco Seguros",
+    "bradesco auto": "Bradesco Seguros",
+    "bradesco capitalizacao": "Bradesco Capitalização",
+    "bradesco saude": "Bradesco Saúde",
+    "bradesco seguros": "Bradesco Seguros",
+    
+    # Grupo SulAmérica
+    "sul america": "SulAmérica Seguros",
+    "sulamerica": "SulAmérica Seguros",
+    
+    # Grupo BB / Brasilprev / Mapfre
+    "brasilprev": "Brasilprev",
+    "brasilseg": "Brasilseg",
+    "mapfre": "Mapfre Seguros",
+    
+    # Grupo Caixa
+    "caixa vida": "Caixa Seguradora",
+    "caixa seguradora": "Caixa Seguradora",
+    "caixa residencial": "Caixa Seguradora",
+    
+    # Grupo Itaú
+    "itau vida": "Itaú Seguros",
+    "itau seguros": "Itaú Seguros",
+    "itau auto": "Itaú Seguros",
+    
+    # Outros Grandes
+    "porto seguro": "Porto Seguro",
+    "azul seguros": "Azul Seguros",
+    "tokio marine": "Tokio Marine Seguradora",
+    "liberty": "Liberty Seguros",
+    "allianz": "Allianz Seguros",
+    "hdi": "HDI Seguros",
+    "sompo": "Sompo Seguros",
+    "chubb": "Chubb Seguros",
+    "zurich": "Zurich Seguros",
+    "zurich santander": "Zurich Santander",
+    "prudential": "Prudential do Brasil",
+    "generali": "Generali Brasil",
+    "icatu": "Icatu Seguros",
+    "unimed": "Seguros Unimed",
+}
 
 def _strip_accents(s: str) -> str:
-    """Remove acentuação (ex: 'São' -> 'Sao')."""
     return "".join(c for c in unicodedata.normalize("NFKD", s) if not unicodedata.combining(c))
 
-
 def _norm(s: str) -> str:
-    """Normaliza string para lowercase, sem acentos e sem caracteres especiais."""
     s = _strip_accents((s or "").lower()).strip()
-    s = re.sub(r"[^a-z0-9\s]+", " ", s)
+    s = re.sub(r"[^a-z0-9\s]", " ", s)
     s = re.sub(r"\s+", " ", s)
     return s.strip()
 
-
-# LISTA DE STOPWORDS REVISADA (Menos agressiva)
-# Removemos termos do "Core Business" (Seguro, Previdência) da exclusão.
-# Agora o match considera "Porto Seguro" diferente de "Porto Serviços".
 DEFAULT_STOPWORDS: Set[str] = {
-    # Jurídico / Sufixos Genéricos
-    "s", "sa", "s.a", "cia", "companhia", "comp", "ltda", "ltd", "inc",
-    "me", "epp", "corp", "corporation", "limitada",
-    
-    # Conectivos e Preposições
-    "de", "da", "do", "das", "dos", "em", "para", "por", "e", "ou",
-    "the", "of", "and", "&",
-    
-    # Termos genéricos de estrutura corporativa (Ruído)
-    "grupo", "holding", "participacoes", "participacao",
-    "servicos", "servico", "assessoria", "consultoria", "negocios"
-    
-    # NOTA: Termos como "Seguros", "Vida", "Previdencia", "Capitalizacao" 
-    # foram REMOVIDOS desta lista para serem considerados no cálculo de similaridade.
+    "s", "sa", "s.a", "cia", "companhia", "comp", "ltda", "me", "epp", 
+    "de", "da", "do", "das", "dos", "em", "para", "por", "e", "the", "of",
+    "grupo", "holding", "participacoes"
 }
 
-
 def _tokens(s: str, stopwords: Set[str]) -> Set[str]:
-    """Quebra a string em tokens únicos e limpos."""
     s = _norm(s)
     toks = set(s.split())
-    # Mantém tokens que não são stopwords e têm pelo menos 2 caracteres
     return {t for t in toks if t and t not in stopwords and len(t) >= 2}
 
-
 def _jaccard(a: Set[str], b: Set[str]) -> float:
-    """Calcula Índice de Jaccard (Interseção / União)."""
-    if not a or not b:
-        return 0.0
-    inter = len(a & b)
-    union = len(a | b)
-    return inter / union if union else 0.0
-
+    if not a or not b: return 0.0
+    return len(a & b) / len(a | b)
 
 @dataclass(frozen=True)
 class Match:
     key: str
     score: float
 
-
 class NameMatcher:
     def __init__(self, candidates: Dict[str, str], stopwords: Optional[Set[str]] = None) -> None:
         self.stopwords = stopwords or DEFAULT_STOPWORDS
-        self.candidates = candidates
-        # Pré-calcula tokens dos candidatos para performance
-        self._cand_tokens: Dict[str, Set[str]] = {
-            k: _tokens(v, self.stopwords) for k, v in candidates.items()
-        }
+        # candidates = {NomeOficialConsumidorGov: Dados...}
+        # Invertemos para facilitar a busca manual: {nome_lower: NomeOficial}
+        self._real_names_map = {k.lower(): k for k in candidates.keys()}
+        self._cand_tokens = {k: _tokens(k, self.stopwords) for k in candidates.keys()}
 
-    def best(self, query: str, threshold: float = 0.85, min_margin: float = 0.05) -> Optional[Match]:
-        """
-        Encontra o melhor match para a query.
+    def best(self, query: str, threshold: float = 0.60, min_margin: float = 0.05) -> Optional[Match]:
+        q_norm = _norm(query)
         
-        Args:
-            query: Nome a ser buscado (ex: "Porto Seguro S.A.")
-            threshold: Score mínimo (0 a 1) para aceitar o match.
-            min_margin: Diferença mínima entre o 1º e o 2º colocado para evitar ambiguidade.
-        """
+        # 1. TENTATIVA MANUAL (ALIAS)
+        for alias, target_name in MANUAL_ALIASES.items():
+            if alias in q_norm:
+                # Verifica se o target existe na base carregada
+                # (Ex: se "Bradesco Seguros" está no JSON do Consumidor.gov)
+                real_key = self._find_target_key(target_name)
+                if real_key:
+                    return Match(key=real_key, score=1.0)
+
+        # 2. ALGORITMO AUTOMÁTICO
         qtok = _tokens(query, self.stopwords)
-        if not qtok:
-            return None
+        if not qtok: return None
 
         best_key = None
         best_score = 0.0
-        second_score = 0.0
+        second = 0.0
 
         for k, ctok in self._cand_tokens.items():
             sc = _jaccard(qtok, ctok)
-            
             if sc > best_score:
-                second_score = best_score
+                second = best_score
                 best_score = sc
                 best_key = k
-            elif sc > second_score:
-                second_score = sc
+            elif sc > second:
+                second = sc
 
-        # Critérios de Aceite
-        if best_key is None:
-            return None
-        
-        # 1. Deve atingir o score mínimo
-        if best_score < threshold:
-            return None
-            
-        # 2. Deve ser inequivocamente melhor que o segundo lugar (safety margin)
-        # Exceção: Se o score for perfeito (1.0), aceitamos mesmo sem margem 
-        # (caso de nomes duplicados na base mas que são idênticos)
-        if best_score < 1.0 and (best_score - second_score) < min_margin:
-            return None
+        if best_key and best_score >= threshold:
+            if best_score == 1.0 or (best_score - second) >= min_margin:
+                return Match(key=best_key, score=best_score)
 
-        return Match(key=best_key, score=best_score)
+        return None
+
+    def _find_target_key(self, partial_name: str) -> Optional[str]:
+        p_norm = partial_name.lower()
+        # Busca exata
+        if p_norm in self._real_names_map:
+            return self._real_names_map[p_norm]
+        # Busca parcial
+        for k_lower, k_original in self._real_names_map.items():
+            if p_norm in k_lower:
+                return k_original
+        return None
