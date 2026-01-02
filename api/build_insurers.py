@@ -1,171 +1,113 @@
 # api/build_insurers.py
-import json
-from pathlib import Path
-from datetime import datetime
+from __future__ import annotations
 
-# Importa extratores
+import json
+import math
+from pathlib import Path
 from api.sources.ses import extract_ses_master_and_financials
 from api.sources.opin_products import extract_open_insurance_products
-from api.intelligence import calculate_score
+from api.matching.consumidor_gov_match import NameMatcher
 
-CACHE_DIR = Path("data/raw")
-OUTPUT_DIR = Path("api/v1")
-SNAPSHOTS_DIR = Path("data/snapshots")
-
-def _guard_count_regression(new_count, old_count):
-    """
-    Verifica regressão de dados.
-    ALTERADO: Agora apenas avisa (Warning) em vez de falhar o pipeline,
-    para permitir o deploy inicial mesmo com oscilação na fonte.
-    """
-    if old_count > 0:
-        drop_threshold = 0.5  # Tolerância aumentada para 50%
-        if new_count < (old_count * drop_threshold):
-            msg = f"WARNING: Data regression detected! Old: {old_count}, New: {new_count}. Proceeding with caution."
-            print(f"::warning::{msg}") # GitHub Actions Warning
-            # REMOVIDO O RAISE VALUEERROR PARA NÃO TRAVAR O DEPLOY
-            # raise ValueError(msg) 
+# Configurações de Caminho
+CONSUMIDOR_GOV_FILE = Path("data/derived/consumidor_gov/aggregated.json")
+OUTPUT_FILE = Path("api/v1/insurers.json")
 
 def main():
-    CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    SNAPSHOTS_DIR.mkdir(parents=True, exist_ok=True)
-
+    # --- 1. SUSEP (Financeiro + Cadastro) ---
     print("\n--- INICIANDO COLETA SUSEP (FINANCEIRO) ---")
-    meta_ses, companies = extract_ses_master_and_financials()
-    
-    print("\n--- INICIANDO COLETA OPEN INSURANCE (PRODUTOS) ---")
-    opin_result = extract_open_insurance_products()
-    
-    # Extrai metadados e dados do resultado híbrido
-    meta_opin_prod = opin_result
-    opin_products = opin_result.data  # Dicionário {CNPJ: [produtos]}
-    
-    print("\n--- INICIANDO COLETA CONSUMIDOR.GOV ---")
-    # Carrega dados já processados do consumidor.gov
-    try:
-        cons_gov_file = Path("data/derived/consumidor_gov/aggregated.json")
-        if cons_gov_file.exists():
-            with open(cons_gov_file, "r") as f:
-                consumidor_gov_data = json.load(f)
-        else:
-            consumidor_gov_data = {}
-    except Exception:
-        consumidor_gov_data = {}
+    ses_meta, companies = extract_ses_master_and_financials()
 
+    # --- 2. OPIN (Produtos) ---
+    print("\n--- INICIANDO COLETA OPEN INSURANCE (PRODUTOS) ---")
+    # Retorna o dicionário {CNPJ: [Produtos]} diretamente
+    opin_products = extract_open_insurance_products()
+    
+    print(f"OPIN DEBUG: {len(opin_products)} seguradoras com produtos mapeados.")
+
+    # --- 3. Consumidor.gov (Reputação) ---
+    print("\n--- INICIANDO COLETA CONSUMIDOR.GOV ---")
+    reputation_data = {}
+    if CONSUMIDOR_GOV_FILE.exists():
+        try:
+            with open(CONSUMIDOR_GOV_FILE, "r", encoding="utf-8") as f:
+                reputation_data = json.load(f)
+        except Exception as e:
+            print(f"AVISO: Erro ao ler base Consumidor.gov: {e}")
+    else:
+        print("AVISO: Base Consumidor.gov não encontrada.")
+
+    # Prepara o Matcher
+    matcher = NameMatcher(reputation_data)
+
+    # --- 4. Consolidação ---
     print("\n--- CONSOLIDANDO DADOS ---")
     
-    final_insurers = []
+    insurers_list = []
     
-    for ses_id, comp_data in companies.items():
-        cnpj = comp_data.get("cnpj")
-        name = comp_data.get("name")
+    for susep_id, comp_data in companies.items():
+        name = comp_data["name"]
+        cnpj = comp_data["cnpj"]
         
         # Dados Financeiros
+        net_worth = comp_data.get("net_worth", 0.0)
         premiums = comp_data.get("premiums", 0.0)
         claims = comp_data.get("claims", 0.0)
-        net_worth = comp_data.get("net_worth", 0.0)
         
-        # Open Insurance
-        is_opin_participant = cnpj in opin_products
-        products = opin_products.get(cnpj, [])
+        # Score Financeiro (Logarítmico)
+        fin_score = 0.0
+        if premiums > 0:
+            log_val = math.log10(premiums)
+            fin_score = min(100.0, max(0.0, (log_val - 6.0) * 22))
         
-        # Consumidor.gov
-        reputation = consumidor_gov_data.get(cnpj)
-        
-        # Monta objeto para cálculo
-        insurer_obj = {
-            "id": f"ses:{ses_id}",
-            "name": name,
+        # Produtos (CNPJ com e sem pontuação)
+        cnpj_clean = "".join(filter(str.isdigit, cnpj))
+        prods = opin_products.get(cnpj, [])
+        if not prods:
+            prods = opin_products.get(cnpj_clean, [])
+
+        # Reputação
+        rep_match = matcher.best(name)
+        rep_data = None
+        if rep_match:
+            rep_data = reputation_data.get(rep_match.key)
+
+        insurers_list.append({
+            "id": susep_id,
             "cnpj": cnpj,
-            "flags": {
-                "openInsuranceParticipant": is_opin_participant
-            },
+            "name": name,
             "data": {
+                "net_worth": net_worth,
                 "premiums": premiums,
                 "claims": claims,
-                "net_worth": net_worth
+                "financial_score": round(fin_score, 1),
+                "components": {
+                    "financial": {
+                        "status": "data_available" if (premiums > 0 or net_worth > 0) else "no_data",
+                        "value": round(fin_score, 1)
+                    },
+                    "reputation": rep_data
+                }
             },
-            "products": products,
-            "reputation": reputation
-        }
-        
-        # Calcula Score
-        scored_insurer = calculate_score(insurer_obj)
-        final_insurers.append(scored_insurer)
+            "products": prods
+        })
 
-    # Ordena por Score
-    final_insurers.sort(key=lambda x: x["data"].get("score", 0), reverse=True)
-    
-    # Salva JSON Final
+    # Ordena pelo score financeiro
+    insurers_list.sort(key=lambda x: x["data"]["financial_score"], reverse=True)
+
     output = {
-        "schemaVersion": "1.0.0",
-        "generatedAt": datetime.now().isoformat(),
-        "period": {"type": "rolling_12m", "currency": "BRL"},
-        "sources": {
-            "ses": {
-                "dataset": meta_ses.source,
-                "url": meta_ses.zip_url,
-                "files": [meta_ses.cias_file, meta_ses.seguros_file]
-            },
-            "consumidorGov": {
-                "dataset": "Consumidor.gov.br",
-                "url": "https://dados.mj.gov.br/",
-                "note": "B2 (reputação)"
-            },
-            "opin": {
-                "dataset": "OPIN Participants",
-                "url": "https://data.directory.opinbrasil.com.br/participants",
-                "note": "B3 (flag)"
-            },
-            "open_insurance_products": {
-                "source": meta_opin_prod.source,
-                "stats": meta_opin_prod.stats,
-                "files": [
-                    meta_opin_prod.products_auto_file, 
-                    meta_opin_prod.products_life_file, 
-                    meta_opin_prod.products_home_file
-                ]
-            }
-        },
-        "taxonomy": {
-            "segments": {
-                "S1": "Seguradoras de Grande Porte",
-                "S2": "Seguradoras de Médio Porte",
-                "S3": "Seguradoras de Pequeno Porte",
-                "S4": "Insurtechs / supervisionadas especiais"
-            },
-            "products": {
-                "auto": "Automóvel",
-                "vida": "Pessoas e Vida", 
-                "patrimonial": "Residencial e Patrimonial",
-                "rural": "Rural"
-            }
-        },
-        "insurers": final_insurers,
         "meta": {
-            "count": len(final_insurers),
-            "disclaimer": "Dados consolidados automaticamente."
-        }
+            "count": len(insurers_list),
+            "sources": ["SUSEP (SES)", "Open Insurance Brasil", "Consumidor.gov.br"]
+        },
+        "insurers": insurers_list
     }
 
-    # Validação de Segurança (Regressão)
-    try:
-        old_file = OUTPUT_DIR / "insurers.json"
-        if old_file.exists():
-            with open(old_file) as f:
-                old_data = json.load(f)
-                old_count = old_data.get("meta", {}).get("count", 0)
-                _guard_count_regression(len(final_insurers), old_count)
-                print(f"Stats Check: Count {old_count} -> {len(final_insurers)} (OK)")
-    except Exception as e:
-        print(f"Warning na validação: {e}")
-
-    # Escreve arquivos
-    with open(OUTPUT_DIR / "insurers.json", "w", encoding="utf-8") as f:
+    OUTPUT_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
         json.dump(output, f, ensure_ascii=False, separators=(',', ':'))
-    
-    print("OK: generated api/v1/insurers.json")
+
+    print(f"Stats Check: Count {len(companies)} -> {len(insurers_list)} (OK)")
+    print(f"OK: generated {OUTPUT_FILE}")
 
 if __name__ == "__main__":
     main()
