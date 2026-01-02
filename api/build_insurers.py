@@ -15,10 +15,14 @@ OUTPUT_FILE = Path("api/v1/insurers.json")
 
 def calculate_segment(net_worth: float) -> str:
     """Calcula o segmento (S1-S4) baseado no Patrimônio Líquido."""
-    if net_worth >= 15_000_000_000: return "S1"
-    elif net_worth >= 1_000_000_000: return "S2"
-    elif net_worth >= 100_000_000:   return "S3"
-    else: return "S4"
+    if net_worth >= 15_000_000_000:
+        return "S1"
+    elif net_worth >= 1_000_000_000:
+        return "S2"
+    elif net_worth >= 100_000_000:
+        return "S3"
+    else:
+        return "S4"
 
 def main():
     # --- 1. SUSEP (Financeiro + Cadastro) ---
@@ -85,7 +89,7 @@ def main():
             "cnpj": cnpj,
             "name": name,
             "segment": segment,
-            "flags": [],  # <--- CORREÇÃO: Campo 'flags' adicionado para passar no teste
+            "flags": [],
             "data": {
                 "net_worth": net_worth,
                 "premiums": premiums,
@@ -102,6 +106,7 @@ def main():
             "products": prods
         })
 
+    # Ordena pelo score financeiro
     insurers_list.sort(key=lambda x: x["data"]["financial_score"], reverse=True)
 
     output = {
