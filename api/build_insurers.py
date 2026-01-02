@@ -84,7 +84,7 @@ def main():
         if rep_match:
             rep_data = reputation_data.get(rep_match.key)
 
-        # CORREÇÃO: Flags agora é um dicionário com a chave exigida pelo teste
+        # CORREÇÃO: Flags deve ser um objeto, não lista
         flags = {
             "openInsuranceParticipant": len(prods) > 0
         }
