@@ -2,135 +2,136 @@
 from __future__ import annotations
 
 import json
-import math
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from api.sources.ses import extract_ses_master_and_financials
+from typing import Any, Dict, List
+
+from api.matching.consumidor_gov_match import NameMatcher, format_cnpj, normalize_cnpj
 from api.sources.opin_products import extract_open_insurance_products
-from api.matching.consumidor_gov_match import NameMatcher
+from api.sources.ses import extract_ses_master_and_financials
 
-# Configurações de Caminho
-CONSUMIDOR_GOV_FILE = Path("data/derived/consumidor_gov/aggregated.json")
 OUTPUT_FILE = Path("api/v1/insurers.json")
+CONSUMIDOR_GOV_FILE = Path("data/derived/consumidor_gov/aggregated.json")
 
-def calculate_segment(net_worth: float) -> str:
-    """Calcula o segmento (S1-S4) baseado no Patrimônio Líquido."""
-    if net_worth >= 15_000_000_000:
-        return "S1"
-    elif net_worth >= 1_000_000_000:
-        return "S2"
-    elif net_worth >= 100_000_000:
-        return "S3"
-    else:
-        return "S4"
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
-def main():
-    # --- 1. SUSEP (Financeiro + Cadastro) ---
+def _safe_float(v: Any) -> float:
+    try:
+        if v is None: return 0.0
+        s = str(v).strip().replace(".", "").replace(",", ".")
+        return float(s)
+    except: return 0.0
+
+@dataclass(frozen=True)
+class SegmentThresholds:
+    s1_min: float
+    s2_min: float
+    s3_min: float
+
+def compute_segment_thresholds(companies: Dict[str, Dict[str, Any]]) -> SegmentThresholds:
+    nws = sorted([_safe_float(c.get("net_worth")) for c in companies.values() if _safe_float(c.get("net_worth")) > 0])
+    if len(nws) < 8:
+        return SegmentThresholds(15_000_000_000.0, 5_000_000_000.0, 1_000_000_000.0)
+        
+    def q(p): 
+        idx = (len(nws)-1) * p
+        l, h = int(idx), int(idx)+1
+        return nws[l] if l==h or h>=len(nws) else nws[l]*(1-(idx-l)) + nws[h]*(idx-l)
+
+    s1, s2, s3 = q(0.75), q(0.50), q(0.25)
+    return SegmentThresholds(max(s1, s2), max(min(s2, s1), s3), min(s3, s2))
+
+def calculate_segment(net_worth: Any, t: SegmentThresholds) -> str:
+    nw = _safe_float(net_worth)
+    if nw >= t.s1_min: return "S1"
+    if nw >= t.s2_min: return "S2"
+    if nw >= t.s3_min: return "S3"
+    return "S4"
+
+def main() -> None:
     print("\n--- INICIANDO COLETA SUSEP (FINANCEIRO) ---")
-    ses_meta, companies = extract_ses_master_and_financials()
+    _ses_meta, companies = extract_ses_master_and_financials()
 
-    # --- 2. OPIN (Produtos) ---
-    print("\n--- INICIANDO COLETA OPEN INSURANCE (PRODUTOS) ---")
-    opin_products = extract_open_insurance_products()
-    
-    print(f"OPIN DEBUG: {len(opin_products)} seguradoras com produtos mapeados.")
-
-    # --- 3. Consumidor.gov (Reputação) ---
     print("\n--- INICIANDO COLETA CONSUMIDOR.GOV ---")
-    reputation_data = {}
+    reputation_root = {}
     if CONSUMIDOR_GOV_FILE.exists():
-        try:
-            with open(CONSUMIDOR_GOV_FILE, "r", encoding="utf-8") as f:
-                reputation_data = json.load(f)
-        except Exception as e:
-            print(f"AVISO: Erro ao ler base Consumidor.gov: {e}")
-    else:
-        print("AVISO: Base Consumidor.gov não encontrada.")
+        reputation_root = json.loads(CONSUMIDOR_GOV_FILE.read_text(encoding="utf-8"))
+    matcher = NameMatcher(reputation_root)
 
-    # Prepara o Matcher
-    matcher = NameMatcher(reputation_data)
+    print("\n--- INICIANDO COLETA OPEN INSURANCE (PRODUTOS) ---")
+    products_by_cnpj = extract_open_insurance_products()
 
-    # --- 4. Consolidação ---
     print("\n--- CONSOLIDANDO DADOS ---")
-    
-    insurers_list = []
-    
-    for susep_id, comp_data in companies.items():
-        name = comp_data["name"]
-        cnpj = comp_data["cnpj"]
-        
-        # Dados Financeiros
-        net_worth = comp_data.get("net_worth", 0.0)
-        premiums = comp_data.get("premiums", 0.0)
-        claims = comp_data.get("claims", 0.0)
-        
-        segment = calculate_segment(net_worth)
+    thresholds = compute_segment_thresholds(companies)
+    insurers = []
+    matched_reputation = 0
 
-        # Score Financeiro
+    for raw_cnpj, comp in companies.items():
+        cnpj_dig = normalize_cnpj(comp.get("cnpj") or raw_cnpj) or normalize_cnpj(raw_cnpj)
+        cnpj_fmt = format_cnpj(cnpj_dig) if cnpj_dig else str(comp.get("cnpj") or raw_cnpj)
+        
+        name = comp.get("name") or comp.get("corporate_name") or comp.get("razao_social") or cnpj_fmt
+        
+        # Reputation Match
+        rep_entry, _ = matcher.get_entry(str(name), cnpj=cnpj_dig or cnpj_fmt)
+        if rep_entry: matched_reputation += 1
+        
+        # Products
+        prods = products_by_cnpj.get(cnpj_dig, []) if cnpj_dig else []
+        
+        # Segment
+        segment = calculate_segment(comp.get("net_worth"), thresholds)
+        
+        # Financial Score Calculation
+        premiums = _safe_float(comp.get("premiums"))
         fin_score = 0.0
         if premiums > 0:
+            import math
             log_val = math.log10(premiums)
             fin_score = min(100.0, max(0.0, (log_val - 6.0) * 22))
-        
-        # Produtos
-        cnpj_clean = "".join(filter(str.isdigit, cnpj))
-        prods = opin_products.get(cnpj, [])
-        if not prods:
-            prods = opin_products.get(cnpj_clean, [])
 
-        # Reputação
-        rep_match = matcher.best(name)
-        rep_data = None
-        if rep_match:
-            rep_data = reputation_data.get(rep_match.key)
-
-        # CORREÇÃO: Flags deve ser um objeto, não lista
-        flags = {
-            "openInsuranceParticipant": len(prods) > 0
-        }
-
-        insurers_list.append({
-            "id": susep_id,
-            "cnpj": cnpj,
-            "name": name,
+        insurers.append({
+            "id": cnpj_dig or raw_cnpj,
+            "name": str(name),
+            "cnpj": cnpj_fmt,
             "segment": segment,
-            "flags": flags,
+            "flags": {"openInsuranceParticipant": bool(cnpj_dig and cnpj_dig in products_by_cnpj)},
             "data": {
-                "net_worth": net_worth,
+                "net_worth": _safe_float(comp.get("net_worth")),
                 "premiums": premiums,
-                "claims": claims,
+                "claims": _safe_float(comp.get("claims")),
                 "financial_score": round(fin_score, 1),
                 "components": {
-                    "financial": {
-                        "status": "data_available" if (premiums > 0 or net_worth > 0) else "no_data",
-                        "value": round(fin_score, 1)
-                    },
-                    "reputation": rep_data
-                }
+                    "financial": {"status": "data_available" if premiums > 0 else "no_data", "value": round(fin_score, 1)},
+                    "reputation": rep_entry
+                },
+                "products": prods
             },
-            "products": prods
+            "products": prods # Mantido na raiz para compatibilidade
         })
 
-    # Ordena pelo score financeiro
-    insurers_list.sort(key=lambda x: x["data"]["financial_score"], reverse=True)
+    insurers.sort(key=lambda x: x["data"]["financial_score"], reverse=True)
 
-    output = {
+    out = {
         "schemaVersion": "1.0.0",
-        "generatedAt": datetime.now(timezone.utc).isoformat(),
+        "generatedAt": _utc_now_iso(),
         "period": "2024",
         "sources": ["SUSEP (SES)", "Open Insurance Brasil", "Consumidor.gov.br"],
         "meta": {
-            "count": len(insurers_list)
+            "count": len(insurers),
+            "stats": {
+                "reputationMatched": matched_reputation,
+                "openInsuranceParticipants": sum(1 for i in insurers if i["flags"]["openInsuranceParticipant"]),
+            }
         },
-        "insurers": insurers_list
+        "insurers": insurers
     }
 
     OUTPUT_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
-        json.dump(output, f, ensure_ascii=False, separators=(',', ':'))
-
-    print(f"Stats Check: Count {len(companies)} -> {len(insurers_list)} (OK)")
-    print(f"OK: generated {OUTPUT_FILE}")
+    OUTPUT_FILE.write_text(json.dumps(out, ensure_ascii=False, indent=0, separators=(',', ':')), encoding="utf-8")
+    print(f"OK: generated {OUTPUT_FILE} with {len(insurers)} insurers. Reputation matched: {matched_reputation}.")
 
 if __name__ == "__main__":
     main()
