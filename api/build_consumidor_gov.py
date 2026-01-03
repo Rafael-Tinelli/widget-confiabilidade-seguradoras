@@ -53,11 +53,6 @@ def parse_html_table(html_content):
             # A nota está na coluna correspondente a "Nota do Consumidor"
             # No ranking padrão "Por Segmento", a ordem visual é:
             # Total Reclamações | Respondidas | Nota Consumidor (Ex: 8,5)
-            # O regex pega apenas números, então a nota deve ser o último ou penúltimo valor pequeno.
-            
-            # Tentativa heurística: A nota é um valor <= 5.0 (escala antiga) ou <= 10.0
-            # Mas o site atual usa escala 1-5 na visualização de estrelas, mas o texto pode ser 0-10?
-            # Na verdade, o Consumidor.gov usa escala 1 a 5.
             
             # Vamos pegar a coluna de índice 2 (terceira coluna numérica encontrada)
             nota_str = cols[2].replace(',', '.')
@@ -71,10 +66,10 @@ def parse_html_table(html_content):
                 # Estrutura compatível com o Agg.to_public() antigo
                 companies[norm_name] = {
                     "display_name": name,
-                    "complaints_total": 0, # Dado secundário no bypass
+                    "complaints_total": 0,  # Dado secundário no bypass
                     "satisfaction_avg": nota,
-                    "name": name, # Para o matcher novo
-                    "cnpj": None, # Site não fornece CNPJ nesta view
+                    "name": name,  # Para o matcher novo
+                    "cnpj": None,  # Site não fornece CNPJ nesta view
                     "statistics": {
                         "overallSatisfaction": nota,
                     },
@@ -117,7 +112,7 @@ def fetch_data_with_bypass():
             "area": "",
             "assunto": "",
             "grupoProblema": "",
-            "periodo": "365", # Últimos 12 meses
+            "periodo": "365",  # Últimos 12 meses
             "dataTermino": time.strftime("%d/%m/%Y"),
             "regiao": "BR"
         }
@@ -139,7 +134,7 @@ def fetch_data_with_bypass():
                     print(f"CG: Sucesso! {count} empresas extraídas do HTML no segmento {seg_id}.")
                     all_data.update(extracted)
                 else:
-                    print(f"CG: Aviso - HTML baixado, mas regex não encontrou dados. Layout mudou?")
+                    print("CG: Aviso - HTML baixado, mas regex não encontrou dados. Layout mudou?")
             else:
                 print(f"CG: Falha HTTP {response.status_code} no segmento {seg_id}")
                 
@@ -162,8 +157,8 @@ def main():
     # 2. Formata para o formato esperado pelo Matcher
     # O Matcher espera as chaves 'by_name' e 'by_cnpj_key' (mesmo que vazia)
     aggregated = {
-        "by_cnpj_key": {}, # Scraper HTML não pega CNPJ, fica vazio
-        "by_name": crawled_data # Chave já está normalizada
+        "by_cnpj_key": {},  # Scraper HTML não pega CNPJ, fica vazio
+        "by_name": crawled_data  # Chave já está normalizada
     }
 
     print(f"CG: Total de empresas indexadas para match: {len(aggregated['by_name'])}")
