@@ -9,6 +9,7 @@ import re
 import unicodedata
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from pathlib import Path  # <--- Adicionado
 from typing import Any
 
 import requests
