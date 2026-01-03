@@ -1,6 +1,6 @@
 {
 "schemaVersion":"1.0.0",
-"generatedAt":"2026-01-03T12:21:51.034053Z",
+"generatedAt":"2026-01-03T12:42:20.300053Z",
 "period":"2024",
 "sources":[
 "SUSEP (SES)",
@@ -10,7 +10,7 @@
 "meta":{
 "count":233,
 "stats":{
-"reputationMatched":0,
+"reputationMatched":68,
 "openInsuranceParticipants":0
 }
 },
@@ -33,7 +33,15 @@
 "status":"data_available",
 "value":100.0
 },
-"reputation":null
+"reputation":{
+"display_name":"Sabemi Seguradora",
+"complaints_total":721,
+"complaints_finalizadas":0,
+"responded_rate":null,
+"resolution_rate":null,
+"satisfaction_avg":null,
+"avg_response_days":null
+}
 },
 "products":[]
 },
@@ -81,7 +89,15 @@
 "status":"data_available",
 "value":100.0
 },
-"reputation":null
+"reputation":{
+"display_name":"Essor Seguros",
+"complaints_total":56,
+"complaints_finalizadas":0,
+"responded_rate":null,
+"resolution_rate":null,
+"satisfaction_avg":null,
+"avg_response_days":null
+}
 },
 "products":[]
 },
@@ -129,7 +145,15 @@
 "status":"data_available",
 "value":100.0
 },
-"reputation":null
+"reputation":{
+"display_name":"HDI Global Seguros",
+"complaints_total":1,
+"complaints_finalizadas":0,
+"responded_rate":null,
+"resolution_rate":null,
+"satisfaction_avg":null,
+"avg_response_days":null
+}
 },
 "products":[]
 },
@@ -153,7 +177,15 @@
 "status":"data_available",
 "value":100.0
 },
-"reputation":null
+"reputation":{
+"display_name":"Santander Auto",
+"complaints_total":1050,
+"complaints_finalizadas":0,
+"responded_rate":null,
+"resolution_rate":null,
+"satisfaction_avg":null,
+"avg_response_days":null
+}
 },
 "products":[]
 },
@@ -177,7 +209,15 @@
 "status":"data_available",
 "value":100.0
 },
-"reputation":null
+"reputation":{
+"display_name":"Safra Seguros Gerais",
+"complaints_total":117,
+"complaints_finalizadas":0,
+"responded_rate":null,
+"resolution_rate":null,
+"satisfaction_avg":null,
+"avg_response_days":null
+}
 },
 "products":[]
 },
@@ -201,7 +241,15 @@
 "status":"data_available",
 "value":100.0
 },
-"reputation":null
+"reputation":{
+"display_name":"Banco Bmg",
+"complaints_total":27225,
+"complaints_finalizadas":0,
+"responded_rate":null,
+"resolution_rate":null,
+"satisfaction_avg":null,
+"avg_response_days":null
+}
 },
 "products":[]
 },
@@ -225,7 +273,15 @@
 "status":"data_available",
 "value":100.0
 },
-"reputation":null
+"reputation":{
+"display_name":"Comprev Seguradora",
+"complaints_total":6,
+"complaints_finalizadas":0,
+"responded_rate":null,
+"resolution_rate":null,
+"satisfaction_avg":null,
+"avg_response_days":null
+}
 },
 "products":[]
 },
@@ -273,7 +329,15 @@
 "status":"data_available",
 "value":100.0
 },
-"reputation":null
+"reputation":{
+"display_name":"Luizaseg",
+"complaints_total":118,
+"complaints_finalizadas":0,
+"responded_rate":null,
+"resolution_rate":null,
+"satisfaction_avg":null,
+"avg_response_days":null
+}
 },
 "products":[]
 },
@@ -321,7 +385,15 @@
 "status":"data_available",
 "value":100.0
 },
-"reputation":null
+"reputation":{
+"display_name":"Aruana Seguradora",
+"complaints_total":27,
+"complaints_finalizadas":0,
+"responded_rate":null,
+"resolution_rate":null,
+"satisfaction_avg":null,
+"avg_response_days":null
+}
 },
 "products":[]
 },
@@ -345,7 +417,15 @@
 "status":"data_available",
 "value":100.0
 },
-"reputation":null
+"reputation":{
+"display_name":"Assurant Seguradora",
+"complaints_total":1232,
+"complaints_finalizadas":0,
+"responded_rate":null,
+"resolution_rate":null,
+"satisfaction_avg":null,
+"avg_response_days":null
+}
 },
 "products":[]
 },
@@ -393,7 +473,15 @@
 "status":"data_available",
 "value":100.0
 },
-"reputation":null
+"reputation":{
+"display_name":"Omint Seguros",
+"complaints_total":73,
+"complaints_finalizadas":0,
+"responded_rate":null,
+"resolution_rate":null,
+"satisfaction_avg":null,
+"avg_response_days":null
+}
 },
 "products":[]
 },
@@ -417,7 +505,15 @@
 "status":"data_available",
 "value":100.0
 },
-"reputation":null
+"reputation":{
+"display_name":"Banco BTG Pactual",
+"complaints_total":2734,
+"complaints_finalizadas":0,
+"responded_rate":null,
+"resolution_rate":null,
+"satisfaction_avg":null,
+"avg_response_days":null
+}
 },
 "products":[]
 },
@@ -489,7 +585,15 @@
 "status":"data_available",
 "value":100.0
 },
-"reputation":null
+"reputation":{
+"display_name":"Axa Seguros",
+"complaints_total":264,
+"complaints_finalizadas":0,
+"responded_rate":null,
+"resolution_rate":null,
+"satisfaction_avg":null,
+"avg_response_days":null
+}
 },
 "products":[]
 },
@@ -561,7 +665,15 @@
 "status":"data_available",
 "value":100.0
 },
-"reputation":null
+"reputation":{
+"display_name":"Gazin Seguros",
+"complaints_total":30,
+"complaints_finalizadas":0,
+"responded_rate":null,
+"resolution_rate":null,
+"satisfaction_avg":null,
+"avg_response_days":null
+}
 },
 "products":[]
 },
@@ -585,7 +697,15 @@
 "status":"data_available",
 "value":100.0
 },
-"reputation":null
+"reputation":{
+"display_name":"Pottencial Seguradora",
+"complaints_total":147,
+"complaints_finalizadas":0,
+"responded_rate":null,
+"resolution_rate":null,
+"satisfaction_avg":null,
+"avg_response_days":null
+}
 },
 "products":[]
 },
@@ -609,7 +729,15 @@
 "status":"data_available",
 "value":100.0
 },
-"reputation":null
+"reputation":{
+"display_name":"Mapfre Seguros",
+"complaints_total":2375,
+"complaints_finalizadas":0,
+"responded_rate":null,
+"resolution_rate":null,
+"satisfaction_avg":null,
+"avg_response_days":null
+}
 },
 "products":[]
 },
@@ -633,7 +761,15 @@
 "status":"data_available",
 "value":100.0
 },
-"reputation":null
+"reputation":{
+"display_name":"MG Seguros",
+"complaints_total":43,
+"complaints_finalizadas":0,
+"responded_rate":null,
+"resolution_rate":null,
+"satisfaction_avg":null,
+"avg_response_days":null
+}
 },
 "products":[]
 },
@@ -657,7 +793,15 @@
 "status":"data_available",
 "value":100.0
 },
-"reputation":null
+"reputation":{
+"display_name":"Sicoob Seguradora",
+"complaints_total":434,
+"complaints_finalizadas":0,
+"responded_rate":null,
+"resolution_rate":null,
+"satisfaction_avg":null,
+"avg_response_days":null
+}
 },
 "products":[]
 },
@@ -681,7 +825,15 @@
 "status":"data_available",
 "value":100.0
 },
-"reputation":null
+"reputation":{
+"display_name":"Usebens Seguradora",
+"complaints_total":416,
+"complaints_finalizadas":0,
+"responded_rate":null,
+"resolution_rate":null,
+"satisfaction_avg":null,
+"avg_response_days":null
+}
 },
 "products":[]
 },
@@ -729,7 +881,15 @@
 "status":"data_available",
 "value":100.0
 },
-"reputation":null
+"reputation":{
+"display_name":"Banco XP",
+"complaints_total":1983,
+"complaints_finalizadas":0,
+"responded_rate":null,
+"resolution_rate":null,
+"satisfaction_avg":null,
+"avg_response_days":null
+}
 },
 "products":[]
 },
@@ -753,7 +913,15 @@
 "status":"data_available",
 "value":100.0
 },
-"reputation":null
+"reputation":{
+"display_name":"JNS Seguros",
+"complaints_total":12,
+"complaints_finalizadas":0,
+"responded_rate":null,
+"resolution_rate":null,
+"satisfaction_avg":null,
+"avg_response_days":null
+}
 },
 "products":[]
 },
@@ -777,7 +945,15 @@
 "status":"data_available",
 "value":100.0
 },
-"reputation":null
+"reputation":{
+"display_name":"Capemisa Seguradora",
+"complaints_total":118,
+"complaints_finalizadas":0,
+"responded_rate":null,
+"resolution_rate":null,
+"satisfaction_avg":null,
+"avg_response_days":null
+}
 },
 "products":[]
 },
@@ -825,7 +1001,15 @@
 "status":"data_available",
 "value":100.0
 },
-"reputation":null
+"reputation":{
+"display_name":"Prudential do Brasil",
+"complaints_total":242,
+"complaints_finalizadas":0,
+"responded_rate":null,
+"resolution_rate":null,
+"satisfaction_avg":null,
+"avg_response_days":null
+}
 },
 "products":[]
 },
@@ -969,7 +1153,15 @@
 "status":"data_available",
 "value":100.0
 },
-"reputation":null
+"reputation":{
+"display_name":"Suhai Seguradora",
+"complaints_total":975,
+"complaints_finalizadas":0,
+"responded_rate":null,
+"resolution_rate":null,
+"satisfaction_avg":null,
+"avg_response_days":null
+}
 },
 "products":[]
 },
@@ -993,7 +1185,15 @@
 "status":"data_available",
 "value":100.0
 },
-"reputation":null
+"reputation":{
+"display_name":"Zurich Santander Seguros",
+"complaints_total":1116,
+"complaints_finalizadas":0,
+"responded_rate":null,
+"resolution_rate":null,
+"satisfaction_avg":null,
+"avg_response_days":null
+}
 },
 "products":[]
 },
@@ -1041,7 +1241,15 @@
 "status":"data_available",
 "value":100.0
 },
-"reputation":null
+"reputation":{
+"display_name":"Icatu Seguros",
+"complaints_total":3073,
+"complaints_finalizadas":0,
+"responded_rate":null,
+"resolution_rate":null,
+"satisfaction_avg":null,
+"avg_response_days":null
+}
 },
 "products":[]
 },
@@ -1065,7 +1273,15 @@
 "status":"data_available",
 "value":100.0
 },
-"reputation":null
+"reputation":{
+"display_name":"Allianz Seguros",
+"complaints_total":1802,
+"complaints_finalizadas":0,
+"responded_rate":null,
+"resolution_rate":null,
+"satisfaction_avg":null,
+"avg_response_days":null
+}
 },
 "products":[]
 },
@@ -1137,7 +1353,15 @@
 "status":"data_available",
 "value":100.0
 },
-"reputation":null
+"reputation":{
+"display_name":"Banestes",
+"complaints_total":905,
+"complaints_finalizadas":0,
+"responded_rate":null,
+"resolution_rate":null,
+"satisfaction_avg":null,
+"avg_response_days":null
+}
 },
 "products":[]
 },
@@ -1161,7 +1385,15 @@
 "status":"data_available",
 "value":100.0
 },
-"reputation":null
+"reputation":{
+"display_name":"Bradesco Auto/RE",
+"complaints_total":2267,
+"complaints_finalizadas":0,
+"responded_rate":null,
+"resolution_rate":null,
+"satisfaction_avg":null,
+"avg_response_days":null
+}
 },
 "products":[]
 },
@@ -1209,7 +1441,15 @@
 "status":"data_available",
 "value":100.0
 },
-"reputation":null
+"reputation":{
+"display_name":"Azul Seguros Cia de Seguros Gerais",
+"complaints_total":953,
+"complaints_finalizadas":0,
+"responded_rate":null,
+"resolution_rate":null,
+"satisfaction_avg":null,
+"avg_response_days":null
+}
 },
 "products":[]
 },
@@ -1281,7 +1521,15 @@
 "status":"data_available",
 "value":100.0
 },
-"reputation":null
+"reputation":{
+"display_name":"Caixa Seguradora",
+"complaints_total":299,
+"complaints_finalizadas":0,
+"responded_rate":null,
+"resolution_rate":null,
+"satisfaction_avg":null,
+"avg_response_days":null
+}
 },
 "products":[]
 },
@@ -1305,7 +1553,15 @@
 "status":"data_available",
 "value":100.0
 },
-"reputation":null
+"reputation":{
+"display_name":"Mapfre Seguros",
+"complaints_total":2375,
+"complaints_finalizadas":0,
+"responded_rate":null,
+"resolution_rate":null,
+"satisfaction_avg":null,
+"avg_response_days":null
+}
 },
 "products":[]
 },
@@ -1329,7 +1585,15 @@
 "status":"data_available",
 "value":100.0
 },
-"reputation":null
+"reputation":{
+"display_name":"Excelsior Seguros",
+"complaints_total":36,
+"complaints_finalizadas":0,
+"responded_rate":null,
+"resolution_rate":null,
+"satisfaction_avg":null,
+"avg_response_days":null
+}
 },
 "products":[]
 },
@@ -1353,7 +1617,15 @@
 "status":"data_available",
 "value":100.0
 },
-"reputation":null
+"reputation":{
+"display_name":"Sompo Seguros",
+"complaints_total":138,
+"complaints_finalizadas":0,
+"responded_rate":null,
+"resolution_rate":null,
+"satisfaction_avg":null,
+"avg_response_days":null
+}
 },
 "products":[]
 },
@@ -1377,7 +1649,15 @@
 "status":"data_available",
 "value":100.0
 },
-"reputation":null
+"reputation":{
+"display_name":"American Life Seguros",
+"complaints_total":74,
+"complaints_finalizadas":0,
+"responded_rate":null,
+"resolution_rate":null,
+"satisfaction_avg":null,
+"avg_response_days":null
+}
 },
 "products":[]
 },
@@ -1401,7 +1681,15 @@
 "status":"data_available",
 "value":100.0
 },
-"reputation":null
+"reputation":{
+"display_name":"Indiana Seguros",
+"complaints_total":31,
+"complaints_finalizadas":0,
+"responded_rate":null,
+"resolution_rate":null,
+"satisfaction_avg":null,
+"avg_response_days":null
+}
 },
 "products":[]
 },
@@ -1425,7 +1713,15 @@
 "status":"data_available",
 "value":100.0
 },
-"reputation":null
+"reputation":{
+"display_name":"Porto Seguro Cia de Seguros Gerais",
+"complaints_total":2562,
+"complaints_finalizadas":0,
+"responded_rate":null,
+"resolution_rate":null,
+"satisfaction_avg":null,
+"avg_response_days":null
+}
 },
 "products":[]
 },
@@ -1473,7 +1769,15 @@
 "status":"data_available",
 "value":100.0
 },
-"reputation":null
+"reputation":{
+"display_name":"Swiss Re Corporate Solutions Brasil Seguros",
+"complaints_total":1,
+"complaints_finalizadas":0,
+"responded_rate":null,
+"resolution_rate":null,
+"satisfaction_avg":null,
+"avg_response_days":null
+}
 },
 "products":[]
 },
@@ -1497,7 +1801,15 @@
 "status":"data_available",
 "value":100.0
 },
-"reputation":null
+"reputation":{
+"display_name":"Centauro",
+"complaints_total":2929,
+"complaints_finalizadas":0,
+"responded_rate":null,
+"resolution_rate":null,
+"satisfaction_avg":null,
+"avg_response_days":null
+}
 },
 "products":[]
 },
@@ -1545,7 +1857,15 @@
 "status":"data_available",
 "value":100.0
 },
-"reputation":null
+"reputation":{
+"display_name":"Fator Seguradora",
+"complaints_total":5,
+"complaints_finalizadas":0,
+"responded_rate":null,
+"resolution_rate":null,
+"satisfaction_avg":null,
+"avg_response_days":null
+}
 },
 "products":[]
 },
@@ -1569,7 +1889,15 @@
 "status":"data_available",
 "value":100.0
 },
-"reputation":null
+"reputation":{
+"display_name":"Tokio Marine",
+"complaints_total":1886,
+"complaints_finalizadas":0,
+"responded_rate":null,
+"resolution_rate":null,
+"satisfaction_avg":null,
+"avg_response_days":null
+}
 },
 "products":[]
 },
@@ -1713,7 +2041,15 @@
 "status":"data_available",
 "value":100.0
 },
-"reputation":null
+"reputation":{
+"display_name":"Alfa Seguradora",
+"complaints_total":343,
+"complaints_finalizadas":0,
+"responded_rate":null,
+"resolution_rate":null,
+"satisfaction_avg":null,
+"avg_response_days":null
+}
 },
 "products":[]
 },
@@ -1785,7 +2121,15 @@
 "status":"data_available",
 "value":100.0
 },
-"reputation":null
+"reputation":{
+"display_name":"Zurich Santander Seguros",
+"complaints_total":1116,
+"complaints_finalizadas":0,
+"responded_rate":null,
+"resolution_rate":null,
+"satisfaction_avg":null,
+"avg_response_days":null
+}
 },
 "products":[]
 },
@@ -1809,7 +2153,15 @@
 "status":"data_available",
 "value":100.0
 },
-"reputation":null
+"reputation":{
+"display_name":"HDI Seguros",
+"complaints_total":631,
+"complaints_finalizadas":0,
+"responded_rate":null,
+"resolution_rate":null,
+"satisfaction_avg":null,
+"avg_response_days":null
+}
 },
 "products":[]
 },
@@ -1833,7 +2185,15 @@
 "status":"data_available",
 "value":100.0
 },
-"reputation":null
+"reputation":{
+"display_name":"Mitsui Sumitomo Seguros",
+"complaints_total":50,
+"complaints_finalizadas":0,
+"responded_rate":null,
+"resolution_rate":null,
+"satisfaction_avg":null,
+"avg_response_days":null
+}
 },
 "products":[]
 },
@@ -1881,7 +2241,15 @@
 "status":"data_available",
 "value":100.0
 },
-"reputation":null
+"reputation":{
+"display_name":"Seguros Sura",
+"complaints_total":162,
+"complaints_finalizadas":0,
+"responded_rate":null,
+"resolution_rate":null,
+"satisfaction_avg":null,
+"avg_response_days":null
+}
 },
 "products":[]
 },
@@ -1929,7 +2297,15 @@
 "status":"data_available",
 "value":100.0
 },
-"reputation":null
+"reputation":{
+"display_name":"Gente Seguradora",
+"complaints_total":26,
+"complaints_finalizadas":0,
+"responded_rate":null,
+"resolution_rate":null,
+"satisfaction_avg":null,
+"avg_response_days":null
+}
 },
 "products":[]
 },
@@ -1977,7 +2353,15 @@
 "status":"data_available",
 "value":100.0
 },
-"reputation":null
+"reputation":{
+"display_name":"Banco Bradesco",
+"complaints_total":66638,
+"complaints_finalizadas":0,
+"responded_rate":null,
+"resolution_rate":null,
+"satisfaction_avg":null,
+"avg_response_days":null
+}
 },
 "products":[]
 },
@@ -2025,7 +2409,15 @@
 "status":"data_available",
 "value":100.0
 },
-"reputation":null
+"reputation":{
+"display_name":"Unimed Seguradora",
+"complaints_total":342,
+"complaints_finalizadas":0,
+"responded_rate":null,
+"resolution_rate":null,
+"satisfaction_avg":null,
+"avg_response_days":null
+}
 },
 "products":[]
 },
@@ -2049,7 +2441,15 @@
 "status":"data_available",
 "value":100.0
 },
-"reputation":null
+"reputation":{
+"display_name":"Caixa Seguradora",
+"complaints_total":299,
+"complaints_finalizadas":0,
+"responded_rate":null,
+"resolution_rate":null,
+"satisfaction_avg":null,
+"avg_response_days":null
+}
 },
 "products":[]
 },
@@ -2289,7 +2689,15 @@
 "status":"data_available",
 "value":100.0
 },
-"reputation":null
+"reputation":{
+"display_name":"Brasilcap",
+"complaints_total":59,
+"complaints_finalizadas":0,
+"responded_rate":null,
+"resolution_rate":null,
+"satisfaction_avg":null,
+"avg_response_days":null
+}
 },
 "products":[]
 },
@@ -2337,7 +2745,15 @@
 "status":"data_available",
 "value":100.0
 },
-"reputation":null
+"reputation":{
+"display_name":"Icatu Seguros",
+"complaints_total":3073,
+"complaints_finalizadas":0,
+"responded_rate":null,
+"resolution_rate":null,
+"satisfaction_avg":null,
+"avg_response_days":null
+}
 },
 "products":[]
 },
@@ -2361,7 +2777,15 @@
 "status":"data_available",
 "value":100.0
 },
-"reputation":null
+"reputation":{
+"display_name":"Capemisa Seguradora",
+"complaints_total":118,
+"complaints_finalizadas":0,
+"responded_rate":null,
+"resolution_rate":null,
+"satisfaction_avg":null,
+"avg_response_days":null
+}
 },
 "products":[]
 },
@@ -2457,7 +2881,15 @@
 "status":"data_available",
 "value":100.0
 },
-"reputation":null
+"reputation":{
+"display_name":"Banco Bradesco",
+"complaints_total":66638,
+"complaints_finalizadas":0,
+"responded_rate":null,
+"resolution_rate":null,
+"satisfaction_avg":null,
+"avg_response_days":null
+}
 },
 "products":[]
 },
@@ -2529,7 +2961,15 @@
 "status":"data_available",
 "value":100.0
 },
-"reputation":null
+"reputation":{
+"display_name":"Mapfre Seguros",
+"complaints_total":2375,
+"complaints_finalizadas":0,
+"responded_rate":null,
+"resolution_rate":null,
+"satisfaction_avg":null,
+"avg_response_days":null
+}
 },
 "products":[]
 },
@@ -2577,7 +3017,15 @@
 "status":"data_available",
 "value":100.0
 },
-"reputation":null
+"reputation":{
+"display_name":"Banco Santander",
+"complaints_total":74819,
+"complaints_finalizadas":0,
+"responded_rate":null,
+"resolution_rate":null,
+"satisfaction_avg":null,
+"avg_response_days":null
+}
 },
 "products":[]
 },
@@ -2625,7 +3073,15 @@
 "status":"data_available",
 "value":94.1
 },
-"reputation":null
+"reputation":{
+"display_name":"Banco Safra",
+"complaints_total":9230,
+"complaints_finalizadas":0,
+"responded_rate":null,
+"resolution_rate":null,
+"satisfaction_avg":null,
+"avg_response_days":null
+}
 },
 "products":[]
 },
@@ -2649,7 +3105,15 @@
 "status":"data_available",
 "value":94.0
 },
-"reputation":null
+"reputation":{
+"display_name":"Caixa Seguradora",
+"complaints_total":299,
+"complaints_finalizadas":0,
+"responded_rate":null,
+"resolution_rate":null,
+"satisfaction_avg":null,
+"avg_response_days":null
+}
 },
 "products":[]
 },
@@ -2697,7 +3161,15 @@
 "status":"data_available",
 "value":86.4
 },
-"reputation":null
+"reputation":{
+"display_name":"Unimed Seguros Patrimoniais",
+"complaints_total":17,
+"complaints_finalizadas":0,
+"responded_rate":null,
+"resolution_rate":null,
+"satisfaction_avg":null,
+"avg_response_days":null
+}
 },
 "products":[]
 },
@@ -2721,7 +3193,15 @@
 "status":"data_available",
 "value":86.0
 },
-"reputation":null
+"reputation":{
+"display_name":"Banco BTG Pactual",
+"complaints_total":2734,
+"complaints_finalizadas":0,
+"responded_rate":null,
+"resolution_rate":null,
+"satisfaction_avg":null,
+"avg_response_days":null
+}
 },
 "products":[]
 },
@@ -2745,7 +3225,15 @@
 "status":"data_available",
 "value":84.6
 },
-"reputation":null
+"reputation":{
+"display_name":"Alfa Seguradora",
+"complaints_total":343,
+"complaints_finalizadas":0,
+"responded_rate":null,
+"resolution_rate":null,
+"satisfaction_avg":null,
+"avg_response_days":null
+}
 },
 "products":[]
 },
@@ -2769,7 +3257,15 @@
 "status":"data_available",
 "value":83.6
 },
-"reputation":null
+"reputation":{
+"display_name":"MBM Seguros",
+"complaints_total":50,
+"complaints_finalizadas":0,
+"responded_rate":null,
+"resolution_rate":null,
+"satisfaction_avg":null,
+"avg_response_days":null
+}
 },
 "products":[]
 },
@@ -3057,7 +3553,15 @@
 "status":"data_available",
 "value":58.2
 },
-"reputation":null
+"reputation":{
+"display_name":"Angelus Seguros",
+"complaints_total":1,
+"complaints_finalizadas":0,
+"responded_rate":null,
+"resolution_rate":null,
+"satisfaction_avg":null,
+"avg_response_days":null
+}
 },
 "products":[]
 },
@@ -3129,7 +3633,15 @@
 "status":"no_data",
 "value":0.0
 },
-"reputation":null
+"reputation":{
+"display_name":"Youse Seguradora",
+"complaints_total":873,
+"complaints_finalizadas":0,
+"responded_rate":null,
+"resolution_rate":null,
+"satisfaction_avg":null,
+"avg_response_days":null
+}
 },
 "products":[]
 },
@@ -3225,7 +3737,15 @@
 "status":"no_data",
 "value":0.0
 },
-"reputation":null
+"reputation":{
+"display_name":"Comprev Seguradora",
+"complaints_total":6,
+"complaints_finalizadas":0,
+"responded_rate":null,
+"resolution_rate":null,
+"satisfaction_avg":null,
+"avg_response_days":null
+}
 },
 "products":[]
 },
@@ -3345,7 +3865,15 @@
 "status":"no_data",
 "value":0.0
 },
-"reputation":null
+"reputation":{
+"display_name":"Prudential do Brasil",
+"complaints_total":242,
+"complaints_finalizadas":0,
+"responded_rate":null,
+"resolution_rate":null,
+"satisfaction_avg":null,
+"avg_response_days":null
+}
 },
 "products":[]
 },
@@ -3369,7 +3897,15 @@
 "status":"no_data",
 "value":0.0
 },
-"reputation":null
+"reputation":{
+"display_name":"Banco Bradesco",
+"complaints_total":66638,
+"complaints_finalizadas":0,
+"responded_rate":null,
+"resolution_rate":null,
+"satisfaction_avg":null,
+"avg_response_days":null
+}
 },
 "products":[]
 },
@@ -3561,7 +4097,15 @@
 "status":"no_data",
 "value":0.0
 },
-"reputation":null
+"reputation":{
+"display_name":"AXA Corporate Solutions Seguros",
+"complaints_total":1,
+"complaints_finalizadas":0,
+"responded_rate":null,
+"resolution_rate":null,
+"satisfaction_avg":null,
+"avg_response_days":null
+}
 },
 "products":[]
 },
