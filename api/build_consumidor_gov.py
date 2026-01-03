@@ -94,12 +94,13 @@ def fetch_data_with_bypass():
         }
 
         try:
+            # Impersonate chrome110 é mais estável para o WAF do governo
             response = requests.post(
                 API_URL, 
                 data=payload, 
                 headers=headers, 
-                impersonate="chrome",
-                timeout=60
+                impersonate="chrome110",
+                timeout=45
             )
             
             if response.status_code == 200:
@@ -126,13 +127,12 @@ def normalize_key(text):
 
 
 def main():
-    print("\n--- BUILD CONSUMIDOR.GOV (HTML PARSER FIXED) ---")
+    print("\n--- BUILD CONSUMIDOR.GOV (HTML PARSER RESTORED) ---")
     
     crawled_data = fetch_data_with_bypass()
     
     if not crawled_data:
         print("CG: ERRO - Nenhuma empresa coletada. Verifique logs.")
-        # Se falhar, cria vazio para não quebrar o pipeline, mas o erro será visível no log
         crawled_data = {}
 
     aggregated = {
