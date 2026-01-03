@@ -1,6 +1,6 @@
 {
 "schemaVersion":"1.0.0",
-"generatedAt":"2026-01-03T12:42:20.300053Z",
+"generatedAt":"2026-01-03T13:10:21.120311Z",
 "period":"2024",
 "sources":[
 "SUSEP (SES)",
@@ -10,7 +10,7 @@
 "meta":{
 "count":233,
 "stats":{
-"reputationMatched":68,
+"reputationMatched":79,
 "openInsuranceParticipants":0
 }
 },
@@ -65,7 +65,15 @@
 "status":"data_available",
 "value":100.0
 },
-"reputation":null
+"reputation":{
+"display_name":"Berkley Brasil Seguros",
+"complaints_total":24,
+"complaints_finalizadas":0,
+"responded_rate":null,
+"resolution_rate":null,
+"satisfaction_avg":null,
+"avg_response_days":null
+}
 },
 "products":[]
 },
@@ -617,7 +625,15 @@
 "status":"data_available",
 "value":100.0
 },
-"reputation":null
+"reputation":{
+"display_name":"Cardif Seguros e Garantias",
+"complaints_total":3061,
+"complaints_finalizadas":0,
+"responded_rate":null,
+"resolution_rate":null,
+"satisfaction_avg":null,
+"avg_response_days":null
+}
 },
 "products":[]
 },
@@ -882,8 +898,8 @@
 "value":100.0
 },
 "reputation":{
-"display_name":"Banco XP",
-"complaints_total":1983,
+"display_name":"XP Investimentos",
+"complaints_total":1303,
 "complaints_finalizadas":0,
 "responded_rate":null,
 "resolution_rate":null,
@@ -1033,7 +1049,15 @@
 "status":"data_available",
 "value":100.0
 },
-"reputation":null
+"reputation":{
+"display_name":"Fairfax Brasil",
+"complaints_total":110,
+"complaints_finalizadas":0,
+"responded_rate":null,
+"resolution_rate":null,
+"satisfaction_avg":null,
+"avg_response_days":null
+}
 },
 "products":[]
 },
@@ -1129,7 +1153,15 @@
 "status":"data_available",
 "value":100.0
 },
-"reputation":null
+"reputation":{
+"display_name":"Starr Brasil Seguradora",
+"complaints_total":46,
+"complaints_finalizadas":0,
+"responded_rate":null,
+"resolution_rate":null,
+"satisfaction_avg":null,
+"avg_response_days":null
+}
 },
 "products":[]
 },
@@ -1993,7 +2025,15 @@
 "status":"data_available",
 "value":100.0
 },
-"reputation":null
+"reputation":{
+"display_name":"Rio Grande Seguros e PrevidÃªncia",
+"complaints_total":274,
+"complaints_finalizadas":0,
+"responded_rate":null,
+"resolution_rate":null,
+"satisfaction_avg":null,
+"avg_response_days":null
+}
 },
 "products":[]
 },
@@ -2521,7 +2561,15 @@
 "status":"data_available",
 "value":100.0
 },
-"reputation":null
+"reputation":{
+"display_name":"MBM PrevidÃªncia Complementar",
+"complaints_total":6,
+"complaints_finalizadas":0,
+"responded_rate":null,
+"resolution_rate":null,
+"satisfaction_avg":null,
+"avg_response_days":null
+}
 },
 "products":[]
 },
@@ -2937,7 +2985,15 @@
 "status":"data_available",
 "value":100.0
 },
-"reputation":null
+"reputation":{
+"display_name":"Rio Grande Seguros e PrevidÃªncia",
+"complaints_total":274,
+"complaints_finalizadas":0,
+"responded_rate":null,
+"resolution_rate":null,
+"satisfaction_avg":null,
+"avg_response_days":null
+}
 },
 "products":[]
 },
@@ -3481,7 +3537,15 @@
 "status":"data_available",
 "value":61.3
 },
-"reputation":null
+"reputation":{
+"display_name":"Futuro PrevidÃªncia Privada",
+"complaints_total":609,
+"complaints_finalizadas":0,
+"responded_rate":null,
+"resolution_rate":null,
+"satisfaction_avg":null,
+"avg_response_days":null
+}
 },
 "products":[]
 },
@@ -3529,7 +3593,15 @@
 "status":"data_available",
 "value":60.3
 },
-"reputation":null
+"reputation":{
+"display_name":"Sabemi PrevidÃªncia Privada",
+"complaints_total":160,
+"complaints_finalizadas":0,
+"responded_rate":null,
+"resolution_rate":null,
+"satisfaction_avg":null,
+"avg_response_days":null
+}
 },
 "products":[]
 },
@@ -4441,7 +4513,15 @@
 "status":"no_data",
 "value":0.0
 },
-"reputation":null
+"reputation":{
+"display_name":"Banco BTG Pactual",
+"complaints_total":2734,
+"complaints_finalizadas":0,
+"responded_rate":null,
+"resolution_rate":null,
+"satisfaction_avg":null,
+"avg_response_days":null
+}
 },
 "products":[]
 },
@@ -5857,7 +5937,15 @@
 "status":"no_data",
 "value":0.0
 },
-"reputation":null
+"reputation":{
+"display_name":"Banco BTG Pactual",
+"complaints_total":2734,
+"complaints_finalizadas":0,
+"responded_rate":null,
+"resolution_rate":null,
+"satisfaction_avg":null,
+"avg_response_days":null
+}
 },
 "products":[]
 },
