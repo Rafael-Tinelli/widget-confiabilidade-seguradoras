@@ -6,17 +6,16 @@ import unicodedata
 from pathlib import Path
 from curl_cffi import requests
 
-# Configurações de Saída
+# Configurações
 OUTPUT_FILE = Path("data/derived/consumidor_gov/aggregated.json")
 CACHE_DIR = Path("data/raw/consumidor_gov")
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
-# URL Real que alimenta a tabela do site (retorna HTML)
+# URL da tabela HTML
 API_URL = "https://www.consumidor.gov.br/pages/ranking/resultado-ranking"
 
 
 def normalize_key(text):
-    """Normaliza o nome para ser usado como chave de busca (lowercase, sem acento)."""
     if not text:
         return ""
     text = unicodedata.normalize('NFKD', text).encode('ASCII', 'ignore').decode('ASCII')
@@ -24,37 +23,21 @@ def normalize_key(text):
 
 
 def parse_html_table(html_content):
-    """
-    Parser robusto via Regex para extrair dados da tabela HTML retornada pelo servidor.
-    Extrai: Nome, Nota (Satisfação) e cria a estrutura esperada pelo Matcher.
-    """
     companies = {}
-    
-    # Regex para encontrar as linhas da tabela <tr>...</tr>
     rows = re.findall(r'<tr.*?>(.*?)</tr>', html_content, re.DOTALL)
     
     for row in rows:
         try:
-            # 1. Extrair Nome da Empresa (dentro da tag <a ...>)
             name_match = re.search(r'<a[^>]*>(.*?)</a>', row)
             if not name_match:
                 continue
             name = name_match.group(1).strip()
             
-            # 2. Extrair Células de Dados (td)
-            # A tabela geralmente tem: [Posição, Nome, Reclamações, Respondidas, Nota Consumidor, ...]
-            # A "Nota Consumidor" costuma ser a 3ª ou 4ª célula numérica relevante.
             cols = re.findall(r'<td[^>]*>([\d,]+)%?</td>', row)
-            
-            # Precisamos de pelo menos 3 números para chegar na nota
             if len(cols) < 3:
                 continue
             
-            # A nota está na coluna correspondente a "Nota do Consumidor"
-            # No ranking padrão "Por Segmento", a ordem visual é:
-            # Total Reclamações | Respondidas | Nota Consumidor (Ex: 8,5)
-            
-            # Vamos pegar a coluna de índice 2 (terceira coluna numérica encontrada)
+            # Nota Consumidor (3ª coluna numérica)
             nota_str = cols[2].replace(',', '.')
             try:
                 nota = float(nota_str)
@@ -63,15 +46,15 @@ def parse_html_table(html_content):
                 
             if name:
                 norm_name = normalize_key(name)
-                # Estrutura compatível com o Agg.to_public() antigo
                 companies[norm_name] = {
                     "display_name": name,
-                    "complaints_total": 0,  # Dado secundário no bypass
-                    "satisfaction_avg": nota,
-                    "name": name,  # Para o matcher novo
-                    "cnpj": None,  # Site não fornece CNPJ nesta view
+                    "name": name,
+                    "cnpj": None,
                     "statistics": {
                         "overallSatisfaction": nota,
+                        "complaintsCount": 0,
+                        "solutionIndex": 0,
+                        "averageResponseTime": 0
                     },
                     "indexes": {
                         "b": {"nota": nota}
@@ -84,47 +67,48 @@ def parse_html_table(html_content):
 
 
 def fetch_data_with_bypass():
-    """
-    Executa o request simulando um Chrome real para evitar o erro 403/WAF.
-    """
-    print("CG: Iniciando bypass com curl_cffi (Chrome impersonation)...")
+    print("CG: Iniciando bypass com curl_cffi (Chrome 120)...")
     
+    # Headers otimizados para parecer navegação real
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "text/html, */*; q=0.01",
+        "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
         "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
         "Origin": "https://www.consumidor.gov.br",
         "Referer": "https://www.consumidor.gov.br/pages/ranking/ranking-segmento",
-        "X-Requested-With": "XMLHttpRequest"
+        "X-Requested-With": "XMLHttpRequest",
+        "Sec-Fetch-Dest": "empty",
+        "Sec-Fetch-Mode": "cors",
+        "Sec-Fetch-Site": "same-origin"
     }
 
-    # IDs de Segmento no Consumidor.gov:
-    # 2 = Bancos, Financeiras e Administradoras de Cartão
-    # 4 = Seguros, Capitalização e Previdência
+    # Segmentos: 2 (Bancos), 4 (Seguros)
     segmentos = [2, 4] 
     all_data = {}
 
     for seg_id in segmentos:
         print(f"CG: Consultando segmento {seg_id}...")
         
-        # Payload do formulário de busca
         payload = {
             "segmento": str(seg_id),
             "area": "",
             "assunto": "",
             "grupoProblema": "",
-            "periodo": "365",  # Últimos 12 meses
+            "periodo": "365",
             "dataTermino": time.strftime("%d/%m/%Y"),
             "regiao": "BR"
         }
 
         try:
-            # Impersonate 'chrome110' é geralmente mais estável contra WAFs do governo
+            # Impersonate atualizado para chrome120 (menos chance de block que o 110)
+            # Timeout aumentado para lidar com lentidão do WAF
             response = requests.post(
                 API_URL, 
                 data=payload, 
                 headers=headers, 
-                impersonate="chrome110",
-                timeout=45
+                impersonate="chrome120",
+                timeout=60
             )
             
             if response.status_code == 200:
@@ -134,7 +118,7 @@ def fetch_data_with_bypass():
                     print(f"CG: Sucesso! {count} empresas extraídas do HTML no segmento {seg_id}.")
                     all_data.update(extracted)
                 else:
-                    print("CG: Aviso - HTML baixado, mas regex não encontrou dados. Layout mudou?")
+                    print(f"CG: Aviso - HTML baixado, mas regex não encontrou dados no segmento {seg_id}.")
             else:
                 print(f"CG: Falha HTTP {response.status_code} no segmento {seg_id}")
                 
@@ -145,25 +129,21 @@ def fetch_data_with_bypass():
 
 
 def main():
-    print("\n--- BUILD CONSUMIDOR.GOV (BYPASS MODE RESTORED) ---")
+    print("\n--- BUILD CONSUMIDOR.GOV (ROBUST BYPASS) ---")
     
-    # 1. Scraping Direto (Sem CSVs quebrados)
     crawled_data = fetch_data_with_bypass()
     
     if not crawled_data:
-        print("CG: ALERTA CRÍTICO - Nenhuma empresa coletada via Scraper.")
+        print("CG: ALERTA - Nenhuma empresa coletada. O WAF pode estar bloqueando o IP do GitHub.")
         crawled_data = {}
 
-    # 2. Formata para o formato esperado pelo Matcher
-    # O Matcher espera as chaves 'by_name' e 'by_cnpj_key' (mesmo que vazia)
     aggregated = {
-        "by_cnpj_key": {},  # Scraper HTML não pega CNPJ, fica vazio
-        "by_name": crawled_data  # Chave já está normalizada
+        "by_cnpj_key": {},
+        "by_name": crawled_data
     }
 
-    print(f"CG: Total de empresas indexadas para match: {len(aggregated['by_name'])}")
+    print(f"CG: Total de empresas indexadas: {len(aggregated['by_name'])}")
     
-    # 3. Salva JSON Final
     with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
         json.dump(aggregated, f, ensure_ascii=False, separators=(',', ':'))
     
