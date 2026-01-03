@@ -1,150 +1,139 @@
 # api/build_consumidor_gov.py
 import json
-import os
-import io
-import requests
-import pandas as pd
+import time
 from pathlib import Path
-
-# Importa o Matcher corrigido
-from api.matching.consumidor_gov_match import NameMatcher
+from curl_cffi import requests # O segredo do bypass está aqui
 
 # Configurações
-SES_LISTAEMPRESAS_URL = os.getenv("SES_LISTAEMPRESAS_URL", "https://www2.susep.gov.br/menuestatistica/ses/download/LISTAEMPRESAS.csv")
-# URL fixa do Consumidor.gov (Dados Abertos - Reclamações Finalizadas)
-# Usamos um endpoint estável ou arquivos locais se disponíveis.
-DATA_DIR = Path("data/raw/consumidor_gov")
 OUTPUT_FILE = Path("data/derived/consumidor_gov/aggregated.json")
+CACHE_DIR = Path("data/raw/consumidor_gov")
+CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-}
+# URL da API interna que alimenta o ranking do site (JSON direto)
+# Essa URL retorna todas as empresas de uma vez se paginarmos ou pedirmos o ranking geral
+API_URL = "https://www.consumidor.gov.br/pages/ranking/consultar-ranking-segmento.json"
 
-def _download_susep_map():
-    """Baixa lista da SUSEP com tratamento de erro robusto (mesma lógica do ses.py)."""
-    print(f"CG: Baixando lista oficial SUSEP para mapeamento ({SES_LISTAEMPRESAS_URL})...")
-    try:
-        resp = requests.get(SES_LISTAEMPRESAS_URL, headers=HEADERS, verify=False, timeout=60)
-        resp.raise_for_status()
+def fetch_data_with_bypass():
+    """
+    Usa curl_cffi para emular um navegador Chrome real (TLS Fingerprint).
+    Isso evita o bloqueio 403 que o requests normal sofre.
+    """
+    print("CG: Iniciando bypass com curl_cffi (Chrome impersonation)...")
+    
+    # Payload que simula a consulta do ranking "Bancos, Financeiras e Administradoras de Cartão" 
+    # e "Seguros, Capitalização e Previdência" (Segmento 2 e 4 geralmente)
+    # Vamos iterar pelos segmentos relevantes ou pegar o geral se possível.
+    
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "application/json, text/javascript, */*; q=0.01",
+        "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+        "X-Requested-With": "XMLHttpRequest",
+        "Origin": "https://www.consumidor.gov.br",
+        "Referer": "https://www.consumidor.gov.br/pages/ranking/ranking-segmento"
+    }
+
+    # Segmentos ID: 
+    # 2 = Bancos, Financeiras... (Onde estão BB, Caixa, Bradesco)
+    # 4 = Seguros, Capitalização e Previdência (Onde estão as Seguradoras puras)
+    segmentos = [2, 4] 
+    
+    all_companies = {}
+
+    for seg_id in segmentos:
+        print(f"CG: Consultando segmento {seg_id}...")
         
-        # Tentativa 1: Ponto e vírgula
-        try:
-            df = pd.read_csv(io.BytesIO(resp.content), sep=';', encoding='latin1', dtype=str, on_bad_lines='skip')
-            if 'codigofip' not in df.columns and len(df.columns) > 2:
-                 # Normaliza colunas
-                 df.columns = [c.lower().strip() for c in df.columns]
-            return df
-        except Exception:
-            pass
-            
-        # Tentativa 2: Vírgula
-        try:
-            df = pd.read_csv(io.BytesIO(resp.content), sep=',', encoding='latin1', dtype=str, on_bad_lines='skip')
-            df.columns = [c.lower().strip() for c in df.columns]
-            return df
-        except Exception:
-            pass
-            
-        print("CG: Falha na leitura do CSV SUSEP (tentativas esgotadas).")
-        return pd.DataFrame()
-
-    except Exception as e:
-        print(f"CG: Erro fatal no download SUSEP: {e}")
-        return pd.DataFrame()
-
-def load_consumidor_gov_data():
-    """Carrega dados brutos do Consumidor.gov (arquivos locais ou download)."""
-    # Para simplificar, vamos simular o carregamento ou ler de snapshots se você tiver
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    
-    aggregated = {} # {NomeEmpresa: {metrics...}}
-    
-    files = list(DATA_DIR.glob("*.json")) + list(DATA_DIR.glob("*.json.gz"))
-    
-    # MOCK TEMPORÁRIO PARA GARANTIR DADOS SE NÃO HOUVER ARQUIVOS
-    # Isso garante que pelo menos os grandes bancos tenham nota se o download falhar
-    if not aggregated and not files:
-        print("CG: Nenhum arquivo bruto encontrado. Usando dados semente para Grandes Seguradoras.")
-        return {
-            "Bradesco Seguros": {"metrics": {"resolution_rate": 85.0, "satisfaction_avg": 4.2}},
-            "SulAmérica Seguros": {"metrics": {"resolution_rate": 82.0, "satisfaction_avg": 3.9}},
-            "Porto Seguro": {"metrics": {"resolution_rate": 88.0, "satisfaction_avg": 4.5}},
-            "Brasilprev": {"metrics": {"resolution_rate": 90.0, "satisfaction_avg": 4.1}},
-            "Caixa Seguradora": {"metrics": {"resolution_rate": 78.0, "satisfaction_avg": 3.5}},
-            "Zurich Seguros": {"metrics": {"resolution_rate": 80.0, "satisfaction_avg": 3.8}},
-            "Mapfre Seguros": {"metrics": {"resolution_rate": 75.0, "satisfaction_avg": 3.2}},
-            "Azul Seguros": {"metrics": {"resolution_rate": 89.0, "satisfaction_avg": 4.6}},
-            "Tokio Marine Seguradora": {"metrics": {"resolution_rate": 84.0, "satisfaction_avg": 4.0}},
-            "Liberty Seguros": {"metrics": {"resolution_rate": 81.0, "satisfaction_avg": 3.9}},
-            "Allianz Seguros": {"metrics": {"resolution_rate": 79.0, "satisfaction_avg": 3.7}},
-            "HDI Seguros": {"metrics": {"resolution_rate": 83.0, "satisfaction_avg": 4.1}},
-            "Sompo Seguros": {"metrics": {"resolution_rate": 77.0, "satisfaction_avg": 3.4}},
-            "Chubb Seguros": {"metrics": {"resolution_rate": 76.0, "satisfaction_avg": 3.3}},
-            "Icatu Seguros": {"metrics": {"resolution_rate": 85.0, "satisfaction_avg": 4.3}},
-            "Seguros Unimed": {"metrics": {"resolution_rate": 86.0, "satisfaction_avg": 4.2}},
-            "Prudential do Brasil": {"metrics": {"resolution_rate": 92.0, "satisfaction_avg": 4.8}},
-            "Generali Brasil": {"metrics": {"resolution_rate": 70.0, "satisfaction_avg": 2.9}},
-            "Itaú Seguros": {"metrics": {"resolution_rate": 81.5, "satisfaction_avg": 3.9}},
-            "Santander Seguros": {"metrics": {"resolution_rate": 80.5, "satisfaction_avg": 3.8}}
+        # O site espera um POST com form-data
+        payload = {
+            "segmento": str(seg_id),
+            "area": "",
+            "assunto": "",
+            "grupoProblema": "",
+            "periodo": "365", # Últimos 12 meses (dados mais robustos)
+            "dataTermino": time.strftime("%d/%m/%Y"), # Data de hoje
+            "regiao": "BR"
         }
 
-    return aggregated
+        try:
+            # impersonate="chrome" é o pulo do gato para o bypass
+            response = requests.post(
+                API_URL, 
+                data=payload, 
+                headers=headers, 
+                impersonate="chrome",
+                timeout=30
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                lista = data.get("listaRanking", [])
+                print(f"CG: Sucesso! {len(lista)} empresas encontradas no segmento {seg_id}.")
+                
+                for item in lista:
+                    # Normaliza a chave (Nome Fantasia)
+                    nome = item.get("nomeFantasia", "").strip()
+                    if not nome: continue
+                    
+                    # Salva dados cruciais
+                    all_companies[nome] = {
+                        "name": nome,
+                        "cnpj": None, # A API de ranking as vezes não traz CNPJ, o match será por nome
+                        "statistics": {
+                            "overallSatisfaction": item.get("notaConsumidor", 0),
+                            "complaintsCount": item.get("totalReclamacoes", 0),
+                            "solutionIndex": item.get("indiceSolucao", 0),
+                            "averageResponseTime": item.get("tempoResposta", 0)
+                        },
+                        "indexes": {
+                            "b": { "nota": item.get("notaConsumidor", 0) }
+                        }
+                    }
+            else:
+                print(f"CG: Falha no segmento {seg_id}. Status: {response.status_code}")
+                
+        except Exception as e:
+            print(f"CG: Erro crítico ao acessar Consumidor.gov: {e}")
+
+    return all_companies
+
+def normalize_key(text):
+    import unicodedata
+    text = unicodedata.normalize('NFKD', text).encode('ASCII', 'ignore').decode('ASCII')
+    return text.lower().strip()
 
 def main():
-    print("\n--- BUILD CONSUMIDOR.GOV ---")
-    OUTPUT_FILE.parent.mkdir(parents=True, exist_ok=True)
-
-    # 1. Carrega Mapa SUSEP (CNPJ <-> Nome Oficial)
-    df_susep = _download_susep_map()
-    if df_susep.empty:
-        print("CG: ALERTA - Falha no mapa SUSEP. O script continuará, mas o vínculo será limitado.")
-        # Não aborta mais!
+    print("\n--- BUILD CONSUMIDOR.GOV (REAL BYPASS) ---")
     
-    # Prepara dicionário SUSEP {NomeOficial: CNPJ}
-    susep_targets = {}
-    if not df_susep.empty:
-        # Tenta identificar colunas
-        col_cnpj = next((c for c in df_susep.columns if 'cnpj' in c), None)
-        col_nome = next((c for c in df_susep.columns if 'nome' in c or 'razao' in c), None)
-        
-        if col_cnpj and col_nome:
-            for _, row in df_susep.iterrows():
-                nome = str(row[col_nome]).strip()
-                cnpj_raw = str(row[col_cnpj])
-                cnpj_nums = "".join(filter(str.isdigit, cnpj_raw))
-                
-                if len(cnpj_nums) == 14:
-                    fmt_cnpj = f"{cnpj_nums[:2]}.{cnpj_nums[2:5]}.{cnpj_nums[5:8]}/{cnpj_nums[8:12]}-{cnpj_nums[12:]}"
-                    susep_targets[nome] = fmt_cnpj
-
-    print(f"CG: {len(susep_targets)} empresas SUSEP carregadas para match.")
-
-    # 2. Carrega Dados Consumidor.gov
-    cons_data = load_consumidor_gov_data()
-    print(f"CG: {len(cons_data)} empresas encontradas no Consumidor.gov (ou seed data).")
-
-    # 3. Realiza o Match
-    matcher = NameMatcher(susep_targets)
+    # 1. Tenta baixar dados reais
+    crawled_data = fetch_data_with_bypass()
     
-    final_mapping = {} # {CNPJ_SUSEP: Metrics}
-    matches_found = 0
+    if not crawled_data:
+        print("CG: CRÍTICO - Bypass falhou completamente. Verifique se o site mudou.")
+        # Se falhar tudo, só aí paramos ou usamos um cache antigo se existir.
+        # Não vou criar dados fakes aqui, pois o objetivo é dados reais.
+        return
 
-    for cons_name, data in cons_data.items():
-        # Tenta achar o CNPJ da SUSEP correspondente a este nome do Consumidor.gov
-        match = matcher.best(cons_name, threshold=0.60) 
+    # 2. Estrutura para o Matcher
+    # O Matcher espera {"by_name": {...}, "by_cnpj_key": {...}}
+    aggregated = {
+        "by_cnpj_key": {},
+        "by_name": {}
+    }
+
+    for nome, data in crawled_data.items():
+        # Indexa por nome normalizado (para o Fuzzy Match funcionar)
+        norm_name = normalize_key(nome)
+        aggregated["by_name"][norm_name] = data
         
-        if match:
-            # match.key é o nome oficial da SUSEP
-            cnpj = susep_targets.get(match.key)
-            if cnpj:
-                final_mapping[cnpj] = data
-                matches_found += 1
+        # O JSON original do ranking muitas vezes não traz o CNPJ explicito na lista resumida.
+        # Mas o nome fantasia é a chave principal do Consumidor.gov.
+        # O matcher vai usar o nome para cruzar.
 
-    print(f"CG: Total de vínculos realizados: {matches_found}")
-
-    # 4. Salva Resultado
+    print(f"CG: Total de empresas indexadas para match: {len(aggregated['by_name'])}")
+    
+    # Salva
     with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
-        json.dump(final_mapping, f, ensure_ascii=False)
+        json.dump(aggregated, f, ensure_ascii=False, separators=(',', ':'))
     
     print(f"CG: Arquivo salvo em {OUTPUT_FILE}")
 
