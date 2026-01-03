@@ -5,7 +5,7 @@ import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 from api.matching.consumidor_gov_match import NameMatcher, format_cnpj, normalize_cnpj
 from api.sources.opin_products import extract_open_insurance_products
