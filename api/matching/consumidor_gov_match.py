@@ -203,7 +203,7 @@ class NameMatcher:
                 
                 for nm in self._iter_candidate_names(key, entry):
                     if nm in seen: continue
-                    seen.add(nm)
+                        seen.add(nm)
                     norm, toks = normalize_company_name(nm)
                     if norm:
                         self._candidates.append((key, nm, norm, toks))
