@@ -19,10 +19,8 @@ function App() {
       .then(res => res.json())
       .then(data => {
         const rawList = data.insurers || [];
-        
-        // 1. CORREÇÃO DE DUPLICATAS: Filtra por CNPJ único
+        // 1. CORREÇÃO DE DUPLICATAS
         const uniqueList = Array.from(new Map(rawList.map(item => [item.cnpj, item])).values());
-        
         setInsurers(uniqueList);
         setLoading(false);
       })
@@ -32,7 +30,6 @@ function App() {
       });
   }, []);
 
-  // Reseta para página 1 se mudar a busca ou ordenação
   useEffect(() => {
     setCurrentPage(1);
   }, [searchTerm, sortKey]);
@@ -49,18 +46,21 @@ function App() {
       );
     }
 
-    // 3. ORDENAÇÃO (CORREÇÃO DE LÓGICA)
+    // 3. ORDENAÇÃO CORRIGIDA (Lê financial_score ou score antigo)
     res.sort((a, b) => {
-      // Garante que são números (fallback para 0)
-      const scoreA = Number(a.data?.score) || 0;
-      const scoreB = Number(b.data?.score) || 0;
-      const premA  = Number(a.data?.premiums) || 0;
-      const premB  = Number(b.data?.premiums) || 0;
+      const dataA = a.data || {};
+      const dataB = b.data || {};
+
+      // Compatibilidade: Lê financial_score (novo) ou score (antigo)
+      const scoreA = Number(dataA.financial_score) || Number(dataA.score) || 0;
+      const scoreB = Number(dataB.financial_score) || Number(dataB.score) || 0;
+      
+      const premA  = Number(dataA.premiums) || 0;
+      const premB  = Number(dataB.premiums) || 0;
 
       if (sortKey === 'score') {
-        // Se empate na nota, desempata por prêmio
-        if (scoreB !== scoreA) return scoreB - scoreA;
-        return premB - premA;
+        if (scoreB !== scoreA) return scoreB - scoreA; // Maior nota primeiro
+        return premB - premA; // Desempate por prêmio
       }
       
       if (sortKey === 'premiums') {
@@ -73,7 +73,7 @@ function App() {
     return res;
   }, [insurers, searchTerm, sortKey]);
 
-  // 4. LÓGICA DE PAGINAÇÃO
+  // 4. PAGINAÇÃO
   const totalPages = Math.ceil(processedData.length / itemsPerPage);
   const paginatedData = processedData.slice(
     (currentPage - 1) * itemsPerPage,
@@ -89,7 +89,6 @@ function App() {
   return (
     <div className="w-full max-w-[1100px] mx-auto px-4 pt-24 pb-12 font-sans text-[#373739]">
       
-      {/* Título */}
       <div className="text-center mb-10">
         <h1 className="text-3xl md:text-4xl font-bold text-[#3498db] mb-3">
           Ranking de Confiabilidade
@@ -99,7 +98,6 @@ function App() {
         </p>
       </div>
 
-      {/* Controles */}
       <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 mb-8 sticky top-20 z-40">
         <div className="flex flex-col md:flex-row gap-4 justify-between items-center">
           
@@ -144,7 +142,6 @@ function App() {
         </div>
       </div>
 
-      {/* Lista Paginada */}
       <div className="flex justify-between items-center mb-2 px-2 text-sm text-gray-500">
         <span>Mostrando {paginatedData.length} de {processedData.length} resultados</span>
         <span>Página {currentPage} de {totalPages || 1}</span>
@@ -162,7 +159,6 @@ function App() {
         )}
       </div>
 
-      {/* Controles de Paginação */}
       {totalPages > 1 && (
         <div className="flex justify-center gap-2 mt-8">
           <button
