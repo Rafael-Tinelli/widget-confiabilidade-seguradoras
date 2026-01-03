@@ -1,154 +1,238 @@
 # api/build_consumidor_gov.py
+from __future__ import annotations
+
 import json
-import re
-import time
-import unicodedata
+import os
+from dataclasses import asdict
 from pathlib import Path
-from curl_cffi import requests
 
-# Configurações
-OUTPUT_FILE = Path("data/derived/consumidor_gov/aggregated.json")
-CACHE_DIR = Path("data/raw/consumidor_gov")
-CACHE_DIR.mkdir(parents=True, exist_ok=True)
+from api.sources.consumidor_gov import Agg, aggregate_month_dual_with_stats, download_month_csv_gz, _utc_now
 
-# URL da tabela HTML
-API_URL = "https://www.consumidor.gov.br/pages/ranking/resultado-ranking"
+RAW_DIR = "data/raw/consumidor_gov"
+DERIVED_DIR = "data/derived/consumidor_gov"
+MONTHLY_DIR = f"{DERIVED_DIR}/monthly"
 
-
-def normalize_key(text):
-    if not text:
-        return ""
-    text = unicodedata.normalize('NFKD', text).encode('ASCII', 'ignore').decode('ASCII')
-    return text.lower().strip()
+OUT_LATEST = f"{DERIVED_DIR}/aggregated.json"  # Ajustado para aggregated.json que é o padrão atual
 
 
-def parse_html_table(html_content):
-    companies = {}
-    rows = re.findall(r'<tr.*?>(.*?)</tr>', html_content, re.DOTALL)
-    
-    for row in rows:
+def _monthly_path(ym: str) -> str:
+    return os.path.join(MONTHLY_DIR, f"consumidor_gov_{ym}.json")
+
+
+def _write_json(path: str, obj: dict) -> None:
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(obj, f, ensure_ascii=False, indent=2, sort_keys=False)
+        f.write("\n")
+    os.replace(tmp, path)
+
+
+def _load_json(path: str) -> dict:
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _prune_monthly(retain: int = 24) -> None:
+    if not os.path.isdir(MONTHLY_DIR):
+        return
+    files = sorted(Path(MONTHLY_DIR).glob("consumidor_gov_*.json"))
+    if len(files) <= retain:
+        return
+    for p in files[:-retain]:
         try:
-            name_match = re.search(r'<a[^>]*>(.*?)</a>', row)
-            if not name_match:
+            p.unlink()
+        except Exception:
+            pass
+
+
+def _merge_raw_into(dst: dict[str, Agg], key: str, raw: dict) -> None:
+    a = dst.get(key)
+    if not a:
+        a = Agg(display_name=str(raw.get("display_name") or ""))
+        dst[key] = a
+    a.merge_raw(raw)
+
+
+def build_month(ym: str, url: str) -> str:
+    os.makedirs(RAW_DIR, exist_ok=True)
+    os.makedirs(MONTHLY_DIR, exist_ok=True)
+
+    gz_path = os.path.join(RAW_DIR, f"consumidor_gov_{ym}.csv.gz")
+    info = download_month_csv_gz(url, gz_path)
+
+    by_name, by_cnpj, stats = aggregate_month_dual_with_stats(gz_path)
+
+    out_path = _monthly_path(ym)
+    payload = {
+        "meta": {
+            "ym": ym,
+            "source": "dados.mj.gov.br",
+            "dataset": "reclamacoes-do-consumidor-gov-br",
+            "source_url": url,
+            "download": info,
+            "generated_at": _utc_now(),
+            "parse": stats,
+            "cnpj": {
+                "detected_column": stats.get("cnpj_col"),
+                "rows_with_cnpj_valid": stats.get("rows_with_cnpj_valid"),
+                "unique_cnpj_keys": stats.get("unique_cnpj_keys"),
+            },
+        },
+        "by_name_key_raw": {k: asdict(v) for k, v in by_name.items()},
+        "by_cnpj_key_raw": {k: asdict(v) for k, v in by_cnpj.items()},
+    }
+
+    _write_json(out_path, payload)
+    return out_path
+
+
+def main(months: int = 12) -> None:
+    # URL base padrão (Portal de Dados Abertos)
+    base_url = os.environ.get("CONSUMIDOR_GOV_BASE_URL", "").strip()
+    if not base_url:
+        base_url = "https://dados.mj.gov.br/dataset/reclamacoes-do-consumidor-gov-br/resource"
+
+    env_as_of = os.environ.get("CONSUMIDOR_GOV_AS_OF", "").strip()
+    if env_as_of:
+        as_of = env_as_of[:7]
+    else:
+        existing = sorted(Path(MONTHLY_DIR).glob("consumidor_gov_*.json"))
+        as_of = existing[-1].stem.replace("consumidor_gov_", "")[:7] if existing else _utc_now()[:7]
+
+    months_list = os.environ.get("CONSUMIDOR_GOV_MONTHS_LIST", "").strip()
+    if months_list:
+        merge_yms = [x.strip() for x in months_list.split(",") if x.strip()]
+    else:
+        y, m = map(int, as_of.split("-"))
+        merge_yms: list[str] = []
+        yy, mm = y, m
+        for _ in range(months):
+            merge_yms.append(f"{yy:04d}-{mm:02d}")
+            mm -= 1
+            if mm == 0:
+                mm = 12
+                yy -= 1
+        merge_yms = list(reversed(merge_yms))
+
+    produced_months: list[str] = []
+
+    for ym in merge_yms:
+        out_path = _monthly_path(ym)
+        # Se já existe cache recente (> 1KB), pula
+        if os.path.exists(out_path) and os.path.getsize(out_path) > 1000:
+            continue
+
+        # Mapeamento manual de recursos se necessário (ex: 2024-01=abcd-1234...)
+        mapping = os.environ.get("CONSUMIDOR_GOV_RESOURCE_MAP", "").strip()
+        resource_id = ""
+        if mapping:
+            for part in mapping.split(","):
+                part = part.strip()
+                if not part or "=" not in part:
+                    continue
+                k, v = part.split("=", 1)
+                if k.strip() == ym:
+                    resource_id = v.strip()
+                    break
+
+        if resource_id:
+            url = f"{base_url}/{resource_id}/download?filename=consumidor_gov_{ym}.csv.gz"
+        else:
+            # Fallback: Tenta adivinhar ou usa env específico
+            url = os.environ.get(f"CONSUMIDOR_GOV_URL_{ym.replace('-', '_')}", "").strip()
+            if not url:
                 continue
-            name = name_match.group(1).strip()
-            
-            cols = re.findall(r'<td[^>]*>([\d,]+)%?</td>', row)
-            if len(cols) < 3:
-                continue
-            
-            # Nota Consumidor (3ª coluna numérica)
-            nota_str = cols[2].replace(',', '.')
-            try:
-                nota = float(nota_str)
-            except ValueError:
-                nota = 0.0
-                
-            if name:
-                norm_name = normalize_key(name)
-                companies[norm_name] = {
-                    "display_name": name,
-                    "name": name,
-                    "cnpj": None,
-                    "statistics": {
-                        "overallSatisfaction": nota,
-                        "complaintsCount": 0,
-                        "solutionIndex": 0,
-                        "averageResponseTime": 0
-                    },
-                    "indexes": {
-                        "b": {"nota": nota}
-                    }
-                }
+
+        p = build_month(ym, url)
+        produced_months.append(ym)
+        print(f"OK: monthly {ym} => {p}")
+
+    merged_name: dict[str, Agg] = {}
+    merged_cnpj: dict[str, Agg] = {}
+    used_months: list[str] = []
+
+    cnpj_detected_months: list[str] = []
+    cnpj_col_counts: dict[str, int] = {}
+    cnpj_rows_valid_total = 0
+
+    for ym in merge_yms:
+        p = _monthly_path(ym)
+        if not os.path.exists(p):
+            continue
+        try:
+            month = _load_json(p)
         except Exception:
             continue
-            
-    return companies
 
+        meta = month.get("meta") or {}
+        parse_stats = meta.get("parse") if isinstance(meta.get("parse"), dict) else {}
 
-def fetch_data_with_bypass():
-    print("CG: Iniciando bypass com curl_cffi (Chrome 120)...")
-    
-    # Headers otimizados para parecer navegação real
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept": "text/html, */*; q=0.01",
-        "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
-        "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
-        "Origin": "https://www.consumidor.gov.br",
-        "Referer": "https://www.consumidor.gov.br/pages/ranking/ranking-segmento",
-        "X-Requested-With": "XMLHttpRequest",
-        "Sec-Fetch-Dest": "empty",
-        "Sec-Fetch-Mode": "cors",
-        "Sec-Fetch-Site": "same-origin"
-    }
-
-    # Segmentos: 2 (Bancos), 4 (Seguros)
-    segmentos = [2, 4] 
-    all_data = {}
-
-    for seg_id in segmentos:
-        print(f"CG: Consultando segmento {seg_id}...")
-        
-        payload = {
-            "segmento": str(seg_id),
-            "area": "",
-            "assunto": "",
-            "grupoProblema": "",
-            "periodo": "365",
-            "dataTermino": time.strftime("%d/%m/%Y"),
-            "regiao": "BR"
-        }
+        ccol = parse_stats.get("cnpj_col")
+        if ccol:
+            cnpj_detected_months.append(ym)
+            cnpj_col_counts[str(ccol)] = cnpj_col_counts.get(str(ccol), 0) + 1
 
         try:
-            # Impersonate atualizado para chrome120 (menos chance de block que o 110)
-            # Timeout aumentado para lidar com lentidão do WAF
-            response = requests.post(
-                API_URL, 
-                data=payload, 
-                headers=headers, 
-                impersonate="chrome120",
-                timeout=60
-            )
-            
-            if response.status_code == 200:
-                extracted = parse_html_table(response.text)
-                count = len(extracted)
-                if count > 0:
-                    print(f"CG: Sucesso! {count} empresas extraídas do HTML no segmento {seg_id}.")
-                    all_data.update(extracted)
-                else:
-                    print(f"CG: Aviso - HTML baixado, mas regex não encontrou dados no segmento {seg_id}.")
-            else:
-                print(f"CG: Falha HTTP {response.status_code} no segmento {seg_id}")
-                
-        except Exception as e:
-            print(f"CG: Erro de conexão (WAF/Rede) no segmento {seg_id}: {e}")
+            cnpj_rows_valid_total += int(parse_stats.get("rows_with_cnpj_valid") or 0)
+        except (ValueError, TypeError):
+            pass
 
-    return all_data
+        raw_name = month.get("by_name_key_raw") or {}
+        raw_cnpj = month.get("by_cnpj_key_raw") or {}
 
+        if not isinstance(raw_name, dict) or not raw_name:
+            continue
 
-def main():
-    print("\n--- BUILD CONSUMIDOR.GOV (ROBUST BYPASS) ---")
-    
-    crawled_data = fetch_data_with_bypass()
-    
-    if not crawled_data:
-        print("CG: ALERTA - Nenhuma empresa coletada. O WAF pode estar bloqueando o IP do GitHub.")
-        crawled_data = {}
+        for k, raw in raw_name.items():
+            if isinstance(raw, dict):
+                _merge_raw_into(merged_name, str(k), raw)
 
-    aggregated = {
-        "by_cnpj_key": {},
-        "by_name": crawled_data
+        if isinstance(raw_cnpj, dict):
+            for k, raw in raw_cnpj.items():
+                if isinstance(raw, dict):
+                    _merge_raw_into(merged_cnpj, str(k), raw)
+
+        used_months.append(ym)
+
+    most_freq_col = max(cnpj_col_counts, key=cnpj_col_counts.get) if cnpj_col_counts else None
+
+    out = {
+        "meta": {
+            "as_of": as_of,
+            "window_months": len(used_months) if used_months else len(merge_yms),
+            "months": used_months if used_months else merge_yms,
+            "generated_at": _utc_now(),
+            "monthly_newly_built": produced_months,
+            "produced_months": produced_months,
+            "source": "dados.mj.gov.br",
+            "dataset": "reclamacoes-do-consumidor-gov-br",
+            "cnpj": {
+                "detected_months": sorted(set(cnpj_detected_months)),
+                "detected_column_most_freq": most_freq_col,
+                "rows_with_cnpj_valid_total": cnpj_rows_valid_total,
+                "unique_keys": len(merged_cnpj),
+            },
+        },
+        # Mantém keys raw para debug
+        "by_name_key_raw": {k: asdict(v) for k, v in merged_name.items()},
+        "by_cnpj_key_raw": {k: asdict(v) for k, v in merged_cnpj.items()},
+        # COMPATIBILIDADE: Chaves públicas usadas pelo Matcher
+        "by_name": {k: v.to_public() for k, v in merged_name.items()}, # Renomeado de by_name_key para by_name
+        "by_cnpj_key": {k: v.to_public() for k, v in merged_cnpj.items()},
     }
 
-    print(f"CG: Total de empresas indexadas: {len(aggregated['by_name'])}")
-    
-    with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
-        json.dump(aggregated, f, ensure_ascii=False, separators=(',', ':'))
-    
-    print(f"CG: Arquivo salvo em {OUTPUT_FILE}")
+    _write_json(OUT_LATEST, out)
+    _prune_monthly(retain=max(24, months))
+    print(f"OK: Consumidor.gov agregado atualizado (as_of={as_of}). Keys CNPJ={len(merged_cnpj)}")
 
 
 if __name__ == "__main__":
-    main()
+    env_months = os.environ.get("CONSUMIDOR_GOV_MONTHS")
+    if env_months:
+        try:
+            main(months=int(env_months))
+        except ValueError:
+            main()
+    else:
+        main()
