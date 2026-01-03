@@ -12,7 +12,7 @@ RAW_DIR = "data/raw/consumidor_gov"
 DERIVED_DIR = "data/derived/consumidor_gov"
 MONTHLY_DIR = f"{DERIVED_DIR}/monthly"
 
-OUT_LATEST = f"{DERIVED_DIR}/aggregated.json"  # Ajustado para aggregated.json que é o padrão atual
+OUT_LATEST = f"{DERIVED_DIR}/aggregated.json"  # Output file esperado pelo build_insurers
 
 
 def _monthly_path(ym: str) -> str:
@@ -88,7 +88,6 @@ def build_month(ym: str, url: str) -> str:
 
 
 def main(months: int = 12) -> None:
-    # URL base padrão (Portal de Dados Abertos)
     base_url = os.environ.get("CONSUMIDOR_GOV_BASE_URL", "").strip()
     if not base_url:
         base_url = "https://dados.mj.gov.br/dataset/reclamacoes-do-consumidor-gov-br/resource"
@@ -119,11 +118,9 @@ def main(months: int = 12) -> None:
 
     for ym in merge_yms:
         out_path = _monthly_path(ym)
-        # Se já existe cache recente (> 1KB), pula
         if os.path.exists(out_path) and os.path.getsize(out_path) > 1000:
             continue
 
-        # Mapeamento manual de recursos se necessário (ex: 2024-01=abcd-1234...)
         mapping = os.environ.get("CONSUMIDOR_GOV_RESOURCE_MAP", "").strip()
         resource_id = ""
         if mapping:
@@ -139,7 +136,6 @@ def main(months: int = 12) -> None:
         if resource_id:
             url = f"{base_url}/{resource_id}/download?filename=consumidor_gov_{ym}.csv.gz"
         else:
-            # Fallback: Tenta adivinhar ou usa env específico
             url = os.environ.get(f"CONSUMIDOR_GOV_URL_{ym.replace('-', '_')}", "").strip()
             if not url:
                 continue
@@ -214,11 +210,9 @@ def main(months: int = 12) -> None:
                 "unique_keys": len(merged_cnpj),
             },
         },
-        # Mantém keys raw para debug
         "by_name_key_raw": {k: asdict(v) for k, v in merged_name.items()},
         "by_cnpj_key_raw": {k: asdict(v) for k, v in merged_cnpj.items()},
-        # COMPATIBILIDADE: Chaves públicas usadas pelo Matcher
-        "by_name": {k: v.to_public() for k, v in merged_name.items()}, # Renomeado de by_name_key para by_name
+        "by_name": {k: v.to_public() for k, v in merged_name.items()}, # CORRIGIDO PARA 'by_name'
         "by_cnpj_key": {k: v.to_public() for k, v in merged_cnpj.items()},
     }
 
