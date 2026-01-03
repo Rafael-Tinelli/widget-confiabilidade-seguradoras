@@ -197,12 +197,13 @@ class NameMatcher:
     def _build_candidates(self) -> None:
         for source_dict in [self.by_name, self.by_cnpj]:
             for key, entry in source_dict.items():
-                seen: set[str] = set()
                 if not isinstance(entry, dict) and source_dict is self.by_cnpj:
                     continue
-                
+
+                seen: set[str] = set()
                 for nm in self._iter_candidate_names(key, entry):
-                    if nm in seen: continue
+                    if nm in seen:
+                        continue
                     seen.add(nm)
                     norm, toks = normalize_company_name(nm)
                     if norm:
@@ -223,14 +224,14 @@ class NameMatcher:
 
         if best_key and best_score >= threshold:
             return MatchResult(key=best_key, score=best_score, method="fuzzy", candidate=best_candidate, details=best_details)
-        
+
         return None
 
     def get_entry(self, susep_name: str, *, cnpj: Optional[str] = None, threshold: float = 0.85) -> tuple[Optional[Any], Optional[MatchResult]]:
         mr = self.best(susep_name, cnpj=cnpj, threshold=threshold)
         if not mr:
             return None, None
-        
+
         entry = self.by_cnpj.get(mr.key)
         if entry is None:
             entry = self.by_name.get(mr.key)
