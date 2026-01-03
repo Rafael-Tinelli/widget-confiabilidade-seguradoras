@@ -2,16 +2,16 @@
 import json
 import time
 from pathlib import Path
-from curl_cffi import requests # O segredo do bypass está aqui
+from curl_cffi import requests
 
 # Configurações
 OUTPUT_FILE = Path("data/derived/consumidor_gov/aggregated.json")
 CACHE_DIR = Path("data/raw/consumidor_gov")
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
-# URL da API interna que alimenta o ranking do site (JSON direto)
-# Essa URL retorna todas as empresas de uma vez se paginarmos ou pedirmos o ranking geral
+# URL da API interna que alimenta o ranking do site
 API_URL = "https://www.consumidor.gov.br/pages/ranking/consultar-ranking-segmento.json"
+
 
 def fetch_data_with_bypass():
     """
@@ -19,10 +19,6 @@ def fetch_data_with_bypass():
     Isso evita o bloqueio 403 que o requests normal sofre.
     """
     print("CG: Iniciando bypass com curl_cffi (Chrome impersonation)...")
-    
-    # Payload que simula a consulta do ranking "Bancos, Financeiras e Administradoras de Cartão" 
-    # e "Seguros, Capitalização e Previdência" (Segmento 2 e 4 geralmente)
-    # Vamos iterar pelos segmentos relevantes ou pegar o geral se possível.
     
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -34,8 +30,8 @@ def fetch_data_with_bypass():
     }
 
     # Segmentos ID: 
-    # 2 = Bancos, Financeiras... (Onde estão BB, Caixa, Bradesco)
-    # 4 = Seguros, Capitalização e Previdência (Onde estão as Seguradoras puras)
+    # 2 = Bancos, Financeiras e Administradoras de Cartão
+    # 4 = Seguros, Capitalização e Previdência
     segmentos = [2, 4] 
     
     all_companies = {}
@@ -43,19 +39,17 @@ def fetch_data_with_bypass():
     for seg_id in segmentos:
         print(f"CG: Consultando segmento {seg_id}...")
         
-        # O site espera um POST com form-data
         payload = {
             "segmento": str(seg_id),
             "area": "",
             "assunto": "",
             "grupoProblema": "",
-            "periodo": "365", # Últimos 12 meses (dados mais robustos)
-            "dataTermino": time.strftime("%d/%m/%Y"), # Data de hoje
+            "periodo": "365",  # Últimos 12 meses
+            "dataTermino": time.strftime("%d/%m/%Y"),
             "regiao": "BR"
         }
 
         try:
-            # impersonate="chrome" é o pulo do gato para o bypass
             response = requests.post(
                 API_URL, 
                 data=payload, 
@@ -72,12 +66,13 @@ def fetch_data_with_bypass():
                 for item in lista:
                     # Normaliza a chave (Nome Fantasia)
                     nome = item.get("nomeFantasia", "").strip()
-                    if not nome: continue
+                    if not nome:
+                        continue
                     
                     # Salva dados cruciais
                     all_companies[nome] = {
                         "name": nome,
-                        "cnpj": None, # A API de ranking as vezes não traz CNPJ, o match será por nome
+                        "cnpj": None,
                         "statistics": {
                             "overallSatisfaction": item.get("notaConsumidor", 0),
                             "complaintsCount": item.get("totalReclamacoes", 0),
@@ -85,7 +80,7 @@ def fetch_data_with_bypass():
                             "averageResponseTime": item.get("tempoResposta", 0)
                         },
                         "indexes": {
-                            "b": { "nota": item.get("notaConsumidor", 0) }
+                            "b": {"nota": item.get("notaConsumidor", 0)}
                         }
                     }
             else:
@@ -96,10 +91,12 @@ def fetch_data_with_bypass():
 
     return all_companies
 
+
 def normalize_key(text):
     import unicodedata
     text = unicodedata.normalize('NFKD', text).encode('ASCII', 'ignore').decode('ASCII')
     return text.lower().strip()
+
 
 def main():
     print("\n--- BUILD CONSUMIDOR.GOV (REAL BYPASS) ---")
@@ -109,12 +106,9 @@ def main():
     
     if not crawled_data:
         print("CG: CRÍTICO - Bypass falhou completamente. Verifique se o site mudou.")
-        # Se falhar tudo, só aí paramos ou usamos um cache antigo se existir.
-        # Não vou criar dados fakes aqui, pois o objetivo é dados reais.
         return
 
     # 2. Estrutura para o Matcher
-    # O Matcher espera {"by_name": {...}, "by_cnpj_key": {...}}
     aggregated = {
         "by_cnpj_key": {},
         "by_name": {}
@@ -124,10 +118,6 @@ def main():
         # Indexa por nome normalizado (para o Fuzzy Match funcionar)
         norm_name = normalize_key(nome)
         aggregated["by_name"][norm_name] = data
-        
-        # O JSON original do ranking muitas vezes não traz o CNPJ explicito na lista resumida.
-        # Mas o nome fantasia é a chave principal do Consumidor.gov.
-        # O matcher vai usar o nome para cruzar.
 
     print(f"CG: Total de empresas indexadas para match: {len(aggregated['by_name'])}")
     
@@ -136,6 +126,7 @@ def main():
         json.dump(aggregated, f, ensure_ascii=False, separators=(',', ':'))
     
     print(f"CG: Arquivo salvo em {OUTPUT_FILE}")
+
 
 if __name__ == "__main__":
     main()
