@@ -197,13 +197,14 @@ class NameMatcher:
     def _build_candidates(self) -> None:
         for source_dict in [self.by_name, self.by_cnpj]:
             for key, entry in source_dict.items():
-                seen: set[str] = set()
                 if not isinstance(entry, dict) and source_dict is self.by_cnpj:
                     continue
                 
+                seen: set[str] = set()
                 for nm in self._iter_candidate_names(key, entry):
-                    if nm in seen: continue
-                        seen.add(nm)
+                    if nm in seen:
+                        continue
+                    seen.add(nm)
                     norm, toks = normalize_company_name(nm)
                     if norm:
                         self._candidates.append((key, nm, norm, toks))
