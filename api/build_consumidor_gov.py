@@ -2,6 +2,7 @@
 import json
 import re
 import time
+import unicodedata
 from pathlib import Path
 from curl_cffi import requests
 
@@ -10,16 +11,17 @@ OUTPUT_FILE = Path("data/derived/consumidor_gov/aggregated.json")
 CACHE_DIR = Path("data/raw/consumidor_gov")
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
-# URL da tabela HTML (Confirmada)
+# URL CORRETA (Retorna HTML da tabela)
 API_URL = "https://www.consumidor.gov.br/pages/ranking/resultado-ranking"
 
 
 def parse_html_table(html_content):
     """
-    Extrai nomes e notas do HTML bruto da tabela.
+    Extrai nomes e notas do HTML bruto retornado pelo servidor.
     """
     companies = {}
-    # Encontra as linhas da tabela
+    
+    # Encontrar linhas da tabela
     rows = re.findall(r'<tr.*?>(.*?)</tr>', html_content, re.DOTALL)
     
     for row in rows:
@@ -37,7 +39,7 @@ def parse_html_table(html_content):
             if len(cols) < 3:
                 continue
                 
-            # Coluna 3: Nota Consumidor (Ex: "8,5")
+            # Col 3: Nota Consumidor (Ex: "8,5")
             nota_str = cols[2].replace(',', '.')
             try:
                 nota = float(nota_str)
@@ -47,13 +49,16 @@ def parse_html_table(html_content):
             if name:
                 companies[name] = {
                     "name": name,
+                    "cnpj": None,
                     "statistics": {
                         "overallSatisfaction": nota,
                         "complaintsCount": 0,
                         "solutionIndex": 0,
                         "averageResponseTime": 0
                     },
-                    "indexes": {"b": {"nota": nota}}
+                    "indexes": {
+                        "b": {"nota": nota}
+                    }
                 }
         except Exception:
             continue
@@ -62,13 +67,13 @@ def parse_html_table(html_content):
 
 
 def fetch_data_with_bypass():
-    print("CG: Iniciando bypass com curl_cffi...")
+    print("CG: Iniciando bypass com curl_cffi (Chrome impersonation)...")
     
     headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
         "Origin": "https://www.consumidor.gov.br",
-        "Referer": "https://www.consumidor.gov.br/pages/ranking/ranking-segmento",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        "Referer": "https://www.consumidor.gov.br/pages/ranking/ranking-segmento"
     }
 
     # Segmentos: 2 (Bancos), 4 (Seguros/Prev)
@@ -89,8 +94,6 @@ def fetch_data_with_bypass():
         }
 
         try:
-            # impersonate="chrome" usa a assinatura TLS mais recente disponível na lib
-            # Isso geralmente tem mais sucesso que fixar em versões antigas
             response = requests.post(
                 API_URL, 
                 data=payload, 
@@ -101,16 +104,18 @@ def fetch_data_with_bypass():
             
             if response.status_code == 200:
                 companies = parse_html_table(response.text)
-                if companies:
-                    print(f"CG: Sucesso! {len(companies)} empresas extraídas.")
+                count = len(companies)
+                
+                if count > 0:
+                    print(f"CG: Sucesso! {count} empresas extraídas do HTML no segmento {seg_id}.")
                     all_companies.update(companies)
                 else:
-                    print(f"CG: HTML baixado mas regex falhou no segmento {seg_id}.")
+                    print(f"CG: Aviso - HTML baixado, mas regex não encontrou dados no segmento {seg_id}.")
             else:
-                print(f"CG: Falha HTTP {response.status_code}")
+                print(f"CG: Falha no segmento {seg_id}. Status: {response.status_code}")
                 
         except Exception as e:
-            print(f"CG: Erro de conexão (possível bloqueio WAF): {e}")
+            print(f"CG: Erro crítico ao acessar Consumidor.gov: {e}")
 
     return all_companies
 
@@ -121,16 +126,13 @@ def normalize_key(text):
 
 
 def main():
-    import unicodedata  # Garantir import para normalize_key
-    print("\n--- BUILD CONSUMIDOR.GOV (PURE SCRAPER) ---")
+    print("\n--- BUILD CONSUMIDOR.GOV (HTML PARSER FIXED) ---")
     
     crawled_data = fetch_data_with_bypass()
     
-    # Se falhar, falha. Não inventa dados.
     if not crawled_data:
-        print("CG: ERRO - Nenhuma empresa coletada. O WAF bloqueou ou o layout mudou.")
-        # Gera JSON vazio para não quebrar o próximo passo do pipeline, 
-        # mas deixa claro que não tem dados.
+        print("CG: ERRO - Nenhuma empresa coletada. Verifique logs.")
+        # Se falhar, cria vazio para não quebrar o pipeline, mas o erro será visível no log
         crawled_data = {}
 
     aggregated = {
@@ -138,10 +140,8 @@ def main():
         "by_name": {}
     }
 
-    # Normalização
-    for name, data in crawled_data.items():
-        # Função interna de normalização para evitar dependência externa
-        norm_name = unicodedata.normalize('NFKD', name).encode('ASCII', 'ignore').decode('ASCII').lower().strip()
+    for nome, data in crawled_data.items():
+        norm_name = normalize_key(nome)
         aggregated["by_name"][norm_name] = data
 
     print(f"CG: Total de empresas indexadas: {len(aggregated['by_name'])}")
