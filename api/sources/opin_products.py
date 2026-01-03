@@ -2,172 +2,179 @@
 from __future__ import annotations
 
 import json
+import os
+import re
 from pathlib import Path
-from typing import Dict, List, Any
+from typing import Any, Dict, Iterable, List, Tuple
+
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
-# Configuração
+from api.matching.consumidor_gov_match import normalize_cnpj
+
+DEFAULT_PARTICIPANTS_URL = os.getenv(
+    "OPIN_PARTICIPANTS_URL",
+    "https://data.directory.opinbrasil.com.br/participants",
+)
+
 CACHE_DIR = Path("data/raw/opin")
+CACHE_DIR.mkdir(parents=True, exist_ok=True)
+CACHE_PARTICIPANTS_FILE = CACHE_DIR / "participants.json"
 PARTICIPANTS_FILE = Path("api/v1/participants.json")
-TIMEOUT = 10 
 
-INTERESTING_RESOURCES = {
+REQUEST_TIMEOUT = float(os.getenv("OPIN_HTTP_TIMEOUT", "20"))
+MAX_TOTAL_REQUESTS = int(os.getenv("OPIN_MAX_REQUESTS", "20000"))
+CACHE_MAX_AGE_HOURS = int(os.getenv("OPIN_PARTICIPANTS_CACHE_MAX_AGE_HOURS", "48"))
+
+INTERESTING_RESOURCES: Dict[str, str] = {
     "auto-insurance": "Auto",
     "home-insurance": "Residencial",
-    "life-pension": "Vida/Prev",
-    "condominium-insurance": "Condomínio",
+    "business-insurance": "Empresarial",
+    "life-pension": "Vida & Previdência",
+    "travel-insurance": "Viagem",
     "rural-insurance": "Rural",
-    "business-insurance": "Empresarial"
+    "responsibility-insurance": "Responsabilidade Civil",
+    "capitalization-title": "Capitalização",
+    "other-products": "Outros",
 }
 
-HEADERS = {
-    "User-Agent": "WidgetSeguradoras/1.0",
-    "Accept": "application/json"
-}
+def _ci_get(obj: Any, *keys: str, default: Any = None) -> Any:
+    if not isinstance(obj, dict):
+        return default
+    lower_map = {str(k).lower(): k for k in obj.keys()}
+    for k in keys:
+        real = lower_map.get(str(k).lower())
+        if real is not None:
+            return obj.get(real)
+    return default
 
-def load_participants() -> List[Dict[str, Any]]:
-    """Carrega a lista de participantes de forma robusta (case-insensitive)."""
-    if not PARTICIPANTS_FILE.exists():
-        print(f"OPIN ERROR: Arquivo {PARTICIPANTS_FILE} não encontrado.")
-        return []
-    
-    try:
-        with open(PARTICIPANTS_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
+def _build_session() -> requests.Session:
+    s = requests.Session()
+    retries = Retry(total=4, connect=4, read=4, backoff_factor=0.5, status_forcelist=(429, 500, 502, 503, 504))
+    adapter = HTTPAdapter(max_retries=retries, pool_connections=20, pool_maxsize=20)
+    s.mount("http://", adapter)
+    s.mount("https://", adapter)
+    s.headers.update({"User-Agent": "widget-confiabilidade-seguradoras/1.0", "Accept": "application/json"})
+    return s
+
+def _is_cache_fresh(path: Path) -> bool:
+    import time
+    if not path.exists(): return False
+    return (time.time() - os.path.getmtime(path)) <= (CACHE_MAX_AGE_HOURS * 3600)
+
+def _load_participants() -> List[dict]:
+    # Try local cache or repo snapshot first
+    for p in [CACHE_PARTICIPANTS_FILE, PARTICIPANTS_FILE]:
+        if p.exists() and (p == PARTICIPANTS_FILE or _is_cache_fresh(p)):
+            data = json.loads(p.read_text(encoding="utf-8"))
+            if isinstance(data, dict): data = data.get("data", [])
+            if isinstance(data, list): return data
             
-            # Caso 1: Lista direta
-            if isinstance(data, list):
-                return data
-            
-            # Caso 2: Dicionário envelope
-            if isinstance(data, dict):
-                # Procura por chaves comuns de dados, ignorando case se possível
-                keys = data.keys()
-                print(f"OPIN DEBUG: Chaves encontradas no JSON raiz: {list(keys)}")
-                
-                for candidate in ["data", "Data", "participants", "Participants"]:
-                    if candidate in data and isinstance(data[candidate], list):
-                        return data[candidate]
-                
-                print("OPIN ERROR: Nenhuma lista de participantes encontrada dentro do dicionário.")
-                return []
-                
-            return []
-    except Exception as e:
-        print(f"OPIN ERROR: Falha ao ler JSON: {e}")
-        return []
-
-def extract_api_endpoints(participant: Dict[str, Any]) -> List[Dict[str, str]]:
-    endpoints = []
+    # Download
+    session = _build_session()
+    r = session.get(DEFAULT_PARTICIPANTS_URL, timeout=REQUEST_TIMEOUT)
+    r.raise_for_status()
+    payload = r.json()
+    participants = payload.get("data") if isinstance(payload, dict) else payload
+    if not isinstance(participants, list): raise ValueError("Invalid structure")
     
-    org_profile = participant.get("OrganisationProfile", {})
-    cnpj = "N/A"
-    if "LegalEntity" in org_profile:
-         cnpj = org_profile["LegalEntity"].get("RegistrationNumber", "N/A")
-    if cnpj == "N/A":
-        cnpj = participant.get("OrganisationId", "N/A")
+    CACHE_PARTICIPANTS_FILE.write_text(json.dumps(participants, ensure_ascii=False, indent=2), encoding="utf-8")
+    return participants
 
-    servers = participant.get("AuthorisationServers", [])
+def _extract_products_services_endpoints(participant: dict) -> List[Tuple[str, str]]:
+    endpoints: List[Tuple[str, str]] = []
+    auth_servers = _ci_get(participant, "AuthorisationServers", "authorisationServers", default=[])
     
-    for server in servers:
-        base_url = server.get("ApiBaseUrl", "").rstrip("/")
-        if not base_url:
-            continue
+    if not isinstance(auth_servers, list): return endpoints
 
-        resources = server.get("ApiResources", [])
-        for resource in resources:
-            family = resource.get("ApiFamilyType")
-            if family != "products-services":
+    for server in auth_servers:
+        resources = _ci_get(server, "ApiResources", "apiResources", default=[])
+        if not isinstance(resources, list): continue
+        
+        for res in resources:
+            family = _ci_get(res, "ApiFamilyType", "apiFamilyType")
+            if not family or str(family).strip().lower() != "products-services":
                 continue
-            
-            api_resources_list = resource.get("ApiResource", [])
-            if isinstance(api_resources_list, str):
-                api_resources_list = [api_resources_list]
 
-            version = resource.get("ApiVersion", "1.0.0")
+            api_version = str(_ci_get(res, "ApiVersion", "apiVersion", default="1.0.0")).strip()
+            discovery = _ci_get(res, "ApiDiscoveryEndpoints", "apiDiscoveryEndpoints", default=[])
             
-            for res_code in api_resources_list:
-                if res_code in INTERESTING_RESOURCES:
-                    path = f"/open-insurance/products-services/{version}/{res_code}"
+            if isinstance(discovery, list) and discovery:
+                for d in discovery:
+                    ep = _ci_get(d, "ApiEndpoint", "apiEndpoint")
+                    if isinstance(ep, str) and ep.strip():
+                        endpoints.append((ep.strip().rstrip("/"), api_version))
+            else:
+                api_base = _ci_get(res, "ApiBaseUrl", "apiBaseUrl") or _ci_get(participant, "ApiBaseUrl")
+                if isinstance(api_base, str) and api_base.strip():
+                    endpoints.append((api_base.strip().rstrip("/"), api_version))
                     
-                    if "/open-insurance" in base_url:
-                         full_url = f"{base_url}/products-services/{version}/{res_code}"
-                    else:
-                        full_url = f"{base_url}{path}"
-                    
-                    full_url = full_url.replace("///", "/").replace("//open-insurance", "/open-insurance")
-                    
-                    endpoints.append({
-                        "type": INTERESTING_RESOURCES[res_code],
-                        "url": full_url,
-                        "cnpj": cnpj,
-                        "name": participant.get("OrganisationName", "Unknown")
-                    })
     return endpoints
 
-def extract_open_insurance_products():
-    CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    
-    print("OPIN: Carregando diretório de participantes...")
-    participants = load_participants()
-    print(f"OPIN: {len(participants)} participantes carregados.")
+def _build_products_url(api_endpoint: str, version: str, resource_code: str) -> str:
+    base = api_endpoint.rstrip("/")
+    if re.search(r"/v?\d+\.\d+\.\d+/?$", base): return f"{base}/{resource_code}"
+    if "/products-services" in base: return f"{base}/{version}/{resource_code}"
+    if "/open-insurance" in base: return f"{base}/products-services/{version}/{resource_code}"
+    return f"{base}/open-insurance/products-services/{version}/{resource_code}"
 
-    all_endpoints = []
+def _parse_products_payload(payload: Any, resource_code: str) -> List[dict]:
+    if not isinstance(payload, dict): return []
+    out = []
+    brands = payload.get("brand") or payload.get("brands") or []
+    if not isinstance(brands, list): return []
+    
+    for b in brands:
+        for comp in (b.get("companies") or []):
+            for p in (comp.get("products") or []):
+                name = p.get("name") or p.get("productName") or p.get("nome")
+                code = p.get("code") or p.get("productCode") or resource_code
+                out.append({"type": INTERESTING_RESOURCES.get(resource_code, resource_code), "name": str(name or code), "code": str(code)})
+    return out
+
+def extract_open_insurance_products() -> Dict[str, List[dict]]:
+    participants = _load_participants()
+    products_by_cnpj = {}
+    endpoint_jobs = []
+
     for p in participants:
-        if isinstance(p, dict) and p.get("Status") == "Active":
-            all_endpoints.extend(extract_api_endpoints(p))
-    
-    print(f"OPIN: Discovery completo. {len(all_endpoints)} endpoints encontrados.")
-    
-    products_db = {}
-    success_count = 0
-    error_count = 0
-
-    import urllib3
-    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-
-    for i, ep in enumerate(all_endpoints):
-        cnpj = ep["cnpj"]
-        url = ep["url"]
-        p_type = ep["type"]
+        status = _ci_get(p, "Status", "status")
+        if status and str(status).lower() != "active": continue
         
-        if i % 10 == 0:
-            print(f"OPIN: Progresso {i}/{len(all_endpoints)}...")
-
-        try:
-            resp = requests.get(url, headers=HEADERS, timeout=TIMEOUT, verify=False)
+        reg = _ci_get(p, "RegistrationNumber", "registrationNumber", "cnpj")
+        if not reg:
+            legal = _ci_get(p, "LegalEntity", "legalEntity")
+            if isinstance(legal, dict): reg = _ci_get(legal, "RegistrationNumber", "cnpj")
             
-            if resp.status_code == 200:
-                data = resp.json()
-                payload = data.get("data", {})
-                brand_list = payload.get("brand", [])
-                
-                count_prods = 0
-                for brand in brand_list:
-                    companies = brand.get("companies", [])
-                    for comp in companies:
-                        prods = comp.get("products", [])
-                        for prod in prods:
-                            if cnpj not in products_db:
-                                products_db[cnpj] = []
-                            
-                            products_db[cnpj].append({
-                                "type": p_type,
-                                "name": prod.get("name", "Produto sem nome"),
-                                "code": prod.get("code", "")
-                            })
-                            count_prods += 1
-                
-                if count_prods > 0:
-                    success_count += 1
-            else:
-                error_count += 1
-                
-        except Exception:
-            error_count += 1
+        cnpj = normalize_cnpj(reg)
+        if not cnpj: continue
+        
+        products_by_cnpj.setdefault(cnpj, [])
+        for ep, ver in _extract_products_services_endpoints(p):
+            endpoint_jobs.append((cnpj, ep, ver))
 
-    print(f"OPIN: Download concluído. Sucessos: {success_count}, Erros: {error_count}.")
-    return products_db
+    if not endpoint_jobs: return products_by_cnpj
 
-if __name__ == "__main__":
-    extract_open_insurance_products()
+    session = _build_session()
+    seen = {k: set() for k in products_by_cnpj}
+    req_count = 0
+
+    for cnpj, ep, ver in endpoint_jobs:
+        for res_code in INTERESTING_RESOURCES:
+            if req_count >= MAX_TOTAL_REQUESTS: return products_by_cnpj
+            req_count += 1
+            
+            try:
+                url = _build_products_url(ep, ver, res_code)
+                r = session.get(url, timeout=REQUEST_TIMEOUT)
+                if r.status_code < 400:
+                    items = _parse_products_payload(r.json(), res_code)
+                    for it in items:
+                        k = (it["code"], it["name"])
+                        if k not in seen[cnpj]:
+                            seen[cnpj].add(k)
+                            products_by_cnpj[cnpj].append(it)
+            except: continue
+            
+    return products_by_cnpj
