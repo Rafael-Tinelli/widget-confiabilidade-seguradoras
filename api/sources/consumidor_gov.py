@@ -38,6 +38,19 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+def _is_monthly_dump_candidate(url: str, meta: Optional[dict] = None) -> bool:
+    """
+    Aceita apenas os dumps mensais que nos interessam:
+    - finalizadas_YYYY-MM.(zip|csv)
+    - basecompletaYYYY-MM.(csv|zip)
+    """
+    blob = (url or "").lower()
+    if meta:
+        blob += " " + str(meta.get("name") or "").lower()
+        blob += " " + str(meta.get("description") or "").lower()
+    return ("finalizadas" in blob) or ("basecompleta" in blob)
+
+
 @dataclass
 class Agg:
     display_name: str
@@ -156,7 +169,8 @@ def _get_latest_dump_url(client: requests.Session) -> Optional[str]:
 
     # 1) CKAN (API Oficial)
     try:
-        terms = [CKAN_QUERY, "consumidor gov", "consumidor.gov.br"]
+        # Busca ampliada para garantir que "finalizadas" apareça
+        terms = ["finalizadas", f"{CKAN_QUERY} finalizadas", CKAN_QUERY, "consumidor gov", "consumidor.gov.br"]
         best: Tuple[int, str] | None = None
 
         for term in terms:
@@ -180,6 +194,10 @@ def _get_latest_dump_url(client: requests.Session) -> Optional[str]:
                     if not u or not _FILE_RE.search(u):
                         continue
                     
+                    # FILTRO CRÍTICO: Só aceita dumps reais
+                    if not _is_monthly_dump_candidate(u, res):
+                        continue
+
                     sc = _score_url(u, res)
                     if best is None or sc > best[0]:
                         best = (sc, u)
@@ -203,14 +221,18 @@ def _get_latest_dump_url(client: requests.Session) -> Optional[str]:
         candidates: list[tuple[int, str]] = []
 
         for h in hrefs:
-            if not h:
-                continue
-            if ("download" not in h.lower()) and (not _FILE_RE.search(h)):
-                continue
+            if not h: continue
+            if ("download" not in h.lower()) and (not _FILE_RE.search(h)): continue
             
             full = urljoin("https://www.consumidor.gov.br", h)
-            if _FILE_RE.search(full):
+            if _FILE_RE.search(full) and _is_monthly_dump_candidate(full):
                 candidates.append((_score_url(full), full))
+
+        # Varredura extra por URLs absolutas soltas
+        absolutes = re.findall(r"(https?://[^\s\"\'<>]+)", html, flags=re.I)
+        for u in absolutes:
+            if _FILE_RE.search(u) and _is_monthly_dump_candidate(u):
+                candidates.append((_score_url(u), u))
 
         if not candidates:
             return None
