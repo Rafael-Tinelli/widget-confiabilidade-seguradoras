@@ -13,15 +13,20 @@ from typing import Any, Optional, Set
 
 _CNPJ_DIGITS_RE = re.compile(r"\D+")
 
+
 def normalize_cnpj(value: Optional[str]) -> Optional[str]:
-    if not value: return None
+    if not value:
+        return None
     digits = _CNPJ_DIGITS_RE.sub("", str(value))
     return digits if len(digits) == 14 else None
 
+
 def format_cnpj(digits14: str) -> str:
     d = _CNPJ_DIGITS_RE.sub("", str(digits14))
-    if len(d) != 14: return str(digits14)
+    if len(d) != 14:
+        return str(digits14)
     return f"{d[0:2]}.{d[2:5]}.{d[5:8]}/{d[8:12]}-{d[12:14]}"
+
 
 # -----------------------------
 # Lógica de Matching
@@ -30,15 +35,18 @@ def format_cnpj(digits14: str) -> str:
 def _strip_accents(s: str) -> str:
     return "".join(c for c in unicodedata.normalize("NFKD", s) if not unicodedata.combining(c))
 
+
 def _norm(s: str) -> str:
     s = _strip_accents((s or "").lower()).strip()
     s = re.sub(r"[^a-z0-9\s]+", " ", s)
     s = re.sub(r"\s+", " ", s)
     return s.strip()
 
+
 def _norm_strong(s: str) -> str:
     """Remove espaços para comparar 'SulAmerica' com 'Sul America'."""
     return _norm(s).replace(" ", "")
+
 
 # STOPWORDS CRÍTICAS
 _STOPWORDS: Set[str] = {
@@ -67,20 +75,25 @@ _MANUAL_ALIASES = {
     "BB": ["BB SEGUROS", "BRASILSEG"],
 }
 
+
 def _tokens(s: str) -> Set[str]:
     s = _norm(s)
     toks = set(s.split())
     return {t for t in toks if t and t not in _STOPWORDS and len(t) >= 2}
 
+
 def _jaccard(a: Set[str], b: Set[str]) -> float:
-    if not a or not b: return 0.0
+    if not a or not b:
+        return 0.0
     inter = len(a & b)
     union = len(a | b)
     return inter / union if union else 0.0
 
+
 def _string_similarity(a: str, b: str) -> float:
     """Ratcliff/Obershelp similarity (built-in do Python)"""
     return SequenceMatcher(None, a, b).ratio()
+
 
 @dataclass(frozen=True)
 class MatchResult:
@@ -89,6 +102,7 @@ class MatchResult:
     method: str
     candidate: str | None = None
     details: dict[str, float] | None = None
+
 
 class NameMatcher:
     def __init__(self, aggregated_root: dict[str, Any]):
@@ -104,7 +118,8 @@ class NameMatcher:
         for k, v in self.by_name.items():
             if isinstance(v, dict):
                 c = normalize_cnpj(v.get("cnpj"))
-                if c: self._cnpj_to_key[c] = k
+                if c:
+                    self._cnpj_to_key[c] = k
 
         # Pré-processamento
         self._candidates: list[dict] = []
@@ -132,11 +147,10 @@ class NameMatcher:
         q_norm_strong = _norm_strong(susep_name)
         
         # 3. Alias Check (Manual Override)
-        # Se 'SUL AMERICA' estiver nos aliases, tentamos achar 'SULAMERICA' nos candidatos
         uname = susep_name.upper()
         potential_aliases = []
         for k_alias, v_list in _MANUAL_ALIASES.items():
-            if k_alias in uname: # ex: "SUL AMERICA" in "SUL AMERICA CIA..."
+            if k_alias in uname:  # ex: "SUL AMERICA" in "SUL AMERICA CIA..."
                 potential_aliases.extend(v_list)
         
         if potential_aliases:
@@ -155,7 +169,7 @@ class NameMatcher:
             # Jaccard Score
             j_score = _jaccard(q_tokens, cand["tokens"])
             
-            # String Similarity (Strong Norm) - ajuda em 'SulAmerica' vs 'Sul America'
+            # String Similarity (Strong Norm)
             s_score = 0.0
             if len(q_norm_strong) > 4 and len(cand["norm_strong"]) > 4:
                 # Se um contém o outro exatamente após remover espaços
@@ -168,7 +182,8 @@ class NameMatcher:
                 best_score = final_score
                 best_key = cand["key"]
                 best_cand_name = cand["name"]
-                if best_score >= 0.99: break
+                if best_score >= 0.99:
+                    break
 
         if best_key and best_score >= threshold:
             return self.by_name.get(best_key), MatchResult(best_key, best_score, "fuzzy", best_cand_name, {"score": best_score})
