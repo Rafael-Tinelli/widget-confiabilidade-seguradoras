@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import gzip
-# import io  <-- Removed unused import
 import json
 import os
 import re
@@ -14,7 +13,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, BinaryIO, Dict, List, Optional, Tuple
-from urllib.parse import urljoin, quote  # Added quote
+from urllib.parse import urljoin, quote, urlparse
 
 import pandas as pd
 from curl_cffi import requests
@@ -23,7 +22,7 @@ from curl_cffi import requests
 CKAN_API_BASE = os.getenv("CG_CKAN_API_BASE", "https://dados.mj.gov.br/api/3/action/")
 CKAN_QUERY = os.getenv("CG_CKAN_QUERY", "consumidor.gov")
 
-TIMEOUT = int(os.getenv("CG_TIMEOUT", "300"))
+TIMEOUT = int(os.getenv("CG_TIMEOUT", "600")) # Aumentado para dumps grandes
 MIN_BYTES = int(os.getenv("CG_MIN_BYTES", "50000"))
 CHUNK_SIZE = int(os.getenv("CG_CHUNK_SIZE", "100000"))
 CACHE_DIR = Path("data/raw/consumidor_gov")
@@ -67,7 +66,6 @@ class Agg:
         if rc is not None:
             self.resolved_claims += int(rc)
         else:
-            # Fallback se não vier consolidado
             idx_sol = float(stats.get("solutionIndex", 0.0))
             self.resolved_claims += int((idx_sol if idx_sol <= 1.0 else idx_sol / 100.0) * tc)
 
@@ -117,13 +115,24 @@ def normalize_key_name(raw: str) -> str:
 def _score_url(url: str, meta: Optional[dict] = None) -> int:
     u = (url or "").lower()
     score = 0
-    if u.endswith(".csv"):
-        score += 50
-    if u.endswith(".zip"):
-        score += 40
-    if u.endswith(".gz"):
-        score += 30
+    
+    # 1. Preferência por arquivos "finalizadas" (mais limpos, mensais)
+    if "finalizadas" in u:
+        score += 1_000_000
+    
+    # 2. Desprioriza "basecompleta" (gigante, instável)
+    if "basecompleta" in u:
+        score -= 250_000
 
+    # 3. Extensão
+    if u.endswith(".zip"):
+        score += 50_000
+    elif u.endswith(".csv"):
+        score += 40_000
+    elif u.endswith(".gz"):
+        score += 30_000
+
+    # 4. Recência (Ano/Mês na URL)
     m = _YM_RE.search(u)
     if m:
         score += int(m.group(1)) * 100 + int(m.group(2))
@@ -137,30 +146,32 @@ def _score_url(url: str, meta: Optional[dict] = None) -> int:
         mm = _YM_RE.search(str(lm))
         if mm:
             score += int(mm.group(1)) * 100 + int(mm.group(2))
+            
     return score
 
 
 # --- TRANSPORTE ---
 
 def _get_latest_dump_url(client: requests.Session) -> Optional[str]:
-    # Permite override manual via ENV (para emergências)
     env_url = os.getenv("CG_DUMP_URL")
     if env_url:
         print(f"CG: Usando URL forçada via ENV: {env_url}")
         return env_url
 
-    # 1) CKAN (dados.mj.gov.br) — mais estável que HTML do consumidor.gov.br
+    # 1) CKAN (API Oficial)
     try:
-        terms = [CKAN_QUERY, "consumidor gov", "consumidor.gov.br", "consumidor-gov"]
+        terms = [CKAN_QUERY, "consumidor gov", "consumidor.gov.br"]
         best: Tuple[int, str] | None = None
 
         for term in terms:
             api = urljoin(CKAN_API_BASE, "package_search")
-            url = f"{api}?q={quote(term)}&rows=25"
+            url = f"{api}?q={quote(term)}&rows=50" # Aumentado rows para achar finalizadas
             print(f"CG: CKAN search -> {term}")
+            
             r = client.get(url, timeout=30)
             if r.status_code != 200:
                 continue
+            
             data = r.json()
             if not data.get("success"):
                 continue
@@ -172,6 +183,7 @@ def _get_latest_dump_url(client: requests.Session) -> Optional[str]:
                     u = res.get("url") or ""
                     if not u or not _FILE_RE.search(u):
                         continue
+                    
                     sc = _score_url(u, res)
                     if best is None or sc > best[0]:
                         best = (sc, u)
@@ -182,7 +194,7 @@ def _get_latest_dump_url(client: requests.Session) -> Optional[str]:
     except Exception as e:
         print(f"CG: CKAN falhou: {e}")
 
-    # 2) Fallback: HTML do consumidor.gov.br
+    # 2) Fallback: Scraping HTML
     print(f"CG: Fallback HTML -> {DIRECT_DOWNLOAD_PAGE} ...")
     try:
         r = client.get(DIRECT_DOWNLOAD_PAGE, timeout=30)
@@ -195,19 +207,12 @@ def _get_latest_dump_url(client: requests.Session) -> Optional[str]:
         candidates: list[tuple[int, str]] = []
 
         for h in hrefs:
-            if not h:
-                continue
-            if ("download" not in h.lower()) and (not _FILE_RE.search(h)):
-                continue
+            if not h: continue
+            if ("download" not in h.lower()) and (not _FILE_RE.search(h)): continue
+            
             full = urljoin("https://www.consumidor.gov.br", h)
             if _FILE_RE.search(full):
                 candidates.append((_score_url(full), full))
-
-        # Varredura extra: URLs absolutas no HTML
-        absolutes = re.findall(r"(https?://[^\s\"\'<>]+)", html, flags=re.I)
-        for u in absolutes:
-            if _FILE_RE.search(u):
-                candidates.append((_score_url(u), u))
 
         if not candidates:
             return None
@@ -226,7 +231,11 @@ def download_dump_to_file(url: str, client: requests.Session) -> Optional[Path]:
 
     print(f"CG: Baixando {url} para {out_path}...")
     try:
-        with client.get(url, stream=True, timeout=TIMEOUT) as r:
+        # FIX: curl_cffi Response não suporta context manager (__enter__)
+        # Usamos try/finally manual para fechar
+        r = client.get(url, stream=True, timeout=TIMEOUT)
+        
+        try:
             if r.status_code != 200:
                 print(f"CG: Erro HTTP {r.status_code}")
                 return None
@@ -244,25 +253,24 @@ def download_dump_to_file(url: str, client: requests.Session) -> Optional[Path]:
 
             print(f"CG: Download OK ({total_bytes / 1024 / 1024:.2f} MB).")
             return out_path
+            
+        finally:
+            if hasattr(r, 'close'):
+                r.close()
+                
     except Exception as e:
         print(f"CG: Exceção download: {e}")
         return None
 
 
 def open_dump_file(path: Path) -> BinaryIO:
-    """
-    Identifica formato e retorna stream binário do CSV.
-    Para ZIP, extrai para tempfile para garantir seekability.
-    """
     with open(path, "rb") as f:
         sig = f.read(4)
 
-    # GZIP (1f 8b)
     if sig.startswith(b"\x1f\x8b"):
         print("CG: Formato GZIP detectado.")
         return gzip.open(path, "rb")
 
-    # ZIP (PK 03 04)
     if sig.startswith(b"PK\x03\x04"):
         print("CG: Formato ZIP detectado.")
         z = zipfile.ZipFile(path, "r")
@@ -270,10 +278,11 @@ def open_dump_file(path: Path) -> BinaryIO:
             csvs = [n for n in z.namelist() if n.lower().endswith(".csv")]
             if not csvs:
                 raise ValueError("ZIP sem CSV")
+            
+            # Pega o maior CSV
             target = max(csvs, key=lambda x: z.getinfo(x).file_size)
             print(f"CG: Extraindo {target} do ZIP para temp...")
 
-            # Cria arquivo temporário físico para suportar seek() e leitura longa
             CACHE_DIR.mkdir(parents=True, exist_ok=True)
             tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".csv", dir=str(CACHE_DIR))
             tmp_path = Path(tmp.name)
@@ -285,10 +294,8 @@ def open_dump_file(path: Path) -> BinaryIO:
         finally:
             z.close()
 
-        # Retorna o handle do arquivo temporário extraído
         return open(tmp_path, "rb")
 
-    # CSV direto
     print("CG: Assumindo CSV direto.")
     return open(path, "rb")
 
@@ -366,7 +373,11 @@ def process_dump_to_monthly(dump_path: Path, target_yms: List[str], output_dir: 
             print(f"CG: Colunas Mapeadas -> {cols}")
             if not cols['name'] or not cols['date']:
                 print("CG: CRÍTICO - Colunas obrigatórias não encontradas.")
-                break # Encerra leitura
+                break 
+            
+            if not cols['cnpj']:
+                print("CG: AVISO - Coluna CNPJ não encontrada. Prosseguindo sem CNPJ.")
+                
             first = False
 
         dates = chunk[cols['date']].fillna("")
@@ -424,11 +435,10 @@ def process_dump_to_monthly(dump_path: Path, target_yms: List[str], output_dir: 
                             agg.cnpj = norm
                             break
 
-    # Limpeza de recursos
+    # Limpeza
     try:
         file_name = getattr(csv_stream, "name", None)
         csv_stream.close()
-        
         if file_name:
             p = Path(file_name)
             if p.exists() and p.parent == CACHE_DIR and p.suffix == ".csv" and "dump_latest" not in p.name:
@@ -485,7 +495,6 @@ def process_dump_to_monthly(dump_path: Path, target_yms: List[str], output_dir: 
 
 
 def sync_monthly_cache_from_dump_if_needed(target_yms: List[str], monthly_dir: str):
-    """Entrypoint principal."""
     missing = [ym for ym in target_yms if not os.path.exists(os.path.join(monthly_dir, f"consumidor_gov_{ym}.json"))]
 
     if not missing:
