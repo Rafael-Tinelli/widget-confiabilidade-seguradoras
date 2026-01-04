@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, BinaryIO, Dict, List, Optional, Tuple
-from urllib.parse import urljoin, quote, urlparse
+from urllib.parse import urljoin, quote
 
 import pandas as pd
 from curl_cffi import requests
@@ -22,7 +22,7 @@ from curl_cffi import requests
 CKAN_API_BASE = os.getenv("CG_CKAN_API_BASE", "https://dados.mj.gov.br/api/3/action/")
 CKAN_QUERY = os.getenv("CG_CKAN_QUERY", "consumidor.gov")
 
-TIMEOUT = int(os.getenv("CG_TIMEOUT", "600")) # Aumentado para dumps grandes
+TIMEOUT = int(os.getenv("CG_TIMEOUT", "600"))
 MIN_BYTES = int(os.getenv("CG_MIN_BYTES", "50000"))
 CHUNK_SIZE = int(os.getenv("CG_CHUNK_SIZE", "100000"))
 CACHE_DIR = Path("data/raw/consumidor_gov")
@@ -116,15 +116,12 @@ def _score_url(url: str, meta: Optional[dict] = None) -> int:
     u = (url or "").lower()
     score = 0
     
-    # 1. Preferência por arquivos "finalizadas" (mais limpos, mensais)
     if "finalizadas" in u:
         score += 1_000_000
     
-    # 2. Desprioriza "basecompleta" (gigante, instável)
     if "basecompleta" in u:
         score -= 250_000
 
-    # 3. Extensão
     if u.endswith(".zip"):
         score += 50_000
     elif u.endswith(".csv"):
@@ -132,7 +129,6 @@ def _score_url(url: str, meta: Optional[dict] = None) -> int:
     elif u.endswith(".gz"):
         score += 30_000
 
-    # 4. Recência (Ano/Mês na URL)
     m = _YM_RE.search(u)
     if m:
         score += int(m.group(1)) * 100 + int(m.group(2))
@@ -165,7 +161,7 @@ def _get_latest_dump_url(client: requests.Session) -> Optional[str]:
 
         for term in terms:
             api = urljoin(CKAN_API_BASE, "package_search")
-            url = f"{api}?q={quote(term)}&rows=50" # Aumentado rows para achar finalizadas
+            url = f"{api}?q={quote(term)}&rows=50"
             print(f"CG: CKAN search -> {term}")
             
             r = client.get(url, timeout=30)
@@ -207,8 +203,10 @@ def _get_latest_dump_url(client: requests.Session) -> Optional[str]:
         candidates: list[tuple[int, str]] = []
 
         for h in hrefs:
-            if not h: continue
-            if ("download" not in h.lower()) and (not _FILE_RE.search(h)): continue
+            if not h:
+                continue
+            if ("download" not in h.lower()) and (not _FILE_RE.search(h)):
+                continue
             
             full = urljoin("https://www.consumidor.gov.br", h)
             if _FILE_RE.search(full):
@@ -231,8 +229,6 @@ def download_dump_to_file(url: str, client: requests.Session) -> Optional[Path]:
 
     print(f"CG: Baixando {url} para {out_path}...")
     try:
-        # FIX: curl_cffi Response não suporta context manager (__enter__)
-        # Usamos try/finally manual para fechar
         r = client.get(url, stream=True, timeout=TIMEOUT)
         
         try:
@@ -279,7 +275,6 @@ def open_dump_file(path: Path) -> BinaryIO:
             if not csvs:
                 raise ValueError("ZIP sem CSV")
             
-            # Pega o maior CSV
             target = max(csvs, key=lambda x: z.getinfo(x).file_size)
             print(f"CG: Extraindo {target} do ZIP para temp...")
 
@@ -333,7 +328,6 @@ def process_dump_to_monthly(dump_path: Path, target_yms: List[str], output_dir: 
         print(f"CG: Falha ao abrir dump: {e}")
         return
 
-    # Tenta detectar encoding
     enc = "utf-8"
     try:
         sample = csv_stream.read(4096)
@@ -381,12 +375,10 @@ def process_dump_to_monthly(dump_path: Path, target_yms: List[str], output_dir: 
             first = False
 
         dates = chunk[cols['date']].fillna("")
-        # Tenta DD/MM/YYYY
         extracted = dates.str.extract(r'(\d{2})/(\d{2})/(\d{4})')
         if not extracted.empty and extracted[2].notna().any():
             chunk['ym'] = extracted[2] + "-" + extracted[1]
         else:
-            # Fallback YYYY-MM-DD
             chunk['ym'] = dates.str.slice(0, 7)
 
         valid_chunk = chunk[chunk['ym'].isin(target_set)].copy()
@@ -425,7 +417,6 @@ def process_dump_to_monthly(dump_path: Path, target_yms: List[str], output_dir: 
 
             agg.resolved_claims += int(g['res_val'].sum())
 
-            # Melhoria CNPJ: Busca o primeiro válido no grupo inteiro
             if not agg.cnpj and cols['cnpj']:
                 c_vals = g[cols['cnpj']].dropna()
                 if not c_vals.empty:
@@ -435,7 +426,6 @@ def process_dump_to_monthly(dump_path: Path, target_yms: List[str], output_dir: 
                             agg.cnpj = norm
                             break
 
-    # Limpeza
     try:
         file_name = getattr(csv_stream, "name", None)
         csv_stream.close()
@@ -446,7 +436,6 @@ def process_dump_to_monthly(dump_path: Path, target_yms: List[str], output_dir: 
     except Exception:
         pass
 
-    # Escrita dos JSONs mensais
     os.makedirs(output_dir, exist_ok=True)
     count_files = 0
     for ym, data_map in monthly_data.items():
