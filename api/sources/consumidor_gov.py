@@ -34,7 +34,6 @@ DIRECT_DOWNLOAD_PAGE = "https://www.consumidor.gov.br/pages/dadosabertos/externo
 _CNPJ_RE = re.compile(r"\D+")
 _FILE_RE = re.compile(r"\.(csv|zip|gz)(\?|$)", re.I)
 _FINALIZADAS_OR_BASE_RE = re.compile(r"(finalizadas|basecompleta)", re.I)
-# Regex flexível para mês: 2025-12, 202512, 2025_12, 2025.12
 _YM_ANY_RE = re.compile(r"(20\d{2})[^\d]?(0[1-9]|1[0-2])")
 _YM_RE = re.compile(r"(20\d{2})[-_/\.](0[1-9]|1[0-2])")
 _Y_RE = re.compile(r"(20\d{2})")
@@ -59,7 +58,6 @@ def _blob(url: str, meta: Optional[dict] = None) -> str:
 
 
 def _ym_variants(ym: str) -> set[str]:
-    """Gera variantes de YYYY-MM para busca flexível."""
     y, m = ym.split("-")
     return {
         ym,
@@ -72,7 +70,6 @@ def _ym_variants(ym: str) -> set[str]:
 
 
 def _blob_has_ym(b: str, ym: str) -> bool:
-    """Verifica se o blob contem o mês em algum formato."""
     bb = (b or "").lower()
     return any(v in bb for v in _ym_variants(ym))
 
@@ -81,11 +78,8 @@ def _is_monthly_dump_candidate(url: str, meta: Optional[dict] = None) -> bool:
     b = _blob(url, meta)
     if not _FINALIZADAS_OR_BASE_RE.search(b):
         return False
-
-    # Política de Custo: Evita base completa se não permitido explicitamente
     if "basecompleta" in b and not ALLOW_BASECOMPLETA:
         return False
-
     return ("finalizadas" in b) or ("basecompleta" in b)
 
 
@@ -102,48 +96,61 @@ class Agg:
         if not self.display_name:
             self.display_name = raw.get("display_name", "")
 
-        stats = raw.get("statistics", {})
-        tc = int(stats.get("complaintsCount", 0))
-        ec = int(stats.get("evaluatedCount", 0))
+        stats = raw.get("statistics") or {}
+        tc = int(stats.get("complaintsCount") or 0)
+        ec = int(stats.get("evaluatedCount") or 0)
 
         self.total_claims += tc
         self.evaluated_claims += ec
 
-        avg_sat = float(stats.get("overallSatisfaction", 0.0))
-        if ec > 0:
-            self.score_sum += avg_sat * ec
+        avg_sat = stats.get("overallSatisfaction")
+        if avg_sat is not None and ec > 0:
+            self.score_sum += float(avg_sat) * ec
 
         rc = stats.get("resolvedCount")
         if rc is not None:
             self.resolved_claims += int(rc)
+            # Se já temos o count absoluto, paramos aqui
+            # (evita recálculo impreciso via índice)
         else:
-            idx_sol = float(stats.get("solutionIndex", 0.0))
-            self.resolved_claims += int((idx_sol if idx_sol <= 1.0 else idx_sol / 100.0) * tc)
+            # Fallback: tentar reconstruir resolved_claims a partir do índice
+            idx_sol = stats.get("solutionIndex")
+            if idx_sol is not None:
+                idx = float(idx_sol)
+                if idx > 1.0:  # se vier em %, normaliza
+                    idx /= 100.0
+                
+                # CORREÇÃO CRÍTICA: O índice é sobre as AVALIADAS, não o total
+                denom = ec if ec > 0 else tc
+                if denom > 0:
+                    self.resolved_claims += int(round(idx * denom))
 
         if not self.cnpj and raw.get("cnpj"):
             self.cnpj = raw.get("cnpj")
 
     def to_public(self) -> dict:
-        avg_sat = 0.0
-        if self.evaluated_claims > 0:
-            avg_sat = round(self.score_sum / self.evaluated_claims, 2)
+        tc = self.total_claims
+        ec = self.evaluated_claims
+        rc = self.resolved_claims
 
-        sol_idx = 0.0
-        if self.total_claims > 0:
-            sol_idx = round(self.resolved_claims / self.total_claims, 2)
+        # CORREÇÃO CRÍTICA: Médias apenas se houver avaliação
+        sat_avg = round(self.score_sum / ec, 2) if ec > 0 else None
+        
+        # O índice de solução é (Resolvidas / Avaliadas)
+        sol_idx = round(rc / ec, 2) if ec > 0 else None
 
         return {
             "display_name": self.display_name,
             "name": self.display_name,
             "cnpj": self.cnpj,
             "statistics": {
-                "overallSatisfaction": avg_sat,
+                "overallSatisfaction": sat_avg,
                 "solutionIndex": sol_idx,
-                "complaintsCount": self.total_claims,
-                "evaluatedCount": self.evaluated_claims,
-                "resolvedCount": self.resolved_claims
+                "complaintsCount": tc,
+                "evaluatedCount": ec,
+                "resolvedCount": rc
             },
-            "indexes": {"b": {"nota": avg_sat}}
+            "indexes": {"b": {"nota": sat_avg}}
         }
 
 
@@ -166,7 +173,7 @@ def normalize_key_name(raw: str) -> str:
 def _score_url(url: str, meta: Optional[dict] = None) -> int:
     u = (url or "").lower()
     score = 0
-
+    
     if "finalizadas" in u:
         score += 1_000_000
     if "basecompleta" in u:
@@ -192,12 +199,11 @@ def _score_url(url: str, meta: Optional[dict] = None) -> int:
         mm = _YM_ANY_RE.search(str(lm))
         if mm:
             score += int(mm.group(1)) * 100 + int(mm.group(2))
-
+            
     return score
 
 
 def _ckan_resource_search(client: requests.Session, term: str, limit: int = 50) -> list[dict]:
-    """Busca direta por resources no CKAN."""
     api = urljoin(CKAN_API_BASE, "resource_search")
     url = f"{api}?query={quote(term)}&limit={limit}"
     try:
@@ -214,7 +220,6 @@ def _ckan_resource_search(client: requests.Session, term: str, limit: int = 50) 
 
 def _get_dump_url_for_month(client: requests.Session, ym: str) -> Optional[str]:
     try:
-        # Termos específicos para o mês
         terms = [
             f"finalizadas {ym}",
             f"finalizadas_{ym}",
@@ -224,7 +229,6 @@ def _get_dump_url_for_month(client: requests.Session, ym: str) -> Optional[str]:
         ]
         best: Tuple[int, str] | None = None
 
-        # 1. Busca Direta por Resource (Mais preciso)
         for term in terms:
             print(f"CG: CKAN resource_search -> {term}")
             resources = _ckan_resource_search(client, term)
@@ -234,7 +238,7 @@ def _get_dump_url_for_month(client: requests.Session, ym: str) -> Optional[str]:
                     continue
                 if not _is_monthly_dump_candidate(u, res):
                     continue
-
+                
                 b = _blob(u, res)
                 if not _blob_has_ym(b, ym):
                     continue
@@ -243,38 +247,12 @@ def _get_dump_url_for_month(client: requests.Session, ym: str) -> Optional[str]:
                 if best is None or sc > best[0]:
                     best = (sc, u)
 
-        # 2. Busca por Package (Fallback)
-        if not best:
-            api = urljoin(CKAN_API_BASE, "package_search")
-            url = f"{api}?q={quote(CKAN_QUERY)}&rows=50"
-            r = client.get(url, timeout=30)
-            if r.status_code == 200:
-                data = r.json()
-                if data.get("success"):
-                    results = (data.get("result") or {}).get("results") or []
-                    for pkg in results:
-                        for res in (pkg.get("resources") or []):
-                            u = res.get("url") or ""
-                            if not u or not _FILE_RE.search(u):
-                                continue
-                            if not _is_monthly_dump_candidate(u, res):
-                                continue
-
-                            b = _blob(u, res)
-                            if not _blob_has_ym(b, ym):
-                                continue
-
-                            sc = _score_url(u, res)
-                            if best is None or sc > best[0]:
-                                best = (sc, u)
-
         if best:
             print(f"CG: CKAN candidate {ym} (score={best[0]}): {best[1]}")
             return best[1]
     except Exception as e:
         print(f"CG: CKAN falhou ({ym}): {e}")
 
-    # 3. Fallback HTML
     print(f"CG: Fallback HTML ({ym}) -> {DIRECT_DOWNLOAD_PAGE} ...")
     try:
         r = client.get(DIRECT_DOWNLOAD_PAGE, timeout=30)
@@ -288,18 +266,15 @@ def _get_dump_url_for_month(client: requests.Session, ym: str) -> Optional[str]:
         for h in hrefs:
             if not h:
                 continue
-
+            
             full = urljoin("https://www.consumidor.gov.br", h)
-
             if not _FILE_RE.search(full):
                 continue
             if not _is_monthly_dump_candidate(full):
                 continue
-
-            # Check flexível de mês
             if not _blob_has_ym(full, ym):
                 continue
-
+            
             candidates.append((_score_url(full), full))
 
         if not candidates:
@@ -313,15 +288,11 @@ def _get_dump_url_for_month(client: requests.Session, ym: str) -> Optional[str]:
         return None
 
 
-# --- TRANSPORTE ---
-
 def _get_latest_dump_url(client: requests.Session) -> Optional[str]:
     env_url = os.getenv("CG_DUMP_URL")
     if env_url:
         print(f"CG: Usando URL forçada via ENV: {env_url}")
         return env_url
-
-    # Fallback genérico se precisasse, mas o fluxo agora é por mês
     return None
 
 
@@ -331,14 +302,10 @@ def download_dump_to_file(url: str, client: requests.Session) -> Optional[Path]:
 
     print(f"CG: Baixando {url} para {out_path}...")
     try:
-        # FIX: curl_cffi Response não suporta context manager (__enter__)
-        # Usamos try/finally manual para fechar
         r = client.get(url, stream=True, timeout=TIMEOUT)
-
         try:
             if r.status_code != 200:
                 print(f"CG: Erro HTTP {r.status_code}")
-                # Cleanup imediato em caso de erro
                 if out_path.exists():
                     out_path.unlink()
                 return None
@@ -352,21 +319,17 @@ def download_dump_to_file(url: str, client: requests.Session) -> Optional[Path]:
 
             if total_bytes < MIN_BYTES:
                 print(f"CG: Arquivo muito pequeno ({total_bytes}b).")
-                # Cleanup de arquivo inválido
                 if out_path.exists():
                     out_path.unlink()
                 return None
 
             print(f"CG: Download OK ({total_bytes / 1024 / 1024:.2f} MB).")
             return out_path
-
         finally:
             if hasattr(r, 'close'):
                 r.close()
-
     except Exception as e:
         print(f"CG: Exceção download: {e}")
-        # Cleanup em exceção
         if out_path.exists():
             out_path.unlink()
         return None
@@ -387,37 +350,32 @@ def open_dump_file(path: Path) -> BinaryIO:
             csvs = [n for n in z.namelist() if n.lower().endswith(".csv")]
             if not csvs:
                 raise ValueError("ZIP sem CSV")
-
+            
             target = max(csvs, key=lambda x: z.getinfo(x).file_size)
             print(f"CG: Extraindo {target} do ZIP para temp...")
 
             CACHE_DIR.mkdir(parents=True, exist_ok=True)
-
-            # Patch E: Usa NamedTemporaryFile para extração segura e única
             tmp = tempfile.NamedTemporaryFile(
-                delete=False,
-                suffix=".csv",
-                prefix="cg_extract_",
+                delete=False, 
+                suffix=".csv", 
+                prefix="cg_extract_", 
                 dir=str(CACHE_DIR)
             )
             tmp_path = Path(tmp.name)
-
+            
             with z.open(target) as zfh:
                 shutil.copyfileobj(zfh, tmp)
-
-            tmp.close()  # Fecha o handle de escrita
+            
+            tmp.close()
 
         finally:
             z.close()
 
-        # Retorna handle de leitura do arquivo extraído
         return open(tmp_path, "rb")
 
     print("CG: Assumindo CSV direto.")
     return open(path, "rb")
 
-
-# --- PROCESSAMENTO ---
 
 def pick_columns(cols: list[str]) -> Tuple[Any, Any, Any, Any, Any]:
     c_map = {_norm_col(c): c for c in cols}
@@ -433,7 +391,6 @@ def pick_columns(cols: list[str]) -> Tuple[Any, Any, Any, Any, Any]:
     c_name = find(["nome fantasia", "fantasia", "nome do fornecedor", "fornecedor"])
     c_score = find(["nota do consumidor", "nota", "avaliacao"])
     c_date = find(["data finalizacao", "data finalizacao", "data abertura", "data"])
-    # "Avaliação Reclamação" é o melhor proxy de resolvida/não resolvida
     c_resolved = find(["avaliacao reclamacao", "respondida", "resolvida", "situacao", "status"])
 
     return c_cnpj, c_name, c_score, c_date, c_resolved
@@ -451,7 +408,6 @@ def process_dump_to_monthly(dump_path: Path, target_yms: List[str], output_dir: 
         print(f"CG: Falha ao abrir dump: {e}")
         return
 
-    # Tenta detectar encoding
     enc = "utf-8"
     try:
         sample = csv_stream.read(4096)
@@ -462,7 +418,7 @@ def process_dump_to_monthly(dump_path: Path, target_yms: List[str], output_dir: 
         csv_stream.seek(0)
 
     print(f"CG: Processando CSV (Encoding: {enc})...")
-
+    
     monthly_data: Dict[str, Dict[str, Agg]] = {ym: {} for ym in target_set}
 
     try:
@@ -492,30 +448,24 @@ def process_dump_to_monthly(dump_path: Path, target_yms: List[str], output_dir: 
             print(f"CG: Colunas Mapeadas -> {cols}")
             if not cols['name'] or not cols['date']:
                 print("CG: CRÍTICO - Colunas obrigatórias não encontradas.")
-                break
-
+                break 
+            
             if not cols['cnpj']:
                 print("CG: AVISO - Coluna CNPJ não encontrada. Prosseguindo sem CNPJ.")
-                # Patch D: Log das colunas para debug definitivo
                 print(f"CG: Colunas disponíveis (sample): {list(chunk.columns)[:20]}")
             has_cnpj_col = bool(cols['cnpj'])
-
+                
             first = False
 
         dates = chunk[cols['date']].fillna("")
-
-        # Patch de Data Robusto: dd/mm/yyyy, dd-mm-yyyy, dd.mm.yyyy ou ISO
-        # Captura (\d{2})SEP(\d{2})SEP(\d{4})
         extracted = dates.str.extract(r'(\d{2})[\/\-\.](\d{2})[\/\-\.](\d{4})')
         if not extracted.empty and extracted[2].notna().any():
             chunk['ym'] = extracted[2] + "-" + extracted[1]
         else:
-            # Tenta ISO YYYY-MM-DD
             iso = dates.str.extract(r'(20\d{2})-(\d{2})-(\d{2})')
             if not iso.empty and iso[0].notna().any():
                 chunk['ym'] = iso[0] + "-" + iso[1]
             else:
-                # Fallback slice YYYY-MM
                 chunk['ym'] = dates.str.slice(0, 7)
 
         valid_chunk = chunk[chunk['ym'].isin(target_set)].copy()
@@ -573,13 +523,11 @@ def process_dump_to_monthly(dump_path: Path, target_yms: List[str], output_dir: 
                             agg.cnpj = norm
                             break
 
-    # Limpeza de recursos (temp file)
     try:
         file_name = getattr(csv_stream, "name", None)
         csv_stream.close()
         if file_name:
             p = Path(file_name)
-            # Patch E: Limpa temporários gerados por nós
             if p.exists() and p.parent == CACHE_DIR and ("cg_extract_" in p.name or "dump_latest" in p.name):
                 p.unlink(missing_ok=True)
     except Exception:
@@ -597,17 +545,23 @@ def process_dump_to_monthly(dump_path: Path, target_yms: List[str], output_dir: 
         by_cnpj_raw = {}
 
         for k, agg in data_map.items():
-            avg = 0.0
-            if agg.evaluated_claims > 0:
-                avg = round(agg.score_sum / agg.evaluated_claims, 2)
-
+            # A agregação mensal deve usar to_public() para garantir consistência
+            # Mas aqui salvamos "raw" para merge futuro
+            
+            # Recálculos para salvar estado correto no JSON mensal
+            ec = agg.evaluated_claims
+            avg_sat = round(agg.score_sum / ec, 2) if ec > 0 else 0.0
+            
+            # Nota: Aqui salvamos o dado cru no JSON mensal.
+            # O cálculo final de "solução" (rc/ec) é feito no to_public() do Agregado.
+            
             raw_obj = {
                 "display_name": agg.display_name,
                 "cnpj": agg.cnpj,
                 "statistics": {
                     "complaintsCount": agg.total_claims,
                     "evaluatedCount": agg.evaluated_claims,
-                    "overallSatisfaction": avg,
+                    "overallSatisfaction": avg_sat,
                     "resolvedCount": agg.resolved_claims
                 }
             }
@@ -644,7 +598,6 @@ def sync_monthly_cache_from_dump_if_needed(target_yms: List[str], monthly_dir: s
 
     env_url = os.getenv("CG_DUMP_URL")
     if env_url:
-        # Modo de recuperação manual via ENV
         dump_path = download_dump_to_file(env_url, client)
         if dump_path:
             process_dump_to_monthly(dump_path, target_yms, monthly_dir)
@@ -664,6 +617,4 @@ def sync_monthly_cache_from_dump_if_needed(target_yms: List[str], monthly_dir: s
         if dump_path.exists():
             os.remove(dump_path)
 
-
-# --- BACKWARD COMPATIBILITY ---
 sync_monthly_cache_from_dump = sync_monthly_cache_from_dump_if_needed
