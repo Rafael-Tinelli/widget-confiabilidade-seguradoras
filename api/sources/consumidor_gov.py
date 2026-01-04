@@ -11,7 +11,7 @@ import zipfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple  # Fixed: Added Any
 from urllib.parse import urljoin
 
 import pandas as pd
