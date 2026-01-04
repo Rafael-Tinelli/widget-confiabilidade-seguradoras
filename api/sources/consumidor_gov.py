@@ -169,7 +169,6 @@ def _get_latest_dump_url(client: requests.Session) -> Optional[str]:
 
     # 1) CKAN (API Oficial)
     try:
-        # Busca ampliada para garantir que "finalizadas" apareça
         terms = ["finalizadas", f"{CKAN_QUERY} finalizadas", CKAN_QUERY, "consumidor gov", "consumidor.gov.br"]
         best: Tuple[int, str] | None = None
 
@@ -194,7 +193,6 @@ def _get_latest_dump_url(client: requests.Session) -> Optional[str]:
                     if not u or not _FILE_RE.search(u):
                         continue
                     
-                    # FILTRO CRÍTICO: Só aceita dumps reais
                     if not _is_monthly_dump_candidate(u, res):
                         continue
 
@@ -221,8 +219,10 @@ def _get_latest_dump_url(client: requests.Session) -> Optional[str]:
         candidates: list[tuple[int, str]] = []
 
         for h in hrefs:
-            if not h: continue
-            if ("download" not in h.lower()) and (not _FILE_RE.search(h)): continue
+            if not h:
+                continue
+            if ("download" not in h.lower()) and (not _FILE_RE.search(h)):
+                continue
             
             full = urljoin("https://www.consumidor.gov.br", h)
             if _FILE_RE.search(full) and _is_monthly_dump_candidate(full):
@@ -350,6 +350,7 @@ def process_dump_to_monthly(dump_path: Path, target_yms: List[str], output_dir: 
         print(f"CG: Falha ao abrir dump: {e}")
         return
 
+    # Tenta detectar encoding
     enc = "utf-8"
     try:
         sample = csv_stream.read(4096)
@@ -397,10 +398,12 @@ def process_dump_to_monthly(dump_path: Path, target_yms: List[str], output_dir: 
             first = False
 
         dates = chunk[cols['date']].fillna("")
+        # Tenta DD/MM/YYYY
         extracted = dates.str.extract(r'(\d{2})/(\d{2})/(\d{4})')
         if not extracted.empty and extracted[2].notna().any():
             chunk['ym'] = extracted[2] + "-" + extracted[1]
         else:
+            # Fallback YYYY-MM-DD
             chunk['ym'] = dates.str.slice(0, 7)
 
         valid_chunk = chunk[chunk['ym'].isin(target_set)].copy()
