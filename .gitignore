@@ -8,21 +8,31 @@ venv/
 # Node
 node_modules/
 npm-debug.log
+dist/
+widget-ui/dist/
+
+# Testes e Linters
+.pytest_cache/
+.ruff_cache/
 
 # OS
 .DS_Store
 Thumbs.db
 
-# --- DADOS (A MUDANÇA IMPORTANTE) ---
-# Ignora a pasta de dados brutos (CSVs da Susep, etc)
+# --- DADOS ---
+# Ignora pastas de dados brutos e snapshots (gerados a cada run)
 data/raw/
-
-# Ignora snapshots históricos (para não inchar o repo)
 data/snapshots/
 
-# Mantém a estrutura de pastas (opcional, se tiver .gitkeep)
+# Segurança extra: Ignora temporários do extrator onde quer que estejam
+dump_latest.bin
+cg_extract_*.csv
+*.tmp
+
+# Mantém a estrutura de pastas (gitkeep)
 !data/raw/.gitkeep
 !data/snapshots/.gitkeep
 
-# Mantém os dados processados/agregados (opcional, mas útil para diffs)
+# IMPORTANTE: Mantém os dados processados (aggregated.json, insurers.json)
+# Isso permite que o frontend consuma os dados direto do repo se necessário
 !data/derived/
