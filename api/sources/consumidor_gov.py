@@ -35,7 +35,7 @@ _CNPJ_RE = re.compile(r"\D+")
 _FILE_RE = re.compile(r"\.(csv|zip|gz)(\?|$)", re.I)
 _FINALIZADAS_OR_BASE_RE = re.compile(r"(finalizadas|basecompleta)", re.I)
 # Regex flexível para mês: 2025-12, 202512, 2025_12, 2025.12
-_YM_ANY_RE = re.compile(r"(20\d{2})[^\d]?(0[1-9]|1[0-2])") 
+_YM_ANY_RE = re.compile(r"(20\d{2})[^\d]?(0[1-9]|1[0-2])")
 _YM_RE = re.compile(r"(20\d{2})[-_/\.](0[1-9]|1[0-2])")
 _Y_RE = re.compile(r"(20\d{2})")
 
@@ -81,11 +81,11 @@ def _is_monthly_dump_candidate(url: str, meta: Optional[dict] = None) -> bool:
     b = _blob(url, meta)
     if not _FINALIZADAS_OR_BASE_RE.search(b):
         return False
-    
+
     # Política de Custo: Evita base completa se não permitido explicitamente
     if "basecompleta" in b and not ALLOW_BASECOMPLETA:
         return False
-        
+
     return ("finalizadas" in b) or ("basecompleta" in b)
 
 
@@ -166,7 +166,7 @@ def normalize_key_name(raw: str) -> str:
 def _score_url(url: str, meta: Optional[dict] = None) -> int:
     u = (url or "").lower()
     score = 0
-    
+
     if "finalizadas" in u:
         score += 1_000_000
     if "basecompleta" in u:
@@ -192,7 +192,7 @@ def _score_url(url: str, meta: Optional[dict] = None) -> int:
         mm = _YM_ANY_RE.search(str(lm))
         if mm:
             score += int(mm.group(1)) * 100 + int(mm.group(2))
-            
+
     return score
 
 
@@ -234,7 +234,7 @@ def _get_dump_url_for_month(client: requests.Session, ym: str) -> Optional[str]:
                     continue
                 if not _is_monthly_dump_candidate(u, res):
                     continue
-                
+
                 b = _blob(u, res)
                 if not _blob_has_ym(b, ym):
                     continue
@@ -259,7 +259,7 @@ def _get_dump_url_for_month(client: requests.Session, ym: str) -> Optional[str]:
                                 continue
                             if not _is_monthly_dump_candidate(u, res):
                                 continue
-                            
+
                             b = _blob(u, res)
                             if not _blob_has_ym(b, ym):
                                 continue
@@ -288,18 +288,18 @@ def _get_dump_url_for_month(client: requests.Session, ym: str) -> Optional[str]:
         for h in hrefs:
             if not h:
                 continue
-            
+
             full = urljoin("https://www.consumidor.gov.br", h)
-            
+
             if not _FILE_RE.search(full):
                 continue
             if not _is_monthly_dump_candidate(full):
                 continue
-            
+
             # Check flexível de mês
             if not _blob_has_ym(full, ym):
                 continue
-            
+
             candidates.append((_score_url(full), full))
 
         if not candidates:
@@ -320,7 +320,7 @@ def _get_latest_dump_url(client: requests.Session) -> Optional[str]:
     if env_url:
         print(f"CG: Usando URL forçada via ENV: {env_url}")
         return env_url
-    
+
     # Fallback genérico se precisasse, mas o fluxo agora é por mês
     return None
 
@@ -331,8 +331,10 @@ def download_dump_to_file(url: str, client: requests.Session) -> Optional[Path]:
 
     print(f"CG: Baixando {url} para {out_path}...")
     try:
+        # FIX: curl_cffi Response não suporta context manager (__enter__)
+        # Usamos try/finally manual para fechar
         r = client.get(url, stream=True, timeout=TIMEOUT)
-        
+
         try:
             if r.status_code != 200:
                 print(f"CG: Erro HTTP {r.status_code}")
@@ -357,11 +359,11 @@ def download_dump_to_file(url: str, client: requests.Session) -> Optional[Path]:
 
             print(f"CG: Download OK ({total_bytes / 1024 / 1024:.2f} MB).")
             return out_path
-            
+
         finally:
             if hasattr(r, 'close'):
                 r.close()
-                
+
     except Exception as e:
         print(f"CG: Exceção download: {e}")
         # Cleanup em exceção
@@ -385,25 +387,25 @@ def open_dump_file(path: Path) -> BinaryIO:
             csvs = [n for n in z.namelist() if n.lower().endswith(".csv")]
             if not csvs:
                 raise ValueError("ZIP sem CSV")
-            
+
             target = max(csvs, key=lambda x: z.getinfo(x).file_size)
             print(f"CG: Extraindo {target} do ZIP para temp...")
 
             CACHE_DIR.mkdir(parents=True, exist_ok=True)
-            
+
             # Patch E: Usa NamedTemporaryFile para extração segura e única
             tmp = tempfile.NamedTemporaryFile(
-                delete=False, 
-                suffix=".csv", 
-                prefix="cg_extract_", 
+                delete=False,
+                suffix=".csv",
+                prefix="cg_extract_",
                 dir=str(CACHE_DIR)
             )
             tmp_path = Path(tmp.name)
-            
+
             with z.open(target) as zfh:
                 shutil.copyfileobj(zfh, tmp)
-            
-            tmp.close() # Fecha o handle de escrita
+
+            tmp.close()  # Fecha o handle de escrita
 
         finally:
             z.close()
@@ -431,6 +433,7 @@ def pick_columns(cols: list[str]) -> Tuple[Any, Any, Any, Any, Any]:
     c_name = find(["nome fantasia", "fantasia", "nome do fornecedor", "fornecedor"])
     c_score = find(["nota do consumidor", "nota", "avaliacao"])
     c_date = find(["data finalizacao", "data finalizacao", "data abertura", "data"])
+    # "Avaliação Reclamação" é o melhor proxy de resolvida/não resolvida
     c_resolved = find(["avaliacao reclamacao", "respondida", "resolvida", "situacao", "status"])
 
     return c_cnpj, c_name, c_score, c_date, c_resolved
@@ -459,7 +462,7 @@ def process_dump_to_monthly(dump_path: Path, target_yms: List[str], output_dir: 
         csv_stream.seek(0)
 
     print(f"CG: Processando CSV (Encoding: {enc})...")
-    
+
     monthly_data: Dict[str, Dict[str, Agg]] = {ym: {} for ym in target_set}
 
     try:
@@ -489,18 +492,18 @@ def process_dump_to_monthly(dump_path: Path, target_yms: List[str], output_dir: 
             print(f"CG: Colunas Mapeadas -> {cols}")
             if not cols['name'] or not cols['date']:
                 print("CG: CRÍTICO - Colunas obrigatórias não encontradas.")
-                break 
-            
+                break
+
             if not cols['cnpj']:
                 print("CG: AVISO - Coluna CNPJ não encontrada. Prosseguindo sem CNPJ.")
                 # Patch D: Log das colunas para debug definitivo
                 print(f"CG: Colunas disponíveis (sample): {list(chunk.columns)[:20]}")
             has_cnpj_col = bool(cols['cnpj'])
-                
+
             first = False
 
         dates = chunk[cols['date']].fillna("")
-        
+
         # Patch de Data Robusto: dd/mm/yyyy, dd-mm-yyyy, dd.mm.yyyy ou ISO
         # Captura (\d{2})SEP(\d{2})SEP(\d{4})
         extracted = dates.str.extract(r'(\d{2})[\/\-\.](\d{2})[\/\-\.](\d{4})')
@@ -641,6 +644,7 @@ def sync_monthly_cache_from_dump_if_needed(target_yms: List[str], monthly_dir: s
 
     env_url = os.getenv("CG_DUMP_URL")
     if env_url:
+        # Modo de recuperação manual via ENV
         dump_path = download_dump_to_file(env_url, client)
         if dump_path:
             process_dump_to_monthly(dump_path, target_yms, monthly_dir)
@@ -659,6 +663,7 @@ def sync_monthly_cache_from_dump_if_needed(target_yms: List[str], monthly_dir: s
         process_dump_to_monthly(dump_path, [ym], monthly_dir)
         if dump_path.exists():
             os.remove(dump_path)
+
 
 # --- BACKWARD COMPATIBILITY ---
 sync_monthly_cache_from_dump = sync_monthly_cache_from_dump_if_needed
