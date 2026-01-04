@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import gzip
-import io
+# import io  <-- Removed unused import
 import json
 import os
 import re
@@ -14,12 +14,15 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, BinaryIO, Dict, List, Optional, Tuple
-from urllib.parse import urljoin
+from urllib.parse import urljoin, quote  # Added quote
 
 import pandas as pd
 from curl_cffi import requests
 
 # --- CONFIGURAÇÕES ---
+CKAN_API_BASE = os.getenv("CG_CKAN_API_BASE", "https://dados.mj.gov.br/api/3/action/")
+CKAN_QUERY = os.getenv("CG_CKAN_QUERY", "consumidor.gov")
+
 TIMEOUT = int(os.getenv("CG_TIMEOUT", "300"))
 MIN_BYTES = int(os.getenv("CG_MIN_BYTES", "50000"))
 CHUNK_SIZE = int(os.getenv("CG_CHUNK_SIZE", "100000"))
@@ -27,6 +30,9 @@ CACHE_DIR = Path("data/raw/consumidor_gov")
 DIRECT_DOWNLOAD_PAGE = "https://www.consumidor.gov.br/pages/dadosabertos/externo/"
 
 _CNPJ_RE = re.compile(r"\D+")
+_FILE_RE = re.compile(r"\.(csv|zip|gz)(\?|$)", re.I)
+_YM_RE = re.compile(r"(20\d{2})[-_/\.](0[1-9]|1[0-2])")
+_Y_RE = re.compile(r"(20\d{2})")
 
 
 def _utc_now() -> str:
@@ -108,6 +114,32 @@ def normalize_key_name(raw: str) -> str:
     return s
 
 
+def _score_url(url: str, meta: Optional[dict] = None) -> int:
+    u = (url or "").lower()
+    score = 0
+    if u.endswith(".csv"):
+        score += 50
+    if u.endswith(".zip"):
+        score += 40
+    if u.endswith(".gz"):
+        score += 30
+
+    m = _YM_RE.search(u)
+    if m:
+        score += int(m.group(1)) * 100 + int(m.group(2))
+    else:
+        y = _Y_RE.search(u)
+        if y:
+            score += int(y.group(1)) * 10
+
+    if meta:
+        lm = meta.get("last_modified") or meta.get("created") or ""
+        mm = _YM_RE.search(str(lm))
+        if mm:
+            score += int(mm.group(1)) * 100 + int(mm.group(2))
+    return score
+
+
 # --- TRANSPORTE ---
 
 def _get_latest_dump_url(client: requests.Session) -> Optional[str]:
@@ -117,34 +149,74 @@ def _get_latest_dump_url(client: requests.Session) -> Optional[str]:
         print(f"CG: Usando URL forçada via ENV: {env_url}")
         return env_url
 
-    print(f"CG: Varrendo {DIRECT_DOWNLOAD_PAGE}...")
+    # 1) CKAN (dados.mj.gov.br) — mais estável que HTML do consumidor.gov.br
+    try:
+        terms = [CKAN_QUERY, "consumidor gov", "consumidor.gov.br", "consumidor-gov"]
+        best: Tuple[int, str] | None = None
+
+        for term in terms:
+            api = urljoin(CKAN_API_BASE, "package_search")
+            url = f"{api}?q={quote(term)}&rows=25"
+            print(f"CG: CKAN search -> {term}")
+            r = client.get(url, timeout=30)
+            if r.status_code != 200:
+                continue
+            data = r.json()
+            if not data.get("success"):
+                continue
+
+            results = (data.get("result") or {}).get("results") or []
+            for pkg in results:
+                resources = pkg.get("resources") or []
+                for res in resources:
+                    u = res.get("url") or ""
+                    if not u or not _FILE_RE.search(u):
+                        continue
+                    sc = _score_url(u, res)
+                    if best is None or sc > best[0]:
+                        best = (sc, u)
+
+        if best:
+            print(f"CG: CKAN candidate escolhido (score={best[0]}): {best[1]}")
+            return best[1]
+    except Exception as e:
+        print(f"CG: CKAN falhou: {e}")
+
+    # 2) Fallback: HTML do consumidor.gov.br
+    print(f"CG: Fallback HTML -> {DIRECT_DOWNLOAD_PAGE} ...")
     try:
         r = client.get(DIRECT_DOWNLOAD_PAGE, timeout=30)
         if r.status_code != 200:
             print(f"CG: Erro HTTP {r.status_code}")
             return None
 
-        hrefs = re.findall(r'href="([^"]*dadosabertos/download[^"]*)"', r.text, flags=re.I)
-        candidates = []
+        html = r.text or ""
+        hrefs = re.findall(r'href\s*=\s*["\']([^"\']+)["\']', html, flags=re.I)
+        candidates: list[tuple[int, str]] = []
+
         for h in hrefs:
+            if not h:
+                continue
+            if ("download" not in h.lower()) and (not _FILE_RE.search(h)):
+                continue
             full = urljoin("https://www.consumidor.gov.br", h)
-            score = 0
-            matches = re.findall(r"(20\d{2})", full)
-            year = int(matches[0]) if matches else 0
-            score += year * 10
-            if "csv" in full.lower():
-                score += 5
-            if "zip" in full.lower():
-                score += 3
-            candidates.append((score, full))
+            if _FILE_RE.search(full):
+                candidates.append((_score_url(full), full))
+
+        # Varredura extra: URLs absolutas no HTML
+        absolutes = re.findall(r"(https?://[^\s\"\'<>]+)", html, flags=re.I)
+        for u in absolutes:
+            if _FILE_RE.search(u):
+                candidates.append((_score_url(u), u))
 
         if not candidates:
             return None
 
         candidates.sort(reverse=True)
+        print(f"CG: HTML candidate escolhido (score={candidates[0][0]}): {candidates[0][1]}")
         return candidates[0][1]
     except Exception as e:
-        print(f"CG: Erro no scraping: {e}")
+        print(f"CG: Erro no scraping HTML: {e}")
         return None
 
 
@@ -342,20 +414,23 @@ def process_dump_to_monthly(dump_path: Path, target_yms: List[str], output_dir: 
 
             agg.resolved_claims += int(g['res_val'].sum())
 
+            # Melhoria CNPJ: Busca o primeiro válido no grupo inteiro
             if not agg.cnpj and cols['cnpj']:
                 c_vals = g[cols['cnpj']].dropna()
                 if not c_vals.empty:
-                    agg.cnpj = normalize_cnpj(str(c_vals.iloc[0]))
+                    for raw_c in c_vals.astype(str).tolist():
+                        norm = normalize_cnpj(raw_c)
+                        if norm:
+                            agg.cnpj = norm
+                            break
 
     # Limpeza de recursos
-    # Se o csv_stream apontar para um arquivo temporário (extraído do ZIP), devemos removê-lo
     try:
         file_name = getattr(csv_stream, "name", None)
         csv_stream.close()
         
         if file_name:
             p = Path(file_name)
-            # Verifica se é um temp nosso dentro do CACHE_DIR e com extensão .csv
             if p.exists() and p.parent == CACHE_DIR and p.suffix == ".csv" and "dump_latest" not in p.name:
                 p.unlink(missing_ok=True)
     except Exception:
@@ -435,5 +510,4 @@ def sync_monthly_cache_from_dump_if_needed(target_yms: List[str], monthly_dir: s
         os.remove(dump_path)
 
 # --- BACKWARD COMPATIBILITY ---
-# Alias para garantir que imports antigos não quebrem o pipeline
 sync_monthly_cache_from_dump = sync_monthly_cache_from_dump_if_needed
