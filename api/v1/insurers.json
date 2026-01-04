@@ -1,6 +1,6 @@
 {
 "schemaVersion":"1.0.0",
-"generatedAt":"2026-01-04T19:27:53.743589Z",
+"generatedAt":"2026-01-04T21:03:44.665576Z",
 "period":"2024",
 "sources":[
 "SUSEP (SES)",
@@ -10,7 +10,7 @@
 "meta":{
 "count":233,
 "stats":{
-"reputationMatched":90,
+"reputationMatched":91,
 "openInsuranceParticipants":0
 }
 },
@@ -635,30 +635,6 @@
 "reputation":null,
 "products":[],
 "segment":"S4"
-},
-{
-"id":"18096627000153",
-"name":"Hdi Global Seguros S.A.",
-"cnpj":"18.096.627/0001-53",
-"flags":{
-"openInsuranceParticipant":false
-},
-"data":{
-"net_worth":178105652.56,
-"premiums":1345284809.0299997,
-"claims":0.0,
-"components":{
-"solvency":59.0,
-"reputation":null,
-"innovation":0.0
-},
-"score":47.2,
-"lossRatio":0.0,
-"financial_score":59.0
-},
-"reputation":null,
-"products":[],
-"segment":"S1"
 },
 {
 "id":"19851775000107",
@@ -3140,6 +3116,39 @@
 },
 "products":[],
 "segment":"S3"
+},
+{
+"id":"18096627000153",
+"name":"Hdi Global Seguros S.A.",
+"cnpj":"18.096.627/0001-53",
+"flags":{
+"openInsuranceParticipant":false
+},
+"data":{
+"net_worth":178105652.56,
+"premiums":1345284809.0299997,
+"claims":0.0,
+"components":{
+"solvency":59.0,
+"reputation":0,
+"innovation":0.0
+},
+"score":29.5,
+"lossRatio":0.0,
+"financial_score":59.0
+},
+"reputation":{
+"source":"consumidor.gov",
+"match_score":1.0,
+"display_name":"HDI Global Seguros",
+"metrics":{
+"satisfaction_avg":0.0,
+"resolution_rate":0.0,
+"complaints_total":0
+}
+},
+"products":[],
+"segment":"S1"
 },
 {
 "id":"54484753000149",
