@@ -26,14 +26,16 @@ def calculate_solvency_score(data: dict) -> float:
     
     # LR ideal entre 40% e 70%.
     if lr <= 0:
-        lr_score = 50.0 
+        lr_score = 50.0 # Sem dados ou muito baixo (estranho)
     else:
         # Penaliza desvios do ideal (0.60)
         dist = abs(lr - 0.60)
-        lr_score = max(0, 100 - (dist * 200))
+        lr_score = max(0, 100 - (dist * 200)) # Curva íngreme
 
+    # Peso: Patrimônio (60%) + Sinistralidade (40%)
     final_score = (net_worth_score * 0.6) + (lr_score * 0.4)
     return round(final_score, 1)
+
 
 def calculate_reputation_score(reputation_data: dict) -> float | None:
     """
@@ -49,19 +51,20 @@ def calculate_reputation_score(reputation_data: dict) -> float | None:
     if not metrics:
         return None
 
+    # Normaliza taxa de resolução (0-100 ou 0-1)
     resolucao = metrics.get("resolution_rate") or 0.0
-    
-    # Correção do linter: quebra de linha
-    if resolucao > 1.0:
+    if resolucao > 1.0: 
         resolucao /= 100.0
     
+    # Normaliza satisfação (1-5) para 0-100
+    # 1=0, 2=25, 3=50, 4=75, 5=100
     satisfacao = metrics.get("satisfaction_avg") or 0.0
-    # Satisfação (1 a 5) -> Normaliza para 0-100
-    # 1=0, 3=50, 5=100
-    satisfacao_norm = (satisfacao - 1) * 25
+    satisfacao_norm = max(0, (satisfacao - 1) * 25)
     
+    # Peso: Resolução (60%) + Satisfação (40%)
     score = (resolucao * 100 * 0.6) + (satisfacao_norm * 0.4)
     return max(0, min(100, score))
+
 
 def calculate_opin_score(products: list, is_participant: bool) -> float:
     """Inovação: Baseado na participação e produtos."""
@@ -76,20 +79,24 @@ def calculate_opin_score(products: list, is_participant: bool) -> float:
         
     return min(100.0, score)
 
+
 def determine_segment(data: dict) -> str:
     prem = data.get("premiums", 0.0)
-    
-    # Correção do linter: quebra de linhas nos returns
     if prem > 1_000_000_000:
-        return "S1"
+        return "S1" # Gigante
     elif prem > 100_000_000:
-        return "S2"
+        return "S2" # Grande
     elif prem > 0:
-        return "S3"
+        return "S3" # Média/Pequena
     else:
-        return "S4"
+        return "S4" # Inativa/Micro
+
 
 def calculate_score(insurer_obj: dict) -> dict:
+    """
+    Função Mestra: Aplica a inteligência ao objeto cru.
+    Modifica o objeto in-place.
+    """
     data = insurer_obj.get("data", {})
     reputation_raw = insurer_obj.get("reputation") # Pode ser None ou dict vazio
     products = insurer_obj.get("products", [])
@@ -101,7 +108,7 @@ def calculate_score(insurer_obj: dict) -> dict:
     
     # Lógica de Pesos Dinâmicos
     if reputation_score is not None:
-        # Cenário Padrão
+        # Cenário Padrão (Com Reputação)
         w_solv = 0.50
         w_rep  = 0.40
         w_opin = 0.10
@@ -127,6 +134,7 @@ def calculate_score(insurer_obj: dict) -> dict:
     insurer_obj["data"]["components"] = components
     insurer_obj["data"]["score"] = round(final_score, 1)
     
+    # Garante Loss Ratio para UI
     if data.get("premiums", 0) > 0:
         insurer_obj["data"]["lossRatio"] = data["claims"] / data["premiums"]
     else:
