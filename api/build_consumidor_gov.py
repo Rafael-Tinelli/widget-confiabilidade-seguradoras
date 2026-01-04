@@ -1,5 +1,4 @@
 # api/build_consumidor_gov.py
-# api/build_consumidor_gov.py
 from __future__ import annotations
 
 import json
@@ -8,7 +7,7 @@ import sys
 from dataclasses import asdict
 from datetime import datetime
 
-# CORREÇÃO: Importando o nome exato da função definida no sources
+# Importa do novo motor (com nome correto)
 from api.sources.consumidor_gov import Agg, sync_monthly_cache_from_dump_if_needed, _utc_now
 
 DERIVED_DIR = "data/derived/consumidor_gov"
@@ -32,11 +31,10 @@ def _merge_raw_into(dst: dict[str, Agg], key: str, raw: dict) -> None:
 def main(months: int = 12) -> None:
     print("\n--- BUILD CONSUMIDOR.GOV (HYBRID ORCHESTRATOR) ---")
 
-    # 1. Definir Janela de Tempo (Últimos 12 meses a partir de hoje)
+    # 1. Definir Janela de Tempo (Últimos X meses)
     today = datetime.now()
     target_yms = []
     for i in range(months):
-        # Lógica simples para voltar meses
         y = today.year
         m = today.month - i
         while m <= 0:
@@ -46,10 +44,10 @@ def main(months: int = 12) -> None:
 
     print(f"CG: Janela alvo: {target_yms}")
 
-    # 2. Sync: Baixa o dump se necessário e preenche os buracos
+    # 2. Sync: Baixa dump e processa (se faltar mês)
     sync_monthly_cache_from_dump_if_needed(target_yms, MONTHLY_DIR)
 
-    # 3. Merge: Lê os arquivos locais e consolida
+    # 3. Merge: Consolida meses disponíveis
     merged_name: dict[str, Agg] = {}
     merged_cnpj: dict[str, Agg] = {}
     months_found = []
@@ -74,12 +72,12 @@ def main(months: int = 12) -> None:
         except Exception as e:
             print(f"CG: Erro lendo {p}: {e}")
 
-    # 4. Guard Rail: Validação de Segurança
+    # 4. Guard Rail: Evita zerar o site se o download falhar
     if not merged_name:
-        print("CG: FATAL - Nenhum dado consolidado. Abortando para não zerar o site.")
-        sys.exit(1)  # Força falha no CI
+        print("CG: FATAL - Nenhum dado consolidado. Abortando.")
+        sys.exit(1)
 
-    # 5. Exportação Final
+    # 5. Exportação
     out = {
         "meta": {
             "generated_at": _utc_now(),
