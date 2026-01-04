@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os  # Fixed: Added missing import
 import sys
 from dataclasses import asdict
 from datetime import datetime
