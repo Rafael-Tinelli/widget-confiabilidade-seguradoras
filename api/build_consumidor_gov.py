@@ -130,7 +130,8 @@ def main(months: int = 12) -> None:
 
             cg_assert(isinstance(raw_n, dict) and len(raw_n) > 0, f"{p}: by_name_key_raw vazio/inválido")
             
-            if raw_c is None: raw_c = {}
+            if raw_c is None:
+                raw_c = {}
 
             for k, v in raw_n.items():
                 _merge_raw_into(merged_name, k, v)
