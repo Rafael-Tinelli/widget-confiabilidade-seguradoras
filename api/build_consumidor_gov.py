@@ -1,4 +1,5 @@
 # api/build_consumidor_gov.py
+# api/build_consumidor_gov.py
 from __future__ import annotations
 
 import json
@@ -6,7 +7,6 @@ import os
 import sys
 from dataclasses import asdict
 from datetime import datetime
-from pathlib import Path
 
 # CORREÇÃO: Importando o nome exato da função definida no sources
 from api.sources.consumidor_gov import Agg, sync_monthly_cache_from_dump_if_needed, _utc_now
@@ -47,7 +47,6 @@ def main(months: int = 12) -> None:
     print(f"CG: Janela alvo: {target_yms}")
 
     # 2. Sync: Baixa o dump se necessário e preenche os buracos
-    # CORREÇÃO: Chamando a função com o nome correto
     sync_monthly_cache_from_dump_if_needed(target_yms, MONTHLY_DIR)
 
     # 3. Merge: Lê os arquivos locais e consolida
