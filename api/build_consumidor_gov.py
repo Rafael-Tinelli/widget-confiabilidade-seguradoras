@@ -5,7 +5,7 @@ import json
 import os
 import re
 from dataclasses import asdict
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 # Importa do novo motor
 from api.sources.consumidor_gov import Agg, sync_monthly_cache_from_dump_if_needed, _utc_now
@@ -73,9 +73,15 @@ def main(months: int = 12) -> None:
     CG_MIN_CNPJ_ABS = _env_int("CG_MIN_CNPJ_ABS", 50)
     CG_MIN_CNPJ_PCT = _env_float("CG_MIN_CNPJ_PCT", 0.05)
     CG_ALLOW_NO_CNPJ = _env_bool("CG_ALLOW_NO_CNPJ", False)
+    CG_SKIP_CURRENT_MONTH = _env_bool("CG_SKIP_CURRENT_MONTH", True)
 
-    # 1. Definir Janela
-    today = datetime.now()
+    # 1. Definir Janela (Pula mês atual se configurado, usando UTC)
+    today = datetime.now(timezone.utc)
+    if CG_SKIP_CURRENT_MONTH:
+        # Retrocede para o último dia do mês anterior
+        first_day = today.replace(day=1)
+        today = first_day - timedelta(days=1)
+
     target_yms = []
     for i in range(months):
         y = today.year
@@ -126,7 +132,6 @@ def main(months: int = 12) -> None:
 
             cg_assert(isinstance(month_data, dict), f"{p}: JSON inválido")
             
-            # Checa se a fonte tinha CNPJ
             parse_meta = (month_data.get("meta") or {}).get("parse") or {}
             has_cnpj_col_any = has_cnpj_col_any or bool(parse_meta.get("has_cnpj_col"))
             
@@ -153,7 +158,7 @@ def main(months: int = 12) -> None:
         f"Poucas empresas: {len(merged_name)} < {CG_MIN_TOTAL_COMPANIES}"
     )
 
-    # CNPJ Check (Condicional)
+    # CNPJ Check
     if len(merged_cnpj) == 0 and not CG_ALLOW_NO_CNPJ:
         if has_cnpj_col_any:
             raise SystemExit(
