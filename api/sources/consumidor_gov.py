@@ -6,19 +6,21 @@ import io
 import json
 import os
 import re
+import shutil
+import tempfile
 import unicodedata
 import zipfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple  # Fixed: Added Any
+from typing import Any, BinaryIO, Dict, List, Optional, Tuple
 from urllib.parse import urljoin
 
 import pandas as pd
 from curl_cffi import requests
 
 # --- CONFIGURAÇÕES ---
-TIMEOUT = int(os.getenv("CG_TIMEOUT", "180"))
+TIMEOUT = int(os.getenv("CG_TIMEOUT", "300"))
 MIN_BYTES = int(os.getenv("CG_MIN_BYTES", "50000"))
 CHUNK_SIZE = int(os.getenv("CG_CHUNK_SIZE", "100000"))
 CACHE_DIR = Path("data/raw/consumidor_gov")
@@ -33,7 +35,6 @@ def _utc_now() -> str:
 
 @dataclass
 class Agg:
-    """Agregador incremental de dados de reputação."""
     display_name: str
     total_claims: int = 0
     evaluated_claims: int = 0
@@ -42,12 +43,10 @@ class Agg:
     cnpj: Optional[str] = None
 
     def merge_raw(self, raw: dict) -> None:
-        """Mescla dados vindos de JSONs mensais já processados."""
         if not self.display_name:
             self.display_name = raw.get("display_name", "")
 
         stats = raw.get("statistics", {})
-
         tc = int(stats.get("complaintsCount", 0))
         ec = int(stats.get("evaluatedCount", 0))
 
@@ -58,19 +57,18 @@ class Agg:
         if ec > 0:
             self.score_sum += avg_sat * ec
 
-        idx_sol = float(stats.get("solutionIndex", 0.0))
-        
         rc = stats.get("resolvedCount")
         if rc is not None:
             self.resolved_claims += int(rc)
         else:
+            # Fallback se não vier consolidado
+            idx_sol = float(stats.get("solutionIndex", 0.0))
             self.resolved_claims += int((idx_sol if idx_sol <= 1.0 else idx_sol / 100.0) * tc)
 
         if not self.cnpj and raw.get("cnpj"):
             self.cnpj = raw.get("cnpj")
 
     def to_public(self) -> dict:
-        """Exporta formato final para o build_insurers."""
         avg_sat = 0.0
         if self.evaluated_claims > 0:
             avg_sat = round(self.score_sum / self.evaluated_claims, 2)
@@ -90,9 +88,7 @@ class Agg:
                 "evaluatedCount": self.evaluated_claims,
                 "resolvedCount": self.resolved_claims
             },
-            "indexes": {
-                "b": {"nota": avg_sat}
-            }
+            "indexes": {"b": {"nota": avg_sat}}
         }
 
 
@@ -112,9 +108,15 @@ def normalize_key_name(raw: str) -> str:
     return s
 
 
-# --- CAMADA DE TRANSPORTE ---
+# --- TRANSPORTE ---
 
 def _get_latest_dump_url(client: requests.Session) -> Optional[str]:
+    # Permite override manual via ENV (para emergências)
+    env_url = os.getenv("CG_DUMP_URL")
+    if env_url:
+        print(f"CG: Usando URL forçada via ENV: {env_url}")
+        return env_url
+
     print(f"CG: Varrendo {DIRECT_DOWNLOAD_PAGE}...")
     try:
         r = client.get(DIRECT_DOWNLOAD_PAGE, timeout=30)
@@ -147,7 +149,6 @@ def _get_latest_dump_url(client: requests.Session) -> Optional[str]:
 
 
 def download_dump_to_file(url: str, client: requests.Session) -> Optional[Path]:
-    """Baixa stream para arquivo temporário."""
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     out_path = CACHE_DIR / "dump_latest.bin"
 
@@ -166,7 +167,7 @@ def download_dump_to_file(url: str, client: requests.Session) -> Optional[Path]:
                         total_bytes += len(chunk)
 
             if total_bytes < MIN_BYTES:
-                print(f"CG: Arquivo muito pequeno ({total_bytes}b). Bloqueio WAF?")
+                print(f"CG: Arquivo muito pequeno ({total_bytes}b).")
                 return None
 
             print(f"CG: Download OK ({total_bytes / 1024 / 1024:.2f} MB).")
@@ -176,27 +177,48 @@ def download_dump_to_file(url: str, client: requests.Session) -> Optional[Path]:
         return None
 
 
-def open_dump_file(path: Path) -> io.BytesIO:
+def open_dump_file(path: Path) -> BinaryIO:
+    """
+    Identifica formato e retorna stream binário do CSV.
+    Para ZIP, extrai para tempfile para garantir seekability.
+    """
     with open(path, "rb") as f:
         sig = f.read(4)
 
+    # GZIP (1f 8b)
     if sig.startswith(b"\x1f\x8b"):
         print("CG: Formato GZIP detectado.")
         return gzip.open(path, "rb")
 
-    elif sig.startswith(b"PK\x03\x04"):
+    # ZIP (PK 03 04)
+    if sig.startswith(b"PK\x03\x04"):
         print("CG: Formato ZIP detectado.")
-        with zipfile.ZipFile(path, "r") as z:
+        z = zipfile.ZipFile(path, "r")
+        try:
             csvs = [n for n in z.namelist() if n.lower().endswith(".csv")]
             if not csvs:
                 raise ValueError("ZIP sem CSV")
             target = max(csvs, key=lambda x: z.getinfo(x).file_size)
-            print(f"CG: Extraindo {target} do ZIP...")
-            return z.open(target)
+            print(f"CG: Extraindo {target} do ZIP para temp...")
 
-    else:
-        print("CG: Assumindo CSV direto.")
-        return open(path, "rb")
+            # Cria arquivo temporário físico para suportar seek() e leitura longa
+            CACHE_DIR.mkdir(parents=True, exist_ok=True)
+            tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".csv", dir=str(CACHE_DIR))
+            tmp_path = Path(tmp.name)
+            tmp.close()
+
+            with z.open(target) as zfh, open(tmp_path, "wb") as out:
+                shutil.copyfileobj(zfh, out)
+
+        finally:
+            z.close()
+
+        # Retorna o handle do arquivo temporário extraído
+        return open(tmp_path, "rb")
+
+    # CSV direto
+    print("CG: Assumindo CSV direto.")
+    return open(path, "rb")
 
 
 # --- PROCESSAMENTO ---
@@ -232,6 +254,7 @@ def process_dump_to_monthly(dump_path: Path, target_yms: List[str], output_dir: 
         print(f"CG: Falha ao abrir dump: {e}")
         return
 
+    # Tenta detectar encoding
     enc = "utf-8"
     try:
         sample = csv_stream.read(4096)
@@ -242,7 +265,7 @@ def process_dump_to_monthly(dump_path: Path, target_yms: List[str], output_dir: 
         csv_stream.seek(0)
 
     print(f"CG: Processando CSV (Encoding: {enc})...")
-
+    
     monthly_data: Dict[str, Dict[str, Agg]] = {ym: {} for ym in target_set}
 
     try:
@@ -256,6 +279,7 @@ def process_dump_to_monthly(dump_path: Path, target_yms: List[str], output_dir: 
         )
     except Exception as e:
         print(f"CG: Erro ao iniciar leitura CSV: {e}")
+        csv_stream.close()
         return
 
     first = True
@@ -270,14 +294,16 @@ def process_dump_to_monthly(dump_path: Path, target_yms: List[str], output_dir: 
             print(f"CG: Colunas Mapeadas -> {cols}")
             if not cols['name'] or not cols['date']:
                 print("CG: CRÍTICO - Colunas obrigatórias não encontradas.")
-                return
+                break # Encerra leitura
             first = False
 
         dates = chunk[cols['date']].fillna("")
+        # Tenta DD/MM/YYYY
         extracted = dates.str.extract(r'(\d{2})/(\d{2})/(\d{4})')
         if not extracted.empty and extracted[2].notna().any():
             chunk['ym'] = extracted[2] + "-" + extracted[1]
         else:
+            # Fallback YYYY-MM-DD
             chunk['ym'] = dates.str.slice(0, 7)
 
         valid_chunk = chunk[chunk['ym'].isin(target_set)].copy()
@@ -321,9 +347,21 @@ def process_dump_to_monthly(dump_path: Path, target_yms: List[str], output_dir: 
                 if not c_vals.empty:
                     agg.cnpj = normalize_cnpj(str(c_vals.iloc[0]))
 
-    if hasattr(csv_stream, 'close'):
+    # Limpeza de recursos
+    # Se o csv_stream apontar para um arquivo temporário (extraído do ZIP), devemos removê-lo
+    try:
+        file_name = getattr(csv_stream, "name", None)
         csv_stream.close()
+        
+        if file_name:
+            p = Path(file_name)
+            # Verifica se é um temp nosso dentro do CACHE_DIR e com extensão .csv
+            if p.exists() and p.parent == CACHE_DIR and p.suffix == ".csv" and "dump_latest" not in p.name:
+                p.unlink(missing_ok=True)
+    except Exception:
+        pass
 
+    # Escrita dos JSONs mensais
     os.makedirs(output_dir, exist_ok=True)
     count_files = 0
     for ym, data_map in monthly_data.items():
@@ -350,7 +388,6 @@ def process_dump_to_monthly(dump_path: Path, target_yms: List[str], output_dir: 
                     "resolvedCount": agg.resolved_claims
                 }
             }
-
             by_name_raw[k] = raw_obj
             if agg.cnpj:
                 by_cnpj_raw[agg.cnpj] = raw_obj
@@ -373,6 +410,7 @@ def process_dump_to_monthly(dump_path: Path, target_yms: List[str], output_dir: 
 
 
 def sync_monthly_cache_from_dump_if_needed(target_yms: List[str], monthly_dir: str):
+    """Entrypoint principal."""
     missing = [ym for ym in target_yms if not os.path.exists(os.path.join(monthly_dir, f"consumidor_gov_{ym}.json"))]
 
     if not missing:
@@ -395,3 +433,7 @@ def sync_monthly_cache_from_dump_if_needed(target_yms: List[str], monthly_dir: s
 
     if dump_path.exists():
         os.remove(dump_path)
+
+# --- BACKWARD COMPATIBILITY ---
+# Alias para garantir que imports antigos não quebrem o pipeline
+sync_monthly_cache_from_dump = sync_monthly_cache_from_dump_if_needed
