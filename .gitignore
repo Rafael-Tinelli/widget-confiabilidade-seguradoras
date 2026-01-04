@@ -20,19 +20,18 @@ widget-ui/dist/
 Thumbs.db
 
 # --- DADOS ---
-# Ignora pastas de dados brutos e snapshots (gerados a cada run)
-data/raw/
-data/snapshots/
+# Ignora conteúdo de dados brutos e snapshots
+data/raw/*
+data/snapshots/*
 
-# Segurança extra: Ignora temporários do extrator onde quer que estejam
-dump_latest.bin
+# Segurança extra: Ignora temporários onde quer que estejam
+*.bin
 cg_extract_*.csv
 *.tmp
 
-# Mantém a estrutura de pastas (gitkeep)
+# Mantém a estrutura de pastas (exceção à regra acima)
 !data/raw/.gitkeep
 !data/snapshots/.gitkeep
 
 # IMPORTANTE: Mantém os dados processados (aggregated.json, insurers.json)
-# Isso permite que o frontend consuma os dados direto do repo se necessário
 !data/derived/
