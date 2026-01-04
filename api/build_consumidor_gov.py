@@ -5,18 +5,21 @@ import json
 import os
 import sys
 from dataclasses import asdict
+from datetime import datetime
 from pathlib import Path
 
-# Importa o novo motor híbrido
-from api.sources.consumidor_gov import Agg, sync_monthly_cache_from_dump, _utc_now
+# CORREÇÃO: Importando o nome exato da função definida no sources
+from api.sources.consumidor_gov import Agg, sync_monthly_cache_from_dump_if_needed, _utc_now
 
 DERIVED_DIR = "data/derived/consumidor_gov"
 MONTHLY_DIR = f"{DERIVED_DIR}/monthly"
 OUT_LATEST = f"{DERIVED_DIR}/aggregated.json"
 
+
 def _load_json(path: str) -> dict:
     with open(path, "r", encoding="utf-8") as f:
         return json.load(f)
+
 
 def _merge_raw_into(dst: dict[str, Agg], key: str, raw: dict) -> None:
     a = dst.get(key)
@@ -25,78 +28,82 @@ def _merge_raw_into(dst: dict[str, Agg], key: str, raw: dict) -> None:
         dst[key] = a
     a.merge_raw(raw)
 
+
 def main(months: int = 12) -> None:
     print("\n--- BUILD CONSUMIDOR.GOV (HYBRID ORCHESTRATOR) ---")
-    
-    # 1. AUTO-DISCOVERY: Tenta baixar o dump e gerar os mensais
-    # Isso preenche a pasta 'data/derived/consumidor_gov/monthly'
-    print("CG: Verificando/Atualizando cache mensal via Dump...")
-    sync_monthly_cache_from_dump(MONTHLY_DIR)
 
-    # 2. DEFINIR JANELA DE TEMPO
-    # Pega os últimos X arquivos JSON disponíveis na pasta monthly
-    available_files = sorted(Path(MONTHLY_DIR).glob("consumidor_gov_*.json"))
-    if not available_files:
-        print("CG: ALERTA CRÍTICO - Nenhum arquivo mensal encontrado após sync.")
-        # Não aborta ainda, tenta processar o que tem
-    
-    # Pega os últimos 'months' arquivos (ex: 12)
-    selected_files = available_files[-months:]
-    merge_yms = [f.stem.replace("consumidor_gov_", "") for f in selected_files]
-    
-    print(f"CG: Meses selecionados para fusão: {merge_yms}")
+    # 1. Definir Janela de Tempo (Últimos 12 meses a partir de hoje)
+    today = datetime.now()
+    target_yms = []
+    for i in range(months):
+        # Lógica simples para voltar meses
+        y = today.year
+        m = today.month - i
+        while m <= 0:
+            m += 12
+            y -= 1
+        target_yms.append(f"{y:04d}-{m:02d}")
 
+    print(f"CG: Janela alvo: {target_yms}")
+
+    # 2. Sync: Baixa o dump se necessário e preenche os buracos
+    # CORREÇÃO: Chamando a função com o nome correto
+    sync_monthly_cache_from_dump_if_needed(target_yms, MONTHLY_DIR)
+
+    # 3. Merge: Lê os arquivos locais e consolida
     merged_name: dict[str, Agg] = {}
     merged_cnpj: dict[str, Agg] = {}
-    
-    # 3. FUSÃO (MERGE)
-    for p in selected_files:
-        try:
-            month = _load_json(str(p))
-        except Exception as e:
-            print(f"CG: Erro lendo {p}: {e}")
+    months_found = []
+
+    for ym in target_yms:
+        p = os.path.join(MONTHLY_DIR, f"consumidor_gov_{ym}.json")
+        if not os.path.exists(p):
             continue
 
-        raw_name = month.get("by_name_key_raw") or {}
-        raw_cnpj = month.get("by_cnpj_key_raw") or {}
+        try:
+            month_data = _load_json(p)
+            months_found.append(ym)
 
-        for k, raw in raw_name.items():
-            if isinstance(raw, dict):
-                _merge_raw_into(merged_name, str(k), raw)
+            raw_n = month_data.get("by_name_key_raw", {})
+            raw_c = month_data.get("by_cnpj_key_raw", {})
 
-        for k, raw in raw_cnpj.items():
-            if isinstance(raw, dict):
-                _merge_raw_into(merged_cnpj, str(k), raw)
+            for k, v in raw_n.items():
+                _merge_raw_into(merged_name, k, v)
+            for k, v in raw_c.items():
+                _merge_raw_into(merged_cnpj, k, v)
 
-    # 4. GUARD RAIL (TRAVA DE SEGURANÇA)
-    if len(merged_name) == 0:
-        print("CG: ERRO FATAL - Nenhum dado processado após fusão.")
-        if os.path.exists(OUT_LATEST):
-            print("CG: Mantendo arquivo anterior para não quebrar o site.")
-        sys.exit(1) # Falha o GitHub Action propositalmente
+        except Exception as e:
+            print(f"CG: Erro lendo {p}: {e}")
 
-    # 5. EXPORTAÇÃO
+    # 4. Guard Rail: Validação de Segurança
+    if not merged_name:
+        print("CG: FATAL - Nenhum dado consolidado. Abortando para não zerar o site.")
+        sys.exit(1)  # Força falha no CI
+
+    # 5. Exportação Final
     out = {
         "meta": {
             "generated_at": _utc_now(),
-            "months_used": merge_yms,
+            "window_months": len(months_found),
+            "months": months_found,
             "source": "consumidor.gov.br (Dump)",
-            "cnpj_matches": len(merged_cnpj)
+            "stats": {
+                "total_companies": len(merged_name),
+                "companies_with_cnpj": len(merged_cnpj)
+            }
         },
-        # Converte objetos Agg para dicts públicos
         "by_name": {k: v.to_public() for k, v in merged_name.items()},
         "by_cnpj_key": {k: v.to_public() for k, v in merged_cnpj.items()},
-        
-        # Mantém raws para compatibilidade futura se precisar
-        "by_name_key_raw": {k: asdict(v) for k, v in merged_name.items()},
+        "by_name_key_raw": {k: asdict(v) for k, v in merged_name.items()}
     }
 
     os.makedirs(os.path.dirname(OUT_LATEST), exist_ok=True)
     with open(OUT_LATEST, "w", encoding="utf-8") as f:
         json.dump(out, f, ensure_ascii=False, separators=(',', ':'))
 
-    print(f"OK: Consumidor.gov agregado salvo em {OUT_LATEST}")
-    print(f"Stats: {len(merged_name)} empresas por nome, {len(merged_cnpj)} por CNPJ.")
+    print(f"OK: Agregado salvo em {OUT_LATEST}")
+    print(f"Stats: {len(merged_name)} empresas, {len(merged_cnpj)} com CNPJ.")
+
 
 if __name__ == "__main__":
     main()
