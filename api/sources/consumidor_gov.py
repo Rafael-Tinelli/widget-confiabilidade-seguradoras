@@ -30,6 +30,7 @@ DIRECT_DOWNLOAD_PAGE = "https://www.consumidor.gov.br/pages/dadosabertos/externo
 
 _CNPJ_RE = re.compile(r"\D+")
 _FILE_RE = re.compile(r"\.(csv|zip|gz)(\?|$)", re.I)
+_FINALIZADAS_OR_BASE_RE = re.compile(r"(finalizadas|basecompleta)", re.I)
 _YM_RE = re.compile(r"(20\d{2})[-_/\.](0[1-9]|1[0-2])")
 _Y_RE = re.compile(r"(20\d{2})")
 
@@ -38,17 +39,31 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+def _norm_col(s: str) -> str:
+    s = (s or "").strip()
+    s = unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode("ascii")
+    return s.lower().strip()
+
+
+def _blob(url: str, meta: Optional[dict] = None) -> str:
+    b = (url or "").lower()
+    if meta:
+        b += " " + str(meta.get("name") or "").lower()
+        b += " " + str(meta.get("description") or "").lower()
+    return b
+
+
 def _is_monthly_dump_candidate(url: str, meta: Optional[dict] = None) -> bool:
     """
     Aceita apenas os dumps mensais que nos interessam:
     - finalizadas_YYYY-MM.(zip|csv)
     - basecompletaYYYY-MM.(csv|zip)
     """
-    blob = (url or "").lower()
-    if meta:
-        blob += " " + str(meta.get("name") or "").lower()
-        blob += " " + str(meta.get("description") or "").lower()
-    return ("finalizadas" in blob) or ("basecompleta" in blob)
+    b = _blob(url, meta)
+    # evita pegar datasets de atendimento/triagem etc.
+    if not _FINALIZADAS_OR_BASE_RE.search(b):
+        return False
+    return ("finalizadas" in b) or ("basecompleta" in b)
 
 
 @dataclass
@@ -157,6 +172,93 @@ def _score_url(url: str, meta: Optional[dict] = None) -> int:
             score += int(mm.group(1)) * 100 + int(mm.group(2))
             
     return score
+
+
+def _get_dump_url_for_month(client: requests.Session, ym: str) -> Optional[str]:
+    """
+    Busca, no CKAN, um recurso que contenha o mês `ym` e prioriza finalizadas_*.
+    Fallback: HTML scraping da página oficial.
+    """
+    try:
+        # termos curtos e objetivos para aumentar chance de match do CKAN
+        terms = [
+            f"finalizadas {ym}",
+            f"finalizadas_{ym}",
+            f"basecompleta{ym}",
+            f"basecompleta {ym}",
+            f"{CKAN_QUERY} {ym}",
+        ]
+        best: Tuple[int, str] | None = None
+
+        for term in terms:
+            api = urljoin(CKAN_API_BASE, "package_search")
+            url = f"{api}?q={quote(term)}&rows=50"
+            print(f"CG: CKAN search -> {term}")
+
+            r = client.get(url, timeout=30)
+            if r.status_code != 200:
+                continue
+
+            data = r.json()
+            if not data.get("success"):
+                continue
+
+            results = (data.get("result") or {}).get("results") or []
+            for pkg in results:
+                for res in (pkg.get("resources") or []):
+                    u = res.get("url") or ""
+                    if not u or not _FILE_RE.search(u):
+                        continue
+                    if not _is_monthly_dump_candidate(u, res):
+                        continue
+
+                    b = _blob(u, res)
+                    if ym not in b:
+                        continue
+
+                    sc = _score_url(u, res)
+                    if best is None or sc > best[0]:
+                        best = (sc, u)
+
+        if best:
+            print(f"CG: CKAN candidate {ym} (score={best[0]}): {best[1]}")
+            return best[1]
+    except Exception as e:
+        print(f"CG: CKAN falhou ({ym}): {e}")
+
+    # Fallback HTML (também filtrando por mês)
+    print(f"CG: Fallback HTML ({ym}) -> {DIRECT_DOWNLOAD_PAGE} ...")
+    try:
+        r = client.get(DIRECT_DOWNLOAD_PAGE, timeout=30)
+        if r.status_code != 200:
+            print(f"CG: Erro HTTP {r.status_code}")
+            return None
+
+        html = r.text or ""
+        hrefs = re.findall(r'href\s*=\s*["\']([^"\']+)["\']', html, flags=re.I)
+        candidates: list[tuple[int, str]] = []
+
+        for h in hrefs:
+            if not h:
+                continue
+            full = urljoin("https://www.consumidor.gov.br", h)
+            if not _FILE_RE.search(full):
+                continue
+            if not _is_monthly_dump_candidate(full):
+                continue
+            if ym not in full.lower():
+                continue
+            candidates.append((_score_url(full), full))
+
+        if not candidates:
+            return None
+
+        candidates.sort(reverse=True)
+        print(f"CG: HTML candidate {ym} (score={candidates[0][0]}): {candidates[0][1]}")
+        return candidates[0][1]
+    except Exception as e:
+        print(f"CG: Erro no scraping HTML ({ym}): {e}")
+        return None
 
 
 # --- TRANSPORTE ---
@@ -320,7 +422,7 @@ def open_dump_file(path: Path) -> BinaryIO:
 # --- PROCESSAMENTO ---
 
 def pick_columns(cols: list[str]) -> Tuple[Any, Any, Any, Any, Any]:
-    c_map = {c.lower().strip(): c for c in cols}
+    c_map = {_norm_col(c): c for c in cols}
 
     def find(targets):
         for t in targets:
@@ -329,11 +431,12 @@ def pick_columns(cols: list[str]) -> Tuple[Any, Any, Any, Any, Any]:
                     return c_map[k]
         return None
 
-    c_cnpj = find(["cnpj", "cpf/cnpj"])
-    c_name = find(["nome fantasia", "fantasia", "nome do fornecedor"])
-    c_score = find(["nota do consumidor", "nota", "avaliação"])
-    c_date = find(["data finalização", "data finalizacao", "data abertura", "data"])
-    c_resolved = find(["resolvida", "situação", "status"])
+    c_cnpj = find(["cnpj", "cpf/cnpj", "cpf cnpj"])
+    c_name = find(["nome fantasia", "fantasia", "nome do fornecedor", "fornecedor"])
+    c_score = find(["nota do consumidor", "nota", "avaliacao"])
+    c_date = find(["data finalizacao", "data finalizacao", "data abertura", "data"])
+    # "Avaliação Reclamação" é o melhor proxy de resolvida/não resolvida
+    c_resolved = find(["avaliacao reclamacao", "respondida", "resolvida", "situacao", "status"])
 
     return c_cnpj, c_name, c_score, c_date, c_resolved
 
@@ -350,7 +453,6 @@ def process_dump_to_monthly(dump_path: Path, target_yms: List[str], output_dir: 
         print(f"CG: Falha ao abrir dump: {e}")
         return
 
-    # Tenta detectar encoding
     enc = "utf-8"
     try:
         sample = csv_stream.read(4096)
@@ -380,6 +482,7 @@ def process_dump_to_monthly(dump_path: Path, target_yms: List[str], output_dir: 
 
     first = True
     cols = {}
+    has_cnpj_col = False
 
     for chunk in reader:
         chunk.columns = [c.strip() for c in chunk.columns]
@@ -394,6 +497,7 @@ def process_dump_to_monthly(dump_path: Path, target_yms: List[str], output_dir: 
             
             if not cols['cnpj']:
                 print("CG: AVISO - Coluna CNPJ não encontrada. Prosseguindo sem CNPJ.")
+            has_cnpj_col = bool(cols['cnpj'])
                 
             first = False
 
@@ -417,7 +521,20 @@ def process_dump_to_monthly(dump_path: Path, target_yms: List[str], output_dir: 
             valid_chunk['score_val'] = 0.0
 
         if cols['resolved']:
-            valid_chunk['res_val'] = valid_chunk[cols['resolved']].astype(str).str.lower().str.startswith('s').astype(int)
+            col_norm = _norm_col(cols['resolved'])
+            s = valid_chunk[cols['resolved']].astype(str).fillna("")
+            s_low = s.str.lower()
+
+            if "avaliacao reclamacao" in col_norm:
+                # valores típicos: "Resolvida", "Não Resolvida", "Não Avaliada"
+                is_res = s_low.str.contains("resolvida", na=False) & ~s_low.str.contains("nao resolvida", na=False) & ~s_low.str.contains("não resolvida", na=False)
+                valid_chunk['res_val'] = is_res.astype(int)
+            elif "respondida" in col_norm:
+                # valores típicos: "S"/"N"
+                valid_chunk['res_val'] = s_low.str.startswith('s').astype(int)
+            else:
+                # fallback legado
+                valid_chunk['res_val'] = s_low.str.startswith('s').astype(int)
         else:
             valid_chunk['res_val'] = 0
 
@@ -442,6 +559,7 @@ def process_dump_to_monthly(dump_path: Path, target_yms: List[str], output_dir: 
 
             agg.resolved_claims += int(g['res_val'].sum())
 
+            # Melhoria CNPJ: Busca o primeiro válido no grupo inteiro
             if not agg.cnpj and cols['cnpj']:
                 c_vals = g[cols['cnpj']].dropna()
                 if not c_vals.empty:
@@ -495,7 +613,7 @@ def process_dump_to_monthly(dump_path: Path, target_yms: List[str], output_dir: 
             "meta": {
                 "ym": ym,
                 "generated_at": _utc_now(),
-                "parse": {"rows": len(by_name_raw)}
+                "parse": {"rows": len(by_name_raw), "has_cnpj_col": has_cnpj_col}
             },
             "by_name_key_raw": by_name_raw,
             "by_cnpj_key_raw": by_cnpj_raw
@@ -518,19 +636,33 @@ def sync_monthly_cache_from_dump_if_needed(target_yms: List[str], monthly_dir: s
     print(f"CG: Faltam dados para: {missing}. Iniciando download do dump...")
     client = requests.Session(impersonate="chrome110")
 
-    url = _get_latest_dump_url(client)
-    if not url:
-        print("CG: Não foi possível achar URL do dump.")
+    # Se URL forçada via ENV, mantém comportamento antigo: baixa 1 vez e tenta preencher toda janela
+    env_url = os.getenv("CG_DUMP_URL")
+    if env_url:
+        url = _get_latest_dump_url(client)
+        if not url:
+            print("CG: Não foi possível achar URL do dump (ENV).")
+            return
+        dump_path = download_dump_to_file(url, client)
+        if not dump_path:
+            return
+        process_dump_to_monthly(dump_path, target_yms, monthly_dir)
+        if dump_path.exists():
+            os.remove(dump_path)
         return
 
-    dump_path = download_dump_to_file(url, client)
-    if not dump_path:
-        return
-
-    process_dump_to_monthly(dump_path, target_yms, monthly_dir)
-
-    if dump_path.exists():
-        os.remove(dump_path)
+    # Caso normal: baixa mês a mês, priorizando finalizadas_YYYY-MM
+    for ym in missing:
+        url = _get_dump_url_for_month(client, ym)
+        if not url:
+            print(f"CG: WARN - Não encontrei dump mensal para {ym}.")
+            continue
+        dump_path = download_dump_to_file(url, client)
+        if not dump_path:
+            continue
+        process_dump_to_monthly(dump_path, [ym], monthly_dir)
+        if dump_path.exists():
+            os.remove(dump_path)
 
 # --- BACKWARD COMPATIBILITY ---
 sync_monthly_cache_from_dump = sync_monthly_cache_from_dump_if_needed
