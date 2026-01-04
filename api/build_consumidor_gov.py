@@ -113,6 +113,7 @@ def main(months: int = 12) -> None:
     merged_name: dict[str, Agg] = {}
     merged_cnpj: dict[str, Agg] = {}
     months_found = []
+    has_cnpj_col_any = False
 
     for ym in target_yms:
         p = os.path.join(MONTHLY_DIR, f"consumidor_gov_{ym}.json")
@@ -124,6 +125,10 @@ def main(months: int = 12) -> None:
             months_found.append(ym)
 
             cg_assert(isinstance(month_data, dict), f"{p}: JSON inválido")
+            
+            # Checa se a fonte tinha CNPJ
+            parse_meta = (month_data.get("meta") or {}).get("parse") or {}
+            has_cnpj_col_any = has_cnpj_col_any or bool(parse_meta.get("has_cnpj_col"))
             
             raw_n = month_data.get("by_name_key_raw")
             raw_c = month_data.get("by_cnpj_key_raw")
@@ -148,13 +153,18 @@ def main(months: int = 12) -> None:
         f"Poucas empresas: {len(merged_name)} < {CG_MIN_TOTAL_COMPANIES}"
     )
 
-    # CNPJ Check
+    # CNPJ Check (Condicional)
     if len(merged_cnpj) == 0 and not CG_ALLOW_NO_CNPJ:
-        raise SystemExit(
-            "CG FAIL: 0 empresas com CNPJ. Falha crítica no download/parse. "
-            "Verifique se o dump baixado possui coluna de CNPJ ou se a URL está correta. "
-            "Use CG_ALLOW_NO_CNPJ=1 para bypass em emergência."
-        )
+        if has_cnpj_col_any:
+            raise SystemExit(
+                "CG FAIL: 0 empresas com CNPJ. A fonte tinha coluna de CNPJ, então isso indica falha no parse. "
+                "Verifique URL/colunas. Use CG_ALLOW_NO_CNPJ=1 apenas em emergência."
+            )
+        else:
+            print(
+                "CG: WARN - Dumps mensais não possuem coluna de CNPJ. "
+                "Prosseguindo apenas por chave de nome (name_key)."
+            )
     
     if len(merged_cnpj) > 0:
         pct = len(merged_cnpj) / max(1, len(merged_name))
@@ -173,7 +183,8 @@ def main(months: int = 12) -> None:
             "source": "consumidor.gov.br (Dump)",
             "stats": {
                 "total_companies": len(merged_name),
-                "companies_with_cnpj": len(merged_cnpj)
+                "companies_with_cnpj": len(merged_cnpj),
+                "source_has_cnpj_column": bool(has_cnpj_col_any),
             }
         },
         "by_name": {k: v.to_public() for k, v in merged_name.items()},
