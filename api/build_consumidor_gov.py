@@ -73,14 +73,26 @@ def main(months: int = 12) -> None:
     CG_MIN_CNPJ_ABS = _env_int("CG_MIN_CNPJ_ABS", 50)
     CG_MIN_CNPJ_PCT = _env_float("CG_MIN_CNPJ_PCT", 0.05)
     CG_ALLOW_NO_CNPJ = _env_bool("CG_ALLOW_NO_CNPJ", False)
+    
+    # Controle de Janela de Tempo
     CG_SKIP_CURRENT_MONTH = _env_bool("CG_SKIP_CURRENT_MONTH", True)
+    CG_PUBLICATION_LAG = _env_int("CG_PUBLICATION_LAG", 1) # Pula +N meses para trás
 
-    # 1. Definir Janela (Pula mês atual se configurado, usando UTC)
+    # 1. Definir Janela
     today = datetime.now(timezone.utc)
+    
+    def back_one_month(d: datetime) -> datetime:
+        first_day = d.replace(day=1)
+        return first_day - timedelta(days=1)
+
+    # Lógica de Retrocesso:
+    # 1. Se configurado, sai do mês corrente (ex: Jan -> Dez)
     if CG_SKIP_CURRENT_MONTH:
-        # Retrocede para o último dia do mês anterior
-        first_day = today.replace(day=1)
-        today = first_day - timedelta(days=1)
+        today = back_one_month(today)
+    
+    # 2. Aplica o Lag de publicação (ex: Dez -> Nov)
+    for _ in range(CG_PUBLICATION_LAG):
+        today = back_one_month(today)
 
     target_yms = []
     for i in range(months):
@@ -94,7 +106,7 @@ def main(months: int = 12) -> None:
     cg_assert(len(target_yms) == months, f"Janela inconsistente: {len(target_yms)} != {months}")
     cg_assert(all(re.fullmatch(r"\d{4}-\d{2}", ym) for ym in target_yms), "Formato inválido em target_yms")
 
-    print(f"CG: Janela alvo: {target_yms}")
+    print(f"CG: Janela alvo (Lag={CG_PUBLICATION_LAG}): {target_yms}")
 
     # 2. Sync
     os.makedirs(MONTHLY_DIR, exist_ok=True)
@@ -132,6 +144,7 @@ def main(months: int = 12) -> None:
 
             cg_assert(isinstance(month_data, dict), f"{p}: JSON inválido")
             
+            # Checa se a fonte tinha CNPJ
             parse_meta = (month_data.get("meta") or {}).get("parse") or {}
             has_cnpj_col_any = has_cnpj_col_any or bool(parse_meta.get("has_cnpj_col"))
             
@@ -158,7 +171,7 @@ def main(months: int = 12) -> None:
         f"Poucas empresas: {len(merged_name)} < {CG_MIN_TOTAL_COMPANIES}"
     )
 
-    # CNPJ Check
+    # CNPJ Check (Condicional)
     if len(merged_cnpj) == 0 and not CG_ALLOW_NO_CNPJ:
         if has_cnpj_col_any:
             raise SystemExit(
