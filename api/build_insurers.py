@@ -9,7 +9,6 @@ from pathlib import Path
 from api.matching.consumidor_gov_match import NameMatcher, format_cnpj, normalize_cnpj
 from api.sources.opin_products import extract_open_insurance_products
 from api.sources.ses import extract_ses_master_and_financials
-# AQUI ESTÁ A INTEGRAÇÃO CRÍTICA:
 from api.intelligence import calculate_score  
 
 OUTPUT_FILE = Path("api/v1/insurers.json")
@@ -52,27 +51,50 @@ def main() -> None:
         # A. Match com Consumidor.gov
         rep_entry, match_meta = matcher.get_entry(str(name), cnpj=cnpj_dig or cnpj_fmt)
         
-        # B. Estrutura de Reputação para o Intelligence.py
+        # B. Estrutura de Reputação (CORREÇÃO DE LÓGICA: 0 vs None)
         reputation_data = None
         if rep_entry:
             matched_reputation += 1
             stats = rep_entry.get("statistics") or {}
             
-            reputation_data = {
-                "source": "consumidor.gov",
-                "match_score": match_meta.score if match_meta else 0,
-                "display_name": rep_entry.get("display_name") or rep_entry.get("name"),
-                "metrics": {
-                    "satisfaction_avg": stats.get("overallSatisfaction") or 0.0,
-                    "resolution_rate": stats.get("solutionIndex") or 0.0,
-                    "complaints_total": stats.get("complaintsCount") or 0
+            # Helper para extrair float ou None (evita converter 0.0 falso)
+            def get_float(key_primary, key_secondary=None):
+                val = stats.get(key_primary)
+                if val is None and key_secondary:
+                    val = rep_entry.get(key_secondary)
+                
+                # Se for None ou string vazia, retorna None (dado ausente)
+                if val in (None, ""):
+                    return None
+                try:
+                    return float(val)
+                except (ValueError, TypeError):
+                    return None
+
+            sat_avg = get_float("overallSatisfaction", "satisfaction_avg")
+            res_rate = get_float("solutionIndex", "resolution_rate")
+            complaints = int(stats.get("complaintsCount") or rep_entry.get("complaints_total") or 0)
+
+            # Se TODAS as métricas chave forem nulas/zero, consideramos sem dados
+            # (evita reputação fantasma de 0.0)
+            if (sat_avg is None or sat_avg == 0) and (res_rate is None or res_rate == 0):
+                reputation_data = None
+            else:
+                reputation_data = {
+                    "source": "consumidor.gov",
+                    "match_score": match_meta.score if match_meta else 0,
+                    "display_name": rep_entry.get("display_name") or rep_entry.get("name"),
+                    "metrics": {
+                        "satisfaction_avg": sat_avg if sat_avg is not None else 0.0,
+                        "resolution_rate": res_rate if res_rate is not None else 0.0,
+                        "complaints_total": complaints
+                    }
                 }
-            }
 
         # C. Produtos Open Insurance
         prods = products_by_cnpj.get(cnpj_dig, []) if cnpj_dig else []
 
-        # D. Montagem do Objeto Mestre (Pré-Cálculo)
+        # D. Montagem do Objeto Mestre
         insurer_obj = {
             "id": cnpj_dig or raw_cnpj,
             "name": str(name),
@@ -89,18 +111,17 @@ def main() -> None:
             "products": prods
         }
 
-        # E. Aplicação da Inteligência (Cálculo de Scores)
-        # O intelligence calcula o 'score' final e preenche 'components'
+        # E. Aplicação da Inteligência
         processed_insurer = calculate_score(insurer_obj)
         
-        # F. Ajuste Fino para Compatibilidade com Frontend
+        # F. Ajuste Fino para UI
         if "financial_score" not in processed_insurer["data"]:
              comp_fin = processed_insurer["data"].get("components", {}).get("solvency", 0.0)
              processed_insurer["data"]["financial_score"] = comp_fin
 
         insurers.append(processed_insurer)
 
-    # 5. Ordenação Final pelo Score Inteligente
+    # 5. Ordenação Final
     insurers.sort(key=lambda x: x["data"].get("score", 0), reverse=True)
 
     # 6. Geração do JSON Final
