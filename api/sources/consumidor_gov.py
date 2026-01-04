@@ -255,11 +255,14 @@ def _get_dump_url_for_month(client: requests.Session, ym: str) -> Optional[str]:
                     for pkg in results:
                         for res in (pkg.get("resources") or []):
                             u = res.get("url") or ""
-                            if not u or not _FILE_RE.search(u): continue
-                            if not _is_monthly_dump_candidate(u, res): continue
+                            if not u or not _FILE_RE.search(u):
+                                continue
+                            if not _is_monthly_dump_candidate(u, res):
+                                continue
                             
                             b = _blob(u, res)
-                            if not _blob_has_ym(b, ym): continue
+                            if not _blob_has_ym(b, ym):
+                                continue
 
                             sc = _score_url(u, res)
                             if best is None or sc > best[0]:
@@ -283,14 +286,19 @@ def _get_dump_url_for_month(client: requests.Session, ym: str) -> Optional[str]:
         candidates: list[tuple[int, str]] = []
 
         for h in hrefs:
-            if not h: continue
+            if not h:
+                continue
+            
             full = urljoin("https://www.consumidor.gov.br", h)
             
-            if not _FILE_RE.search(full): continue
-            if not _is_monthly_dump_candidate(full): continue
+            if not _FILE_RE.search(full):
+                continue
+            if not _is_monthly_dump_candidate(full):
+                continue
             
             # Check flexível de mês
-            if not _blob_has_ym(full, ym): continue
+            if not _blob_has_ym(full, ym):
+                continue
             
             candidates.append((_score_url(full), full))
 
@@ -312,6 +320,8 @@ def _get_latest_dump_url(client: requests.Session) -> Optional[str]:
     if env_url:
         print(f"CG: Usando URL forçada via ENV: {env_url}")
         return env_url
+    
+    # Fallback genérico se precisasse, mas o fluxo agora é por mês
     return None
 
 
@@ -327,7 +337,8 @@ def download_dump_to_file(url: str, client: requests.Session) -> Optional[Path]:
             if r.status_code != 200:
                 print(f"CG: Erro HTTP {r.status_code}")
                 # Cleanup imediato em caso de erro
-                if out_path.exists(): out_path.unlink()
+                if out_path.exists():
+                    out_path.unlink()
                 return None
 
             total_bytes = 0
@@ -340,7 +351,8 @@ def download_dump_to_file(url: str, client: requests.Session) -> Optional[Path]:
             if total_bytes < MIN_BYTES:
                 print(f"CG: Arquivo muito pequeno ({total_bytes}b).")
                 # Cleanup de arquivo inválido
-                if out_path.exists(): out_path.unlink()
+                if out_path.exists():
+                    out_path.unlink()
                 return None
 
             print(f"CG: Download OK ({total_bytes / 1024 / 1024:.2f} MB).")
@@ -353,7 +365,8 @@ def download_dump_to_file(url: str, client: requests.Session) -> Optional[Path]:
     except Exception as e:
         print(f"CG: Exceção download: {e}")
         # Cleanup em exceção
-        if out_path.exists(): out_path.unlink()
+        if out_path.exists():
+            out_path.unlink()
         return None
 
 
@@ -631,7 +644,8 @@ def sync_monthly_cache_from_dump_if_needed(target_yms: List[str], monthly_dir: s
         dump_path = download_dump_to_file(env_url, client)
         if dump_path:
             process_dump_to_monthly(dump_path, target_yms, monthly_dir)
-            if dump_path.exists(): os.remove(dump_path)
+            if dump_path.exists():
+                os.remove(dump_path)
         return
 
     for ym in missing:
