@@ -1,5 +1,4 @@
 # api/sources/consumidor_gov.py
-# api/sources/consumidor_gov.py
 from __future__ import annotations
 
 import gzip
@@ -132,7 +131,8 @@ class Agg:
             idx_sol = stats.get("solutionIndex")
             if idx_sol is not None:
                 idx = float(idx_sol)
-                if idx > 1.0: idx /= 100.0
+                if idx > 1.0:
+                    idx /= 100.0
                 denom = ec if ec > 0 else tc
                 if denom > 0:
                     self.resolved_claims += int(round(idx * denom))
@@ -206,18 +206,24 @@ def normalize_key_name(raw: str) -> str:
 def _score_url(url: str, meta: Optional[dict] = None) -> int:
     u = (url or "").lower()
     score = 0
-    if "finalizadas" in u: score += 1_000_000
-    if "basecompleta" in u: score -= 250_000
-    if u.endswith(".zip"): score += 50_000
-    elif u.endswith(".csv"): score += 40_000
+    if "finalizadas" in u:
+        score += 1_000_000
+    if "basecompleta" in u:
+        score -= 250_000
+    if u.endswith(".zip"):
+        score += 50_000
+    elif u.endswith(".csv"):
+        score += 40_000
     
     m = _YM_ANY_RE.search(u)
-    if m: score += int(m.group(1)) * 100 + int(m.group(2))
+    if m:
+        score += int(m.group(1)) * 100 + int(m.group(2))
     
     if meta:
         lm = meta.get("last_modified") or meta.get("created") or ""
         mm = _YM_ANY_RE.search(str(lm))
-        if mm: score += int(mm.group(1)) * 100 + int(mm.group(2))
+        if mm:
+            score += int(mm.group(1)) * 100 + int(mm.group(2))
     return score
 
 
@@ -226,9 +232,11 @@ def _ckan_resource_search(client: requests.Session, term: str, limit: int = 50) 
     url = f"{api}?query={quote(term)}&limit={limit}"
     try:
         r = client.get(url, timeout=30)
-        if r.status_code != 200: return []
+        if r.status_code != 200:
+            return []
         data = r.json()
-        if not data.get("success"): return []
+        if not data.get("success"):
+            return []
         return (data.get("result") or {}).get("results") or []
     except Exception:
         return []
@@ -248,12 +256,18 @@ def _get_dump_url_for_month(client: requests.Session, ym: str) -> Optional[str]:
             resources = _ckan_resource_search(client, term)
             for res in resources:
                 u = res.get("url") or ""
-                if not u or not _FILE_RE.search(u): continue
-                if not _is_monthly_dump_candidate(u, res): continue
+                if not u or not _FILE_RE.search(u):
+                    continue
+                if not _is_monthly_dump_candidate(u, res):
+                    continue
+                
                 b = _blob(u, res)
-                if not _blob_has_ym(b, ym): continue
+                if not _blob_has_ym(b, ym):
+                    continue
+
                 sc = _score_url(u, res)
-                if best is None or sc > best[0]: best = (sc, u)
+                if best is None or sc > best[0]:
+                    best = (sc, u)
 
         if best:
             print(f"CG: CKAN candidate {ym} (score={best[0]}): {best[1]}")
@@ -264,21 +278,27 @@ def _get_dump_url_for_month(client: requests.Session, ym: str) -> Optional[str]:
     print(f"CG: Fallback HTML ({ym}) -> {DIRECT_DOWNLOAD_PAGE} ...")
     try:
         r = client.get(DIRECT_DOWNLOAD_PAGE, timeout=30)
-        if r.status_code != 200: return None
+        if r.status_code != 200:
+            return None
 
         html = r.text or ""
         hrefs = re.findall(r'href\s*=\s*["\']([^"\']+)["\']', html, flags=re.I)
         candidates: list[tuple[int, str]] = []
 
         for h in hrefs:
-            if not h: continue
+            if not h:
+                continue
             full = urljoin("https://www.consumidor.gov.br", h)
-            if not _FILE_RE.search(full): continue
-            if not _is_monthly_dump_candidate(full): continue
-            if not _blob_has_ym(full, ym): continue
+            if not _FILE_RE.search(full):
+                continue
+            if not _is_monthly_dump_candidate(full):
+                continue
+            if not _blob_has_ym(full, ym):
+                continue
             candidates.append((_score_url(full), full))
 
-        if not candidates: return None
+        if not candidates:
+            return None
         candidates.sort(reverse=True)
         print(f"CG: HTML candidate {ym} (score={candidates[0][0]}): {candidates[0][1]}")
         return candidates[0][1]
@@ -304,7 +324,8 @@ def download_dump_to_file(url: str, client: requests.Session) -> Optional[Path]:
         try:
             if r.status_code != 200:
                 print(f"CG: Erro HTTP {r.status_code}")
-                if out_path.exists(): out_path.unlink()
+                if out_path.exists():
+                    out_path.unlink()
                 return None
             total_bytes = 0
             with open(out_path, "wb") as f:
@@ -314,20 +335,24 @@ def download_dump_to_file(url: str, client: requests.Session) -> Optional[Path]:
                         total_bytes += len(chunk)
             if total_bytes < MIN_BYTES:
                 print(f"CG: Arquivo muito pequeno ({total_bytes}b).")
-                if out_path.exists(): out_path.unlink()
+                if out_path.exists():
+                    out_path.unlink()
                 return None
             print(f"CG: Download OK ({total_bytes / 1024 / 1024:.2f} MB).")
             return out_path
         finally:
-            if hasattr(r, 'close'): r.close()
+            if hasattr(r, 'close'):
+                r.close()
     except Exception as e:
         print(f"CG: Exceção download: {e}")
-        if out_path.exists(): out_path.unlink()
+        if out_path.exists():
+            out_path.unlink()
         return None
 
 
 def open_dump_file(path: Path) -> BinaryIO:
-    with open(path, "rb") as f: sig = f.read(4)
+    with open(path, "rb") as f:
+        sig = f.read(4)
     if sig.startswith(b"\x1f\x8b"):
         print("CG: Formato GZIP detectado.")
         return gzip.open(path, "rb")
@@ -336,13 +361,15 @@ def open_dump_file(path: Path) -> BinaryIO:
         z = zipfile.ZipFile(path, "r")
         try:
             csvs = [n for n in z.namelist() if n.lower().endswith(".csv")]
-            if not csvs: raise ValueError("ZIP sem CSV")
+            if not csvs:
+                raise ValueError("ZIP sem CSV")
             target = max(csvs, key=lambda x: z.getinfo(x).file_size)
             print(f"CG: Extraindo {target} do ZIP para temp...")
             CACHE_DIR.mkdir(parents=True, exist_ok=True)
             tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".csv", prefix="cg_extract_", dir=str(CACHE_DIR))
             tmp_path = Path(tmp.name)
-            with z.open(target) as zfh: shutil.copyfileobj(zfh, tmp)
+            with z.open(target) as zfh:
+                shutil.copyfileobj(zfh, tmp)
             tmp.close()
         finally:
             z.close()
@@ -353,20 +380,22 @@ def open_dump_file(path: Path) -> BinaryIO:
 
 def pick_columns(cols: list[str]) -> Tuple[Any, Any, Any, Any, Any, Any, Any, Any]:
     c_map = {_norm_col(c): c for c in cols}
+
     def find(targets):
         for t in targets:
             for k in c_map:
-                if t in k: return c_map[k]
+                if t in k:
+                    return c_map[k]
         return None
     
     c_cnpj = find(["cnpj", "cpf/cnpj", "cpf cnpj"])
     c_name = find(["nome fantasia", "fantasia", "nome do fornecedor", "fornecedor"])
-    c_score = find(["nota do consumidor", "nota consumidor"]) # STRICT
+    c_score = find(["nota do consumidor", "nota consumidor"])  # STRICT
     c_date = find(["data finalizacao", "data finalizacao", "data abertura", "data"])
     
     c_resolved = find(["avaliacao reclamacao", "resolvida", "situacao", "status"])
     c_responded = find(["respondida"])
-    c_segment = find(["segmento de mercado"]) # STRICT
+    c_segment = find(["segmento de mercado"])  # STRICT
     c_time = find(["tempo resposta", "tempo de resposta", "dias resposta"])
 
     return c_cnpj, c_name, c_score, c_date, c_resolved, c_responded, c_segment, c_time
@@ -414,7 +443,6 @@ def process_dump_to_monthly(dump_path: Path, target_yms: List[str], output_dir: 
                 print("CG: CRÍTICO - Colunas obrigatórias não encontradas.")
                 break 
             
-            # TRAVA DE SEGURANÇA: Se não achou segmento, aborta para não poluir
             if not cols['segment']:
                 print("CG: CRÍTICO - Coluna 'Segmento de Mercado' não encontrada. Abortando para evitar contaminação.")
                 break
@@ -434,7 +462,8 @@ def process_dump_to_monthly(dump_path: Path, target_yms: List[str], output_dir: 
             mask = seg_norm == SEGMENT_TARGET
             chunk = chunk[mask]
             
-        if chunk.empty: continue
+        if chunk.empty:
+            continue
 
         dates = chunk[cols['date']].fillna("")
         extracted = dates.str.extract(r'(\d{2})[\/\-\.](\d{2})[\/\-\.](\d{4})')
@@ -448,7 +477,8 @@ def process_dump_to_monthly(dump_path: Path, target_yms: List[str], output_dir: 
                 chunk['ym'] = dates.str.slice(0, 7)
 
         valid_chunk = chunk[chunk['ym'].isin(target_set)].copy()
-        if valid_chunk.empty: continue
+        if valid_chunk.empty:
+            continue
 
         # SCORE (Nota do Consumidor 1-5)
         if cols['score']:
@@ -479,19 +509,18 @@ def process_dump_to_monthly(dump_path: Path, target_yms: List[str], output_dir: 
 
         # TEMPO DE RESPOSTA (Parse Robusto: "1,5 dias" -> 1.5)
         if cols['time']:
-             # Troca virgula por ponto
-             t = valid_chunk[cols['time']].astype(str).str.replace(",", ".", regex=False)
-             # Extrai numero decimal
-             t = t.str.extract(r"(\d+(?:\.\d+)?)")[0]
-             valid_chunk['time_val'] = pd.to_numeric(t, errors='coerce') # Mantém NaN/NA
+            t = valid_chunk[cols['time']].astype(str).str.replace(",", ".", regex=False)
+            t = t.str.extract(r"(\d+(?:\.\d+)?)")[0]
+            valid_chunk['time_val'] = pd.to_numeric(t, errors='coerce')  # Mantém NaN/NA
         else:
-             valid_chunk['time_val'] = pd.NA
+            valid_chunk['time_val'] = pd.NA
 
         valid_chunk['key'] = valid_chunk[cols['name']].astype(str).apply(normalize_key_name)
         grp = valid_chunk.groupby(['ym', 'key', cols['name']])
 
         for (ym, key, display_name), g in grp:
-            if not key: continue
+            if not key:
+                continue
             if key not in monthly_data[ym]:
                 monthly_data[ym][key] = Agg(display_name=str(display_name))
 
@@ -501,7 +530,7 @@ def process_dump_to_monthly(dump_path: Path, target_yms: List[str], output_dir: 
             # Respondida
             agg.responded_claims += int(g['resp_val'].sum())
 
-            # Tempo de Resposta
+            # Tempo de Resposta (Média apenas dos válidos)
             if 'time_val' in g:
                 valid_times = g['time_val'].dropna()
                 if not valid_times.empty:
@@ -538,7 +567,8 @@ def process_dump_to_monthly(dump_path: Path, target_yms: List[str], output_dir: 
     os.makedirs(output_dir, exist_ok=True)
     count_files = 0
     for ym, data_map in monthly_data.items():
-        if not data_map: continue
+        if not data_map:
+            continue
         out_p = os.path.join(output_dir, f"consumidor_gov_{ym}.json")
         by_name_raw = {}
         by_cnpj_raw = {}
@@ -565,7 +595,8 @@ def process_dump_to_monthly(dump_path: Path, target_yms: List[str], output_dir: 
                 }
             }
             by_name_raw[k] = raw_obj
-            if agg.cnpj: by_cnpj_raw[agg.cnpj] = raw_obj
+            if agg.cnpj:
+                by_cnpj_raw[agg.cnpj] = raw_obj
 
         payload = {
             "meta": {
@@ -597,7 +628,8 @@ def sync_monthly_cache_from_dump_if_needed(target_yms: List[str], monthly_dir: s
         dump_path = download_dump_to_file(env_url, client)
         if dump_path:
             process_dump_to_monthly(dump_path, target_yms, monthly_dir)
-            if dump_path.exists(): os.remove(dump_path)
+            if dump_path.exists():
+                os.remove(dump_path)
         return
 
     for ym in missing:
@@ -606,8 +638,10 @@ def sync_monthly_cache_from_dump_if_needed(target_yms: List[str], monthly_dir: s
             print(f"CG: WARN - Não encontrei dump mensal para {ym}.")
             continue
         dump_path = download_dump_to_file(url, client)
-        if not dump_path: continue
+        if not dump_path:
+            continue
         process_dump_to_monthly(dump_path, [ym], monthly_dir)
-        if dump_path.exists(): os.remove(dump_path)
+        if dump_path.exists():
+            os.remove(dump_path)
 
 sync_monthly_cache_from_dump = sync_monthly_cache_from_dump_if_needed
