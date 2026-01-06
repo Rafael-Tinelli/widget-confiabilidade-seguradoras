@@ -11,7 +11,9 @@ from api.matching.consumidor_gov_match import NameMatcher, format_cnpj
 from api.utils.identifiers import normalize_cnpj
 from api.sources.opin_participants import load_opin_participant_cnpjs
 from api.sources.ses import extract_ses_master_and_financials
-from api.intelligence import calculate_score
+
+# v3: processamento em lote para reputação contextual (Observed vs Expected)
+from api.intelligence import apply_intelligence_batch
 
 OUTPUT_FILE = Path("api/v1/insurers.json")
 CONSUMIDOR_GOV_FILE = Path("data/derived/consumidor_gov/aggregated.json")
@@ -46,9 +48,9 @@ def main() -> None:
     print("\n--- INICIANDO CRUZAMENTO OPEN INSURANCE ---")
     opin_cnpjs = load_opin_participant_cnpjs()
 
-    # 4. CONSOLIDAÇÃO
-    print("\n--- CONSOLIDANDO E CALCULANDO SCORES ---")
-    insurers = []
+    # 4. CONSOLIDAÇÃO (monta lista bruta; scoring virá em batch)
+    print("\n--- CONSOLIDANDO (RAW) E CALCULANDO SCORES (BATCH) ---")
+    insurers: list[dict] = []
     matched_reputation = 0
     matched_opin = 0
 
@@ -74,6 +76,9 @@ def main() -> None:
 
         reputation_data = None
         if rep_entry:
+            # IMPORTANTE (v3):
+            # - Preserva o "statistics" bruto para o motor contextual (Observed vs Expected)
+            # - Mantém também métricas simplificadas (compat/backward) se você já usa no frontend
             stats = rep_entry.get("statistics") or {}
 
             def get_val(k):
@@ -89,18 +94,20 @@ def main() -> None:
             res_rate = get_val("solutionIndex")
             complaints = int(get_val("complaintsCount") or 0)
 
-            if sat_avg is not None and res_rate is not None:
-                matched_reputation += 1
-                reputation_data = {
-                    "source": "consumidor.gov",
-                    "match_score": match_meta.score if match_meta else 0,
-                    "display_name": rep_entry.get("display_name") or rep_entry.get("name"),
-                    "metrics": {
-                        "satisfaction_avg": sat_avg,
-                        "resolution_rate": res_rate,
-                        "complaints_total": complaints
-                    }
-                }
+            matched_reputation += 1
+            reputation_data = {
+                "source": "consumidor.gov",
+                "match_score": match_meta.score if match_meta else 0,
+                "display_name": rep_entry.get("display_name") or rep_entry.get("name"),
+                # ESSENCIAL para o intelligence v3:
+                "statistics": stats,
+                # Mantido (compat):
+                "metrics": {
+                    "satisfaction_avg": sat_avg,
+                    "resolution_rate": res_rate,
+                    "complaints_total": complaints,
+                },
+            }
 
         # C. Join Open Insurance (Flag Booleana)
         # Verifica interseção de Sets usando CNPJ normalizado
@@ -116,29 +123,33 @@ def main() -> None:
             "id": str(final_id),
             "name": str(name),
             "cnpj": cnpj_fmt,
-            "flags": {
-                "openInsuranceParticipant": is_participant
-            },
+            "flags": {"openInsuranceParticipant": is_participant},
             "data": {
+                # v3 intelligence lê netWorth (camelCase). Mantemos alias net_worth para compat.
+                "netWorth": comp.get("net_worth", 0.0),
                 "net_worth": comp.get("net_worth", 0.0),
                 "premiums": comp.get("premiums", 0.0),
                 "claims": comp.get("claims", 0.0),
             },
             "reputation": reputation_data,
-            "products": []
+            "products": [],
         }
 
-        # E. Inteligência
-        processed_insurer = calculate_score(insurer_obj)
+        insurers.append(insurer_obj)
 
-        if "financial_score" not in processed_insurer["data"]:
-            comp_fin = processed_insurer["data"].get("components", {}).get("solvency", 0.0)
-            processed_insurer["data"]["financial_score"] = comp_fin
+    # E. Inteligência (BATCH)
+    print("Building Intelligence Scores (batch)...")
+    apply_intelligence_batch(insurers)  # modifica in-place e habilita reputação contextual
 
-        insurers.append(processed_insurer)
+    # Ajuste de compatibilidade: mantém financial_score como alias do componente solvency
+    for ins in insurers:
+        if "financial_score" not in ins.get("data", {}):
+            comp_fin = ins.get("data", {}).get("components", {}).get("solvency", 0.0)
+            ins.setdefault("data", {})
+            ins["data"]["financial_score"] = comp_fin
 
     # Ordenação
-    insurers.sort(key=lambda x: x["data"].get("score", 0), reverse=True)
+    insurers.sort(key=lambda x: x.get("data", {}).get("score", 0), reverse=True)
 
     # 5. Validação DoD (FAIL FAST & DINÂMICO)
     total_count = len(insurers)
@@ -189,16 +200,21 @@ def main() -> None:
                 "totalInsurers": total_count,
                 "reputationMatched": matched_reputation,
                 "openInsuranceParticipants": matched_opin,
-            }
+            },
         },
-        "insurers": insurers
+        "insurers": insurers,
     }
 
     OUTPUT_FILE.parent.mkdir(parents=True, exist_ok=True)
-    OUTPUT_FILE.write_text(json.dumps(out, ensure_ascii=False, indent=0, separators=(',', ':')), encoding="utf-8")
+    OUTPUT_FILE.write_text(
+        json.dumps(out, ensure_ascii=False, indent=0, separators=(",", ":")),
+        encoding="utf-8",
+    )
 
     print(f"SUCCESS: Generated {OUTPUT_FILE}")
-    print(f"Integrity Check Passed: {total_count} insurers, {matched_opin} OPIN participants (Expected: {expected_matches}).")
+    print(
+        f"Integrity Check Passed: {total_count} insurers, {matched_opin} OPIN participants (Expected: {expected_matches})."
+    )
 
 
 if __name__ == "__main__":
