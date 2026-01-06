@@ -35,8 +35,7 @@ SES_ZIP_URL_FALLBACK = os.getenv(
     "https://www2.susep.gov.br/redarq.asp?arq=BaseCompleta%2ezip",
 )
 
-# [MODIFICADO] Cache Dinâmico e Flag de Retenção
-# Permite usar /tmp no CI/CD para evitar IO no diretório de trabalho do git
+# Cache Dinâmico
 DEFAULT_CACHE_DIR = Path("data/raw/ses")
 CACHE_DIR = Path(os.getenv("SES_CACHE_DIR", str(DEFAULT_CACHE_DIR)))
 KEEP_ZIP = os.getenv("SES_KEEP_ZIP", "0") == "1"
@@ -55,10 +54,7 @@ class SesMeta:
 
 
 def _canonical_ses_id(raw) -> str:
-    """
-    Canonicaliza ID SES para 6 dígitos.
-    Ex.: 'ses:01007' -> '001007', '1007' -> '001007', 1007.0 -> '001007'
-    """
+    """Canonicaliza ID SES para 6 dígitos."""
     if raw is None:
         return ""
     try:
@@ -72,7 +68,6 @@ def _canonical_ses_id(raw) -> str:
         return ""
 
     s = s.replace("ses:", "").replace("susep:", "")
-    # remove padrão típico "1007.0"
     s = re.sub(r"\.0+$", "", s)
 
     digits = "".join(_DIGITS_RE.findall(s))
@@ -83,9 +78,7 @@ def _canonical_ses_id(raw) -> str:
 
 
 def _canonical_ses_id_series(series: pd.Series) -> pd.Series:
-    """
-    Versão vetorizada da canonicalização.
-    """
+    """Versão vetorizada da canonicalização."""
     s = series.astype(str).str.strip().str.lower()
     s = s.str.replace("ses:", "", regex=False).str.replace("susep:", "", regex=False)
     s = s.str.replace(r"\.0+$", "", regex=True)
@@ -98,9 +91,7 @@ def _canonical_ses_id_series(series: pd.Series) -> pd.Series:
 
 
 def _parse_br_float(series: pd.Series) -> pd.Series:
-    """
-    Converte strings numéricas pt-BR ('1.234,56') para float (1234.56).
-    """
+    """Converte strings numéricas pt-BR ('1.234,56') para float."""
     s = series.astype(str).str.strip()
     s = s.str.replace(".", "", regex=False).str.replace(",", ".", regex=False)
     return pd.to_numeric(s, errors="coerce").fillna(0.0)
@@ -113,10 +104,22 @@ def _download_bytes(url: str, timeout: int) -> bytes:
     return resp.content
 
 
+def _is_zip_file(path: Path) -> bool:
+    """Verifica assinatura mágica e estrutura básica de ZIP."""
+    if not path.exists() or path.stat().st_size < 4:
+        return False
+    
+    # Check rápido de magic bytes
+    with open(path, "rb") as f:
+        if f.read(4) != b"PK\x03\x04":
+            return False
+            
+    # Confirma estrutura (central directory / EOCD). Evita ZIP truncado.
+    return zipfile.is_zipfile(path)
+
+
 def _download_to_file(urls: Iterable[str], dest: Path, timeout: int) -> Path:
-    """
-    Faz download streaming para arquivo.
-    """
+    """Download streaming para arquivo com validação."""
     verify_ssl = not ALLOW_INSECURE_SSL
     dest.parent.mkdir(parents=True, exist_ok=True)
 
@@ -130,13 +133,20 @@ def _download_to_file(urls: Iterable[str], dest: Path, timeout: int) -> Path:
                     for chunk in r.iter_content(chunk_size=1024 * 1024):
                         if chunk:
                             f.write(chunk)
+            
+            if dest.suffix == ".zip" and not _is_zip_file(part):
+                raise ValueError(f"Arquivo baixado de {url} não é um ZIP válido ou está corrompido.")
+
             part.replace(dest)
             return dest
         except Exception as e:
+            print(f"SES: Falha ao baixar de {url}: {e}")
             last_err = e
+            if part.exists():
+                part.unlink()
             continue
 
-    raise RuntimeError(f"Falha ao baixar arquivo. Último erro: {last_err}")  # noqa: TRY003
+    raise RuntimeError(f"Falha ao baixar arquivo após tentativas. Último erro: {last_err}")
 
 
 def _read_csv_bytes(content: bytes) -> pd.DataFrame:
@@ -212,7 +222,7 @@ def extract_ses_master_and_financials():
     # --- 1) MASTER LIST ---
     print(f"SES: Baixando master list: {SES_LISTAEMPRESAS_URL}")
     try:
-        df_cias = _read_csv_bytes(_download_bytes(SES_LISTAEMPRESAS_URL, timeout=90))
+        df_cias = _read_csv_bytes(_download_bytes(SES_LISTAEMPRESAS_URL, timeout=120))
     except Exception as e:
         print(f"SES CRITICAL: Falha ao baixar master list: {e}")
         df_cias = pd.DataFrame()
@@ -244,10 +254,13 @@ def extract_ses_master_and_financials():
                 else:
                     cnpj = cnpj_nums
 
+                raw_name = str(row.get(col_nome, "")).strip()
+                
                 companies[sid] = {
                     "id": sid,
                     "cnpj": cnpj,
-                    "name": str(row.get(col_nome, "")).strip().title(),
+                    "name": raw_name,
+                    "name_clean": raw_name.lower(),
                     "net_worth": 0.0,
                     "premiums": 0.0,
                     "claims": 0.0,
@@ -259,7 +272,7 @@ def extract_ses_master_and_financials():
 
     # --- 2) ZIP (download para disco) ---
     zip_path = CACHE_DIR / "BaseCompleta.zip"
-    print(f"SES: Baixando ZIP: {SES_ZIP_URL} em {zip_path}")
+    print(f"SES: Baixando ZIP: {SES_ZIP_URL}")
     try:
         _download_to_file([SES_ZIP_URL, SES_ZIP_URL_FALLBACK], zip_path, timeout=600)
     except Exception as e:
@@ -268,7 +281,17 @@ def extract_ses_master_and_financials():
 
     # --- 3) Processamento ZIP ---
     try:
-        with zipfile.ZipFile(zip_path) as z:
+        # Tenta abrir; se o ZIP estiver corrompido/truncado, tenta fallback
+        try:
+            z_obj = zipfile.ZipFile(zip_path)
+        except zipfile.BadZipFile as e:
+            print(f"SES WARN: ZIP inválido no endpoint primário ({e}). Tentando fallback...")
+            if zip_path.exists():
+                zip_path.unlink()
+            _download_to_file([SES_ZIP_URL_FALLBACK], zip_path, timeout=600)
+            z_obj = zipfile.ZipFile(zip_path)
+
+        with z_obj as z:
             all_files = z.namelist()
 
             targets = [
@@ -312,7 +335,6 @@ def extract_ses_master_and_financials():
                 c_id = lower_to_orig.get(c_id_l, c_id_l)
                 c_data = lower_to_orig.get(c_data_l, c_data_l) if c_data_l else None
 
-                # Detecta colunas de valor
                 c_patrimonio_l: Optional[str] = None
                 c_receita_l: Optional[str] = None
                 c_despesa_l: Optional[str] = None
@@ -345,7 +367,6 @@ def extract_ses_master_and_financials():
                     c_receita_l = _pick_col(header_lower, ["cessao", "cessoes", "premio_aceito", "premioaceito", "aceito", "receita"])
                     c_despesa_l = _pick_col(header_lower, ["recuperacao", "recuper", "sinistro_pago", "sinistropago", "despesa", "pago"])
 
-                # Gate de validade
                 if file_type == "PATRIMONIO":
                     if not (balanco_layout or c_patrimonio_l):
                         print(f"SES SKIP: {filename} sem colunas de valor reconhecíveis. Header={header_lower[:25]}")
@@ -399,7 +420,6 @@ def extract_ses_master_and_financials():
                     ):
                         chunk.columns = [c.lower().strip() for c in chunk.columns]
 
-                        # filtro temporal
                         if c_data and c_data_l and max_date > 0 and c_data_l in chunk.columns:
                             dates_num = pd.to_numeric(chunk[c_data_l], errors="coerce").fillna(0).astype(int)
                             if file_type == "PATRIMONIO":
@@ -410,14 +430,12 @@ def extract_ses_master_and_financials():
                             if chunk.empty:
                                 continue
 
-                        # lockdown
                         sid_series = _canonical_ses_id_series(chunk[c_id_l])
                         chunk["sid"] = sid_series
                         chunk = chunk[(chunk["sid"] != "") & (chunk["sid"].isin(companies))]
                         if chunk.empty:
                             continue
 
-                        # BALANCO
                         if file_type == "PATRIMONIO" and balanco_layout:
                             if "valor" not in chunk.columns or "quadro" not in chunk.columns:
                                 continue
@@ -435,7 +453,6 @@ def extract_ses_master_and_financials():
                                     passivo_sum[k] = passivo_sum.get(k, 0.0) + float(v)
                             continue
 
-                        # PATRIMONIO DIRETO
                         if file_type == "PATRIMONIO" and c_patrimonio_l:
                             if c_patrimonio_l not in chunk.columns:
                                 continue
@@ -445,7 +462,6 @@ def extract_ses_master_and_financials():
                                 if float(v) > 0:
                                     net_worth_upd[k] = max(net_worth_upd.get(k, 0.0), float(v))
                         else:
-                            # FLUXOS
                             if not (c_receita_l and c_despesa_l):
                                 continue
                             if c_receita_l not in chunk.columns or c_despesa_l not in chunk.columns:
@@ -463,7 +479,6 @@ def extract_ses_master_and_financials():
                                 if float(v) != 0.0:
                                     clm_upd[k] = clm_upd.get(k, 0.0) + float(v)
 
-                # Updates
                 if file_type == "PATRIMONIO" and balanco_layout:
                     updated_any = 0
                     for k in set(ativo_sum.keys()) | set(passivo_sum.keys()):
@@ -502,7 +517,7 @@ def extract_ses_master_and_financials():
     except Exception as e:
         print(f"SES CRITICAL: Erro ao processar ZIP: {e}")
     finally:
-        # [MODIFICADO] Cleanup do ZIP (evita commit acidental de arquivo gigante)
+        # CLEANUP: Remove o ZIP gigante (evita commit no CI/CD)
         if not KEEP_ZIP:
             try:
                 if zip_path.exists():
