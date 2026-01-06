@@ -1,6 +1,6 @@
 {
 "schemaVersion":"1.0.0",
-"generatedAt":"2026-01-05T03:37:49.344264Z",
+"generatedAt":"2026-01-06T03:14:51.551521Z",
 "period":"2024",
 "sources":[
 "SUSEP (SES)",
@@ -10,13 +10,47 @@
 "meta":{
 "count":233,
 "stats":{
-"reputationMatched":100,
-"openInsuranceParticipants":0
+"totalInsurers":233,
+"reputationMatched":68,
+"openInsuranceParticipants":34
 }
 },
 "insurers":[
 {
-"id":"19323190000106",
+"id":"4367",
+"name":"Prudential Do Brasil Vida Em Grupo S.A.",
+"cnpj":"21.986.074/0001-19",
+"flags":{
+"openInsuranceParticipant":true
+},
+"data":{
+"net_worth":3098702602.36,
+"premiums":973619061.7700005,
+"claims":410093731.63000005,
+"components":{
+"solvency":79.6,
+"reputation":67.5,
+"innovation":50.0
+},
+"score":71.8,
+"lossRatio":0.42120552866381444,
+"financial_score":79.6
+},
+"reputation":{
+"source":"consumidor.gov",
+"match_score":0.85,
+"display_name":"Prudential do Brasil",
+"metrics":{
+"satisfaction_avg":3.25,
+"resolution_rate":0.75,
+"complaints_total":16
+}
+},
+"products":[],
+"segment":"S2"
+},
+{
+"id":"2852",
 "name":"Axa Seguros S.A.",
 "cnpj":"19.323.190/0001-06",
 "flags":{
@@ -49,7 +83,7 @@
 "segment":"S1"
 },
 {
-"id":"23025711000116",
+"id":"21661",
 "name":"Cia. Itaú De Capitalização",
 "cnpj":"23.025.711/0001-16",
 "flags":{
@@ -57,15 +91,15 @@
 },
 "data":{
 "net_worth":991740321.411452,
-"premiums":3144388053.79,
-"claims":1777881096.4899998,
+"premiums":3144388053.7900004,
+"claims":1777881096.4900002,
 "components":{
 "solvency":85.2,
 "reputation":null,
 "innovation":0.0
 },
 "score":68.2,
-"lossRatio":0.5654140220851814,
+"lossRatio":0.5654140220851815,
 "financial_score":85.2
 },
 "reputation":null,
@@ -73,56 +107,23 @@
 "segment":"S1"
 },
 {
-"id":"21986074000119",
-"name":"Prudential Do Brasil Vida Em Grupo S.A.",
-"cnpj":"21.986.074/0001-19",
-"flags":{
-"openInsuranceParticipant":false
-},
-"data":{
-"net_worth":3098702602.36,
-"premiums":973619061.7700005,
-"claims":410093731.63000005,
-"components":{
-"solvency":79.6,
-"reputation":67.5,
-"innovation":0.0
-},
-"score":66.8,
-"lossRatio":0.42120552866381444,
-"financial_score":79.6
-},
-"reputation":{
-"source":"consumidor.gov",
-"match_score":0.85,
-"display_name":"Prudential do Brasil",
-"metrics":{
-"satisfaction_avg":3.25,
-"resolution_rate":0.75,
-"complaints_total":16
-}
-},
-"products":[],
-"segment":"S2"
-},
-{
-"id":"15138043000105",
+"id":"20141",
 "name":"Brasilcap Capitalização S.A.",
 "cnpj":"15.138.043/0001-05",
 "flags":{
-"openInsuranceParticipant":false
+"openInsuranceParticipant":true
 },
 "data":{
 "net_worth":809014796.12,
 "premiums":5915919039.42,
-"claims":5262369068.610001,
+"claims":5262369068.61,
 "components":{
 "solvency":63.7,
 "reputation":78.0,
-"innovation":0.0
+"innovation":50.0
 },
-"score":63.1,
-"lossRatio":0.8895268906732581,
+"score":68.1,
+"lossRatio":0.889526890673258,
 "financial_score":63.7
 },
 "reputation":{
@@ -139,7 +140,88 @@
 "segment":"S1"
 },
 {
-"id":"17266009000141",
+"id":"6785",
+"name":"Brasilseg Companhia De Seguros",
+"cnpj":"28.196.889/0001-43",
+"flags":{
+"openInsuranceParticipant":true
+},
+"data":{
+"net_worth":1590607861.57,
+"premiums":13023835848.739998,
+"claims":0.0,
+"components":{
+"solvency":70.4,
+"reputation":null,
+"innovation":50.0
+},
+"score":66.3,
+"lossRatio":0.0,
+"financial_score":70.4
+},
+"reputation":null,
+"products":[],
+"segment":"S1"
+},
+{
+"id":"4707",
+"name":"Brasilprev Seguros E Previdência S/A",
+"cnpj":"27.665.207/0001-31",
+"flags":{
+"openInsuranceParticipant":true
+},
+"data":{
+"net_worth":3884709268.21,
+"premiums":39681439061.94,
+"claims":1102035842.7383072,
+"components":{
+"solvency":55.1,
+"reputation":79.0,
+"innovation":50.0
+},
+"score":64.2,
+"lossRatio":0.027772073513213695,
+"financial_score":55.1
+},
+"reputation":{
+"source":"consumidor.gov",
+"match_score":1.0,
+"display_name":"Brasilprev Seguros e Previdência",
+"metrics":{
+"satisfaction_avg":4.22,
+"resolution_rate":0.78,
+"complaints_total":27
+}
+},
+"products":[],
+"segment":"S1"
+},
+{
+"id":"5444",
+"name":"Bradesco Seguros S.A",
+"cnpj":"33.055.146/0001-93",
+"flags":{
+"openInsuranceParticipant":true
+},
+"data":{
+"net_worth":835202548.42,
+"premiums":0.0,
+"claims":2062812.0,
+"components":{
+"solvency":67.1,
+"reputation":null,
+"innovation":50.0
+},
+"score":63.7,
+"lossRatio":0.0,
+"financial_score":67.1
+},
+"reputation":null,
+"products":[],
+"segment":"S4"
+},
+{
+"id":"22683",
 "name":"Zurich Brasil Capitalização S.A.",
 "cnpj":"17.266.009/0001-41",
 "flags":{
@@ -147,15 +229,15 @@
 },
 "data":{
 "net_worth":32540330.61,
-"premiums":50929658.436624944,
-"claims":34618762.77469999,
+"premiums":50929658.43662493,
+"claims":34618762.77470001,
 "components":{
 "solvency":63.8,
 "reputation":78.0,
 "innovation":0.0
 },
 "score":63.1,
-"lossRatio":0.67973679457871,
+"lossRatio":0.6797367945787105,
 "financial_score":63.8
 },
 "reputation":{
@@ -172,7 +254,55 @@
 "segment":"S3"
 },
 {
-"id":"92872100000126",
+"id":"6548",
+"name":"Cardif Do Brasil Vida E Previdência S/A",
+"cnpj":"03.546.261/0001-08",
+"flags":{
+"openInsuranceParticipant":true
+},
+"data":{
+"net_worth":489693491.21,
+"premiums":1384360284.850001,
+"claims":0.0,
+"components":{
+"solvency":64.3,
+"reputation":null,
+"innovation":50.0
+},
+"score":61.4,
+"lossRatio":0.0,
+"financial_score":64.3
+},
+"reputation":null,
+"products":[],
+"segment":"S1"
+},
+{
+"id":"29319",
+"name":"Santander Capitalização S.A.",
+"cnpj":"03.209.092/0001-02",
+"flags":{
+"openInsuranceParticipant":true
+},
+"data":{
+"net_worth":296499441.0,
+"premiums":3441831929.4800005,
+"claims":2824873276.8200016,
+"components":{
+"solvency":64.0,
+"reputation":null,
+"innovation":50.0
+},
+"score":61.2,
+"lossRatio":0.8207470134216547,
+"financial_score":64.0
+},
+"reputation":null,
+"products":[],
+"segment":"S1"
+},
+{
+"id":"10448",
 "name":"Gboex - Gremio Beneficente",
 "cnpj":"92.872.100/0001-26",
 "flags":{
@@ -180,7 +310,7 @@
 },
 "data":{
 "net_worth":311786124.53,
-"premiums":262987011.13000005,
+"premiums":262987011.13000003,
 "claims":178920737.23,
 "components":{
 "solvency":75.5,
@@ -196,7 +326,7 @@
 "segment":"S2"
 },
 {
-"id":"28414401000107",
+"id":"2968",
 "name":"Gazin Seguros S.A.",
 "cnpj":"28.414.401/0001-07",
 "flags":{
@@ -229,40 +359,55 @@
 "segment":"S2"
 },
 {
-"id":"27665207000131",
-"name":"Brasilprev Seguros E Previdência S/A",
-"cnpj":"27.665.207/0001-31",
+"id":"2933",
+"name":"Cardif Do Brasil Seguros E Garantias S.A.",
+"cnpj":"08.279.191/0001-84",
 "flags":{
-"openInsuranceParticipant":false
+"openInsuranceParticipant":true
 },
 "data":{
-"net_worth":3884709268.21,
-"premiums":39681439061.94,
-"claims":1102035842.738307,
+"net_worth":319992540.22,
+"premiums":1043962946.1199996,
+"claims":0.0,
 "components":{
-"solvency":55.1,
-"reputation":79.0,
-"innovation":0.0
+"solvency":62.1,
+"reputation":null,
+"innovation":50.0
 },
-"score":59.2,
-"lossRatio":0.027772073513213688,
-"financial_score":55.1
+"score":59.7,
+"lossRatio":0.0,
+"financial_score":62.1
 },
-"reputation":{
-"source":"consumidor.gov",
-"match_score":1.0,
-"display_name":"Brasilprev Seguros e Previdência",
-"metrics":{
-"satisfaction_avg":4.22,
-"resolution_rate":0.78,
-"complaints_total":27
-}
-},
+"reputation":null,
 "products":[],
 "segment":"S1"
 },
 {
-"id":"33041062000109",
+"id":"2461",
+"name":"Austral Seguradora S.A.",
+"cnpj":"11.521.976/0001-26",
+"flags":{
+"openInsuranceParticipant":true
+},
+"data":{
+"net_worth":256147719.45,
+"premiums":932522468.7700001,
+"claims":0.0,
+"components":{
+"solvency":60.9,
+"reputation":null,
+"innovation":50.0
+},
+"score":58.7,
+"lossRatio":0.0,
+"financial_score":60.9
+},
+"reputation":null,
+"products":[],
+"segment":"S2"
+},
+{
+"id":"5118",
 "name":"Sul América Cia. Nacional De Seguros",
 "cnpj":"33.041.062/0001-09",
 "flags":{
@@ -286,7 +431,7 @@
 "segment":"S4"
 },
 {
-"id":"33376989000191",
+"id":"31623",
 "name":"Irb Brasil Resseguros S/A",
 "cnpj":"33.376.989/0001-91",
 "flags":{
@@ -295,7 +440,7 @@
 "data":{
 "net_worth":2299010276.36,
 "premiums":0.0,
-"claims":2053105105.0,
+"claims":2053105106.0,
 "components":{
 "solvency":72.3,
 "reputation":null,
@@ -310,7 +455,31 @@
 "segment":"S4"
 },
 {
-"id":"60853264000110",
+"id":"1627",
+"name":"Safra Seguros Gerais S.A.",
+"cnpj":"06.109.373/0001-81",
+"flags":{
+"openInsuranceParticipant":true
+},
+"data":{
+"net_worth":186325769.94,
+"premiums":99951811.31000002,
+"claims":0.0,
+"components":{
+"solvency":59.2,
+"reputation":null,
+"innovation":50.0
+},
+"score":57.4,
+"lossRatio":0.0,
+"financial_score":59.2
+},
+"reputation":null,
+"products":[],
+"segment":"S3"
+},
+{
+"id":"26026",
 "name":"Liderança Capitalização S.A.",
 "cnpj":"60.853.264/0001-10",
 "flags":{
@@ -334,7 +503,7 @@
 "segment":"S2"
 },
 {
-"id":"07017295000158",
+"id":"2119",
 "name":"Aruana Seguradora S. A.",
 "cnpj":"07.017.295/0001-58",
 "flags":{
@@ -367,31 +536,7 @@
 "segment":"S3"
 },
 {
-"id":"28196889000143",
-"name":"Brasilseg Companhia De Seguros",
-"cnpj":"28.196.889/0001-43",
-"flags":{
-"openInsuranceParticipant":false
-},
-"data":{
-"net_worth":1590607861.57,
-"premiums":13023835848.739998,
-"claims":0.0,
-"components":{
-"solvency":70.4,
-"reputation":null,
-"innovation":0.0
-},
-"score":56.3,
-"lossRatio":0.0,
-"financial_score":70.4
-},
-"reputation":null,
-"products":[],
-"segment":"S1"
-},
-{
-"id":"17643407000130",
+"id":"2950",
 "name":"Sancor Seguros Do Brasil S.A.",
 "cnpj":"17.643.407/0001-30",
 "flags":{
@@ -424,7 +569,40 @@
 "segment":"S2"
 },
 {
-"id":"93202448000179",
+"id":"6301",
+"name":"Rio Grande Seguros E Previdência S.A.",
+"cnpj":"01.582.075/0001-90",
+"flags":{
+"openInsuranceParticipant":true
+},
+"data":{
+"net_worth":122156140.18,
+"premiums":1102512533.7099993,
+"claims":1320298.66,
+"components":{
+"solvency":37.0,
+"reputation":80.0,
+"innovation":50.0
+},
+"score":55.5,
+"lossRatio":0.0011975361908650067,
+"financial_score":37.0
+},
+"reputation":{
+"source":"consumidor.gov",
+"match_score":1.0,
+"display_name":"Rio Grande Seguros e Previdência",
+"metrics":{
+"satisfaction_avg":3.0,
+"resolution_rate":1.0,
+"complaints_total":17
+}
+},
+"products":[],
+"segment":"S1"
+},
+{
+"id":"21318",
 "name":"Invest Capitalização S.A. (Antiga Denominação De Investprev Capitalização S.A.)",
 "cnpj":"93.202.448/0001-79",
 "flags":{
@@ -432,7 +610,7 @@
 },
 "data":{
 "net_worth":43318387.27,
-"premiums":1374667785.5399997,
+"premiums":1374667785.5399995,
 "claims":759928729.3300002,
 "components":{
 "solvency":67.9,
@@ -448,7 +626,7 @@
 "segment":"S1"
 },
 {
-"id":"14056028000155",
+"id":"21491",
 "name":"Capemisa Capitalização S.A.",
 "cnpj":"14.056.028/0001-55",
 "flags":{
@@ -456,15 +634,15 @@
 },
 "data":{
 "net_worth":67448819.03,
-"premiums":945792004.7699999,
-"claims":490008864.18000007,
+"premiums":945792004.77,
+"claims":490008864.18,
 "components":{
 "solvency":67.4,
 "reputation":null,
 "innovation":0.0
 },
 "score":53.9,
-"lossRatio":0.5180936841384716,
+"lossRatio":0.5180936841384715,
 "financial_score":67.4
 },
 "reputation":null,
@@ -472,31 +650,31 @@
 "segment":"S2"
 },
 {
-"id":"33055146000193",
-"name":"Bradesco Seguros S.A",
-"cnpj":"33.055.146/0001-93",
+"id":"2682",
+"name":"Btg Pactual Vida E Previdência S.A.",
+"cnpj":"19.449.767/0001-20",
 "flags":{
-"openInsuranceParticipant":false
+"openInsuranceParticipant":true
 },
 "data":{
-"net_worth":835202548.42,
-"premiums":0.0,
-"claims":2062812.0,
+"net_worth":76620378.19,
+"premiums":2439216227.59,
+"claims":0.0,
 "components":{
-"solvency":67.1,
+"solvency":54.6,
 "reputation":null,
-"innovation":0.0
+"innovation":50.0
 },
 "score":53.7,
 "lossRatio":0.0,
-"financial_score":67.1
+"financial_score":54.6
 },
 "reputation":null,
 "products":[],
-"segment":"S4"
+"segment":"S1"
 },
 {
-"id":"01857539000124",
+"id":"37729",
 "name":"Munich Re Do Brasil Resseguradora S.A.",
 "cnpj":"01.857.539/0001-24",
 "flags":{
@@ -520,7 +698,7 @@
 "segment":"S4"
 },
 {
-"id":"10793428000192",
+"id":"4669",
 "name":"Fairfax Brasil Seguros Corporativos S.A.",
 "cnpj":"10.793.428/0001-92",
 "flags":{
@@ -553,7 +731,7 @@
 "segment":"S1"
 },
 {
-"id":"15421859000141",
+"id":"37052",
 "name":"Btg Pactual Resseguradora S.A.",
 "cnpj":"15.421.859/0001-41",
 "flags":{
@@ -577,7 +755,31 @@
 "segment":"S4"
 },
 {
-"id":"33016221000107",
+"id":"5070",
+"name":"Zurich Santander Brasil Seguros E Previdência S.A.",
+"cnpj":"87.376.109/0001-06",
+"flags":{
+"openInsuranceParticipant":true
+},
+"data":{
+"net_worth":2752733371.99,
+"premiums":15758976067.609999,
+"claims":35317424.379672,
+"components":{
+"solvency":53.3,
+"reputation":null,
+"innovation":50.0
+},
+"score":52.6,
+"lossRatio":0.0022410989285186617,
+"financial_score":53.3
+},
+"reputation":null,
+"products":[],
+"segment":"S1"
+},
+{
+"id":"6602",
 "name":"Mitsui Sumitomo Seguros S.A.",
 "cnpj":"33.016.221/0001-07",
 "flags":{
@@ -610,7 +812,7 @@
 "segment":"S2"
 },
 {
-"id":"19323175000168",
+"id":"36099",
 "name":"Axa Corporate Solutions Brasil E América Latina Resseguros S.A.",
 "cnpj":"19.323.175/0001-68",
 "flags":{
@@ -634,55 +836,7 @@
 "segment":"S4"
 },
 {
-"id":"03546261000108",
-"name":"Cardif Do Brasil Vida E Previdência S/A",
-"cnpj":"03.546.261/0001-08",
-"flags":{
-"openInsuranceParticipant":false
-},
-"data":{
-"net_worth":489693491.21,
-"premiums":1384360284.850001,
-"claims":0.0,
-"components":{
-"solvency":64.3,
-"reputation":null,
-"innovation":0.0
-},
-"score":51.4,
-"lossRatio":0.0,
-"financial_score":64.3
-},
-"reputation":null,
-"products":[],
-"segment":"S1"
-},
-{
-"id":"03209092000102",
-"name":"Santander Capitalização S.A.",
-"cnpj":"03.209.092/0001-02",
-"flags":{
-"openInsuranceParticipant":false
-},
-"data":{
-"net_worth":296499441.0,
-"premiums":3441831929.48,
-"claims":2824873276.8200006,
-"components":{
-"solvency":64.0,
-"reputation":null,
-"innovation":0.0
-},
-"score":51.2,
-"lossRatio":0.8207470134216546,
-"financial_score":64.0
-},
-"reputation":null,
-"products":[],
-"segment":"S1"
-},
-{
-"id":"11536561000126",
+"id":"34819",
 "name":"Austral Resseguradora S.A.",
 "cnpj":"11.536.561/0001-26",
 "flags":{
@@ -706,7 +860,31 @@
 "segment":"S4"
 },
 {
-"id":"09594758000170",
+"id":"2305",
+"name":"Btg Pactual Seguros S.A.",
+"cnpj":"32.724.962/0001-80",
+"flags":{
+"openInsuranceParticipant":true
+},
+"data":{
+"net_worth":40747665.69,
+"premiums":81084466.72,
+"claims":0.0,
+"components":{
+"solvency":51.3,
+"reputation":null,
+"innovation":50.0
+},
+"score":51.0,
+"lossRatio":0.0,
+"financial_score":51.3
+},
+"reputation":null,
+"products":[],
+"segment":"S3"
+},
+{
+"id":"38873",
 "name":"Junto Resseguros S.A.",
 "cnpj":"09.594.758/0001-70",
 "flags":{
@@ -730,40 +908,31 @@
 "segment":"S4"
 },
 {
-"id":"01582075000190",
-"name":"Rio Grande Seguros E Previdência S.A.",
-"cnpj":"01.582.075/0001-90",
+"id":"5185",
+"name":"Liberty Seguros S.A.",
+"cnpj":"61.550.141/0001-72",
 "flags":{
-"openInsuranceParticipant":false
+"openInsuranceParticipant":true
 },
 "data":{
-"net_worth":122156140.18,
-"premiums":1102512533.7099993,
-"claims":1320298.66,
+"net_worth":1728847311.51,
+"premiums":5953059693.579994,
+"claims":613171.0,
 "components":{
-"solvency":37.0,
-"reputation":80.0,
-"innovation":0.0
+"solvency":50.9,
+"reputation":null,
+"innovation":50.0
 },
-"score":50.5,
-"lossRatio":0.0011975361908650067,
-"financial_score":37.0
+"score":50.7,
+"lossRatio":0.00010300098295020742,
+"financial_score":50.9
 },
-"reputation":{
-"source":"consumidor.gov",
-"match_score":1.0,
-"display_name":"Rio Grande Seguros e Previdência",
-"metrics":{
-"satisfaction_avg":3.0,
-"resolution_rate":1.0,
-"complaints_total":17
-}
-},
+"reputation":null,
 "products":[],
 "segment":"S1"
 },
 {
-"id":"13122801000171",
+"id":"24813",
 "name":"Aplicap Capitalização S.A.",
 "cnpj":"13.122.801/0001-71",
 "flags":{
@@ -771,15 +940,15 @@
 },
 "data":{
 "net_worth":44567371.87,
-"premiums":820963594.43,
-"claims":398334883.64000005,
+"premiums":820963594.4299997,
+"claims":398334883.64,
 "components":{
 "solvency":62.6,
 "reputation":null,
 "innovation":0.0
 },
 "score":50.1,
-"lossRatio":0.48520407767480406,
+"lossRatio":0.48520407767480417,
 "financial_score":62.6
 },
 "reputation":null,
@@ -787,31 +956,97 @@
 "segment":"S2"
 },
 {
-"id":"08279191000184",
-"name":"Cardif Do Brasil Seguros E Garantias S.A.",
-"cnpj":"08.279.191/0001-84",
+"id":"5142",
+"name":"Icatu Seguros S.A",
+"cnpj":"42.283.770/0001-39",
 "flags":{
-"openInsuranceParticipant":false
+"openInsuranceParticipant":true
 },
 "data":{
-"net_worth":319992540.22,
-"premiums":1043962946.1199996,
-"claims":0.0,
+"net_worth":901902172.77,
+"premiums":7636991173.549996,
+"claims":135708043.07000002,
 "components":{
-"solvency":62.1,
-"reputation":null,
-"innovation":0.0
+"solvency":47.5,
+"reputation":52.4,
+"innovation":50.0
 },
 "score":49.7,
-"lossRatio":0.0,
-"financial_score":62.1
+"lossRatio":0.017769831074312632,
+"financial_score":47.5
+},
+"reputation":{
+"source":"consumidor.gov",
+"match_score":1.0,
+"display_name":"Icatu Seguros",
+"metrics":{
+"satisfaction_avg":3.0,
+"resolution_rate":0.54,
+"complaints_total":282
+}
+},
+"products":[],
+"segment":"S1"
+},
+{
+"id":"5720",
+"name":"Sompo Seguros S.A.",
+"cnpj":"61.383.493/0001-80",
+"flags":{
+"openInsuranceParticipant":true
+},
+"data":{
+"net_worth":1362259136.9475,
+"premiums":1975713994.06,
+"claims":455634.0,
+"components":{
+"solvency":49.6,
+"reputation":null,
+"innovation":50.0
+},
+"score":49.7,
+"lossRatio":0.00023061738762283776,
+"financial_score":49.6
 },
 "reputation":null,
 "products":[],
 "segment":"S1"
 },
 {
-"id":"14868712000131",
+"id":"6220",
+"name":"Sul América Seguros De Pessoas E Previdência S.A.",
+"cnpj":"01.704.513/0001-46",
+"flags":{
+"openInsuranceParticipant":true
+},
+"data":{
+"net_worth":1514527809.36,
+"premiums":1196343415.1499991,
+"claims":121892935.52999997,
+"components":{
+"solvency":50.3,
+"reputation":48.5,
+"innovation":50.0
+},
+"score":49.5,
+"lossRatio":0.10188791444529903,
+"financial_score":50.3
+},
+"reputation":{
+"source":"consumidor.gov",
+"match_score":0.85,
+"display_name":"SulAmérica Seguros de Pessoas e Previdência",
+"metrics":{
+"satisfaction_avg":2.55,
+"resolution_rate":0.55,
+"complaints_total":35
+}
+},
+"products":[],
+"segment":"S1"
+},
+{
+"id":"2798",
 "name":"Argo Seguros Brasil S.A.",
 "cnpj":"14.868.712/0001-31",
 "flags":{
@@ -835,7 +1070,7 @@
 "segment":"S2"
 },
 {
-"id":"19486258000178",
+"id":"1741",
 "name":"Bmg Seguros S.A.",
 "cnpj":"19.486.258/0001-78",
 "flags":{
@@ -859,7 +1094,7 @@
 "segment":"S2"
 },
 {
-"id":"15517074000177",
+"id":"30074",
 "name":"Allianz Global Corporate & Specialty Resseguros Brasil S.A.",
 "cnpj":"15.517.074/0001-77",
 "flags":{
@@ -883,7 +1118,7 @@
 "segment":"S4"
 },
 {
-"id":"08602745000132",
+"id":"4251",
 "name":"Capemisa Seguradora De Vida E Previdência S/A",
 "cnpj":"08.602.745/0001-32",
 "flags":{
@@ -891,15 +1126,15 @@
 },
 "data":{
 "net_worth":401702273.26,
-"premiums":401146031.36,
-"claims":129269027.77000001,
+"premiums":401146031.3600001,
+"claims":129269027.76999998,
 "components":{
 "solvency":61.0,
 "reputation":null,
 "innovation":0.0
 },
 "score":48.8,
-"lossRatio":0.32224929991639445,
+"lossRatio":0.3222492999163943,
 "financial_score":61.0
 },
 "reputation":null,
@@ -907,31 +1142,7 @@
 "segment":"S2"
 },
 {
-"id":"11521976000126",
-"name":"Austral Seguradora S.A.",
-"cnpj":"11.521.976/0001-26",
-"flags":{
-"openInsuranceParticipant":false
-},
-"data":{
-"net_worth":256147719.45,
-"premiums":932522468.7700001,
-"claims":0.0,
-"components":{
-"solvency":60.9,
-"reputation":null,
-"innovation":0.0
-},
-"score":48.7,
-"lossRatio":0.0,
-"financial_score":60.9
-},
-"reputation":null,
-"products":[],
-"segment":"S2"
-},
-{
-"id":"33010851000174",
+"id":"23566",
 "name":"Bradesco Capitalização S.A.",
 "cnpj":"33.010.851/0001-74",
 "flags":{
@@ -939,15 +1150,15 @@
 },
 "data":{
 "net_worth":338817229.71,
-"premiums":6252570849.700001,
-"claims":5447353362.770002,
+"premiums":6252570849.699999,
+"claims":5447353362.770001,
 "components":{
 "solvency":60.7,
 "reputation":null,
 "innovation":0.0
 },
 "score":48.6,
-"lossRatio":0.8712181746859161,
+"lossRatio":0.8712181746859162,
 "financial_score":60.7
 },
 "reputation":null,
@@ -955,7 +1166,7 @@
 "segment":"S1"
 },
 {
-"id":"29985998000102",
+"id":"25429",
 "name":"Rio Grande Capitalização  S.A.",
 "cnpj":"29.985.998/0001-02",
 "flags":{
@@ -963,7 +1174,7 @@
 },
 "data":{
 "net_worth":97699468.51,
-"premiums":743834724.7176958,
+"premiums":743834724.7176957,
 "claims":586350585.0570991,
 "components":{
 "solvency":60.8,
@@ -971,7 +1182,7 @@
 "innovation":0.0
 },
 "score":48.6,
-"lossRatio":0.7882807370678131,
+"lossRatio":0.7882807370678132,
 "financial_score":60.8
 },
 "reputation":null,
@@ -979,7 +1190,7 @@
 "segment":"S2"
 },
 {
-"id":"07021544000189",
+"id":"1414",
 "name":"Berkley International Do Brasil Seguros S/A",
 "cnpj":"07.021.544/0001-89",
 "flags":{
@@ -1003,7 +1214,7 @@
 "segment":"S2"
 },
 {
-"id":"16551758000158",
+"id":"28878",
 "name":"Porto Seguro Capitalização S.A.",
 "cnpj":"16.551.758/0001-58",
 "flags":{
@@ -1011,15 +1222,15 @@
 },
 "data":{
 "net_worth":222643414.39,
-"premiums":1464900257.6799998,
-"claims":1193962462.32,
+"premiums":1464900257.6800003,
+"claims":1193962462.3200002,
 "components":{
 "solvency":63.0,
 "reputation":41.2,
 "innovation":0.0
 },
 "score":48.0,
-"lossRatio":0.8150469331003525,
+"lossRatio":0.8150469331003524,
 "financial_score":63.0
 },
 "reputation":{
@@ -1036,7 +1247,73 @@
 "segment":"S1"
 },
 {
-"id":"13525547000152",
+"id":"5886",
+"name":"Porto Seguro Companhia De Seguros Gerais",
+"cnpj":"61.198.164/0001-60",
+"flags":{
+"openInsuranceParticipant":true
+},
+"data":{
+"net_worth":2457505451.39,
+"premiums":15828971319.85999,
+"claims":309888.0,
+"components":{
+"solvency":52.7,
+"reputation":41.2,
+"innovation":50.0
+},
+"score":47.8,
+"lossRatio":1.9577267134927188e-05,
+"financial_score":52.7
+},
+"reputation":{
+"source":"consumidor.gov",
+"match_score":0.99,
+"display_name":"Porto Seguro Cia de Seguros Gerais",
+"metrics":{
+"satisfaction_avg":2.3,
+"resolution_rate":0.47,
+"complaints_total":217
+}
+},
+"products":[],
+"segment":"S1"
+},
+{
+"id":"6190",
+"name":"Tokio Marine Seguradora S.A.",
+"cnpj":"33.164.021/0001-00",
+"flags":{
+"openInsuranceParticipant":true
+},
+"data":{
+"net_worth":3679981534.23,
+"premiums":11367305987.859983,
+"claims":44726.4,
+"components":{
+"solvency":54.8,
+"reputation":38.0,
+"innovation":50.0
+},
+"score":47.6,
+"lossRatio":3.93465259471037e-06,
+"financial_score":54.8
+},
+"reputation":{
+"source":"consumidor.gov",
+"match_score":0.85,
+"display_name":"Tokio Marine",
+"metrics":{
+"satisfaction_avg":2.52,
+"resolution_rate":0.38,
+"complaints_total":108
+}
+},
+"products":[],
+"segment":"S1"
+},
+{
+"id":"38741",
 "name":"Aig Resseguros Brasil S.A.",
 "cnpj":"13.525.547/0001-52",
 "flags":{
@@ -1060,31 +1337,7 @@
 "segment":"S4"
 },
 {
-"id":"06109373000181",
-"name":"Safra Seguros Gerais S.A.",
-"cnpj":"06.109.373/0001-81",
-"flags":{
-"openInsuranceParticipant":false
-},
-"data":{
-"net_worth":186325769.94,
-"premiums":99951811.31000002,
-"claims":0.0,
-"components":{
-"solvency":59.2,
-"reputation":null,
-"innovation":0.0
-},
-"score":47.4,
-"lossRatio":0.0,
-"financial_score":59.2
-},
-"reputation":null,
-"products":[],
-"segment":"S3"
-},
-{
-"id":"01396770000168",
+"id":"33294",
 "name":"Mapfre Re Do Brasil Companhia De Resseguros",
 "cnpj":"01.396.770/0001-68",
 "flags":{
@@ -1117,7 +1370,7 @@
 "segment":"S4"
 },
 {
-"id":"92863505000106",
+"id":"6947",
 "name":"Unimed Seguradora S.A.",
 "cnpj":"92.863.505/0001-06",
 "flags":{
@@ -1126,14 +1379,14 @@
 "data":{
 "net_worth":413899059.67,
 "premiums":862309365.4000001,
-"claims":7576685.239999998,
+"claims":7576685.240000001,
 "components":{
 "solvency":43.4,
 "reputation":64.1,
 "innovation":0.0
 },
 "score":47.3,
-"lossRatio":0.008786504639765099,
+"lossRatio":0.0087865046397651,
 "financial_score":43.4
 },
 "reputation":{
@@ -1150,7 +1403,7 @@
 "segment":"S2"
 },
 {
-"id":"92892256000179",
+"id":"10707",
 "name":"Mbm Previdência Complementar",
 "cnpj":"92.892.256/0001-79",
 "flags":{
@@ -1158,7 +1411,7 @@
 },
 "data":{
 "net_worth":6051766.45,
-"premiums":8049257.840000001,
+"premiums":8049257.84,
 "claims":5057162.06,
 "components":{
 "solvency":59.1,
@@ -1166,7 +1419,7 @@
 "innovation":0.0
 },
 "score":47.3,
-"lossRatio":0.6282768126607805,
+"lossRatio":0.6282768126607806,
 "financial_score":59.1
 },
 "reputation":null,
@@ -1174,7 +1427,7 @@
 "segment":"S3"
 },
 {
-"id":"18096627000153",
+"id":"1571",
 "name":"Hdi Global Seguros S.A.",
 "cnpj":"18.096.627/0001-53",
 "flags":{
@@ -1198,7 +1451,40 @@
 "segment":"S1"
 },
 {
-"id":"19851775000107",
+"id":"5321",
+"name":"Itau Seguros S.A.",
+"cnpj":"61.557.039/0001-07",
+"flags":{
+"openInsuranceParticipant":true
+},
+"data":{
+"net_worth":3402776569.72137,
+"premiums":5668805622.119998,
+"claims":4622041.93,
+"components":{
+"solvency":54.4,
+"reputation":37.6,
+"innovation":50.0
+},
+"score":47.2,
+"lossRatio":0.0008153466952482075,
+"financial_score":54.4
+},
+"reputation":{
+"source":"consumidor.gov",
+"match_score":1.0,
+"display_name":"Itaú Seguros",
+"metrics":{
+"satisfaction_avg":2.42,
+"resolution_rate":0.39,
+"complaints_total":325
+}
+},
+"products":[],
+"segment":"S1"
+},
+{
+"id":"31551",
 "name":"Scor Brasil Resseguros S.A.",
 "cnpj":"19.851.775/0001-07",
 "flags":{
@@ -1222,7 +1508,7 @@
 "segment":"S4"
 },
 {
-"id":"10808462000193",
+"id":"38253",
 "name":"Chubb Resseguradora Brasil S.A.",
 "cnpj":"10.808.462/0001-93",
 "flags":{
@@ -1246,7 +1532,7 @@
 "segment":"S4"
 },
 {
-"id":"24856160000103",
+"id":"1121",
 "name":"Youse Seguradora S.A.",
 "cnpj":"24.856.160/0001-03",
 "flags":{
@@ -1279,7 +1565,31 @@
 "segment":"S4"
 },
 {
-"id":"14387387000195",
+"id":"17400",
+"name":"Evidence Previdência S.A.",
+"cnpj":"13.615.969/0001-19",
+"flags":{
+"openInsuranceParticipant":true
+},
+"data":{
+"net_worth":675478997.82,
+"premiums":5048895.2,
+"claims":62292972.86582012,
+"components":{
+"solvency":46.0,
+"reputation":null,
+"innovation":50.0
+},
+"score":46.8,
+"lossRatio":12.337941351173246,
+"financial_score":46.0
+},
+"reputation":null,
+"products":[],
+"segment":"S3"
+},
+{
+"id":"32875",
 "name":"Zurich Resseguradora Brasil S.A.",
 "cnpj":"14.387.387/0001-95",
 "flags":{
@@ -1303,7 +1613,7 @@
 "segment":"S4"
 },
 {
-"id":"17341270000169",
+"id":"4928",
 "name":"Starr International Brasil Seguradora S.A.",
 "cnpj":"17.341.270/0001-69",
 "flags":{
@@ -1327,7 +1637,73 @@
 "segment":"S1"
 },
 {
-"id":"51990695000137",
+"id":"5843",
+"name":"Indiana Seguros S.A.",
+"cnpj":"61.100.145/0001-59",
+"flags":{
+"openInsuranceParticipant":true
+},
+"data":{
+"net_worth":339983148.56,
+"premiums":124066559.88000004,
+"claims":138.0,
+"components":{
+"solvency":42.4,
+"reputation":50.0,
+"innovation":50.0
+},
+"score":46.2,
+"lossRatio":1.1123061696356914e-06,
+"financial_score":42.4
+},
+"reputation":{
+"source":"consumidor.gov",
+"match_score":1.0,
+"display_name":"Indiana Seguros",
+"metrics":{
+"satisfaction_avg":3.0,
+"resolution_rate":0.5,
+"complaints_total":2
+}
+},
+"products":[],
+"segment":"S2"
+},
+{
+"id":"6238",
+"name":"Mapfre Seguros Gerais S.A.",
+"cnpj":"61.074.175/0001-38",
+"flags":{
+"openInsuranceParticipant":true
+},
+"data":{
+"net_worth":1702777753.99,
+"premiums":8385887177.010004,
+"claims":255374.56,
+"components":{
+"solvency":50.8,
+"reputation":38.4,
+"innovation":50.0
+},
+"score":45.8,
+"lossRatio":3.045289718422542e-05,
+"financial_score":50.8
+},
+"reputation":{
+"source":"consumidor.gov",
+"match_score":0.99,
+"display_name":"Mapfre Seguros",
+"metrics":{
+"satisfaction_avg":2.32,
+"resolution_rate":0.42,
+"complaints_total":206
+}
+},
+"products":[],
+"segment":"S1"
+},
+{
+"id":"6866",
 "name":"Bradesco Vida E Previdência S.A.",
 "cnpj":"51.990.695/0001-37",
 "flags":{
@@ -1335,15 +1711,15 @@
 },
 "data":{
 "net_worth":5823137641.12,
-"premiums":34462722874.240005,
-"claims":1613059799.7,
+"premiums":34462722874.24,
+"claims":1613059799.7000008,
 "components":{
 "solvency":57.2,
 "reputation":null,
 "innovation":0.0
 },
 "score":45.8,
-"lossRatio":0.04680593015201711,
+"lossRatio":0.046805930152017144,
 "financial_score":57.2
 },
 "reputation":null,
@@ -1351,7 +1727,7 @@
 "segment":"S1"
 },
 {
-"id":"16825255000123",
+"id":"4952",
 "name":"Suhai Seguradora S.A.",
 "cnpj":"16.825.255/0001-23",
 "flags":{
@@ -1384,7 +1760,7 @@
 "segment":"S1"
 },
 {
-"id":"07644868000173",
+"id":"3328",
 "name":"Coface Do Brasil Seguros De Crédito S/A",
 "cnpj":"07.644.868/0001-73",
 "flags":{
@@ -1408,7 +1784,7 @@
 "segment":"S2"
 },
 {
-"id":"08587950000176",
+"id":"2020",
 "name":"Atradius Crédito Y Caución Seguradora S.A.",
 "cnpj":"08.587.950/0001-76",
 "flags":{
@@ -1432,7 +1808,40 @@
 "segment":"S2"
 },
 {
-"id":"88076302000194",
+"id":"1589",
+"name":"Santander Auto S.A.",
+"cnpj":"30.617.319/0001-21",
+"flags":{
+"openInsuranceParticipant":true
+},
+"data":{
+"net_worth":94195810.87,
+"premiums":307775276.62000006,
+"claims":0.0,
+"components":{
+"solvency":55.7,
+"reputation":30.5,
+"innovation":50.0
+},
+"score":45.1,
+"lossRatio":0.0,
+"financial_score":55.7
+},
+"reputation":{
+"source":"consumidor.gov",
+"match_score":1.0,
+"display_name":"Santander Auto",
+"metrics":{
+"satisfaction_avg":2.19,
+"resolution_rate":0.31,
+"complaints_total":55
+}
+},
+"products":[],
+"segment":"S2"
+},
+{
+"id":"23540",
 "name":"Aplub Capitalização S.A.",
 "cnpj":"88.076.302/0001-94",
 "flags":{
@@ -1456,73 +1865,40 @@
 "segment":"S2"
 },
 {
-"id":"42283770000139",
-"name":"Icatu Seguros S.A",
-"cnpj":"42.283.770/0001-39",
+"id":"2062",
+"name":"Luizaseg Seguros S.A.",
+"cnpj":"07.746.953/0001-42",
 "flags":{
-"openInsuranceParticipant":false
+"openInsuranceParticipant":true
 },
 "data":{
-"net_worth":901645602.52,
-"premiums":7636991173.549996,
-"claims":135708043.07000002,
+"net_worth":221502768.09266,
+"premiums":228396259.95000002,
+"claims":0.0,
 "components":{
-"solvency":47.5,
-"reputation":52.4,
-"innovation":0.0
+"solvency":60.1,
+"reputation":22.5,
+"innovation":50.0
 },
-"score":44.7,
-"lossRatio":0.017769831074312632,
-"financial_score":47.5
-},
-"reputation":{
-"source":"consumidor.gov",
-"match_score":1.0,
-"display_name":"Icatu Seguros",
-"metrics":{
-"satisfaction_avg":3.0,
-"resolution_rate":0.54,
-"complaints_total":282
-}
-},
-"products":[],
-"segment":"S1"
-},
-{
-"id":"01704513000146",
-"name":"Sul América Seguros De Pessoas E Previdência S.A.",
-"cnpj":"01.704.513/0001-46",
-"flags":{
-"openInsuranceParticipant":false
-},
-"data":{
-"net_worth":1514527809.36,
-"premiums":1196343415.1499994,
-"claims":121892935.53,
-"components":{
-"solvency":50.3,
-"reputation":48.5,
-"innovation":0.0
-},
-"score":44.5,
-"lossRatio":0.10188791444529903,
-"financial_score":50.3
+"score":44.0,
+"lossRatio":0.0,
+"financial_score":60.1
 },
 "reputation":{
 "source":"consumidor.gov",
 "match_score":0.85,
-"display_name":"SulAmérica Seguros de Pessoas e Previdência",
+"display_name":"Luizaseg",
 "metrics":{
-"satisfaction_avg":2.55,
-"resolution_rate":0.55,
-"complaints_total":35
+"satisfaction_avg":1.75,
+"resolution_rate":0.25,
+"complaints_total":16
 }
 },
 "products":[],
-"segment":"S1"
+"segment":"S2"
 },
 {
-"id":"26314512000116",
+"id":"3654",
 "name":"Sicoob Seguradora De Vida E Previdência S.A.",
 "cnpj":"26.314.512/0001-16",
 "flags":{
@@ -1531,7 +1907,7 @@
 "data":{
 "net_worth":528441948.76,
 "premiums":1829207913.3890543,
-"claims":1934450.7900000003,
+"claims":1934450.79,
 "components":{
 "solvency":44.7,
 "reputation":54.2,
@@ -1555,7 +1931,7 @@
 "segment":"S1"
 },
 {
-"id":"74267170000173",
+"id":"21334",
 "name":"Icatu Capitalização S.A.",
 "cnpj":"74.267.170/0001-73",
 "flags":{
@@ -1564,14 +1940,14 @@
 "data":{
 "net_worth":200697662.91,
 "premiums":1664995061.159598,
-"claims":1427363677.1726665,
+"claims":1427363677.1726668,
 "components":{
 "solvency":59.0,
 "reputation":36.0,
 "innovation":0.0
 },
 "score":43.9,
-"lossRatio":0.8572780247039102,
+"lossRatio":0.8572780247039105,
 "financial_score":59.0
 },
 "reputation":{
@@ -1588,7 +1964,7 @@
 "segment":"S1"
 },
 {
-"id":"04573811000132",
+"id":"4359",
 "name":"Euler Hermes Seguros S.A.",
 "cnpj":"04.573.811/0001-32",
 "flags":{
@@ -1612,31 +1988,31 @@
 "segment":"S2"
 },
 {
-"id":"19449767000120",
-"name":"Btg Pactual Vida E Previdência S.A.",
-"cnpj":"19.449.767/0001-20",
+"id":"4031",
+"name":"Xp Vida E Previdência S.A.",
+"cnpj":"29.408.732/0001-05",
 "flags":{
-"openInsuranceParticipant":false
+"openInsuranceParticipant":true
 },
 "data":{
-"net_worth":76620378.19,
-"premiums":2439216227.59,
-"claims":0.0,
+"net_worth":324271088.23,
+"premiums":2921471624.44,
+"claims":6952840.210000001,
 "components":{
-"solvency":54.6,
+"solvency":42.1,
 "reputation":null,
-"innovation":0.0
+"innovation":50.0
 },
 "score":43.7,
-"lossRatio":0.0,
-"financial_score":54.6
+"lossRatio":0.0023799102314857328,
+"financial_score":42.1
 },
 "reputation":null,
 "products":[],
 "segment":"S1"
 },
 {
-"id":"92661388000190",
+"id":"5096",
 "name":"Itaú Vida E Previdência S/A",
 "cnpj":"92.661.388/0001-90",
 "flags":{
@@ -1644,15 +2020,15 @@
 },
 "data":{
 "net_worth":3429365009.40973,
-"premiums":16035360985.059998,
-"claims":485760554.9,
+"premiums":16035360985.060001,
+"claims":485760554.90000004,
 "components":{
 "solvency":54.4,
 "reputation":null,
 "innovation":0.0
 },
 "score":43.5,
-"lossRatio":0.03029308509815144,
+"lossRatio":0.030293085098151436,
 "financial_score":54.4
 },
 "reputation":null,
@@ -1660,40 +2036,40 @@
 "segment":"S1"
 },
 {
-"id":"61198164000160",
-"name":"Porto Seguro Companhia De Seguros Gerais",
-"cnpj":"61.198.164/0001-60",
+"id":"6572",
+"name":"Hdi Seguros S.A.",
+"cnpj":"29.980.158/0001-57",
 "flags":{
-"openInsuranceParticipant":false
+"openInsuranceParticipant":true
 },
 "data":{
-"net_worth":2457505451.39,
-"premiums":15828971319.85999,
-"claims":309888.0,
+"net_worth":1990593432.39,
+"premiums":4816636694.680003,
+"claims":59.0,
 "components":{
-"solvency":52.7,
-"reputation":41.2,
-"innovation":0.0
+"solvency":51.6,
+"reputation":30.6,
+"innovation":50.0
 },
-"score":42.8,
-"lossRatio":1.9577267134927188e-05,
-"financial_score":52.7
+"score":43.0,
+"lossRatio":1.2249211169521206e-08,
+"financial_score":51.6
 },
 "reputation":{
 "source":"consumidor.gov",
-"match_score":0.99,
-"display_name":"Porto Seguro Cia de Seguros Gerais",
+"match_score":1.0,
+"display_name":"HDI Seguros",
 "metrics":{
-"satisfaction_avg":2.3,
-"resolution_rate":0.47,
-"complaints_total":217
+"satisfaction_avg":2.02,
+"resolution_rate":0.34,
+"complaints_total":108
 }
 },
 "products":[],
 "segment":"S1"
 },
 {
-"id":"20646890000110",
+"id":"2542",
 "name":"Omint Seguros S.A.",
 "cnpj":"20.646.890/0001-10",
 "flags":{
@@ -1717,64 +2093,7 @@
 "segment":"S3"
 },
 {
-"id":"87376109000106",
-"name":"Zurich Santander Brasil Seguros E Previdência S.A.",
-"cnpj":"87.376.109/0001-06",
-"flags":{
-"openInsuranceParticipant":false
-},
-"data":{
-"net_worth":2752733371.99,
-"premiums":15758976067.61,
-"claims":35317424.37967199,
-"components":{
-"solvency":53.3,
-"reputation":null,
-"innovation":0.0
-},
-"score":42.6,
-"lossRatio":0.002241098928518661,
-"financial_score":53.3
-},
-"reputation":null,
-"products":[],
-"segment":"S1"
-},
-{
-"id":"33164021000100",
-"name":"Tokio Marine Seguradora S.A.",
-"cnpj":"33.164.021/0001-00",
-"flags":{
-"openInsuranceParticipant":false
-},
-"data":{
-"net_worth":3679981534.23,
-"premiums":11367305987.859983,
-"claims":44726.4,
-"components":{
-"solvency":54.8,
-"reputation":38.0,
-"innovation":0.0
-},
-"score":42.6,
-"lossRatio":3.93465259471037e-06,
-"financial_score":54.8
-},
-"reputation":{
-"source":"consumidor.gov",
-"match_score":0.85,
-"display_name":"Tokio Marine",
-"metrics":{
-"satisfaction_avg":2.52,
-"resolution_rate":0.38,
-"complaints_total":108
-}
-},
-"products":[],
-"segment":"S1"
-},
-{
-"id":"12973906000171",
+"id":"1970",
 "name":"Unimed Seguros Patrimoniais S.A.",
 "cnpj":"12.973.906/0001-71",
 "flags":{
@@ -1807,40 +2126,40 @@
 "segment":"S3"
 },
 {
-"id":"61557039000107",
-"name":"Itau Seguros S.A.",
-"cnpj":"61.557.039/0001-07",
+"id":"6513",
+"name":"Chubb Seguros Brasil S.A.",
+"cnpj":"03.502.099/0001-18",
 "flags":{
-"openInsuranceParticipant":false
+"openInsuranceParticipant":true
 },
 "data":{
-"net_worth":3402776569.72137,
-"premiums":5668805622.119998,
-"claims":4622041.93,
+"net_worth":891837045.936717,
+"premiums":2985295992.140002,
+"claims":880134.0,
 "components":{
-"solvency":54.4,
-"reputation":37.6,
-"innovation":0.0
+"solvency":47.4,
+"reputation":33.3,
+"innovation":50.0
 },
-"score":42.2,
-"lossRatio":0.0008153466952482075,
-"financial_score":54.4
+"score":42.0,
+"lossRatio":0.0002948230267006382,
+"financial_score":47.4
 },
 "reputation":{
 "source":"consumidor.gov",
-"match_score":1.0,
-"display_name":"Itaú Seguros",
+"match_score":0.85,
+"display_name":"Chubb Seguros",
 "metrics":{
-"satisfaction_avg":2.42,
-"resolution_rate":0.39,
-"complaints_total":325
+"satisfaction_avg":1.93,
+"resolution_rate":0.4,
+"complaints_total":40
 }
 },
 "products":[],
 "segment":"S1"
 },
 {
-"id":"09180505000150",
+"id":"3671",
 "name":"Usebens Seguros S.A.",
 "cnpj":"09.180.505/0001-50",
 "flags":{
@@ -1864,7 +2183,7 @@
 "segment":"S2"
 },
 {
-"id":"07163211000194",
+"id":"3794",
 "name":"Previmax Previdência Privada E Seguradora S.A.",
 "cnpj":"07.163.211/0001-94",
 "flags":{
@@ -1888,7 +2207,7 @@
 "segment":"S3"
 },
 {
-"id":"30862594000100",
+"id":"4111",
 "name":"Jns Seguradora S.A.",
 "cnpj":"30.862.594/0001-00",
 "flags":{
@@ -1912,64 +2231,7 @@
 "segment":"S3"
 },
 {
-"id":"61100145000159",
-"name":"Indiana Seguros S.A.",
-"cnpj":"61.100.145/0001-59",
-"flags":{
-"openInsuranceParticipant":false
-},
-"data":{
-"net_worth":339983148.56,
-"premiums":124066559.88000004,
-"claims":138.0,
-"components":{
-"solvency":42.4,
-"reputation":50.0,
-"innovation":0.0
-},
-"score":41.2,
-"lossRatio":1.1123061696356914e-06,
-"financial_score":42.4
-},
-"reputation":{
-"source":"consumidor.gov",
-"match_score":1.0,
-"display_name":"Indiana Seguros",
-"metrics":{
-"satisfaction_avg":3.0,
-"resolution_rate":0.5,
-"complaints_total":2
-}
-},
-"products":[],
-"segment":"S2"
-},
-{
-"id":"32724962000180",
-"name":"Btg Pactual Seguros S.A.",
-"cnpj":"32.724.962/0001-80",
-"flags":{
-"openInsuranceParticipant":false
-},
-"data":{
-"net_worth":40747665.69,
-"premiums":81084466.72,
-"claims":0.0,
-"components":{
-"solvency":51.3,
-"reputation":null,
-"innovation":0.0
-},
-"score":41.0,
-"lossRatio":0.0,
-"financial_score":51.3
-},
-"reputation":null,
-"products":[],
-"segment":"S3"
-},
-{
-"id":"03823704000152",
+"id":"2143",
 "name":"Assurant Seguradora S.A.",
 "cnpj":"03.823.704/0001-52",
 "flags":{
@@ -2002,64 +2264,7 @@
 "segment":"S1"
 },
 {
-"id":"61074175000138",
-"name":"Mapfre Seguros Gerais S.A.",
-"cnpj":"61.074.175/0001-38",
-"flags":{
-"openInsuranceParticipant":false
-},
-"data":{
-"net_worth":1702777753.99,
-"premiums":8385887177.010004,
-"claims":255374.56,
-"components":{
-"solvency":50.8,
-"reputation":38.4,
-"innovation":0.0
-},
-"score":40.8,
-"lossRatio":3.045289718422542e-05,
-"financial_score":50.8
-},
-"reputation":{
-"source":"consumidor.gov",
-"match_score":0.99,
-"display_name":"Mapfre Seguros",
-"metrics":{
-"satisfaction_avg":2.32,
-"resolution_rate":0.42,
-"complaints_total":206
-}
-},
-"products":[],
-"segment":"S1"
-},
-{
-"id":"61550141000172",
-"name":"Liberty Seguros S.A.",
-"cnpj":"61.550.141/0001-72",
-"flags":{
-"openInsuranceParticipant":false
-},
-"data":{
-"net_worth":1728847311.51,
-"premiums":5953059693.579994,
-"claims":613171.0,
-"components":{
-"solvency":50.9,
-"reputation":null,
-"innovation":0.0
-},
-"score":40.7,
-"lossRatio":0.00010300098295020742,
-"financial_score":50.9
-},
-"reputation":null,
-"products":[],
-"segment":"S1"
-},
-{
-"id":"15047380000197",
+"id":"38270",
 "name":"Swiss Re Brasil Resseguros S.A.",
 "cnpj":"15.047.380/0001-97",
 "flags":{
@@ -2092,7 +2297,7 @@
 "segment":"S4"
 },
 {
-"id":"21242451000105",
+"id":"1554",
 "name":"Equatorial Seguradora S/A - Microsseguros",
 "cnpj":"21.242.451/0001-05",
 "flags":{
@@ -2116,7 +2321,7 @@
 "segment":"S3"
 },
 {
-"id":"33040981000150",
+"id":"8737",
 "name":"Aig Seguros Brasil S.A.",
 "cnpj":"33.040.981/0001-50",
 "flags":{
@@ -2149,7 +2354,7 @@
 "segment":"S1"
 },
 {
-"id":"76678101000188",
+"id":"11096",
 "name":"Upofa - União Previdencial",
 "cnpj":"76.678.101/0001-88",
 "flags":{
@@ -2173,7 +2378,7 @@
 "segment":"S3"
 },
 {
-"id":"33072307000157",
+"id":"5908",
 "name":"Generali  Brasil  Seguros S.A.",
 "cnpj":"33.072.307/0001-57",
 "flags":{
@@ -2206,40 +2411,7 @@
 "segment":"S1"
 },
 {
-"id":"30617319000121",
-"name":"Santander Auto S.A.",
-"cnpj":"30.617.319/0001-21",
-"flags":{
-"openInsuranceParticipant":false
-},
-"data":{
-"net_worth":94195810.87,
-"premiums":307775276.62000006,
-"claims":0.0,
-"components":{
-"solvency":55.7,
-"reputation":30.5,
-"innovation":0.0
-},
-"score":40.1,
-"lossRatio":0.0,
-"financial_score":55.7
-},
-"reputation":{
-"source":"consumidor.gov",
-"match_score":1.0,
-"display_name":"Santander Auto",
-"metrics":{
-"satisfaction_avg":2.19,
-"resolution_rate":0.31,
-"complaints_total":55
-}
-},
-"products":[],
-"segment":"S2"
-},
-{
-"id":"92682038000100",
+"id":"5312",
 "name":"Bradesco Auto/Re Companhia De Seguros",
 "cnpj":"92.682.038/0001-00",
 "flags":{
@@ -2263,31 +2435,7 @@
 "segment":"S1"
 },
 {
-"id":"61383493000180",
-"name":"Sompo Seguros S.A.",
-"cnpj":"61.383.493/0001-80",
-"flags":{
-"openInsuranceParticipant":false
-},
-"data":{
-"net_worth":1362259136.9475,
-"premiums":1975713994.06,
-"claims":455634.0,
-"components":{
-"solvency":49.6,
-"reputation":null,
-"innovation":0.0
-},
-"score":39.7,
-"lossRatio":0.00023061738762283776,
-"financial_score":49.6
-},
-"reputation":null,
-"products":[],
-"segment":"S1"
-},
-{
-"id":"08872199000150",
+"id":"1619",
 "name":"Dayprev Vida E Previdência S.A.",
 "cnpj":"08.872.199/0001-50",
 "flags":{
@@ -2311,7 +2459,7 @@
 "segment":"S4"
 },
 {
-"id":"58768284000140",
+"id":"6033",
 "name":"Porto Seguro Vida E Previdência S/A.",
 "cnpj":"58.768.284/0001-40",
 "flags":{
@@ -2319,15 +2467,15 @@
 },
 "data":{
 "net_worth":330517199.45,
-"premiums":383466111.18999994,
-"claims":53737809.52,
+"premiums":383466111.19,
+"claims":53737809.51999999,
 "components":{
 "solvency":45.4,
 "reputation":41.2,
 "innovation":0.0
 },
 "score":39.2,
-"lossRatio":0.1401370497988386,
+"lossRatio":0.14013704979883854,
 "financial_score":45.4
 },
 "reputation":{
@@ -2344,40 +2492,7 @@
 "segment":"S2"
 },
 {
-"id":"07746953000142",
-"name":"Luizaseg Seguros S.A.",
-"cnpj":"07.746.953/0001-42",
-"flags":{
-"openInsuranceParticipant":false
-},
-"data":{
-"net_worth":221502768.09266,
-"premiums":228396259.95000002,
-"claims":0.0,
-"components":{
-"solvency":60.1,
-"reputation":22.5,
-"innovation":0.0
-},
-"score":39.0,
-"lossRatio":0.0,
-"financial_score":60.1
-},
-"reputation":{
-"source":"consumidor.gov",
-"match_score":0.85,
-"display_name":"Luizaseg",
-"metrics":{
-"satisfaction_avg":1.75,
-"resolution_rate":0.25,
-"complaints_total":16
-}
-},
-"products":[],
-"segment":"S2"
-},
-{
-"id":"17197385000121",
+"id":"5495",
 "name":"Zurich Minas Brasil Seguros S.A.",
 "cnpj":"17.197.385/0001-21",
 "flags":{
@@ -2401,7 +2516,7 @@
 "segment":"S1"
 },
 {
-"id":"09382998000100",
+"id":"28258",
 "name":"Mapfre Capitalização S.A.",
 "cnpj":"09.382.998/0001-00",
 "flags":{
@@ -2409,15 +2524,15 @@
 },
 "data":{
 "net_worth":43024987.8,
-"premiums":122930679.17790002,
-"claims":111321068.72880001,
+"premiums":122930679.17790003,
+"claims":111321068.7288,
 "components":{
 "solvency":47.2,
 "reputation":38.4,
 "innovation":0.0
 },
 "score":39.0,
-"lossRatio":0.9055596981425681,
+"lossRatio":0.9055596981425678,
 "financial_score":47.2
 },
 "reputation":{
@@ -2434,7 +2549,7 @@
 "segment":"S2"
 },
 {
-"id":"08816067000100",
+"id":"3182",
 "name":"Itau Seguros De Auto E Residência S.A.",
 "cnpj":"08.816.067/0001-00",
 "flags":{
@@ -2467,7 +2582,7 @@
 "segment":"S3"
 },
 {
-"id":"26609195000165",
+"id":"4782",
 "name":"Markel Seguradora Do Brasil S.A.",
 "cnpj":"26.609.195/0001-65",
 "flags":{
@@ -2491,7 +2606,40 @@
 "segment":"S2"
 },
 {
-"id":"92751213000173",
+"id":"5177",
+"name":"Allianz Seguros S.A.",
+"cnpj":"61.573.796/0001-66",
+"flags":{
+"openInsuranceParticipant":true
+},
+"data":{
+"net_worth":1756492447.36,
+"premiums":8695336382.75,
+"claims":684101.0,
+"components":{
+"solvency":50.9,
+"reputation":20.2,
+"innovation":50.0
+},
+"score":38.5,
+"lossRatio":7.86744721408518e-05,
+"financial_score":50.9
+},
+"reputation":{
+"source":"consumidor.gov",
+"match_score":1.0,
+"display_name":"Allianz Seguros",
+"metrics":{
+"satisfaction_avg":1.82,
+"resolution_rate":0.2,
+"complaints_total":134
+}
+},
+"products":[],
+"segment":"S1"
+},
+{
+"id":"5193",
 "name":"Companhia De Seguros Previdência Do Sul - Previsul",
 "cnpj":"92.751.213/0001-73",
 "flags":{
@@ -2524,7 +2672,40 @@
 "segment":"S2"
 },
 {
-"id":"11467788000167",
+"id":"8141",
+"name":"Caixa Vida E Previdência S.A.",
+"cnpj":"03.730.204/0001-76",
+"flags":{
+"openInsuranceParticipant":true
+},
+"data":{
+"net_worth":4759261701.1,
+"premiums":25329161988.979992,
+"claims":101192333.19999996,
+"components":{
+"solvency":56.1,
+"reputation":13.5,
+"innovation":50.0
+},
+"score":38.5,
+"lossRatio":0.003995092030444036,
+"financial_score":56.1
+},
+"reputation":{
+"source":"consumidor.gov",
+"match_score":0.99,
+"display_name":"Caixa Seguradora",
+"metrics":{
+"satisfaction_avg":1.33,
+"resolution_rate":0.17,
+"complaints_total":24
+}
+},
+"products":[],
+"segment":"S1"
+},
+{
+"id":"21628",
 "name":"Vanguardacap Capitalização S.A.",
 "cnpj":"11.467.788/0001-67",
 "flags":{
@@ -2548,40 +2729,7 @@
 "segment":"S4"
 },
 {
-"id":"29980158000157",
-"name":"Hdi Seguros S.A.",
-"cnpj":"29.980.158/0001-57",
-"flags":{
-"openInsuranceParticipant":false
-},
-"data":{
-"net_worth":1990593432.39,
-"premiums":4816636694.680003,
-"claims":59.0,
-"components":{
-"solvency":51.6,
-"reputation":30.6,
-"innovation":0.0
-},
-"score":38.0,
-"lossRatio":1.2249211169521206e-08,
-"financial_score":51.6
-},
-"reputation":{
-"source":"consumidor.gov",
-"match_score":1.0,
-"display_name":"HDI Seguros",
-"metrics":{
-"satisfaction_avg":2.02,
-"resolution_rate":0.34,
-"complaints_total":108
-}
-},
-"products":[],
-"segment":"S1"
-},
-{
-"id":"34115683000144",
+"id":"10898",
 "name":"Recíproca Assistência",
 "cnpj":"34.115.683/0001-44",
 "flags":{
@@ -2605,7 +2753,7 @@
 "segment":"S3"
 },
 {
-"id":"09248608000104",
+"id":"3271",
 "name":"Seguradora Líder Dos Consórcios Do Seguro Dpvat S.A.",
 "cnpj":"09.248.608/0001-04",
 "flags":{
@@ -2629,7 +2777,7 @@
 "segment":"S4"
 },
 {
-"id":"14333631000137",
+"id":"2879",
 "name":"Comprev Seguradora S.A.",
 "cnpj":"14.333.631/0001-37",
 "flags":{
@@ -2653,7 +2801,7 @@
 "segment":"S4"
 },
 {
-"id":"04046576000140",
+"id":"3298",
 "name":"Mapfre Previdência S.A.",
 "cnpj":"04.046.576/0001-40",
 "flags":{
@@ -2661,7 +2809,7 @@
 },
 "data":{
 "net_worth":68291547.44,
-"premiums":148827700.86999997,
+"premiums":148827700.87000003,
 "claims":33368807.87,
 "components":{
 "solvency":43.9,
@@ -2669,7 +2817,7 @@
 "innovation":0.0
 },
 "score":37.3,
-"lossRatio":0.22421100154699988,
+"lossRatio":0.2242110015469998,
 "financial_score":43.9
 },
 "reputation":{
@@ -2686,7 +2834,7 @@
 "segment":"S2"
 },
 {
-"id":"54484753000149",
+"id":"5665",
 "name":"Mapfre Vida S.A.",
 "cnpj":"54.484.753/0001-49",
 "flags":{
@@ -2719,7 +2867,7 @@
 "segment":"S2"
 },
 {
-"id":"33634999000180",
+"id":"1937",
 "name":"Comprev Vida E Previdência S.A.",
 "cnpj":"33.634.999/0001-80",
 "flags":{
@@ -2727,8 +2875,8 @@
 },
 "data":{
 "net_worth":101388056.83,
-"premiums":12773348.819999998,
-"claims":2889732.2699999996,
+"premiums":12773348.82,
+"claims":2889732.27,
 "components":{
 "solvency":46.2,
 "reputation":null,
@@ -2743,7 +2891,7 @@
 "segment":"S3"
 },
 {
-"id":"33061813000140",
+"id":"5282",
 "name":"Prudential Do Brasil Seguros De Vida S.A.",
 "cnpj":"33.061.813/0001-40",
 "flags":{
@@ -2776,64 +2924,40 @@
 "segment":"S4"
 },
 {
-"id":"03502099000118",
-"name":"Chubb Seguros Brasil S.A.",
-"cnpj":"03.502.099/0001-18",
+"id":"5631",
+"name":"Caixa Seguradora S.A.",
+"cnpj":"34.020.354/0001-10",
 "flags":{
-"openInsuranceParticipant":false
+"openInsuranceParticipant":true
 },
 "data":{
-"net_worth":891837045.936717,
-"premiums":2985295992.140002,
-"claims":880134.0,
+"net_worth":2289382592.27,
+"premiums":2326105171.620001,
+"claims":1321521.0,
 "components":{
-"solvency":47.4,
-"reputation":33.3,
-"innovation":0.0
+"solvency":52.3,
+"reputation":13.5,
+"innovation":50.0
 },
-"score":37.0,
-"lossRatio":0.0002948230267006382,
-"financial_score":47.4
+"score":36.5,
+"lossRatio":0.000568126074488556,
+"financial_score":52.3
 },
 "reputation":{
 "source":"consumidor.gov",
-"match_score":0.85,
-"display_name":"Chubb Seguros",
+"match_score":0.99,
+"display_name":"Caixa Seguradora",
 "metrics":{
-"satisfaction_avg":1.93,
-"resolution_rate":0.4,
-"complaints_total":40
+"satisfaction_avg":1.33,
+"resolution_rate":0.17,
+"complaints_total":24
 }
 },
 "products":[],
 "segment":"S1"
 },
 {
-"id":"13615969000119",
-"name":"Evidence Previdência S.A.",
-"cnpj":"13.615.969/0001-19",
-"flags":{
-"openInsuranceParticipant":false
-},
-"data":{
-"net_worth":675478997.82,
-"premiums":5048895.199999999,
-"claims":62292972.86582012,
-"components":{
-"solvency":46.0,
-"reputation":null,
-"innovation":0.0
-},
-"score":36.8,
-"lossRatio":12.337941351173248,
-"financial_score":46.0
-},
-"reputation":null,
-"products":[],
-"segment":"S3"
-},
-{
-"id":"17188350000126",
+"id":"10979",
 "name":"Auxiliadora Previdência",
 "cnpj":"17.188.350/0001-26",
 "flags":{
@@ -2841,7 +2965,7 @@
 },
 "data":{
 "net_worth":11081681.2,
-"premiums":8013551.909999999,
+"premiums":8013551.91,
 "claims":2912689.4,
 "components":{
 "solvency":45.6,
@@ -2849,7 +2973,7 @@
 "innovation":0.0
 },
 "score":36.5,
-"lossRatio":0.3634704601295832,
+"lossRatio":0.3634704601295831,
 "financial_score":45.6
 },
 "reputation":null,
@@ -2857,7 +2981,7 @@
 "segment":"S3"
 },
 {
-"id":"06136920000118",
+"id":"6564",
 "name":"Zurich Santander Brasil Seguros S.A.",
 "cnpj":"06.136.920/0001-18",
 "flags":{
@@ -2881,7 +3005,7 @@
 "segment":"S1"
 },
 {
-"id":"02102498000129",
+"id":"6351",
 "name":"Metropolitan Life Seguros E Previdência Privada S.A.",
 "cnpj":"02.102.498/0001-29",
 "flags":{
@@ -2889,7 +3013,7 @@
 },
 "data":{
 "net_worth":549385321.82,
-"premiums":1771084553.700001,
+"premiums":1771084553.7000003,
 "claims":48875850.05,
 "components":{
 "solvency":44.9,
@@ -2897,7 +3021,7 @@
 "innovation":0.0
 },
 "score":35.9,
-"lossRatio":0.027596565024460677,
+"lossRatio":0.02759656502446069,
 "financial_score":44.9
 },
 "reputation":null,
@@ -2905,7 +3029,7 @@
 "segment":"S1"
 },
 {
-"id":"33245762000107",
+"id":"6653",
 "name":"Too Seguros S.A.",
 "cnpj":"33.245.762/0001-07",
 "flags":{
@@ -2929,7 +3053,7 @@
 "segment":"S1"
 },
 {
-"id":"33448150000111",
+"id":"5355",
 "name":"Azul Companhia De Seguros Gerais",
 "cnpj":"33.448.150/0001-11",
 "flags":{
@@ -2962,7 +3086,7 @@
 "segment":"S1"
 },
 {
-"id":"09064453000156",
+"id":"3727",
 "name":"Travelers Seguros Brasil S.A.",
 "cnpj":"09.064.453/0001-56",
 "flags":{
@@ -2986,7 +3110,7 @@
 "segment":"S4"
 },
 {
-"id":"33608308000173",
+"id":"2101",
 "name":"Mongeral Aegon Seguros E Previdência S. A.",
 "cnpj":"33.608.308/0001-73",
 "flags":{
@@ -3019,7 +3143,31 @@
 "segment":"S1"
 },
 {
-"id":"42516278000166",
+"id":"5941",
+"name":"Zurich Brasil Companhia De Seguros",
+"cnpj":"96.348.677/0001-94",
+"flags":{
+"openInsuranceParticipant":true
+},
+"data":{
+"net_worth":33065950.2,
+"premiums":3879.23,
+"claims":28614.0,
+"components":{
+"solvency":30.2,
+"reputation":null,
+"innovation":50.0
+},
+"score":34.2,
+"lossRatio":7.376206102757506,
+"financial_score":30.2
+},
+"reputation":null,
+"products":[],
+"segment":"S3"
+},
+{
+"id":"6017",
 "name":"Centauro Vida E Previdência S.A.",
 "cnpj":"42.516.278/0001-66",
 "flags":{
@@ -3052,7 +3200,7 @@
 "segment":"S3"
 },
 {
-"id":"30902142000105",
+"id":"9938",
 "name":"Safra Vida E Previdência S.A.",
 "cnpj":"30.902.142/0001-05",
 "flags":{
@@ -3060,7 +3208,7 @@
 },
 "data":{
 "net_worth":365514755.83,
-"premiums":1898591312.8,
+"premiums":1898591312.8000002,
 "claims":2641171.78,
 "components":{
 "solvency":42.8,
@@ -3068,7 +3216,7 @@
 "innovation":0.0
 },
 "score":34.2,
-"lossRatio":0.001391121808149885,
+"lossRatio":0.0013911218081498848,
 "financial_score":42.8
 },
 "reputation":null,
@@ -3076,97 +3224,7 @@
 "segment":"S1"
 },
 {
-"id":"29408732000105",
-"name":"Xp Vida E Previdência S.A.",
-"cnpj":"29.408.732/0001-05",
-"flags":{
-"openInsuranceParticipant":false
-},
-"data":{
-"net_worth":324271088.23,
-"premiums":2921471624.4399996,
-"claims":6952840.210000001,
-"components":{
-"solvency":42.1,
-"reputation":null,
-"innovation":0.0
-},
-"score":33.7,
-"lossRatio":0.002379910231485733,
-"financial_score":42.1
-},
-"reputation":null,
-"products":[],
-"segment":"S1"
-},
-{
-"id":"61573796000166",
-"name":"Allianz Seguros S.A.",
-"cnpj":"61.573.796/0001-66",
-"flags":{
-"openInsuranceParticipant":false
-},
-"data":{
-"net_worth":1756492447.36,
-"premiums":8695336382.75,
-"claims":684101.0,
-"components":{
-"solvency":50.9,
-"reputation":20.2,
-"innovation":0.0
-},
-"score":33.5,
-"lossRatio":7.86744721408518e-05,
-"financial_score":50.9
-},
-"reputation":{
-"source":"consumidor.gov",
-"match_score":1.0,
-"display_name":"Allianz Seguros",
-"metrics":{
-"satisfaction_avg":1.82,
-"resolution_rate":0.2,
-"complaints_total":134
-}
-},
-"products":[],
-"segment":"S1"
-},
-{
-"id":"03730204000176",
-"name":"Caixa Vida E Previdência S.A.",
-"cnpj":"03.730.204/0001-76",
-"flags":{
-"openInsuranceParticipant":false
-},
-"data":{
-"net_worth":4759261701.1,
-"premiums":25329161988.98,
-"claims":101192333.19999997,
-"components":{
-"solvency":56.1,
-"reputation":13.5,
-"innovation":0.0
-},
-"score":33.5,
-"lossRatio":0.003995092030444035,
-"financial_score":56.1
-},
-"reputation":{
-"source":"consumidor.gov",
-"match_score":0.99,
-"display_name":"Caixa Seguradora",
-"metrics":{
-"satisfaction_avg":1.33,
-"resolution_rate":0.17,
-"complaints_total":24
-}
-},
-"products":[],
-"segment":"S1"
-},
-{
-"id":"18133809000157",
+"id":"3387",
 "name":"Angelus Seguros S.A.",
 "cnpj":"18.133.809/0001-57",
 "flags":{
@@ -3190,7 +3248,7 @@
 "segment":"S3"
 },
 {
-"id":"84948157000133",
+"id":"5436",
 "name":"Junto Seguros S.A.",
 "cnpj":"84.948.157/0001-33",
 "flags":{
@@ -3214,7 +3272,7 @@
 "segment":"S2"
 },
 {
-"id":"11699534000174",
+"id":"3069",
 "name":"Pottencial Seguradora S.A.",
 "cnpj":"11.699.534/0001-74",
 "flags":{
@@ -3247,7 +3305,7 @@
 "segment":"S2"
 },
 {
-"id":"50662436000114",
+"id":"4715",
 "name":"Crefisa Seguros S.A. (Atual Denominação De Bamércio Seguros S.A.)",
 "cnpj":"50.662.436/0001-14",
 "flags":{
@@ -3280,7 +3338,7 @@
 "segment":"S3"
 },
 {
-"id":"27053230000175",
+"id":"5274",
 "name":"Banestes Seguros S.A.",
 "cnpj":"27.053.230/0001-75",
 "flags":{
@@ -3304,7 +3362,7 @@
 "segment":"S2"
 },
 {
-"id":"42582049000140",
+"id":"5657",
 "name":"Vanguarda Companhia De Seguros Gerais",
 "cnpj":"42.582.049/0001-40",
 "flags":{
@@ -3328,7 +3386,7 @@
 "segment":"S4"
 },
 {
-"id":"33767492000102",
+"id":"10031",
 "name":"Viver Previdência",
 "cnpj":"33.767.492/0001-02",
 "flags":{
@@ -3337,14 +3395,14 @@
 "data":{
 "net_worth":38713264.41,
 "premiums":1970022.65,
-"claims":404768.22000000003,
+"claims":404768.22,
 "components":{
 "solvency":39.5,
 "reputation":null,
 "innovation":0.0
 },
 "score":31.6,
-"lossRatio":0.2054637392113233,
+"lossRatio":0.20546373921132327,
 "financial_score":39.5
 },
 "reputation":null,
@@ -3352,40 +3410,7 @@
 "segment":"S3"
 },
 {
-"id":"34020354000110",
-"name":"Caixa Seguradora S.A.",
-"cnpj":"34.020.354/0001-10",
-"flags":{
-"openInsuranceParticipant":false
-},
-"data":{
-"net_worth":2289382592.27,
-"premiums":2326105171.620001,
-"claims":1321521.0,
-"components":{
-"solvency":52.3,
-"reputation":13.5,
-"innovation":0.0
-},
-"score":31.5,
-"lossRatio":0.000568126074488556,
-"financial_score":52.3
-},
-"reputation":{
-"source":"consumidor.gov",
-"match_score":0.99,
-"display_name":"Caixa Seguradora",
-"metrics":{
-"satisfaction_avg":1.33,
-"resolution_rate":0.17,
-"complaints_total":24
-}
-},
-"products":[],
-"segment":"S1"
-},
-{
-"id":"33061862000183",
+"id":"6122",
 "name":"Fator Seguradora S.A.",
 "cnpj":"33.061.862/0001-83",
 "flags":{
@@ -3409,7 +3434,7 @@
 "segment":"S2"
 },
 {
-"id":"01378407000110",
+"id":"6211",
 "name":"Aliança Do Brasil Seguros S.A.",
 "cnpj":"01.378.407/0001-10",
 "flags":{
@@ -3433,7 +3458,7 @@
 "segment":"S2"
 },
 {
-"id":"06068410000150",
+"id":"4634",
 "name":"Pater Seguros S.A.",
 "cnpj":"06.068.410/0001-50",
 "flags":{
@@ -3457,7 +3482,7 @@
 "segment":"S4"
 },
 {
-"id":"33065699000127",
+"id":"6751",
 "name":"Seguros Sura S.A.",
 "cnpj":"33.065.699/0001-27",
 "flags":{
@@ -3490,7 +3515,7 @@
 "segment":"S1"
 },
 {
-"id":"88663828000170",
+"id":"10987",
 "name":"Sociedade Caxiense De Mútuo Socorro",
 "cnpj":"88.663.828/0001-70",
 "flags":{
@@ -3499,14 +3524,14 @@
 "data":{
 "net_worth":122466276.94,
 "premiums":9332968.42,
-"claims":774046.9899999999,
+"claims":774046.99,
 "components":{
 "solvency":37.1,
 "reputation":null,
 "innovation":0.0
 },
 "score":29.7,
-"lossRatio":0.08293684872449186,
+"lossRatio":0.08293684872449188,
 "financial_score":37.1
 },
 "reputation":null,
@@ -3514,7 +3539,7 @@
 "segment":"S3"
 },
 {
-"id":"14525684000150",
+"id":"1490",
 "name":"Essor Seguros S.A",
 "cnpj":"14.525.684/0001-50",
 "flags":{
@@ -3547,7 +3572,7 @@
 "segment":"S1"
 },
 {
-"id":"29961505000102",
+"id":"11126",
 "name":"Pecúlio União Previdência Privada",
 "cnpj":"29.961.505/0001-02",
 "flags":{
@@ -3571,7 +3596,7 @@
 "segment":"S3"
 },
 {
-"id":"02713529000188",
+"id":"6467",
 "name":"Alfa Seguradora S.A.",
 "cnpj":"02.713.529/0001-88",
 "flags":{
@@ -3604,7 +3629,7 @@
 "segment":"S2"
 },
 {
-"id":"42366302000128",
+"id":"6921",
 "name":"Investprev Seguradora S.A.",
 "cnpj":"42.366.302/0001-28",
 "flags":{
@@ -3628,7 +3653,7 @@
 "segment":"S2"
 },
 {
-"id":"92843531000164",
+"id":"11134",
 "name":"Aspecir Previdência",
 "cnpj":"92.843.531/0001-64",
 "flags":{
@@ -3636,7 +3661,7 @@
 },
 "data":{
 "net_worth":14836007.08,
-"premiums":8243301.660000001,
+"premiums":8243301.66,
 "claims":8056899.459999998,
 "components":{
 "solvency":35.9,
@@ -3644,7 +3669,7 @@
 "innovation":0.0
 },
 "score":28.7,
-"lossRatio":0.977387434345087,
+"lossRatio":0.9773874343450871,
 "financial_score":35.9
 },
 "reputation":null,
@@ -3652,7 +3677,7 @@
 "segment":"S3"
 },
 {
-"id":"44019198000120",
+"id":"6831",
 "name":"Sinaf Previdencial Cia. De Seguros",
 "cnpj":"44.019.198/0001-20",
 "flags":{
@@ -3676,7 +3701,40 @@
 "segment":"S2"
 },
 {
-"id":"87163234000138",
+"id":"5991",
+"name":"Swiss Re Corporate Solutions Brasil Seguros S.A.",
+"cnpj":"72.145.931/0001-99",
+"flags":{
+"openInsuranceParticipant":true
+},
+"data":{
+"net_worth":634588319.04,
+"premiums":1319896940.6599998,
+"claims":141054.0,
+"components":{
+"solvency":45.6,
+"reputation":0,
+"innovation":50.0
+},
+"score":27.8,
+"lossRatio":0.00010686743461157468,
+"financial_score":45.6
+},
+"reputation":{
+"source":"consumidor.gov",
+"match_score":1.0,
+"display_name":"Swiss Re Corporate Solutions Brasil Seguros",
+"metrics":{
+"satisfaction_avg":1.0,
+"resolution_rate":0.0,
+"complaints_total":1
+}
+},
+"products":[],
+"segment":"S1"
+},
+{
+"id":"1007",
 "name":"Sabemi Seguradora S.A.",
 "cnpj":"87.163.234/0001-38",
 "flags":{
@@ -3709,7 +3767,7 @@
 "segment":"S2"
 },
 {
-"id":"02713530000102",
+"id":"2895",
 "name":"Alfa Previdência E Vida S.A.",
 "cnpj":"02.713.530/0001-02",
 "flags":{
@@ -3717,7 +3775,7 @@
 },
 "data":{
 "net_worth":76630534.81,
-"premiums":69753543.89,
+"premiums":69753543.89000002,
 "claims":263197.99,
 "components":{
 "solvency":34.6,
@@ -3725,7 +3783,7 @@
 "innovation":0.0
 },
 "score":27.7,
-"lossRatio":0.003773256171973974,
+"lossRatio":0.0037732561719739733,
 "financial_score":34.6
 },
 "reputation":null,
@@ -3733,7 +3791,7 @@
 "segment":"S3"
 },
 {
-"id":"33054826000192",
+"id":"5690",
 "name":"Companhia Excelsior De Seguros",
 "cnpj":"33.054.826/0001-92",
 "flags":{
@@ -3757,7 +3815,7 @@
 "segment":"S2"
 },
 {
-"id":"15144017000190",
+"id":"5045",
 "name":"Companhia De Seguros Aliança Da Bahia",
 "cnpj":"15.144.017/0001-90",
 "flags":{
@@ -3781,7 +3839,7 @@
 "segment":"S3"
 },
 {
-"id":"92812098000108",
+"id":"11088",
 "name":"Futuro - Previdência Privada",
 "cnpj":"92.812.098/0001-08",
 "flags":{
@@ -3789,7 +3847,7 @@
 },
 "data":{
 "net_worth":34022376.02,
-"premiums":6141944.54,
+"premiums":6141944.539999999,
 "claims":1925.38,
 "components":{
 "solvency":30.4,
@@ -3797,7 +3855,7 @@
 "innovation":0.0
 },
 "score":26.4,
-"lossRatio":0.0003134805251758265,
+"lossRatio":0.00031348052517582653,
 "financial_score":30.4
 },
 "reputation":{
@@ -3814,7 +3872,7 @@
 "segment":"S3"
 },
 {
-"id":"01206480000104",
+"id":"6157",
 "name":"Zurich Brasil Vida E Previdência S.A.",
 "cnpj":"01.206.480/0001-04",
 "flags":{
@@ -3823,14 +3881,14 @@
 "data":{
 "net_worth":53509183.7,
 "premiums":216940540.2,
-"claims":525652.86,
+"claims":525652.8599999999,
 "components":{
 "solvency":32.7,
 "reputation":null,
 "innovation":0.0
 },
 "score":26.2,
-"lossRatio":0.0024230273397281787,
+"lossRatio":0.0024230273397281782,
 "financial_score":32.7
 },
 "reputation":null,
@@ -3838,7 +3896,7 @@
 "segment":"S2"
 },
 {
-"id":"88747928000185",
+"id":"10901",
 "name":"Sabemi Previdência Privada",
 "cnpj":"88.747.928/0001-85",
 "flags":{
@@ -3871,7 +3929,7 @@
 "segment":"S3"
 },
 {
-"id":"01599296000171",
+"id":"25585",
 "name":"Caixa Capitalização S.A.",
 "cnpj":"01.599.296/0001-71",
 "flags":{
@@ -3880,14 +3938,14 @@
 "data":{
 "net_worth":238661245.58,
 "premiums":186885704.85,
-"claims":418971000.39999986,
+"claims":418971000.4,
 "components":{
 "solvency":40.5,
 "reputation":13.5,
 "innovation":0.0
 },
 "score":25.6,
-"lossRatio":2.24185686506241,
+"lossRatio":2.241856865062411,
 "financial_score":40.5
 },
 "reputation":{
@@ -3904,7 +3962,7 @@
 "segment":"S2"
 },
 {
-"id":"17479056000173",
+"id":"6173",
 "name":"Investprev Seguros E Previdência S.A.",
 "cnpj":"17.479.056/0001-73",
 "flags":{
@@ -3928,7 +3986,7 @@
 "segment":"S3"
 },
 {
-"id":"05723617000159",
+"id":"40215",
 "name":"Mapfre Re Compañía De Reaseguros S.A.",
 "cnpj":"05.723.617/0001-59",
 "flags":{
@@ -3961,7 +4019,7 @@
 "segment":"S4"
 },
 {
-"id":"05711001000168",
+"id":"47741",
 "name":"Tokio Marine & Nichido Fire Insurance Co., Ltd.",
 "cnpj":"05.711.001/0001-68",
 "flags":{
@@ -3994,7 +4052,7 @@
 "segment":"S4"
 },
 {
-"id":"42150987000170",
+"id":"10120",
 "name":"Equatorial Previdência Complementar",
 "cnpj":"42.150.987/0001-70",
 "flags":{
@@ -4002,15 +4060,15 @@
 },
 "data":{
 "net_worth":129151027.17,
-"premiums":5666522.68,
-"claims":368651.57999999996,
+"premiums":5666522.679999999,
+"claims":368651.58,
 "components":{
 "solvency":37.3,
 "reputation":15.0,
 "innovation":0.0
 },
 "score":24.6,
-"lossRatio":0.06505781425726156,
+"lossRatio":0.06505781425726158,
 "financial_score":37.3
 },
 "reputation":{
@@ -4027,31 +4085,7 @@
 "segment":"S3"
 },
 {
-"id":"96348677000194",
-"name":"Zurich Brasil Companhia De Seguros",
-"cnpj":"96.348.677/0001-94",
-"flags":{
-"openInsuranceParticipant":false
-},
-"data":{
-"net_worth":33065950.2,
-"premiums":3879.23,
-"claims":28614.0,
-"components":{
-"solvency":30.2,
-"reputation":null,
-"innovation":0.0
-},
-"score":24.2,
-"lossRatio":7.376206102757506,
-"financial_score":30.2
-},
-"reputation":null,
-"products":[],
-"segment":"S3"
-},
-{
-"id":"95619003000114",
+"id":"3140",
 "name":"Previmil Vida E Previdência S.A.",
 "cnpj":"95.619.003/0001-14",
 "flags":{
@@ -4059,7 +4093,7 @@
 },
 "data":{
 "net_worth":65300942.16,
-"premiums":8846218.22,
+"premiums":8846218.219999999,
 "claims":2388322.7399999998,
 "components":{
 "solvency":47.4,
@@ -4067,7 +4101,7 @@
 "innovation":0.0
 },
 "score":23.7,
-"lossRatio":0.269982345065867,
+"lossRatio":0.26998234506586705,
 "financial_score":47.4
 },
 "reputation":{
@@ -4084,7 +4118,7 @@
 "segment":"S3"
 },
 {
-"id":"29959459000107",
+"id":"6998",
 "name":"Cescebrasil Seguros De Garantias E Crédito S.A.",
 "cnpj":"29.959.459/0001-07",
 "flags":{
@@ -4108,7 +4142,7 @@
 "segment":"S3"
 },
 {
-"id":"95611141000157",
+"id":"2801",
 "name":"União Seguradora S.A. - Vida E Previdência (Atual Denominação De União De Previdência S.A.)",
 "cnpj":"95.611.141/0001-57",
 "flags":{
@@ -4132,7 +4166,7 @@
 "segment":"S3"
 },
 {
-"id":"87883807000106",
+"id":"6084",
 "name":"Mbm Seguradora S.A.",
 "cnpj":"87.883.807/0001-06",
 "flags":{
@@ -4156,7 +4190,7 @@
 "segment":"S3"
 },
 {
-"id":"23694731000180",
+"id":"2275",
 "name":"Alm Seguradora S.A - Microsseguradora",
 "cnpj":"23.694.731/0001-80",
 "flags":{
@@ -4189,40 +4223,7 @@
 "segment":"S3"
 },
 {
-"id":"72145931000199",
-"name":"Swiss Re Corporate Solutions Brasil Seguros S.A.",
-"cnpj":"72.145.931/0001-99",
-"flags":{
-"openInsuranceParticipant":false
-},
-"data":{
-"net_worth":634588319.04,
-"premiums":1319896940.6599998,
-"claims":141054.0,
-"components":{
-"solvency":45.6,
-"reputation":0,
-"innovation":0.0
-},
-"score":22.8,
-"lossRatio":0.00010686743461157468,
-"financial_score":45.6
-},
-"reputation":{
-"source":"consumidor.gov",
-"match_score":1.0,
-"display_name":"Swiss Re Corporate Solutions Brasil Seguros",
-"metrics":{
-"satisfaction_avg":1.0,
-"resolution_rate":0.0,
-"complaints_total":1
-}
-},
-"products":[],
-"segment":"S1"
-},
-{
-"id":"32191644000109",
+"id":"2771",
 "name":"Sudaseg Seguradora De Danos E Pessoas S.A. - Microsseguradora",
 "cnpj":"32.191.644/0001-09",
 "flags":{
@@ -4230,7 +4231,7 @@
 },
 "data":{
 "net_worth":12634672.74,
-"premiums":51616748.79,
+"premiums":51616748.79000001,
 "claims":0.0,
 "components":{
 "solvency":45.2,
@@ -4255,7 +4256,7 @@
 "segment":"S3"
 },
 {
-"id":"05723273000188",
+"id":"42790",
 "name":"Swiss Reinsurance Company",
 "cnpj":"05.723.273/0001-88",
 "flags":{
@@ -4288,7 +4289,7 @@
 "segment":"S4"
 },
 {
-"id":"09482728000171",
+"id":"48747",
 "name":"Swiss Reinsurance America Corporation",
 "cnpj":"09.482.728/0001-71",
 "flags":{
@@ -4321,7 +4322,7 @@
 "segment":"S4"
 },
 {
-"id":"26136748000100",
+"id":"3417",
 "name":"Mg Seguros, Vida E Previdência S.A.",
 "cnpj":"26.136.748/0001-00",
 "flags":{
@@ -4330,7 +4331,7 @@
 "data":{
 "net_worth":111647633.54,
 "premiums":327739407.3600001,
-"claims":165902.81,
+"claims":165902.80999999997,
 "components":{
 "solvency":36.6,
 "reputation":0,
@@ -4354,7 +4355,7 @@
 "segment":"S2"
 },
 {
-"id":"67865360000127",
+"id":"5819",
 "name":"American Life Companhia De Seguros",
 "cnpj":"67.865.360/0001-27",
 "flags":{
@@ -4387,7 +4388,7 @@
 "segment":"S2"
 },
 {
-"id":"90180605000102",
+"id":"6793",
 "name":"Gente Seguradora S.A.",
 "cnpj":"90.180.605/0001-02",
 "flags":{
@@ -4420,7 +4421,7 @@
 "segment":"S2"
 },
 {
-"id":"14448493000131",
+"id":"1431",
 "name":"Xl Seguros Brasil S.A.",
 "cnpj":"14.448.493/0001-31",
 "flags":{
@@ -4444,7 +4445,7 @@
 "segment":"S4"
 },
 {
-"id":"17909518000145",
+"id":"2739",
 "name":"Agência Brasileira Gestora De Fundos Garantidores E Garantias S.A.  Abgf",
 "cnpj":"17.909.518/0001-45",
 "flags":{
@@ -4468,7 +4469,7 @@
 "segment":"S4"
 },
 {
-"id":"01356570000181",
+"id":"6181",
 "name":"Brasilveículos Companhia De Seguros",
 "cnpj":"01.356.570/0001-81",
 "flags":{
@@ -4492,7 +4493,7 @@
 "segment":"S4"
 },
 {
-"id":"02166824000161",
+"id":"6335",
 "name":"Seguradora Brasileira De Crédito À Exportação S.A.",
 "cnpj":"02.166.824/0001-61",
 "flags":{
@@ -4516,7 +4517,7 @@
 "segment":"S4"
 },
 {
-"id":"61383576000170",
+"id":"6360",
 "name":"Kyoei Do Brasil Companhia De Seguros",
 "cnpj":"61.383.576/0001-70",
 "flags":{
@@ -4540,7 +4541,7 @@
 "segment":"S4"
 },
 {
-"id":"03505295000146",
+"id":"6530",
 "name":"Virginia Surety Companhia De Seguros Do Brasil",
 "cnpj":"03.505.295/0001-46",
 "flags":{
@@ -4564,7 +4565,7 @@
 "segment":"S4"
 },
 {
-"id":"62088042000183",
+"id":"6688",
 "name":"Companhia De Seguros Do Estado De São Paulo - Cosesp",
 "cnpj":"62.088.042/0001-83",
 "flags":{
@@ -4588,7 +4589,7 @@
 "segment":"S4"
 },
 {
-"id":"33822131000103",
+"id":"6696",
 "name":"Axa Corporate Solutions Seguros S.A.",
 "cnpj":"33.822.131/0001-03",
 "flags":{
@@ -4612,7 +4613,7 @@
 "segment":"S4"
 },
 {
-"id":"29741030000130",
+"id":"6912",
 "name":"Itauseg Seguradora S.A.",
 "cnpj":"29.741.030/0001-30",
 "flags":{
@@ -4636,7 +4637,7 @@
 "segment":"S4"
 },
 {
-"id":"62874219000177",
+"id":"10413",
 "name":"Familia Bandeirante Previdência Privada",
 "cnpj":"62.874.219/0001-77",
 "flags":{
@@ -4660,7 +4661,7 @@
 "segment":"S4"
 },
 {
-"id":"03558096000104",
+"id":"28932",
 "name":"Sul América Capitalização S.A. - Sulacap",
 "cnpj":"03.558.096/0001-04",
 "flags":{
@@ -4684,7 +4685,7 @@
 "segment":"S4"
 },
 {
-"id":"12909684000128",
+"id":"30201",
 "name":"Terra Brasis Resseguros S.A.",
 "cnpj":"12.909.684/0001-28",
 "flags":{
@@ -4708,7 +4709,7 @@
 "segment":"S4"
 },
 {
-"id":"10356741000163",
+"id":"34665",
 "name":"Xl Resseguros Brasil S.A.",
 "cnpj":"10.356.741/0001-63",
 "flags":{
@@ -4732,7 +4733,7 @@
 "segment":"S4"
 },
 {
-"id":"13641418000120",
+"id":"39764",
 "name":"Markel Resseguradora Do Brasil S.A.",
 "cnpj":"13.641.418/0001-20",
 "flags":{
@@ -4756,7 +4757,7 @@
 "segment":"S4"
 },
 {
-"id":"11987926000139",
+"id":"40096",
 "name":"Torus Specialty Insurance Company",
 "cnpj":"11.987.926/0001-39",
 "flags":{
@@ -4780,7 +4781,7 @@
 "segment":"S4"
 },
 {
-"id":"10853223000155",
+"id":"40207",
 "name":"Allianz Global Corporate & Specialty Se",
 "cnpj":"10.853.223/0001-55",
 "flags":{
@@ -4804,7 +4805,7 @@
 "segment":"S4"
 },
 {
-"id":"09438454000113",
+"id":"40851",
 "name":"Chubb Tempest Reinsurance Ltd.",
 "cnpj":"09.438.454/0001-13",
 "flags":{
@@ -4828,7 +4829,7 @@
 "segment":"S4"
 },
 {
-"id":"05708388000101",
+"id":"41262",
 "name":"Scor Se",
 "cnpj":"05.708.388/0001-01",
 "flags":{
@@ -4852,7 +4853,7 @@
 "segment":"S4"
 },
 {
-"id":"10916851000132",
+"id":"41416",
 "name":"Factory Mutual Insurance Company",
 "cnpj":"10.916.851/0001-32",
 "flags":{
@@ -4876,7 +4877,7 @@
 "segment":"S4"
 },
 {
-"id":"11337192000142",
+"id":"41432",
 "name":"Odyssey Reinsurance Company",
 "cnpj":"11.337.192/0001-42",
 "flags":{
@@ -4900,7 +4901,7 @@
 "segment":"S4"
 },
 {
-"id":"09486274000107",
+"id":"41491",
 "name":"Hannover Rück Se",
 "cnpj":"09.486.274/0001-07",
 "flags":{
@@ -4909,7 +4910,7 @@
 "data":{
 "net_worth":0.0,
 "premiums":0.0,
-"claims":546152439.0,
+"claims":546152438.0,
 "components":{
 "solvency":20.0,
 "reputation":null,
@@ -4924,7 +4925,7 @@
 "segment":"S4"
 },
 {
-"id":"09486271000173",
+"id":"41629",
 "name":"Scor Reinsurance Company",
 "cnpj":"09.486.271/0001-73",
 "flags":{
@@ -4948,7 +4949,7 @@
 "segment":"S4"
 },
 {
-"id":"10257065000170",
+"id":"42307",
 "name":"Xl Insurance Company Se",
 "cnpj":"10.257.065/0001-70",
 "flags":{
@@ -4972,7 +4973,7 @@
 "segment":"S4"
 },
 {
-"id":"09390549000104",
+"id":"42463",
 "name":"Lloyd´S",
 "cnpj":"09.390.549/0001-04",
 "flags":{
@@ -4996,7 +4997,7 @@
 "segment":"S4"
 },
 {
-"id":"12575275000132",
+"id":"42684",
 "name":"Argo Re Ltd.",
 "cnpj":"12.575.275/0001-32",
 "flags":{
@@ -5020,7 +5021,7 @@
 "segment":"S4"
 },
 {
-"id":"08712487000147",
+"id":"42871",
 "name":"Liberty Mutual Insurance Company",
 "cnpj":"08.712.487/0001-47",
 "flags":{
@@ -5044,7 +5045,7 @@
 "segment":"S4"
 },
 {
-"id":"09539939000101",
+"id":"42951",
 "name":"Transamerica International Re (Bermuda) Ltd.",
 "cnpj":"09.539.939/0001-01",
 "flags":{
@@ -5068,7 +5069,7 @@
 "segment":"S4"
 },
 {
-"id":"20869397000160",
+"id":"43419",
 "name":"Starr Insurance & Reinsurance Limited",
 "cnpj":"20.869.397/0001-60",
 "flags":{
@@ -5092,7 +5093,7 @@
 "segment":"S4"
 },
 {
-"id":"09577213000155",
+"id":"44661",
 "name":"Scor Global Life Americas Reinsurance Company",
 "cnpj":"09.577.213/0001-55",
 "flags":{
@@ -5116,7 +5117,7 @@
 "segment":"S4"
 },
 {
-"id":"09345630000172",
+"id":"44814",
 "name":"Partner Reinsurance Europe Se (Antiga Partner Reinsurance Europe Public Limited Company)",
 "cnpj":"09.345.630/0001-72",
 "flags":{
@@ -5140,7 +5141,7 @@
 "segment":"S4"
 },
 {
-"id":"10223555000156",
+"id":"44920",
 "name":"Everest Reinsurance Company",
 "cnpj":"10.223.555/0001-56",
 "flags":{
@@ -5164,7 +5165,7 @@
 "segment":"S4"
 },
 {
-"id":"17944714000150",
+"id":"44938",
 "name":"Financial Assurance Company Limited",
 "cnpj":"17.944.714/0001-50",
 "flags":{
@@ -5188,7 +5189,7 @@
 "segment":"S4"
 },
 {
-"id":"10274217000143",
+"id":"45004",
 "name":"Royal & Sun Alliance Insurance Plc",
 "cnpj":"10.274.217/0001-43",
 "flags":{
@@ -5212,7 +5213,7 @@
 "segment":"S4"
 },
 {
-"id":"03492427000142",
+"id":"45420",
 "name":"Catlin Re Switzerland Ltd",
 "cnpj":"03.492.427/0001-42",
 "flags":{
@@ -5236,7 +5237,7 @@
 "segment":"S4"
 },
 {
-"id":"16365597000108",
+"id":"45896",
 "name":"Gard Marine & Energy Limited",
 "cnpj":"16.365.597/0001-08",
 "flags":{
@@ -5260,7 +5261,7 @@
 "segment":"S4"
 },
 {
-"id":"11459147000160",
+"id":"45926",
 "name":"Arden Reinsurance Company Ltd. ( Antiga Ariel Reinsurance Company Ltd.)",
 "cnpj":"11.459.147/0001-60",
 "flags":{
@@ -5284,7 +5285,7 @@
 "segment":"S4"
 },
 {
-"id":"29166269000124",
+"id":"45951",
 "name":"Atradius Reinsurance Designated Activity Company",
 "cnpj":"29.166.269/0001-24",
 "flags":{
@@ -5308,7 +5309,7 @@
 "segment":"S4"
 },
 {
-"id":"11499800000115",
+"id":"46507",
 "name":"Axis Re Se",
 "cnpj":"11.499.800/0001-15",
 "flags":{
@@ -5332,7 +5333,7 @@
 "segment":"S4"
 },
 {
-"id":"09532974000190",
+"id":"46761",
 "name":"Federal Insurance Company",
 "cnpj":"09.532.974/0001-90",
 "flags":{
@@ -5356,7 +5357,7 @@
 "segment":"S4"
 },
 {
-"id":"05547043000105",
+"id":"47082",
 "name":"Hdi Global Network Ag",
 "cnpj":"05.547.043/0001-05",
 "flags":{
@@ -5380,7 +5381,7 @@
 "segment":"S4"
 },
 {
-"id":"17944715000103",
+"id":"47406",
 "name":"Financial Insurance Company Limited",
 "cnpj":"17.944.715/0001-03",
 "flags":{
@@ -5404,7 +5405,7 @@
 "segment":"S4"
 },
 {
-"id":"23195172000163",
+"id":"47660",
 "name":"Westport Insurance Corporation",
 "cnpj":"23.195.172/0001-63",
 "flags":{
@@ -5428,7 +5429,7 @@
 "segment":"S4"
 },
 {
-"id":"13380383000112",
+"id":"47708",
 "name":"Xl Catlin Insurance Company Uk Limited (Antiga Catlin Insurance Company (Uk) Ltd)",
 "cnpj":"13.380.383/0001-12",
 "flags":{
@@ -5452,7 +5453,7 @@
 "segment":"S4"
 },
 {
-"id":"05598097000108",
+"id":"47724",
 "name":"Mitsui Sumitomo Insurance Company, Limited",
 "cnpj":"05.598.097/0001-08",
 "flags":{
@@ -5476,7 +5477,7 @@
 "segment":"S4"
 },
 {
-"id":"18120916000140",
+"id":"48178",
 "name":"Rga Global Reinsurance Company, Ltd.",
 "cnpj":"18.120.916/0001-40",
 "flags":{
@@ -5524,7 +5525,7 @@
 "segment":"S4"
 },
 {
-"id":"05708742000190",
+"id":"48259",
 "name":"Transatlantic Reinsurance Company",
 "cnpj":"05.708.742/0001-90",
 "flags":{
@@ -5548,7 +5549,7 @@
 "segment":"S4"
 },
 {
-"id":"05617056000103",
+"id":"48275",
 "name":"Zurich Insurance Company",
 "cnpj":"05.617.056/0001-03",
 "flags":{
@@ -5572,7 +5573,7 @@
 "segment":"S4"
 },
 {
-"id":"02030942000148",
+"id":"48879",
 "name":"General Reinsurance Ag",
 "cnpj":"02.030.942/0001-48",
 "flags":{
@@ -5596,7 +5597,7 @@
 "segment":"S4"
 },
 {
-"id":"16809990000143",
+"id":"49131",
 "name":"Arch Reinsurance Ltd.",
 "cnpj":"16.809.990/0001-43",
 "flags":{
@@ -5620,7 +5621,7 @@
 "segment":"S4"
 },
 {
-"id":"05489278000198",
+"id":"49760",
 "name":"American Home Assurance Company",
 "cnpj":"05.489.278/0001-98",
 "flags":{
@@ -5644,7 +5645,7 @@
 "segment":"S4"
 },
 {
-"id":"19438946000162",
+"id":"67407",
 "name":"Ibracor",
 "cnpj":"19.438.946/0001-62",
 "flags":{
@@ -5668,7 +5669,7 @@
 "segment":"S4"
 },
 {
-"id":"06913526000149",
+"id":"70076",
 "name":"Mexbrit Brasil Corretora De Resseguros Ltda.",
 "cnpj":"06.913.526/0001-49",
 "flags":{
@@ -5692,7 +5693,7 @@
 "segment":"S4"
 },
 {
-"id":"08516565000138",
+"id":"70203",
 "name":"Circles Group Brasil Corretora De Resseguro S.A",
 "cnpj":"08.516.565/0001-38",
 "flags":{
@@ -5716,7 +5717,7 @@
 "segment":"S4"
 },
 {
-"id":"45887171000112",
+"id":"70858",
 "name":"Guy Carpenter & Company Corretora De Resseguros Ltda.",
 "cnpj":"45.887.171/0001-12",
 "flags":{
@@ -5740,7 +5741,7 @@
 "segment":"S4"
 },
 {
-"id":"07237510000126",
+"id":"70939",
 "name":"Nausch Hogan & Murray Brasil Corretora De Resseguros Ltda",
 "cnpj":"07.237.510/0001-26",
 "flags":{
@@ -5764,7 +5765,7 @@
 "segment":"S4"
 },
 {
-"id":"29983071000133",
+"id":"71269",
 "name":"Bks Re - Corretora De Resseguros Ltda.",
 "cnpj":"29.983.071/0001-33",
 "flags":{
@@ -5788,7 +5789,7 @@
 "segment":"S4"
 },
 {
-"id":"10260613000111",
+"id":"71412",
 "name":"Universal Re Corretores De Resseguros Ltda.",
 "cnpj":"10.260.613/0001-11",
 "flags":{
@@ -5812,7 +5813,7 @@
 "segment":"S4"
 },
 {
-"id":"48087985000160",
+"id":"71625",
 "name":"Bowring Marsh Corretora De Resseguros Ltda.",
 "cnpj":"48.087.985/0001-60",
 "flags":{
@@ -5836,7 +5837,7 @@
 "segment":"S4"
 },
 {
-"id":"09656599000190",
+"id":"72958",
 "name":"Arx-Re Corretora De Resseguros Ltda",
 "cnpj":"09.656.599/0001-90",
 "flags":{
@@ -5860,7 +5861,7 @@
 "segment":"S4"
 },
 {
-"id":"09591510000155",
+"id":"74667",
 "name":"Thb Re Corretora De Resseguros Ltda",
 "cnpj":"09.591.510/0001-55",
 "flags":{
@@ -5884,7 +5885,7 @@
 "segment":"S4"
 },
 {
-"id":"09476647000169",
+"id":"74811",
 "name":"Uib Re Brasil Corretora De Resseguros Ltda",
 "cnpj":"09.476.647/0001-69",
 "flags":{
@@ -5908,7 +5909,7 @@
 "segment":"S4"
 },
 {
-"id":"22256195000178",
+"id":"74934",
 "name":"Btg Pactual Corretora De Resseguros Ltda.",
 "cnpj":"22.256.195/0001-78",
 "flags":{
@@ -5932,7 +5933,7 @@
 "segment":"S4"
 },
 {
-"id":"29981859000100",
+"id":"75434",
 "name":"Willis Corretora De Resseguros Ltda.",
 "cnpj":"29.981.859/0001-00",
 "flags":{
@@ -5956,7 +5957,7 @@
 "segment":"S4"
 },
 {
-"id":"19630496000105",
+"id":"75761",
 "name":"Besso Re Brasil Corretora De Resseguros Ltda.",
 "cnpj":"19.630.496/0001-05",
 "flags":{
@@ -5980,7 +5981,7 @@
 "segment":"S4"
 },
 {
-"id":"05362227000109",
+"id":"75957",
 "name":"Inter Corretora De Resseguros Ltda.",
 "cnpj":"05.362.227/0001-09",
 "flags":{
@@ -6004,7 +6005,7 @@
 "segment":"S4"
 },
 {
-"id":"10910474000124",
+"id":"76503",
 "name":"Pluris Re Corretora De Resseguros Ltda",
 "cnpj":"10.910.474/0001-24",
 "flags":{
@@ -6028,7 +6029,7 @@
 "segment":"S4"
 },
 {
-"id":"05375622000118",
+"id":"76767",
 "name":"Cooper Gay Do Brasil Corretora De Resseguros Ltda.",
 "cnpj":"05.375.622/0001-18",
 "flags":{
@@ -6052,7 +6053,7 @@
 "segment":"S4"
 },
 {
-"id":"30453728000130",
+"id":"77003",
 "name":"Brazil Re Corretora De Resseguros Ltda.",
 "cnpj":"30.453.728/0001-30",
 "flags":{
@@ -6076,7 +6077,7 @@
 "segment":"S4"
 },
 {
-"id":"12651299000123",
+"id":"77089",
 "name":"Brib Corretora De Resseguros Ltda",
 "cnpj":"12.651.299/0001-23",
 "flags":{
@@ -6100,7 +6101,7 @@
 "segment":"S4"
 },
 {
-"id":"22404448000103",
+"id":"77402",
 "name":"Truster Brasil Corretagem De Resseguros Ltda.",
 "cnpj":"22.404.448/0001-03",
 "flags":{
@@ -6124,7 +6125,7 @@
 "segment":"S4"
 },
 {
-"id":"09674690000139",
+"id":"77747",
 "name":"Capsicum Re Latin America Corretora De Resseguros Ltda.",
 "cnpj":"09.674.690/0001-39",
 "flags":{
@@ -6148,7 +6149,7 @@
 "segment":"S4"
 },
 {
-"id":"03621568000118",
+"id":"78271",
 "name":"Jlt Re Brasil Administração E Corretagem De Resseguros Ltda",
 "cnpj":"03.621.568/0001-18",
 "flags":{
@@ -6172,7 +6173,7 @@
 "segment":"S4"
 },
 {
-"id":"02757429000153",
+"id":"78743",
 "name":"Aon Benfield Brasil Corretora De Resseguros Ltda",
 "cnpj":"02.757.429/0001-53",
 "flags":{
@@ -6196,7 +6197,7 @@
 "segment":"S4"
 },
 {
-"id":"09556558000122",
+"id":"79766",
 "name":"Mds Re Corretora De Resseguros Ltda.",
 "cnpj":"09.556.558/0001-22",
 "flags":{
