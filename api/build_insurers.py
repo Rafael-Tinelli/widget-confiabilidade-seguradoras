@@ -11,7 +11,7 @@ from api.matching.consumidor_gov_match import NameMatcher, format_cnpj
 from api.utils.identifiers import normalize_cnpj
 from api.sources.opin_participants import load_opin_participant_cnpjs
 from api.sources.ses import extract_ses_master_and_financials
-from api.intelligence import calculate_score  
+from api.intelligence import calculate_score
 
 OUTPUT_FILE = Path("api/v1/insurers.json")
 CONSUMIDOR_GOV_FILE = Path("data/derived/consumidor_gov/aggregated.json")
@@ -19,10 +19,12 @@ CONSUMIDOR_GOV_FILE = Path("data/derived/consumidor_gov/aggregated.json")
 # Constantes de Validação
 TARGET_UNIVERSE_COUNT = 233
 # O DoD de match do Open Insurance agora é dinâmico, mas exigimos um piso mínimo de sanidade
-MIN_OPIN_MATCH_FLOOR = 10 
+MIN_OPIN_MATCH_FLOOR = 10
+
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
 
 def main() -> None:
     # 1. COLETA FINANCEIRA (SUSEP)
@@ -37,7 +39,7 @@ def main() -> None:
             reputation_root = json.loads(CONSUMIDOR_GOV_FILE.read_text(encoding="utf-8"))
         except Exception as e:
             print(f"Aviso: Erro ao ler {CONSUMIDOR_GOV_FILE}: {e}")
-            
+
     matcher = NameMatcher(reputation_root)
 
     # 3. CARGA DE PARTICIPANTES OPEN INSURANCE (SET CNPJ)
@@ -49,7 +51,7 @@ def main() -> None:
     insurers = []
     matched_reputation = 0
     matched_opin = 0
-    
+
     # Rastreamento para validação dinâmica
     susep_cnpjs_seen = set()
 
@@ -57,28 +59,31 @@ def main() -> None:
         # A. Normalização para Join
         cnpj_candidate = comp.get("cnpj") or comp.get("cnpj_fmt") or str(raw_id)
         cnpj_clean = normalize_cnpj(cnpj_candidate)
-        
+
         # Rastreia CNPJs válidos no universo SUSEP para cálculo de interseção
         if cnpj_clean:
             susep_cnpjs_seen.add(cnpj_clean)
-        
+
         # Formatação visual
         cnpj_fmt = format_cnpj(cnpj_clean) if cnpj_clean else str(cnpj_candidate)
-        
+
         name = comp.get("name") or comp.get("corporate_name") or comp.get("razao_social") or cnpj_fmt
 
         # B. Match com Consumidor.gov
         rep_entry, match_meta = matcher.get_entry(str(name), cnpj=cnpj_clean or cnpj_fmt)
-        
+
         reputation_data = None
         if rep_entry:
             stats = rep_entry.get("statistics") or {}
-            
+
             def get_val(k):
                 v = stats.get(k)
-                if v in (None, ""): return None
-                try: return float(v)
-                except (ValueError, TypeError): return None
+                if v in (None, ""):
+                    return None
+                try:
+                    return float(v)
+                except (ValueError, TypeError):
+                    return None
 
             sat_avg = get_val("overallSatisfaction")
             res_rate = get_val("solutionIndex")
@@ -106,7 +111,7 @@ def main() -> None:
         # D. Objeto Mestre
         # CRÍTICO: Preserva o ID original do extrator SUSEP
         final_id = comp.get("id") or raw_id
-        
+
         insurer_obj = {
             "id": str(final_id),
             "name": str(name),
@@ -120,15 +125,15 @@ def main() -> None:
                 "claims": comp.get("claims", 0.0),
             },
             "reputation": reputation_data,
-            "products": [] 
+            "products": []
         }
 
         # E. Inteligência
         processed_insurer = calculate_score(insurer_obj)
-        
+
         if "financial_score" not in processed_insurer["data"]:
-             comp_fin = processed_insurer["data"].get("components", {}).get("solvency", 0.0)
-             processed_insurer["data"]["financial_score"] = comp_fin
+            comp_fin = processed_insurer["data"].get("components", {}).get("solvency", 0.0)
+            processed_insurer["data"]["financial_score"] = comp_fin
 
         insurers.append(processed_insurer)
 
@@ -137,7 +142,7 @@ def main() -> None:
 
     # 5. Validação DoD (FAIL FAST & DINÂMICO)
     total_count = len(insurers)
-    
+
     # Validação 1: Universo SUSEP (Estrito)
     if total_count != TARGET_UNIVERSE_COUNT:
         error_msg = (
@@ -151,7 +156,7 @@ def main() -> None:
     # Validação 2: Cruzamento Open Insurance (Dinâmico)
     # Calcula a interseção matemática esperada
     expected_matches = len(opin_cnpjs.intersection(susep_cnpjs_seen))
-    
+
     if matched_opin != expected_matches:
         error_msg = (
             f"FATAL: Inconsistência no join Open Insurance. "
@@ -160,7 +165,7 @@ def main() -> None:
         )
         print(error_msg, file=sys.stderr)
         raise SystemExit(1)
-        
+
     # Sanity Check: Se a normalização falhar silenciosamente, a interseção seria 0 e passaria no check acima.
     # Exigimos um piso mínimo para garantir que o ETL está saudável.
     if matched_opin < MIN_OPIN_MATCH_FLOOR:
@@ -191,9 +196,10 @@ def main() -> None:
 
     OUTPUT_FILE.parent.mkdir(parents=True, exist_ok=True)
     OUTPUT_FILE.write_text(json.dumps(out, ensure_ascii=False, indent=0, separators=(',', ':')), encoding="utf-8")
-    
+
     print(f"SUCCESS: Generated {OUTPUT_FILE}")
     print(f"Integrity Check Passed: {total_count} insurers, {matched_opin} OPIN participants (Expected: {expected_matches}).")
+
 
 if __name__ == "__main__":
     main()
