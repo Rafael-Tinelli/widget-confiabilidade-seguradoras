@@ -1,6 +1,6 @@
 {
 "schemaVersion":"1.0.0",
-"generatedAt":"2026-01-06T12:59:25.769158Z",
+"generatedAt":"2026-01-06T13:33:18.341902Z",
 "period":"2024",
 "sources":[
 "SUSEP (SES)",
@@ -18,7 +18,7 @@
 "insurers":[
 {
 "id":"005720",
-"name":"Sompo Seguros S.A.",
+"name":"SOMPO SEGUROS S.A.",
 "cnpj":"61.383.493/0001-80",
 "flags":{
 "openInsuranceParticipant":true
@@ -42,7 +42,7 @@
 },
 {
 "id":"005185",
-"name":"Liberty Seguros S.A.",
+"name":"LIBERTY SEGUROS S.A.",
 "cnpj":"61.550.141/0001-72",
 "flags":{
 "openInsuranceParticipant":true
@@ -66,7 +66,7 @@
 },
 {
 "id":"002852",
-"name":"Axa Seguros S.A.",
+"name":"AXA SEGUROS S.A.",
 "cnpj":"19.323.190/0001-06",
 "flags":{
 "openInsuranceParticipant":false
@@ -99,7 +99,7 @@
 },
 {
 "id":"004367",
-"name":"Prudential Do Brasil Vida Em Grupo S.A.",
+"name":"PRUDENTIAL DO BRASIL VIDA EM GRUPO S.A.",
 "cnpj":"21.986.074/0001-19",
 "flags":{
 "openInsuranceParticipant":true
@@ -132,7 +132,7 @@
 },
 {
 "id":"005444",
-"name":"Bradesco Seguros S.A",
+"name":"BRADESCO SEGUROS S.A",
 "cnpj":"33.055.146/0001-93",
 "flags":{
 "openInsuranceParticipant":true
@@ -156,7 +156,7 @@
 },
 {
 "id":"020141",
-"name":"Brasilcap Capitalização S.A.",
+"name":"BRASILCAP CAPITALIZAÇÃO S.A.",
 "cnpj":"15.138.043/0001-05",
 "flags":{
 "openInsuranceParticipant":true
@@ -189,7 +189,7 @@
 },
 {
 "id":"006602",
-"name":"Mitsui Sumitomo Seguros S.A.",
+"name":"MITSUI SUMITOMO SEGUROS S.A.",
 "cnpj":"33.016.221/0001-07",
 "flags":{
 "openInsuranceParticipant":false
@@ -222,7 +222,7 @@
 },
 {
 "id":"021661",
-"name":"Cia. Itaú De Capitalização",
+"name":"CIA. ITAÚ DE CAPITALIZAÇÃO",
 "cnpj":"23.025.711/0001-16",
 "flags":{
 "openInsuranceParticipant":false
@@ -246,7 +246,7 @@
 },
 {
 "id":"029319",
-"name":"Santander Capitalização S.A.",
+"name":"SANTANDER CAPITALIZAÇÃO S.A.",
 "cnpj":"03.209.092/0001-02",
 "flags":{
 "openInsuranceParticipant":true
@@ -270,7 +270,7 @@
 },
 {
 "id":"004928",
-"name":"Starr International Brasil Seguradora S.A.",
+"name":"STARR INTERNATIONAL BRASIL SEGURADORA S.A.",
 "cnpj":"17.341.270/0001-69",
 "flags":{
 "openInsuranceParticipant":false
@@ -294,7 +294,7 @@
 },
 {
 "id":"005312",
-"name":"Bradesco Auto/Re Companhia De Seguros",
+"name":"BRADESCO AUTO/RE COMPANHIA DE SEGUROS",
 "cnpj":"92.682.038/0001-00",
 "flags":{
 "openInsuranceParticipant":false
@@ -318,7 +318,7 @@
 },
 {
 "id":"002798",
-"name":"Argo Seguros Brasil S.A.",
+"name":"ARGO SEGUROS BRASIL S.A.",
 "cnpj":"14.868.712/0001-31",
 "flags":{
 "openInsuranceParticipant":false
@@ -342,7 +342,7 @@
 },
 {
 "id":"005843",
-"name":"Indiana Seguros S.A.",
+"name":"INDIANA SEGUROS S.A.",
 "cnpj":"61.100.145/0001-59",
 "flags":{
 "openInsuranceParticipant":true
@@ -375,7 +375,7 @@
 },
 {
 "id":"004669",
-"name":"Fairfax Brasil Seguros Corporativos S.A.",
+"name":"FAIRFAX BRASIL SEGUROS CORPORATIVOS S.A.",
 "cnpj":"10.793.428/0001-92",
 "flags":{
 "openInsuranceParticipant":false
@@ -408,7 +408,7 @@
 },
 {
 "id":"006238",
-"name":"Mapfre Seguros Gerais S.A.",
+"name":"MAPFRE SEGUROS GERAIS S.A.",
 "cnpj":"61.074.175/0001-38",
 "flags":{
 "openInsuranceParticipant":true
@@ -441,7 +441,7 @@
 },
 {
 "id":"002119",
-"name":"Aruana Seguradora S. A.",
+"name":"ARUANA SEGURADORA S. A.",
 "cnpj":"07.017.295/0001-58",
 "flags":{
 "openInsuranceParticipant":false
@@ -474,7 +474,7 @@
 },
 {
 "id":"005886",
-"name":"Porto Seguro Companhia De Seguros Gerais",
+"name":"PORTO SEGURO COMPANHIA DE SEGUROS GERAIS",
 "cnpj":"61.198.164/0001-60",
 "flags":{
 "openInsuranceParticipant":true
@@ -507,7 +507,7 @@
 },
 {
 "id":"006190",
-"name":"Tokio Marine Seguradora S.A.",
+"name":"TOKIO MARINE SEGURADORA S.A.",
 "cnpj":"33.164.021/0001-00",
 "flags":{
 "openInsuranceParticipant":true
@@ -540,7 +540,7 @@
 },
 {
 "id":"001414",
-"name":"Berkley International Do Brasil Seguros S/A",
+"name":"Berkley International do Brasil Seguros S/A",
 "cnpj":"07.021.544/0001-89",
 "flags":{
 "openInsuranceParticipant":false
@@ -564,7 +564,7 @@
 },
 {
 "id":"006572",
-"name":"Hdi Seguros S.A.",
+"name":"HDI SEGUROS S.A.",
 "cnpj":"29.980.158/0001-57",
 "flags":{
 "openInsuranceParticipant":true
@@ -597,7 +597,7 @@
 },
 {
 "id":"004782",
-"name":"Markel Seguradora Do Brasil S.A.",
+"name":"MARKEL SEGURADORA DO BRASIL S.A.",
 "cnpj":"26.609.195/0001-65",
 "flags":{
 "openInsuranceParticipant":false
@@ -621,7 +621,7 @@
 },
 {
 "id":"006947",
-"name":"Unimed Seguradora S.A.",
+"name":"UNIMED SEGURADORA S.A.",
 "cnpj":"92.863.505/0001-06",
 "flags":{
 "openInsuranceParticipant":false
@@ -654,7 +654,7 @@
 },
 {
 "id":"004707",
-"name":"Brasilprev Seguros E Previdência S/A",
+"name":"BRASILPREV SEGUROS E PREVIDÊNCIA S/A",
 "cnpj":"27.665.207/0001-31",
 "flags":{
 "openInsuranceParticipant":true
@@ -687,7 +687,7 @@
 },
 {
 "id":"006785",
-"name":"Brasilseg Companhia De Seguros",
+"name":"BRASILSEG COMPANHIA DE SEGUROS",
 "cnpj":"28.196.889/0001-43",
 "flags":{
 "openInsuranceParticipant":true
@@ -711,7 +711,7 @@
 },
 {
 "id":"026026",
-"name":"Liderança Capitalização S.A.",
+"name":"LIDERANÇA CAPITALIZAÇÃO S.A.",
 "cnpj":"60.853.264/0001-10",
 "flags":{
 "openInsuranceParticipant":false
@@ -735,7 +735,7 @@
 },
 {
 "id":"006351",
-"name":"Metropolitan Life Seguros E Previdência Privada S.A.",
+"name":"METROPOLITAN LIFE SEGUROS E PREVIDÊNCIA PRIVADA S.A.",
 "cnpj":"02.102.498/0001-29",
 "flags":{
 "openInsuranceParticipant":false
@@ -759,7 +759,7 @@
 },
 {
 "id":"005118",
-"name":"Sul América Cia. Nacional De Seguros",
+"name":"SUL AMÉRICA CIA. NACIONAL DE SEGUROS",
 "cnpj":"33.041.062/0001-09",
 "flags":{
 "openInsuranceParticipant":false
@@ -783,7 +783,7 @@
 },
 {
 "id":"031623",
-"name":"Irb Brasil Resseguros S/A",
+"name":"IRB BRASIL RESSEGUROS S/A",
 "cnpj":"33.376.989/0001-91",
 "flags":{
 "openInsuranceParticipant":false
@@ -807,7 +807,7 @@
 },
 {
 "id":"034819",
-"name":"Austral Resseguradora S.A.",
+"name":"AUSTRAL RESSEGURADORA S.A.",
 "cnpj":"11.536.561/0001-26",
 "flags":{
 "openInsuranceParticipant":false
@@ -831,7 +831,7 @@
 },
 {
 "id":"037729",
-"name":"Munich Re Do Brasil Resseguradora S.A.",
+"name":"MUNICH RE DO BRASIL RESSEGURADORA S.A.",
 "cnpj":"01.857.539/0001-24",
 "flags":{
 "openInsuranceParticipant":false
@@ -855,7 +855,7 @@
 },
 {
 "id":"010448",
-"name":"Gboex - Gremio Beneficente",
+"name":"GBOEX - GREMIO BENEFICENTE",
 "cnpj":"92.872.100/0001-26",
 "flags":{
 "openInsuranceParticipant":false
@@ -879,7 +879,7 @@
 },
 {
 "id":"006220",
-"name":"Sul América Seguros De Pessoas E Previdência S.A.",
+"name":"SUL AMÉRICA SEGUROS DE PESSOAS E PREVIDÊNCIA S.A.",
 "cnpj":"01.704.513/0001-46",
 "flags":{
 "openInsuranceParticipant":true
@@ -912,7 +912,7 @@
 },
 {
 "id":"002461",
-"name":"Austral Seguradora S.A.",
+"name":"AUSTRAL SEGURADORA S.A.",
 "cnpj":"11.521.976/0001-26",
 "flags":{
 "openInsuranceParticipant":true
@@ -936,7 +936,7 @@
 },
 {
 "id":"030074",
-"name":"Allianz Global Corporate & Specialty Resseguros Brasil S.A.",
+"name":"ALLIANZ GLOBAL CORPORATE & SPECIALTY RESSEGUROS BRASIL S.A.",
 "cnpj":"15.517.074/0001-77",
 "flags":{
 "openInsuranceParticipant":false
@@ -960,7 +960,7 @@
 },
 {
 "id":"004111",
-"name":"Jns Seguradora S.A.",
+"name":"JNS SEGURADORA S.A.",
 "cnpj":"30.862.594/0001-00",
 "flags":{
 "openInsuranceParticipant":false
@@ -984,7 +984,7 @@
 },
 {
 "id":"005177",
-"name":"Allianz Seguros S.A.",
+"name":"ALLIANZ SEGUROS S.A.",
 "cnpj":"61.573.796/0001-66",
 "flags":{
 "openInsuranceParticipant":true
@@ -1017,7 +1017,7 @@
 },
 {
 "id":"005495",
-"name":"Zurich Minas Brasil Seguros S.A.",
+"name":"ZURICH MINAS BRASIL SEGUROS S.A.",
 "cnpj":"17.197.385/0001-21",
 "flags":{
 "openInsuranceParticipant":false
@@ -1041,7 +1041,7 @@
 },
 {
 "id":"006921",
-"name":"Investprev Seguradora S.A.",
+"name":"INVESTPREV SEGURADORA S.A.",
 "cnpj":"42.366.302/0001-28",
 "flags":{
 "openInsuranceParticipant":false
@@ -1065,7 +1065,7 @@
 },
 {
 "id":"038873",
-"name":"Junto Resseguros S.A.",
+"name":"JUNTO RESSEGUROS S.A.",
 "cnpj":"09.594.758/0001-70",
 "flags":{
 "openInsuranceParticipant":false
@@ -1089,7 +1089,7 @@
 },
 {
 "id":"032875",
-"name":"Zurich Resseguradora Brasil S.A.",
+"name":"ZURICH RESSEGURADORA BRASIL S.A.",
 "cnpj":"14.387.387/0001-95",
 "flags":{
 "openInsuranceParticipant":false
@@ -1113,7 +1113,7 @@
 },
 {
 "id":"005665",
-"name":"Mapfre Vida S.A.",
+"name":"MAPFRE VIDA S.A.",
 "cnpj":"54.484.753/0001-49",
 "flags":{
 "openInsuranceParticipant":false
@@ -1146,7 +1146,7 @@
 },
 {
 "id":"004251",
-"name":"Capemisa Seguradora De Vida E Previdência S/A",
+"name":"CAPEMISA SEGURADORA DE VIDA E PREVIDÊNCIA S/A",
 "cnpj":"08.602.745/0001-32",
 "flags":{
 "openInsuranceParticipant":false
@@ -1170,7 +1170,7 @@
 },
 {
 "id":"038253",
-"name":"Chubb Resseguradora Brasil S.A.",
+"name":"CHUBB RESSEGURADORA BRASIL S.A.",
 "cnpj":"10.808.462/0001-93",
 "flags":{
 "openInsuranceParticipant":false
@@ -1194,7 +1194,7 @@
 },
 {
 "id":"006301",
-"name":"Rio Grande Seguros E Previdência S.A.",
+"name":"RIO GRANDE SEGUROS E PREVIDÊNCIA S.A.",
 "cnpj":"01.582.075/0001-90",
 "flags":{
 "openInsuranceParticipant":true
@@ -1227,7 +1227,7 @@
 },
 {
 "id":"002950",
-"name":"Sancor Seguros Do Brasil S.A.",
+"name":"SANCOR SEGUROS DO BRASIL S.A.",
 "cnpj":"17.643.407/0001-30",
 "flags":{
 "openInsuranceParticipant":false
@@ -1260,7 +1260,7 @@
 },
 {
 "id":"005142",
-"name":"Icatu Seguros S.A",
+"name":"ICATU SEGUROS S.A",
 "cnpj":"42.283.770/0001-39",
 "flags":{
 "openInsuranceParticipant":true
@@ -1293,7 +1293,7 @@
 },
 {
 "id":"005274",
-"name":"Banestes Seguros S.A.",
+"name":"BANESTES SEGUROS S.A.",
 "cnpj":"27.053.230/0001-75",
 "flags":{
 "openInsuranceParticipant":false
@@ -1317,7 +1317,7 @@
 },
 {
 "id":"005070",
-"name":"Zurich Santander Brasil Seguros E Previdência S.A.",
+"name":"ZURICH SANTANDER BRASIL SEGUROS E PREVIDÊNCIA S.A.",
 "cnpj":"87.376.109/0001-06",
 "flags":{
 "openInsuranceParticipant":true
@@ -1341,7 +1341,7 @@
 },
 {
 "id":"037052",
-"name":"Btg Pactual Resseguradora S.A.",
+"name":"BTG Pactual Resseguradora S.A.",
 "cnpj":"15.421.859/0001-41",
 "flags":{
 "openInsuranceParticipant":false
@@ -1365,7 +1365,7 @@
 },
 {
 "id":"002305",
-"name":"Btg Pactual Seguros S.A.",
+"name":"BTG PACTUAL SEGUROS S.A.",
 "cnpj":"32.724.962/0001-80",
 "flags":{
 "openInsuranceParticipant":true
@@ -1389,7 +1389,7 @@
 },
 {
 "id":"031551",
-"name":"Scor Brasil Resseguros S.A.",
+"name":"SCOR Brasil Resseguros S.A.",
 "cnpj":"19.851.775/0001-07",
 "flags":{
 "openInsuranceParticipant":false
@@ -1413,7 +1413,7 @@
 },
 {
 "id":"005690",
-"name":"Companhia Excelsior De Seguros",
+"name":"Companhia Excelsior de Seguros",
 "cnpj":"33.054.826/0001-92",
 "flags":{
 "openInsuranceParticipant":false
@@ -1437,7 +1437,7 @@
 },
 {
 "id":"004952",
-"name":"Suhai Seguradora S.A.",
+"name":"SUHAI SEGURADORA S.A.",
 "cnpj":"16.825.255/0001-23",
 "flags":{
 "openInsuranceParticipant":false
@@ -1470,7 +1470,7 @@
 },
 {
 "id":"005355",
-"name":"Azul Companhia De Seguros Gerais",
+"name":"AZUL COMPANHIA DE SEGUROS GERAIS",
 "cnpj":"33.448.150/0001-11",
 "flags":{
 "openInsuranceParticipant":false
@@ -1503,7 +1503,7 @@
 },
 {
 "id":"022683",
-"name":"Zurich Brasil Capitalização S.A.",
+"name":"ZURICH BRASIL CAPITALIZAÇÃO S.A.",
 "cnpj":"17.266.009/0001-41",
 "flags":{
 "openInsuranceParticipant":false
@@ -1536,7 +1536,7 @@
 },
 {
 "id":"006548",
-"name":"Cardif Do Brasil Vida E Previdência S/A",
+"name":"CARDIF DO BRASIL VIDA E PREVIDÊNCIA S/A",
 "cnpj":"03.546.261/0001-08",
 "flags":{
 "openInsuranceParticipant":true
@@ -1560,7 +1560,7 @@
 },
 {
 "id":"008737",
-"name":"Aig Seguros Brasil S.A.",
+"name":"AIG SEGUROS BRASIL S.A.",
 "cnpj":"33.040.981/0001-50",
 "flags":{
 "openInsuranceParticipant":false
@@ -1593,7 +1593,7 @@
 },
 {
 "id":"010707",
-"name":"Mbm Previdência Complementar",
+"name":"MBM Previdência Complementar",
 "cnpj":"92.892.256/0001-79",
 "flags":{
 "openInsuranceParticipant":false
@@ -1617,7 +1617,7 @@
 },
 {
 "id":"023566",
-"name":"Bradesco Capitalização S.A.",
+"name":"BRADESCO CAPITALIZAÇÃO S.A.",
 "cnpj":"33.010.851/0001-74",
 "flags":{
 "openInsuranceParticipant":false
@@ -1641,7 +1641,7 @@
 },
 {
 "id":"006211",
-"name":"Aliança Do Brasil Seguros S.A.",
+"name":"ALIANÇA DO BRASIL SEGUROS S.A.",
 "cnpj":"01.378.407/0001-10",
 "flags":{
 "openInsuranceParticipant":false
@@ -1665,7 +1665,7 @@
 },
 {
 "id":"002968",
-"name":"Gazin Seguros S.A.",
+"name":"GAZIN SEGUROS S.A.",
 "cnpj":"28.414.401/0001-07",
 "flags":{
 "openInsuranceParticipant":false
@@ -1698,7 +1698,7 @@
 },
 {
 "id":"038741",
-"name":"Aig Resseguros Brasil S.A.",
+"name":"AIG RESSEGUROS BRASIL S.A.",
 "cnpj":"13.525.547/0001-52",
 "flags":{
 "openInsuranceParticipant":false
@@ -1722,7 +1722,7 @@
 },
 {
 "id":"002933",
-"name":"Cardif Do Brasil Seguros E Garantias S.A.",
+"name":"CARDIF DO BRASIL SEGUROS E GARANTIAS S.A.",
 "cnpj":"08.279.191/0001-84",
 "flags":{
 "openInsuranceParticipant":true
@@ -1746,7 +1746,7 @@
 },
 {
 "id":"025429",
-"name":"Rio Grande Capitalização  S.A.",
+"name":"RIO GRANDE CAPITALIZAÇÃO  S.A.",
 "cnpj":"29.985.998/0001-02",
 "flags":{
 "openInsuranceParticipant":false
@@ -1770,7 +1770,7 @@
 },
 {
 "id":"006122",
-"name":"Fator Seguradora S.A.",
+"name":"FATOR SEGURADORA S.A.",
 "cnpj":"33.061.862/0001-83",
 "flags":{
 "openInsuranceParticipant":false
@@ -1794,7 +1794,7 @@
 },
 {
 "id":"005941",
-"name":"Zurich Brasil Companhia De Seguros",
+"name":"ZURICH BRASIL COMPANHIA DE SEGUROS",
 "cnpj":"96.348.677/0001-94",
 "flags":{
 "openInsuranceParticipant":true
@@ -1818,7 +1818,7 @@
 },
 {
 "id":"033294",
-"name":"Mapfre Re Do Brasil Companhia De Resseguros",
+"name":"MAPFRE RE DO BRASIL COMPANHIA DE RESSEGUROS",
 "cnpj":"01.396.770/0001-68",
 "flags":{
 "openInsuranceParticipant":false
@@ -1851,7 +1851,7 @@
 },
 {
 "id":"003654",
-"name":"Sicoob Seguradora De Vida E Previdência S.A.",
+"name":"SICOOB SEGURADORA DE VIDA E PREVIDÊNCIA S.A.",
 "cnpj":"26.314.512/0001-16",
 "flags":{
 "openInsuranceParticipant":false
@@ -1884,7 +1884,7 @@
 },
 {
 "id":"036099",
-"name":"Axa Corporate Solutions Brasil E América Latina Resseguros S.A.",
+"name":"AXA CORPORATE SOLUTIONS BRASIL E AMÉRICA LATINA RESSEGUROS S.A.",
 "cnpj":"19.323.175/0001-68",
 "flags":{
 "openInsuranceParticipant":false
@@ -1908,7 +1908,7 @@
 },
 {
 "id":"028878",
-"name":"Porto Seguro Capitalização S.A.",
+"name":"PORTO SEGURO CAPITALIZAÇÃO S.A.",
 "cnpj":"16.551.758/0001-58",
 "flags":{
 "openInsuranceParticipant":false
@@ -1941,7 +1941,7 @@
 },
 {
 "id":"005193",
-"name":"Companhia De Seguros Previdência Do Sul - Previsul",
+"name":"COMPANHIA DE SEGUROS PREVIDÊNCIA DO SUL - PREVISUL",
 "cnpj":"92.751.213/0001-73",
 "flags":{
 "openInsuranceParticipant":false
@@ -1974,7 +1974,7 @@
 },
 {
 "id":"001741",
-"name":"Bmg Seguros S.A.",
+"name":"BMG SEGUROS S.A.",
 "cnpj":"19.486.258/0001-78",
 "flags":{
 "openInsuranceParticipant":false
@@ -1998,7 +1998,7 @@
 },
 {
 "id":"006513",
-"name":"Chubb Seguros Brasil S.A.",
+"name":"CHUBB SEGUROS BRASIL S.A.",
 "cnpj":"03.502.099/0001-18",
 "flags":{
 "openInsuranceParticipant":true
@@ -2031,7 +2031,7 @@
 },
 {
 "id":"002682",
-"name":"Btg Pactual Vida E Previdência S.A.",
+"name":"BTG Pactual Vida e Previdência S.A.",
 "cnpj":"19.449.767/0001-20",
 "flags":{
 "openInsuranceParticipant":true
@@ -2055,7 +2055,7 @@
 },
 {
 "id":"005321",
-"name":"Itau Seguros S.A.",
+"name":"ITAU SEGUROS S.A.",
 "cnpj":"61.557.039/0001-07",
 "flags":{
 "openInsuranceParticipant":true
@@ -2088,7 +2088,7 @@
 },
 {
 "id":"004359",
-"name":"Euler Hermes Seguros S.A.",
+"name":"EULER HERMES SEGUROS S.A.",
 "cnpj":"04.573.811/0001-32",
 "flags":{
 "openInsuranceParticipant":false
@@ -2112,7 +2112,7 @@
 },
 {
 "id":"005631",
-"name":"Caixa Seguradora S.A.",
+"name":"CAIXA SEGURADORA S.A.",
 "cnpj":"34.020.354/0001-10",
 "flags":{
 "openInsuranceParticipant":true
@@ -2145,7 +2145,7 @@
 },
 {
 "id":"005908",
-"name":"Generali  Brasil  Seguros S.A.",
+"name":"GENERALI  BRASIL  SEGUROS S.A.",
 "cnpj":"33.072.307/0001-57",
 "flags":{
 "openInsuranceParticipant":false
@@ -2178,7 +2178,7 @@
 },
 {
 "id":"006653",
-"name":"Too Seguros S.A.",
+"name":"TOO SEGUROS S.A.",
 "cnpj":"33.245.762/0001-07",
 "flags":{
 "openInsuranceParticipant":false
@@ -2202,7 +2202,7 @@
 },
 {
 "id":"005991",
-"name":"Swiss Re Corporate Solutions Brasil Seguros S.A.",
+"name":"SWISS RE CORPORATE SOLUTIONS BRASIL SEGUROS S.A.",
 "cnpj":"72.145.931/0001-99",
 "flags":{
 "openInsuranceParticipant":true
@@ -2268,7 +2268,7 @@
 },
 {
 "id":"001619",
-"name":"Dayprev Vida E Previdência S.A.",
+"name":"DAYPREV VIDA E PREVIDÊNCIA S.A.",
 "cnpj":"08.872.199/0001-50",
 "flags":{
 "openInsuranceParticipant":false
@@ -2292,7 +2292,7 @@
 },
 {
 "id":"001571",
-"name":"Hdi Global Seguros S.A.",
+"name":"HDI GLOBAL SEGUROS S.A.",
 "cnpj":"18.096.627/0001-53",
 "flags":{
 "openInsuranceParticipant":false
@@ -2316,7 +2316,7 @@
 },
 {
 "id":"006998",
-"name":"Cescebrasil Seguros De Garantias E Crédito S.A.",
+"name":"CESCEBRASIL SEGUROS DE GARANTIAS E CRÉDITO S.A.",
 "cnpj":"29.959.459/0001-07",
 "flags":{
 "openInsuranceParticipant":false
@@ -2340,7 +2340,7 @@
 },
 {
 "id":"024813",
-"name":"Aplicap Capitalização S.A.",
+"name":"APLICAP CAPITALIZAÇÃO S.A.",
 "cnpj":"13.122.801/0001-71",
 "flags":{
 "openInsuranceParticipant":false
@@ -2364,7 +2364,7 @@
 },
 {
 "id":"001589",
-"name":"Santander Auto S.A.",
+"name":"SANTANDER AUTO S.A.",
 "cnpj":"30.617.319/0001-21",
 "flags":{
 "openInsuranceParticipant":true
@@ -2397,7 +2397,7 @@
 },
 {
 "id":"002101",
-"name":"Mongeral Aegon Seguros E Previdência S. A.",
+"name":"MONGERAL AEGON SEGUROS E PREVIDÊNCIA S. A.",
 "cnpj":"33.608.308/0001-73",
 "flags":{
 "openInsuranceParticipant":false
@@ -2430,7 +2430,7 @@
 },
 {
 "id":"006084",
-"name":"Mbm Seguradora S.A.",
+"name":"MBM SEGURADORA S.A.",
 "cnpj":"87.883.807/0001-06",
 "flags":{
 "openInsuranceParticipant":false
@@ -2454,7 +2454,7 @@
 },
 {
 "id":"005096",
-"name":"Itaú Vida E Previdência S/A",
+"name":"ITAÚ VIDA E PREVIDÊNCIA S/A",
 "cnpj":"92.661.388/0001-90",
 "flags":{
 "openInsuranceParticipant":false
@@ -2478,7 +2478,7 @@
 },
 {
 "id":"006866",
-"name":"Bradesco Vida E Previdência S.A.",
+"name":"BRADESCO VIDA E PREVIDÊNCIA S.A.",
 "cnpj":"51.990.695/0001-37",
 "flags":{
 "openInsuranceParticipant":false
@@ -2502,7 +2502,7 @@
 },
 {
 "id":"009938",
-"name":"Safra Vida E Previdência S.A.",
+"name":"SAFRA VIDA E PREVIDÊNCIA S.A.",
 "cnpj":"30.902.142/0001-05",
 "flags":{
 "openInsuranceParticipant":false
@@ -2526,7 +2526,7 @@
 },
 {
 "id":"017400",
-"name":"Evidence Previdência S.A.",
+"name":"EVIDENCE PREVIDÊNCIA S.A.",
 "cnpj":"13.615.969/0001-19",
 "flags":{
 "openInsuranceParticipant":true
@@ -2550,7 +2550,7 @@
 },
 {
 "id":"004031",
-"name":"Xp Vida E Previdência S.A.",
+"name":"XP VIDA E PREVIDÊNCIA S.A.",
 "cnpj":"29.408.732/0001-05",
 "flags":{
 "openInsuranceParticipant":true
@@ -2574,7 +2574,7 @@
 },
 {
 "id":"038270",
-"name":"Swiss Re Brasil Resseguros S.A.",
+"name":"SWISS RE BRASIL RESSEGUROS S.A.",
 "cnpj":"15.047.380/0001-97",
 "flags":{
 "openInsuranceParticipant":false
@@ -2607,7 +2607,7 @@
 },
 {
 "id":"001121",
-"name":"Youse Seguradora S.A.",
+"name":"YOUSE SEGURADORA S.A.",
 "cnpj":"24.856.160/0001-03",
 "flags":{
 "openInsuranceParticipant":false
@@ -2640,7 +2640,7 @@
 },
 {
 "id":"002542",
-"name":"Omint Seguros S.A.",
+"name":"OMINT SEGUROS S.A.",
 "cnpj":"20.646.890/0001-10",
 "flags":{
 "openInsuranceParticipant":false
@@ -2664,7 +2664,7 @@
 },
 {
 "id":"021334",
-"name":"Icatu Capitalização S.A.",
+"name":"ICATU CAPITALIZAÇÃO S.A.",
 "cnpj":"74.267.170/0001-73",
 "flags":{
 "openInsuranceParticipant":false
@@ -2697,7 +2697,7 @@
 },
 {
 "id":"021491",
-"name":"Capemisa Capitalização S.A.",
+"name":"CAPEMISA CAPITALIZAÇÃO S.A.",
 "cnpj":"14.056.028/0001-55",
 "flags":{
 "openInsuranceParticipant":false
@@ -2721,7 +2721,7 @@
 },
 {
 "id":"006751",
-"name":"Seguros Sura S.A.",
+"name":"SEGUROS SURA S.A.",
 "cnpj":"33.065.699/0001-27",
 "flags":{
 "openInsuranceParticipant":false
@@ -2754,7 +2754,7 @@
 },
 {
 "id":"023540",
-"name":"Aplub Capitalização S.A.",
+"name":"APLUB CAPITALIZAÇÃO S.A.",
 "cnpj":"88.076.302/0001-94",
 "flags":{
 "openInsuranceParticipant":false
@@ -2778,7 +2778,7 @@
 },
 {
 "id":"001627",
-"name":"Safra Seguros Gerais S.A.",
+"name":"SAFRA SEGUROS GERAIS S.A.",
 "cnpj":"06.109.373/0001-81",
 "flags":{
 "openInsuranceParticipant":true
@@ -2802,7 +2802,7 @@
 },
 {
 "id":"005436",
-"name":"Junto Seguros S.A.",
+"name":"JUNTO SEGUROS S.A.",
 "cnpj":"84.948.157/0001-33",
 "flags":{
 "openInsuranceParticipant":false
@@ -2826,7 +2826,7 @@
 },
 {
 "id":"006033",
-"name":"Porto Seguro Vida E Previdência S/A.",
+"name":"PORTO SEGURO VIDA E PREVIDÊNCIA S/A.",
 "cnpj":"58.768.284/0001-40",
 "flags":{
 "openInsuranceParticipant":false
@@ -2883,7 +2883,7 @@
 },
 {
 "id":"003182",
-"name":"Itau Seguros De Auto E Residência S.A.",
+"name":"ITAU SEGUROS DE AUTO E RESIDÊNCIA S.A.",
 "cnpj":"08.816.067/0001-00",
 "flags":{
 "openInsuranceParticipant":false
@@ -2916,7 +2916,7 @@
 },
 {
 "id":"001937",
-"name":"Comprev Vida E Previdência S.A.",
+"name":"COMPREV VIDA E PREVIDÊNCIA S.A.",
 "cnpj":"33.634.999/0001-80",
 "flags":{
 "openInsuranceParticipant":false
@@ -2940,7 +2940,7 @@
 },
 {
 "id":"006564",
-"name":"Zurich Santander Brasil Seguros S.A.",
+"name":"ZURICH SANTANDER BRASIL SEGUROS S.A.",
 "cnpj":"06.136.920/0001-18",
 "flags":{
 "openInsuranceParticipant":false
@@ -2997,7 +2997,7 @@
 },
 {
 "id":"006831",
-"name":"Sinaf Previdencial Cia. De Seguros",
+"name":"SINAF PREVIDENCIAL CIA. DE SEGUROS",
 "cnpj":"44.019.198/0001-20",
 "flags":{
 "openInsuranceParticipant":false
@@ -3021,7 +3021,7 @@
 },
 {
 "id":"001970",
-"name":"Unimed Seguros Patrimoniais S.A.",
+"name":"UNIMED SEGUROS PATRIMONIAIS S.A.",
 "cnpj":"12.973.906/0001-71",
 "flags":{
 "openInsuranceParticipant":false
@@ -3054,7 +3054,7 @@
 },
 {
 "id":"003298",
-"name":"Mapfre Previdência S.A.",
+"name":"MAPFRE PREVIDÊNCIA S.A.",
 "cnpj":"04.046.576/0001-40",
 "flags":{
 "openInsuranceParticipant":false
@@ -3087,7 +3087,7 @@
 },
 {
 "id":"006017",
-"name":"Centauro Vida E Previdência S.A.",
+"name":"CENTAURO VIDA E PREVIDÊNCIA S.A.",
 "cnpj":"42.516.278/0001-66",
 "flags":{
 "openInsuranceParticipant":false
@@ -3120,7 +3120,7 @@
 },
 {
 "id":"002801",
-"name":"União Seguradora S.A. - Vida E Previdência (Atual Denominação De União De Previdência S.A.)",
+"name":"UNIÃO SEGURADORA S.A. - VIDA E PREVIDÊNCIA (ATUAL DENOMINAÇÃO DE UNIÃO DE PREVIDÊNCIA S.A.)",
 "cnpj":"95.611.141/0001-57",
 "flags":{
 "openInsuranceParticipant":false
@@ -3144,7 +3144,7 @@
 },
 {
 "id":"021318",
-"name":"Invest Capitalização S.A. (Antiga Denominação De Investprev Capitalização S.A.)",
+"name":"INVEST CAPITALIZAÇÃO S.A. (Antiga denominação de INVESTPREV CAPITALIZAÇÃO S.A.)",
 "cnpj":"93.202.448/0001-79",
 "flags":{
 "openInsuranceParticipant":false
@@ -3168,7 +3168,7 @@
 },
 {
 "id":"005045",
-"name":"Companhia De Seguros Aliança Da Bahia",
+"name":"COMPANHIA DE SEGUROS ALIANÇA DA BAHIA",
 "cnpj":"15.144.017/0001-90",
 "flags":{
 "openInsuranceParticipant":false
@@ -3192,7 +3192,7 @@
 },
 {
 "id":"002895",
-"name":"Alfa Previdência E Vida S.A.",
+"name":"ALFA PREVIDÊNCIA E VIDA S.A.",
 "cnpj":"02.713.530/0001-02",
 "flags":{
 "openInsuranceParticipant":false
@@ -3216,7 +3216,7 @@
 },
 {
 "id":"008141",
-"name":"Caixa Vida E Previdência S.A.",
+"name":"CAIXA VIDA E PREVIDÊNCIA S.A.",
 "cnpj":"03.730.204/0001-76",
 "flags":{
 "openInsuranceParticipant":true
@@ -3282,7 +3282,7 @@
 },
 {
 "id":"003727",
-"name":"Travelers Seguros Brasil S.A.",
+"name":"TRAVELERS SEGUROS BRASIL S.A.",
 "cnpj":"09.064.453/0001-56",
 "flags":{
 "openInsuranceParticipant":false
@@ -3306,7 +3306,7 @@
 },
 {
 "id":"010898",
-"name":"Recíproca Assistência",
+"name":"RECÍPROCA ASSISTÊNCIA",
 "cnpj":"34.115.683/0001-44",
 "flags":{
 "openInsuranceParticipant":false
@@ -3330,7 +3330,7 @@
 },
 {
 "id":"010979",
-"name":"Auxiliadora Previdência",
+"name":"AUXILIADORA PREVIDÊNCIA",
 "cnpj":"17.188.350/0001-26",
 "flags":{
 "openInsuranceParticipant":false
@@ -3354,7 +3354,7 @@
 },
 {
 "id":"002143",
-"name":"Assurant Seguradora S.A.",
+"name":"ASSURANT SEGURADORA S.A.",
 "cnpj":"03.823.704/0001-52",
 "flags":{
 "openInsuranceParticipant":false
@@ -3387,7 +3387,7 @@
 },
 {
 "id":"021628",
-"name":"Vanguardacap Capitalização S.A.",
+"name":"VANGUARDACAP CAPITALIZAÇÃO S.A.",
 "cnpj":"11.467.788/0001-67",
 "flags":{
 "openInsuranceParticipant":false
@@ -3411,7 +3411,7 @@
 },
 {
 "id":"002879",
-"name":"Comprev Seguradora S.A.",
+"name":"COMPREV SEGURADORA S.A.",
 "cnpj":"14.333.631/0001-37",
 "flags":{
 "openInsuranceParticipant":false
@@ -3435,7 +3435,7 @@
 },
 {
 "id":"003794",
-"name":"Previmax Previdência Privada E Seguradora S.A.",
+"name":"PREVIMAX PREVIDÊNCIA PRIVADA E SEGURADORA S.A.",
 "cnpj":"07.163.211/0001-94",
 "flags":{
 "openInsuranceParticipant":false
@@ -3459,7 +3459,7 @@
 },
 {
 "id":"003271",
-"name":"Seguradora Líder Dos Consórcios Do Seguro Dpvat S.A.",
+"name":"SEGURADORA LÍDER DOS CONSÓRCIOS DO SEGURO DPVAT S.A.",
 "cnpj":"09.248.608/0001-04",
 "flags":{
 "openInsuranceParticipant":false
@@ -3483,7 +3483,7 @@
 },
 {
 "id":"005282",
-"name":"Prudential Do Brasil Seguros De Vida S.A.",
+"name":"PRUDENTIAL DO BRASIL SEGUROS DE VIDA S.A.",
 "cnpj":"33.061.813/0001-40",
 "flags":{
 "openInsuranceParticipant":false
@@ -3516,7 +3516,7 @@
 },
 {
 "id":"003328",
-"name":"Coface Do Brasil Seguros De Crédito S/A",
+"name":"Coface do Brasil Seguros de Crédito S/A",
 "cnpj":"07.644.868/0001-73",
 "flags":{
 "openInsuranceParticipant":false
@@ -3540,7 +3540,7 @@
 },
 {
 "id":"002062",
-"name":"Luizaseg Seguros S.A.",
+"name":"LUIZASEG SEGUROS S.A.",
 "cnpj":"07.746.953/0001-42",
 "flags":{
 "openInsuranceParticipant":true
@@ -3573,7 +3573,7 @@
 },
 {
 "id":"002020",
-"name":"Atradius Crédito Y Caución Seguradora S.A.",
+"name":"ATRADIUS CRÉDITO Y CAUCIÓN SEGURADORA S.A.",
 "cnpj":"08.587.950/0001-76",
 "flags":{
 "openInsuranceParticipant":false
@@ -3597,7 +3597,7 @@
 },
 {
 "id":"003069",
-"name":"Pottencial Seguradora S.A.",
+"name":"POTTENCIAL SEGURADORA S.A.",
 "cnpj":"11.699.534/0001-74",
 "flags":{
 "openInsuranceParticipant":false
@@ -3630,7 +3630,7 @@
 },
 {
 "id":"011134",
-"name":"Aspecir Previdência",
+"name":"ASPECIR PREVIDÊNCIA",
 "cnpj":"92.843.531/0001-64",
 "flags":{
 "openInsuranceParticipant":false
@@ -3654,7 +3654,7 @@
 },
 {
 "id":"010031",
-"name":"Viver Previdência",
+"name":"VIVER PREVIDÊNCIA",
 "cnpj":"33.767.492/0001-02",
 "flags":{
 "openInsuranceParticipant":false
@@ -3678,7 +3678,7 @@
 },
 {
 "id":"003671",
-"name":"Usebens Seguros S.A.",
+"name":"USEBENS SEGUROS S.A.",
 "cnpj":"09.180.505/0001-50",
 "flags":{
 "openInsuranceParticipant":false
@@ -3702,7 +3702,7 @@
 },
 {
 "id":"001007",
-"name":"Sabemi Seguradora S.A.",
+"name":"SABEMI SEGURADORA S.A.",
 "cnpj":"87.163.234/0001-38",
 "flags":{
 "openInsuranceParticipant":false
@@ -3735,7 +3735,7 @@
 },
 {
 "id":"005819",
-"name":"American Life Companhia De Seguros",
+"name":"AMERICAN LIFE COMPANHIA DE SEGUROS",
 "cnpj":"67.865.360/0001-27",
 "flags":{
 "openInsuranceParticipant":false
@@ -3768,7 +3768,7 @@
 },
 {
 "id":"005657",
-"name":"Vanguarda Companhia De Seguros Gerais",
+"name":"VANGUARDA COMPANHIA DE SEGUROS GERAIS",
 "cnpj":"42.582.049/0001-40",
 "flags":{
 "openInsuranceParticipant":false
@@ -3792,7 +3792,7 @@
 },
 {
 "id":"006173",
-"name":"Investprev Seguros E Previdência S.A.",
+"name":"INVESTPREV SEGUROS E PREVIDÊNCIA S.A.",
 "cnpj":"17.479.056/0001-73",
 "flags":{
 "openInsuranceParticipant":false
@@ -3816,7 +3816,7 @@
 },
 {
 "id":"028258",
-"name":"Mapfre Capitalização S.A.",
+"name":"MAPFRE Capitalização S.A.",
 "cnpj":"09.382.998/0001-00",
 "flags":{
 "openInsuranceParticipant":false
@@ -3849,7 +3849,7 @@
 },
 {
 "id":"025585",
-"name":"Caixa Capitalização S.A.",
+"name":"CAIXA CAPITALIZAÇÃO S.A.",
 "cnpj":"01.599.296/0001-71",
 "flags":{
 "openInsuranceParticipant":false
@@ -3882,7 +3882,7 @@
 },
 {
 "id":"004634",
-"name":"Pater Seguros S.A.",
+"name":"PATER SEGUROS S.A.",
 "cnpj":"06.068.410/0001-50",
 "flags":{
 "openInsuranceParticipant":false
@@ -3906,7 +3906,7 @@
 },
 {
 "id":"010987",
-"name":"Sociedade Caxiense De Mútuo Socorro",
+"name":"SOCIEDADE CAXIENSE DE MÚTUO SOCORRO",
 "cnpj":"88.663.828/0001-70",
 "flags":{
 "openInsuranceParticipant":false
@@ -3930,7 +3930,7 @@
 },
 {
 "id":"006157",
-"name":"Zurich Brasil Vida E Previdência S.A.",
+"name":"ZURICH BRASIL VIDA E PREVIDÊNCIA S.A.",
 "cnpj":"01.206.480/0001-04",
 "flags":{
 "openInsuranceParticipant":false
@@ -3954,7 +3954,7 @@
 },
 {
 "id":"011126",
-"name":"Pecúlio União Previdência Privada",
+"name":"PECÚLIO UNIÃO PREVIDÊNCIA PRIVADA",
 "cnpj":"29.961.505/0001-02",
 "flags":{
 "openInsuranceParticipant":false
@@ -3978,7 +3978,7 @@
 },
 {
 "id":"003140",
-"name":"Previmil Vida E Previdência S.A.",
+"name":"PREVIMIL VIDA E PREVIDÊNCIA S.A.",
 "cnpj":"95.619.003/0001-14",
 "flags":{
 "openInsuranceParticipant":false
@@ -4011,7 +4011,7 @@
 },
 {
 "id":"001554",
-"name":"Equatorial Seguradora S/A - Microsseguros",
+"name":"EQUATORIAL SEGURADORA S/A - MICROSSEGUROS",
 "cnpj":"21.242.451/0001-05",
 "flags":{
 "openInsuranceParticipant":false
@@ -4035,7 +4035,7 @@
 },
 {
 "id":"010901",
-"name":"Sabemi Previdência Privada",
+"name":"SABEMI PREVIDÊNCIA PRIVADA",
 "cnpj":"88.747.928/0001-85",
 "flags":{
 "openInsuranceParticipant":false
@@ -4068,7 +4068,7 @@
 },
 {
 "id":"010120",
-"name":"Equatorial Previdência Complementar",
+"name":"EQUATORIAL PREVIDÊNCIA COMPLEMENTAR",
 "cnpj":"42.150.987/0001-70",
 "flags":{
 "openInsuranceParticipant":false
@@ -4101,7 +4101,7 @@
 },
 {
 "id":"011088",
-"name":"Futuro - Previdência Privada",
+"name":"FUTURO - PREVIDÊNCIA PRIVADA",
 "cnpj":"92.812.098/0001-08",
 "flags":{
 "openInsuranceParticipant":false
@@ -4134,7 +4134,7 @@
 },
 {
 "id":"040215",
-"name":"Mapfre Re Compañía De Reaseguros S.A.",
+"name":"MAPFRE RE COMPAÑÍA DE REASEGUROS S.A.",
 "cnpj":"05.723.617/0001-59",
 "flags":{
 "openInsuranceParticipant":false
@@ -4167,7 +4167,7 @@
 },
 {
 "id":"047741",
-"name":"Tokio Marine & Nichido Fire Insurance Co., Ltd.",
+"name":"TOKIO MARINE & NICHIDO FIRE INSURANCE CO., LTD.",
 "cnpj":"05.711.001/0001-68",
 "flags":{
 "openInsuranceParticipant":false
@@ -4200,7 +4200,7 @@
 },
 {
 "id":"004715",
-"name":"Crefisa Seguros S.A. (Atual Denominação De Bamércio Seguros S.A.)",
+"name":"CREFISA SEGUROS S.A. (atual denominação de BAMÉRCIO SEGUROS S.A.)",
 "cnpj":"50.662.436/0001-14",
 "flags":{
 "openInsuranceParticipant":false
@@ -4233,7 +4233,7 @@
 },
 {
 "id":"003417",
-"name":"Mg Seguros, Vida E Previdência S.A.",
+"name":"MG SEGUROS, VIDA E PREVIDÊNCIA S.A.",
 "cnpj":"26.136.748/0001-00",
 "flags":{
 "openInsuranceParticipant":false
@@ -4266,7 +4266,7 @@
 },
 {
 "id":"003387",
-"name":"Angelus Seguros S.A.",
+"name":"ANGELUS SEGUROS S.A.",
 "cnpj":"18.133.809/0001-57",
 "flags":{
 "openInsuranceParticipant":false
@@ -4290,7 +4290,7 @@
 },
 {
 "id":"042790",
-"name":"Swiss Reinsurance Company",
+"name":"SWISS REINSURANCE COMPANY",
 "cnpj":"05.723.273/0001-88",
 "flags":{
 "openInsuranceParticipant":false
@@ -4323,7 +4323,7 @@
 },
 {
 "id":"048747",
-"name":"Swiss Reinsurance America Corporation",
+"name":"SWISS REINSURANCE AMERICA CORPORATION",
 "cnpj":"09.482.728/0001-71",
 "flags":{
 "openInsuranceParticipant":false
@@ -4356,7 +4356,7 @@
 },
 {
 "id":"002275",
-"name":"Alm Seguradora S.A - Microsseguradora",
+"name":"ALM SEGURADORA S.A - MICROSSEGURADORA",
 "cnpj":"23.694.731/0001-80",
 "flags":{
 "openInsuranceParticipant":false
@@ -4389,7 +4389,7 @@
 },
 {
 "id":"001431",
-"name":"Xl Seguros Brasil S.A.",
+"name":"XL Seguros Brasil S.A.",
 "cnpj":"14.448.493/0001-31",
 "flags":{
 "openInsuranceParticipant":false
@@ -4413,7 +4413,7 @@
 },
 {
 "id":"002739",
-"name":"Agência Brasileira Gestora De Fundos Garantidores E Garantias S.A.  Abgf",
+"name":"AGÊNCIA BRASILEIRA GESTORA DE FUNDOS GARANTIDORES E GARANTIAS S.A.  ABGF",
 "cnpj":"17.909.518/0001-45",
 "flags":{
 "openInsuranceParticipant":false
@@ -4437,7 +4437,7 @@
 },
 {
 "id":"006181",
-"name":"Brasilveículos Companhia De Seguros",
+"name":"BRASILVEÍCULOS COMPANHIA DE SEGUROS",
 "cnpj":"01.356.570/0001-81",
 "flags":{
 "openInsuranceParticipant":false
@@ -4461,7 +4461,7 @@
 },
 {
 "id":"006335",
-"name":"Seguradora Brasileira De Crédito À Exportação S.A.",
+"name":"SEGURADORA BRASILEIRA DE CRÉDITO À EXPORTAÇÃO S.A.",
 "cnpj":"02.166.824/0001-61",
 "flags":{
 "openInsuranceParticipant":false
@@ -4485,7 +4485,7 @@
 },
 {
 "id":"006360",
-"name":"Kyoei Do Brasil Companhia De Seguros",
+"name":"KYOEI DO BRASIL COMPANHIA DE SEGUROS",
 "cnpj":"61.383.576/0001-70",
 "flags":{
 "openInsuranceParticipant":false
@@ -4509,7 +4509,7 @@
 },
 {
 "id":"006530",
-"name":"Virginia Surety Companhia De Seguros Do Brasil",
+"name":"VIRGINIA SURETY COMPANHIA DE SEGUROS DO BRASIL",
 "cnpj":"03.505.295/0001-46",
 "flags":{
 "openInsuranceParticipant":false
@@ -4533,7 +4533,7 @@
 },
 {
 "id":"006688",
-"name":"Companhia De Seguros Do Estado De São Paulo - Cosesp",
+"name":"COMPANHIA DE SEGUROS DO ESTADO DE SÃO PAULO - COSESP",
 "cnpj":"62.088.042/0001-83",
 "flags":{
 "openInsuranceParticipant":false
@@ -4557,7 +4557,7 @@
 },
 {
 "id":"006696",
-"name":"Axa Corporate Solutions Seguros S.A.",
+"name":"AXA CORPORATE SOLUTIONS SEGUROS S.A.",
 "cnpj":"33.822.131/0001-03",
 "flags":{
 "openInsuranceParticipant":false
@@ -4581,7 +4581,7 @@
 },
 {
 "id":"006912",
-"name":"Itauseg Seguradora S.A.",
+"name":"ITAUSEG SEGURADORA S.A.",
 "cnpj":"29.741.030/0001-30",
 "flags":{
 "openInsuranceParticipant":false
@@ -4605,7 +4605,7 @@
 },
 {
 "id":"010413",
-"name":"Familia Bandeirante Previdência Privada",
+"name":"FAMILIA BANDEIRANTE PREVIDÊNCIA PRIVADA",
 "cnpj":"62.874.219/0001-77",
 "flags":{
 "openInsuranceParticipant":false
@@ -4629,7 +4629,7 @@
 },
 {
 "id":"028932",
-"name":"Sul América Capitalização S.A. - Sulacap",
+"name":"SUL AMÉRICA CAPITALIZAÇÃO S.A. - SULACAP",
 "cnpj":"03.558.096/0001-04",
 "flags":{
 "openInsuranceParticipant":false
@@ -4653,7 +4653,7 @@
 },
 {
 "id":"030201",
-"name":"Terra Brasis Resseguros S.A.",
+"name":"TERRA BRASIS RESSEGUROS S.A.",
 "cnpj":"12.909.684/0001-28",
 "flags":{
 "openInsuranceParticipant":false
@@ -4677,7 +4677,7 @@
 },
 {
 "id":"034665",
-"name":"Xl Resseguros Brasil S.A.",
+"name":"XL Resseguros Brasil S.A.",
 "cnpj":"10.356.741/0001-63",
 "flags":{
 "openInsuranceParticipant":false
@@ -4701,7 +4701,7 @@
 },
 {
 "id":"039764",
-"name":"Markel Resseguradora Do Brasil S.A.",
+"name":"MARKEL RESSEGURADORA DO BRASIL S.A.",
 "cnpj":"13.641.418/0001-20",
 "flags":{
 "openInsuranceParticipant":false
@@ -4725,7 +4725,7 @@
 },
 {
 "id":"040096",
-"name":"Torus Specialty Insurance Company",
+"name":"TORUS SPECIALTY INSURANCE COMPANY",
 "cnpj":"11.987.926/0001-39",
 "flags":{
 "openInsuranceParticipant":false
@@ -4749,7 +4749,7 @@
 },
 {
 "id":"040207",
-"name":"Allianz Global Corporate & Specialty Se",
+"name":"ALLIANZ GLOBAL CORPORATE & SPECIALTY SE",
 "cnpj":"10.853.223/0001-55",
 "flags":{
 "openInsuranceParticipant":false
@@ -4773,7 +4773,7 @@
 },
 {
 "id":"040851",
-"name":"Chubb Tempest Reinsurance Ltd.",
+"name":"CHUBB TEMPEST REINSURANCE LTD.",
 "cnpj":"09.438.454/0001-13",
 "flags":{
 "openInsuranceParticipant":false
@@ -4797,7 +4797,7 @@
 },
 {
 "id":"041262",
-"name":"Scor Se",
+"name":"SCOR SE",
 "cnpj":"05.708.388/0001-01",
 "flags":{
 "openInsuranceParticipant":false
@@ -4821,7 +4821,7 @@
 },
 {
 "id":"041416",
-"name":"Factory Mutual Insurance Company",
+"name":"FACTORY MUTUAL INSURANCE COMPANY",
 "cnpj":"10.916.851/0001-32",
 "flags":{
 "openInsuranceParticipant":false
@@ -4869,7 +4869,7 @@
 },
 {
 "id":"041491",
-"name":"Hannover Rück Se",
+"name":"HANNOVER RÜCK SE",
 "cnpj":"09.486.274/0001-07",
 "flags":{
 "openInsuranceParticipant":false
@@ -4893,7 +4893,7 @@
 },
 {
 "id":"041629",
-"name":"Scor Reinsurance Company",
+"name":"SCOR REINSURANCE COMPANY",
 "cnpj":"09.486.271/0001-73",
 "flags":{
 "openInsuranceParticipant":false
@@ -4917,7 +4917,7 @@
 },
 {
 "id":"042307",
-"name":"Xl Insurance Company Se",
+"name":"XL INSURANCE COMPANY SE",
 "cnpj":"10.257.065/0001-70",
 "flags":{
 "openInsuranceParticipant":false
@@ -4941,7 +4941,7 @@
 },
 {
 "id":"042463",
-"name":"Lloyd´S",
+"name":"LLOYD´S",
 "cnpj":"09.390.549/0001-04",
 "flags":{
 "openInsuranceParticipant":false
@@ -4965,7 +4965,7 @@
 },
 {
 "id":"042684",
-"name":"Argo Re Ltd.",
+"name":"ARGO RE LTD.",
 "cnpj":"12.575.275/0001-32",
 "flags":{
 "openInsuranceParticipant":false
@@ -4989,7 +4989,7 @@
 },
 {
 "id":"042871",
-"name":"Liberty Mutual Insurance Company",
+"name":"LIBERTY MUTUAL INSURANCE COMPANY",
 "cnpj":"08.712.487/0001-47",
 "flags":{
 "openInsuranceParticipant":false
@@ -5013,7 +5013,7 @@
 },
 {
 "id":"042951",
-"name":"Transamerica International Re (Bermuda) Ltd.",
+"name":"TRANSAMERICA INTERNATIONAL RE (BERMUDA) LTD.",
 "cnpj":"09.539.939/0001-01",
 "flags":{
 "openInsuranceParticipant":false
@@ -5037,7 +5037,7 @@
 },
 {
 "id":"043419",
-"name":"Starr Insurance & Reinsurance Limited",
+"name":"STARR INSURANCE & REINSURANCE LIMITED",
 "cnpj":"20.869.397/0001-60",
 "flags":{
 "openInsuranceParticipant":false
@@ -5061,7 +5061,7 @@
 },
 {
 "id":"044661",
-"name":"Scor Global Life Americas Reinsurance Company",
+"name":"SCOR GLOBAL LIFE AMERICAS REINSURANCE COMPANY",
 "cnpj":"09.577.213/0001-55",
 "flags":{
 "openInsuranceParticipant":false
@@ -5085,7 +5085,7 @@
 },
 {
 "id":"044814",
-"name":"Partner Reinsurance Europe Se (Antiga Partner Reinsurance Europe Public Limited Company)",
+"name":"PARTNER REINSURANCE EUROPE SE (ANTIGA PARTNER REINSURANCE EUROPE PUBLIC LIMITED COMPANY)",
 "cnpj":"09.345.630/0001-72",
 "flags":{
 "openInsuranceParticipant":false
@@ -5133,7 +5133,7 @@
 },
 {
 "id":"044938",
-"name":"Financial Assurance Company Limited",
+"name":"FINANCIAL ASSURANCE COMPANY LIMITED",
 "cnpj":"17.944.714/0001-50",
 "flags":{
 "openInsuranceParticipant":false
@@ -5157,7 +5157,7 @@
 },
 {
 "id":"045004",
-"name":"Royal & Sun Alliance Insurance Plc",
+"name":"ROYAL & SUN ALLIANCE INSURANCE PLC",
 "cnpj":"10.274.217/0001-43",
 "flags":{
 "openInsuranceParticipant":false
@@ -5181,7 +5181,7 @@
 },
 {
 "id":"045420",
-"name":"Catlin Re Switzerland Ltd",
+"name":"CATLIN RE SWITZERLAND LTD",
 "cnpj":"03.492.427/0001-42",
 "flags":{
 "openInsuranceParticipant":false
@@ -5205,7 +5205,7 @@
 },
 {
 "id":"045896",
-"name":"Gard Marine & Energy Limited",
+"name":"GARD MARINE & ENERGY LIMITED",
 "cnpj":"16.365.597/0001-08",
 "flags":{
 "openInsuranceParticipant":false
@@ -5229,7 +5229,7 @@
 },
 {
 "id":"045926",
-"name":"Arden Reinsurance Company Ltd. ( Antiga Ariel Reinsurance Company Ltd.)",
+"name":"ARDEN REINSURANCE COMPANY LTD. ( ANTIGA ARIEL REINSURANCE COMPANY LTD.)",
 "cnpj":"11.459.147/0001-60",
 "flags":{
 "openInsuranceParticipant":false
@@ -5253,7 +5253,7 @@
 },
 {
 "id":"045951",
-"name":"Atradius Reinsurance Designated Activity Company",
+"name":"ATRADIUS REINSURANCE DESIGNATED ACTIVITY COMPANY",
 "cnpj":"29.166.269/0001-24",
 "flags":{
 "openInsuranceParticipant":false
@@ -5277,7 +5277,7 @@
 },
 {
 "id":"046507",
-"name":"Axis Re Se",
+"name":"AXIS Re SE",
 "cnpj":"11.499.800/0001-15",
 "flags":{
 "openInsuranceParticipant":false
@@ -5301,7 +5301,7 @@
 },
 {
 "id":"046761",
-"name":"Federal Insurance Company",
+"name":"FEDERAL INSURANCE COMPANY",
 "cnpj":"09.532.974/0001-90",
 "flags":{
 "openInsuranceParticipant":false
@@ -5325,7 +5325,7 @@
 },
 {
 "id":"047082",
-"name":"Hdi Global Network Ag",
+"name":"HDI GLOBAL NETWORK AG",
 "cnpj":"05.547.043/0001-05",
 "flags":{
 "openInsuranceParticipant":false
@@ -5349,7 +5349,7 @@
 },
 {
 "id":"047406",
-"name":"Financial Insurance Company Limited",
+"name":"FINANCIAL INSURANCE COMPANY LIMITED",
 "cnpj":"17.944.715/0001-03",
 "flags":{
 "openInsuranceParticipant":false
@@ -5373,7 +5373,7 @@
 },
 {
 "id":"047660",
-"name":"Westport Insurance Corporation",
+"name":"WESTPORT INSURANCE CORPORATION",
 "cnpj":"23.195.172/0001-63",
 "flags":{
 "openInsuranceParticipant":false
@@ -5397,7 +5397,7 @@
 },
 {
 "id":"047708",
-"name":"Xl Catlin Insurance Company Uk Limited (Antiga Catlin Insurance Company (Uk) Ltd)",
+"name":"XL CATLIN INSURANCE COMPANY UK LIMITED (Antiga Catlin Insurance Company (UK) Ltd)",
 "cnpj":"13.380.383/0001-12",
 "flags":{
 "openInsuranceParticipant":false
@@ -5421,7 +5421,7 @@
 },
 {
 "id":"047724",
-"name":"Mitsui Sumitomo Insurance Company, Limited",
+"name":"MITSUI SUMITOMO INSURANCE COMPANY, LIMITED",
 "cnpj":"05.598.097/0001-08",
 "flags":{
 "openInsuranceParticipant":false
@@ -5445,7 +5445,7 @@
 },
 {
 "id":"048178",
-"name":"Rga Global Reinsurance Company, Ltd.",
+"name":"RGA GLOBAL REINSURANCE COMPANY, LTD.",
 "cnpj":"18.120.916/0001-40",
 "flags":{
 "openInsuranceParticipant":false
@@ -5469,7 +5469,7 @@
 },
 {
 "id":"048186",
-"name":"Münchener Rückversicherungs-Gesellschaft Aktiengesellschaft In München",
+"name":"MÜNCHENER RÜCKVERSICHERUNGS-GESELLSCHAFT AKTIENGESELLSCHAFT IN MÜNCHEN",
 "cnpj":"048186",
 "flags":{
 "openInsuranceParticipant":false
@@ -5493,7 +5493,7 @@
 },
 {
 "id":"048259",
-"name":"Transatlantic Reinsurance Company",
+"name":"TRANSATLANTIC REINSURANCE COMPANY",
 "cnpj":"05.708.742/0001-90",
 "flags":{
 "openInsuranceParticipant":false
@@ -5517,7 +5517,7 @@
 },
 {
 "id":"048275",
-"name":"Zurich Insurance Company",
+"name":"ZURICH INSURANCE COMPANY",
 "cnpj":"05.617.056/0001-03",
 "flags":{
 "openInsuranceParticipant":false
@@ -5541,7 +5541,7 @@
 },
 {
 "id":"048879",
-"name":"General Reinsurance Ag",
+"name":"GENERAL REINSURANCE AG",
 "cnpj":"02.030.942/0001-48",
 "flags":{
 "openInsuranceParticipant":false
@@ -5565,7 +5565,7 @@
 },
 {
 "id":"049131",
-"name":"Arch Reinsurance Ltd.",
+"name":"ARCH REINSURANCE LTD.",
 "cnpj":"16.809.990/0001-43",
 "flags":{
 "openInsuranceParticipant":false
@@ -5589,7 +5589,7 @@
 },
 {
 "id":"049760",
-"name":"American Home Assurance Company",
+"name":"AMERICAN HOME ASSURANCE COMPANY",
 "cnpj":"05.489.278/0001-98",
 "flags":{
 "openInsuranceParticipant":false
@@ -5613,7 +5613,7 @@
 },
 {
 "id":"067407",
-"name":"Ibracor",
+"name":"IBRACOR",
 "cnpj":"19.438.946/0001-62",
 "flags":{
 "openInsuranceParticipant":false
@@ -5637,7 +5637,7 @@
 },
 {
 "id":"070076",
-"name":"Mexbrit Brasil Corretora De Resseguros Ltda.",
+"name":"MEXBRIT BRASIL CORRETORA DE RESSEGUROS LTDA.",
 "cnpj":"06.913.526/0001-49",
 "flags":{
 "openInsuranceParticipant":false
@@ -5661,7 +5661,7 @@
 },
 {
 "id":"070203",
-"name":"Circles Group Brasil Corretora De Resseguro S.A",
+"name":"CIRCLES GROUP BRASIL CORRETORA DE RESSEGURO S.A",
 "cnpj":"08.516.565/0001-38",
 "flags":{
 "openInsuranceParticipant":false
@@ -5685,7 +5685,7 @@
 },
 {
 "id":"070858",
-"name":"Guy Carpenter & Company Corretora De Resseguros Ltda.",
+"name":"GUY CARPENTER & COMPANY CORRETORA DE RESSEGUROS LTDA.",
 "cnpj":"45.887.171/0001-12",
 "flags":{
 "openInsuranceParticipant":false
@@ -5733,7 +5733,7 @@
 },
 {
 "id":"071269",
-"name":"Bks Re - Corretora De Resseguros Ltda.",
+"name":"BKS RE - CORRETORA DE RESSEGUROS LTDA.",
 "cnpj":"29.983.071/0001-33",
 "flags":{
 "openInsuranceParticipant":false
@@ -5757,7 +5757,7 @@
 },
 {
 "id":"071412",
-"name":"Universal Re Corretores De Resseguros Ltda.",
+"name":"UNIVERSAL RE CORRETORES DE RESSEGUROS LTDA.",
 "cnpj":"10.260.613/0001-11",
 "flags":{
 "openInsuranceParticipant":false
@@ -5781,7 +5781,7 @@
 },
 {
 "id":"071625",
-"name":"Bowring Marsh Corretora De Resseguros Ltda.",
+"name":"BOWRING MARSH CORRETORA DE RESSEGUROS LTDA.",
 "cnpj":"48.087.985/0001-60",
 "flags":{
 "openInsuranceParticipant":false
@@ -5805,7 +5805,7 @@
 },
 {
 "id":"072958",
-"name":"Arx-Re Corretora De Resseguros Ltda",
+"name":"ARX-RE CORRETORA DE RESSEGUROS LTDA",
 "cnpj":"09.656.599/0001-90",
 "flags":{
 "openInsuranceParticipant":false
@@ -5829,7 +5829,7 @@
 },
 {
 "id":"074667",
-"name":"Thb Re Corretora De Resseguros Ltda",
+"name":"THB RE CORRETORA DE RESSEGUROS LTDA",
 "cnpj":"09.591.510/0001-55",
 "flags":{
 "openInsuranceParticipant":false
@@ -5853,7 +5853,7 @@
 },
 {
 "id":"074811",
-"name":"Uib Re Brasil Corretora De Resseguros Ltda",
+"name":"UIB RE BRASIL CORRETORA DE RESSEGUROS LTDA",
 "cnpj":"09.476.647/0001-69",
 "flags":{
 "openInsuranceParticipant":false
@@ -5877,7 +5877,7 @@
 },
 {
 "id":"074934",
-"name":"Btg Pactual Corretora De Resseguros Ltda.",
+"name":"BTG PACTUAL CORRETORA DE RESSEGUROS LTDA.",
 "cnpj":"22.256.195/0001-78",
 "flags":{
 "openInsuranceParticipant":false
@@ -5901,7 +5901,7 @@
 },
 {
 "id":"075434",
-"name":"Willis Corretora De Resseguros Ltda.",
+"name":"WILLIS CORRETORA DE RESSEGUROS LTDA.",
 "cnpj":"29.981.859/0001-00",
 "flags":{
 "openInsuranceParticipant":false
@@ -5925,7 +5925,7 @@
 },
 {
 "id":"075761",
-"name":"Besso Re Brasil Corretora De Resseguros Ltda.",
+"name":"BESSO RE BRASIL CORRETORA DE RESSEGUROS LTDA.",
 "cnpj":"19.630.496/0001-05",
 "flags":{
 "openInsuranceParticipant":false
@@ -5949,7 +5949,7 @@
 },
 {
 "id":"075957",
-"name":"Inter Corretora De Resseguros Ltda.",
+"name":"INTER CORRETORA DE RESSEGUROS LTDA.",
 "cnpj":"05.362.227/0001-09",
 "flags":{
 "openInsuranceParticipant":false
@@ -5973,7 +5973,7 @@
 },
 {
 "id":"076503",
-"name":"Pluris Re Corretora De Resseguros Ltda",
+"name":"PLURIS RE CORRETORA DE RESSEGUROS LTDA",
 "cnpj":"10.910.474/0001-24",
 "flags":{
 "openInsuranceParticipant":false
@@ -5997,7 +5997,7 @@
 },
 {
 "id":"076767",
-"name":"Cooper Gay Do Brasil Corretora De Resseguros Ltda.",
+"name":"COOPER GAY DO BRASIL CORRETORA DE RESSEGUROS LTDA.",
 "cnpj":"05.375.622/0001-18",
 "flags":{
 "openInsuranceParticipant":false
@@ -6021,7 +6021,7 @@
 },
 {
 "id":"077003",
-"name":"Brazil Re Corretora De Resseguros Ltda.",
+"name":"BRAZIL RE CORRETORA DE RESSEGUROS LTDA.",
 "cnpj":"30.453.728/0001-30",
 "flags":{
 "openInsuranceParticipant":false
@@ -6045,7 +6045,7 @@
 },
 {
 "id":"077089",
-"name":"Brib Corretora De Resseguros Ltda",
+"name":"BRIB CORRETORA DE RESSEGUROS LTDA",
 "cnpj":"12.651.299/0001-23",
 "flags":{
 "openInsuranceParticipant":false
@@ -6069,7 +6069,7 @@
 },
 {
 "id":"077402",
-"name":"Truster Brasil Corretagem De Resseguros Ltda.",
+"name":"TRUSTER BRASIL CORRETAGEM DE RESSEGUROS LTDA.",
 "cnpj":"22.404.448/0001-03",
 "flags":{
 "openInsuranceParticipant":false
@@ -6093,7 +6093,7 @@
 },
 {
 "id":"077747",
-"name":"Capsicum Re Latin America Corretora De Resseguros Ltda.",
+"name":"CAPSICUM RE LATIN AMERICA CORRETORA DE RESSEGUROS LTDA.",
 "cnpj":"09.674.690/0001-39",
 "flags":{
 "openInsuranceParticipant":false
@@ -6117,7 +6117,7 @@
 },
 {
 "id":"078271",
-"name":"Jlt Re Brasil Administração E Corretagem De Resseguros Ltda",
+"name":"JLT RE BRASIL ADMINISTRAÇÃO E CORRETAGEM DE RESSEGUROS LTDA",
 "cnpj":"03.621.568/0001-18",
 "flags":{
 "openInsuranceParticipant":false
@@ -6141,7 +6141,7 @@
 },
 {
 "id":"078743",
-"name":"Aon Benfield Brasil Corretora De Resseguros Ltda",
+"name":"Aon Benfield Brasil Corretora de Resseguros Ltda",
 "cnpj":"02.757.429/0001-53",
 "flags":{
 "openInsuranceParticipant":false
@@ -6165,7 +6165,7 @@
 },
 {
 "id":"079766",
-"name":"Mds Re Corretora De Resseguros Ltda.",
+"name":"MDS RE CORRETORA DE RESSEGUROS LTDA.",
 "cnpj":"09.556.558/0001-22",
 "flags":{
 "openInsuranceParticipant":false
@@ -6189,7 +6189,7 @@
 },
 {
 "id":"002771",
-"name":"Sudaseg Seguradora De Danos E Pessoas S.A. - Microsseguradora",
+"name":"SUDASEG SEGURADORA DE DANOS E PESSOAS S.A. - MICROSSEGURADORA",
 "cnpj":"32.191.644/0001-09",
 "flags":{
 "openInsuranceParticipant":false
