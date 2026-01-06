@@ -21,23 +21,26 @@ SES_HEADERS = {
     ),
 }
 
-# URLs Oficiais (pode sobrescrever via env vars)
+# URLs Oficiais
 SES_LISTAEMPRESAS_URL = os.getenv(
     "SES_LISTAEMPRESAS_URL",
     "https://www2.susep.gov.br/menuestatistica/ses/download/LISTAEMPRESAS.csv",
 )
-# Preferir endpoint "direto" quando disponível
 SES_ZIP_URL = os.getenv(
     "SES_ZIP_URL",
     "https://www2.susep.gov.br/download/estatisticas/BaseCompleta.zip",
 )
-# Fallback histórico
 SES_ZIP_URL_FALLBACK = os.getenv(
     "SES_ZIP_URL_FALLBACK",
     "https://www2.susep.gov.br/redarq.asp?arq=BaseCompleta%2ezip",
 )
 
-CACHE_DIR = Path("data/raw/ses")
+# [MODIFICADO] Cache Dinâmico e Flag de Retenção
+# Permite usar /tmp no CI/CD para evitar IO no diretório de trabalho do git
+DEFAULT_CACHE_DIR = Path("data/raw/ses")
+CACHE_DIR = Path(os.getenv("SES_CACHE_DIR", str(DEFAULT_CACHE_DIR)))
+KEEP_ZIP = os.getenv("SES_KEEP_ZIP", "0") == "1"
+
 ALLOW_INSECURE_SSL = os.getenv("SES_ALLOW_INSECURE_SSL", "0") == "1"
 
 _DIGITS_RE = re.compile(r"\d+")
@@ -81,8 +84,7 @@ def _canonical_ses_id(raw) -> str:
 
 def _canonical_ses_id_series(series: pd.Series) -> pd.Series:
     """
-    Versão vetorizada da canonicalização (mais rápida em CSV grande).
-    Mantém "" para vazios (não gera '000000').
+    Versão vetorizada da canonicalização.
     """
     s = series.astype(str).str.strip().str.lower()
     s = s.str.replace("ses:", "", regex=False).str.replace("susep:", "", regex=False)
@@ -97,7 +99,7 @@ def _canonical_ses_id_series(series: pd.Series) -> pd.Series:
 
 def _parse_br_float(series: pd.Series) -> pd.Series:
     """
-    Converte strings numéricas pt-BR ('1.234,56') para float (1234.56), vetorizado.
+    Converte strings numéricas pt-BR ('1.234,56') para float (1234.56).
     """
     s = series.astype(str).str.strip()
     s = s.str.replace(".", "", regex=False).str.replace(",", ".", regex=False)
@@ -113,8 +115,7 @@ def _download_bytes(url: str, timeout: int) -> bytes:
 
 def _download_to_file(urls: Iterable[str], dest: Path, timeout: int) -> Path:
     """
-    Faz download streaming para arquivo (reduz risco de OOM e de ZIP corrompido).
-    Tenta URLs em ordem até conseguir.
+    Faz download streaming para arquivo.
     """
     verify_ssl = not ALLOW_INSECURE_SSL
     dest.parent.mkdir(parents=True, exist_ok=True)
@@ -139,9 +140,6 @@ def _download_to_file(urls: Iterable[str], dest: Path, timeout: int) -> Path:
 
 
 def _read_csv_bytes(content: bytes) -> pd.DataFrame:
-    """
-    Tenta ler CSV em ; e depois em , mantendo dtype=str.
-    """
     bio = io.BytesIO(content)
     try:
         return pd.read_csv(bio, sep=";", encoding="latin1", dtype=str, on_bad_lines="skip")
@@ -156,9 +154,6 @@ def _read_csv_bytes(content: bytes) -> pd.DataFrame:
 
 
 def _pick_col(cols_lower: List[str], candidates: List[str]) -> Optional[str]:
-    """
-    Retorna o nome da coluna (em lower-case) cuja string contenha algum candidato.
-    """
     for cand in candidates:
         cand_l = cand.lower()
         for c in cols_lower:
@@ -168,10 +163,6 @@ def _pick_col(cols_lower: List[str], candidates: List[str]) -> Optional[str]:
 
 
 def _detect_sep_and_header(z: zipfile.ZipFile, filename: str) -> Tuple[str, List[str], List[str], Dict[str, str]]:
-    """
-    Lê header de forma segura, sem seek: abre o arquivo apenas para header.
-    Retorna (sep, header_original, header_lower, lower_to_orig).
-    """
     for sep in (";", ","):
         try:
             with z.open(filename) as f:
@@ -193,10 +184,6 @@ def _compute_max_date_in_zipfile(
     c_data_orig: str,
     c_data_lower: str,
 ) -> int:
-    """
-    Faz streaming somente da coluna de data para obter o max.
-    Retorna 0 se não encontrado.
-    """
     max_date = 0
     with z.open(filename) as f:
         for chunk in pd.read_csv(
@@ -220,17 +207,6 @@ def _compute_max_date_in_zipfile(
 
 
 def extract_ses_master_and_financials():
-    """
-    Pipeline:
-    1) baixa master (LISTAEMPRESAS.csv) e monta universo companies[SID]
-    2) processa BaseCompleta.zip em streaming:
-       - detecta colunas
-       - calcula max_date (quando aplicável)
-       - aplica filtro temporal
-       - canonicaliza sid
-       - Universe Lockdown: sid precisa existir em companies
-       - agrega por sid e atualiza companies
-    """
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
     # --- 1) MASTER LIST ---
@@ -283,21 +259,21 @@ def extract_ses_master_and_financials():
 
     # --- 2) ZIP (download para disco) ---
     zip_path = CACHE_DIR / "BaseCompleta.zip"
-    print(f"SES: Baixando ZIP: {SES_ZIP_URL}")
+    print(f"SES: Baixando ZIP: {SES_ZIP_URL} em {zip_path}")
     try:
-        _download_to_file([SES_ZIP_URL, SES_ZIP_URL_FALLBACK], zip_path, timeout=300)
+        _download_to_file([SES_ZIP_URL, SES_ZIP_URL_FALLBACK], zip_path, timeout=600)
     except Exception as e:
         print(f"SES CRITICAL: Falha ao baixar ZIP: {e}")
         return SesMeta(), companies
 
-    # --- 3) Processamento do ZIP ---
+    # --- 3) Processamento ZIP ---
     try:
         with zipfile.ZipFile(zip_path) as z:
             all_files = z.namelist()
 
             targets = [
                 ("pl_margem", "PATRIMONIO"),
-                ("balanco", "PATRIMONIO"),  # layout especial: coenti/damesano/cmpid/valor/quadro
+                ("balanco", "PATRIMONIO"),
                 ("ses_seguros", "SEGUROS"),
                 ("contrib_benef", "PREVIDENCIA"),
                 ("ses_dados_cap", "CAPITALIZACAO"),
@@ -330,48 +306,31 @@ def extract_ses_master_and_financials():
                 c_data_l = _pick_col(header_lower, ["damesano"])
 
                 if not c_id_l:
-                    print(f"SES SKIP: {filename} sem coluna de ID (coenti). Header={header_lower[:15]}")
+                    print(f"SES SKIP: {filename} sem coluna de ID (coenti). Header={header_lower[:20]}")
                     continue
 
                 c_id = lower_to_orig.get(c_id_l, c_id_l)
                 c_data = lower_to_orig.get(c_data_l, c_data_l) if c_data_l else None
 
-                # Detecta colunas de valor (heurística robusta)
+                # Detecta colunas de valor
                 c_patrimonio_l: Optional[str] = None
                 c_receita_l: Optional[str] = None
                 c_despesa_l: Optional[str] = None
-                despesa_extra_l: Optional[str] = None  # Capitalização (ex.: sorteiosPagos)
+                despesa_extra_l: Optional[str] = None
                 balanco_layout = False
 
                 if file_type == "PATRIMONIO":
-                    # Caso 1: layout especial do SES_Balanco (valor/quadro)
                     if "valor" in header_lower and "quadro" in header_lower:
                         balanco_layout = True
                     else:
-                        # Caso 2: arquivos que já trazem PL/PLA diretamente (ex.: pl_margem)
                         c_patrimonio_l = _pick_col(
                             header_lower,
-                            [
-                                "plajustado",
-                                "pl_ajustado",
-                                "patrimonio",
-                                "patrim",
-                                "pla",
-                                "pl",
-                                "liquido",
-                                "líquido",
-                            ],
+                            ["plajustado", "pl_ajustado", "patrimonio", "patrim", "pla", "pl", "liquido", "líquido"],
                         )
 
                 elif file_type == "SEGUROS":
-                    c_receita_l = _pick_col(
-                        header_lower,
-                        ["premio_ganho", "premioganho", "premio_emitido", "premioemitido", "premios", "premio"],
-                    )
-                    c_despesa_l = _pick_col(
-                        header_lower,
-                        ["sinistro_ocorrido", "sinistroocorrido", "sinistro_corrido", "sinistrocorrido", "sinistros", "sinistro"],
-                    )
+                    c_receita_l = _pick_col(header_lower, ["premio_ganho", "premioganho", "premio_emitido", "premioemitido", "premios", "premio"])
+                    c_despesa_l = _pick_col(header_lower, ["sinistro_ocorrido", "sinistroocorrido", "sinistro_corrido", "sinistrocorrido", "sinistros", "sinistro"])
 
                 elif file_type == "PREVIDENCIA":
                     c_receita_l = _pick_col(header_lower, ["contrib", "arrec", "arrecadacao", "arrecada", "receita"])
@@ -379,28 +338,25 @@ def extract_ses_master_and_financials():
 
                 elif file_type == "CAPITALIZACAO":
                     c_receita_l = _pick_col(header_lower, ["receitascap", "receitacap", "receita", "arrec", "arrecadacao"])
-                    # Bug clássico: arquivo usa "valorResg" (não contém "resgate")
                     c_despesa_l = _pick_col(header_lower, ["valorresg", "resg", "resgate"])
-                    # Muitas bases também possuem "sorteiosPagos"
                     despesa_extra_l = _pick_col(header_lower, ["sorteios", "sorteiopago", "sorteiospagos", "sorteio"])
 
                 elif file_type == "RESSEGURO":
                     c_receita_l = _pick_col(header_lower, ["cessao", "cessoes", "premio_aceito", "premioaceito", "aceito", "receita"])
                     c_despesa_l = _pick_col(header_lower, ["recuperacao", "recuper", "sinistro_pago", "sinistropago", "despesa", "pago"])
 
-                # validação
+                # Gate de validade
                 if file_type == "PATRIMONIO":
                     if not (balanco_layout or c_patrimonio_l):
-                        print(f"SES SKIP: {filename} sem colunas de valor reconhecíveis. Header={header_lower[:20]}")
+                        print(f"SES SKIP: {filename} sem colunas de valor reconhecíveis. Header={header_lower[:25]}")
                         continue
                 else:
                     if not (c_receita_l and c_despesa_l):
-                        print(f"SES SKIP: {filename} sem colunas de valor reconhecíveis. Header={header_lower[:20]}")
+                        print(f"SES SKIP: {filename} sem colunas de valor reconhecíveis. Header={header_lower[:25]}")
                         continue
 
                 print(f"SES: Processando {filename} ({file_type})...")
 
-                # max_date
                 max_date = 0
                 if c_data and c_data_l:
                     try:
@@ -409,15 +365,12 @@ def extract_ses_master_and_financials():
                         print(f"SES WARN: Falha ao calcular max_date em {filename}: {e}")
                         max_date = 0
 
-                # usecols (com nomes originais)
                 usecols: List[str] = [c_id]
                 if c_data:
                     usecols.append(c_data)
 
                 if balanco_layout:
-                    c_valor = lower_to_orig.get("valor", "valor")
-                    c_quadro = lower_to_orig.get("quadro", "quadro")
-                    usecols.extend([c_valor, c_quadro])
+                    usecols.extend([lower_to_orig.get("valor", "valor"), lower_to_orig.get("quadro", "quadro")])
                 else:
                     if c_patrimonio_l:
                         usecols.append(lower_to_orig.get(c_patrimonio_l, c_patrimonio_l))
@@ -431,8 +384,6 @@ def extract_ses_master_and_financials():
                 net_worth_upd: Dict[str, float] = {}
                 prem_upd: Dict[str, float] = {}
                 clm_upd: Dict[str, float] = {}
-
-                # Balanco: somas por quadro
                 ativo_sum: Dict[str, float] = {}
                 passivo_sum: Dict[str, float] = {}
 
@@ -451,46 +402,40 @@ def extract_ses_master_and_financials():
                         # filtro temporal
                         if c_data and c_data_l and max_date > 0 and c_data_l in chunk.columns:
                             dates_num = pd.to_numeric(chunk[c_data_l], errors="coerce").fillna(0).astype(int)
-
                             if file_type == "PATRIMONIO":
                                 chunk = chunk[dates_num == int(max_date)]
                             else:
                                 target_year = str(int(max_date))[:4]
                                 chunk = chunk[dates_num.astype(str).str.startswith(target_year)]
-
                             if chunk.empty:
                                 continue
 
-                        # canonicaliza sid e aplica LOCKDOWN
-                        sid = _canonical_ses_id_series(chunk[c_id_l])
-                        chunk = chunk.assign(sid=sid)
+                        # lockdown
+                        sid_series = _canonical_ses_id_series(chunk[c_id_l])
+                        chunk["sid"] = sid_series
                         chunk = chunk[(chunk["sid"] != "") & (chunk["sid"].isin(companies))]
                         if chunk.empty:
                             continue
 
-                        # --- BALANCO: net worth ~ (Σ 22A - Σ 22P) ---
+                        # BALANCO
                         if file_type == "PATRIMONIO" and balanco_layout:
                             if "valor" not in chunk.columns or "quadro" not in chunk.columns:
                                 continue
-
                             vals = _parse_br_float(chunk["valor"])
                             q = chunk["quadro"].astype(str).str.strip().str.upper()
-
                             mA = q == "22A"
                             if mA.any():
                                 gA = vals[mA].groupby(chunk.loc[mA, "sid"]).sum()
                                 for k, v in gA.items():
                                     ativo_sum[k] = ativo_sum.get(k, 0.0) + float(v)
-
                             mP = q == "22P"
                             if mP.any():
                                 gP = vals[mP].groupby(chunk.loc[mP, "sid"]).sum()
                                 for k, v in gP.items():
                                     passivo_sum[k] = passivo_sum.get(k, 0.0) + float(v)
-
                             continue
 
-                        # --- PATRIMONIO direto (pl_margem etc.) ---
+                        # PATRIMONIO DIRETO
                         if file_type == "PATRIMONIO" and c_patrimonio_l:
                             if c_patrimonio_l not in chunk.columns:
                                 continue
@@ -499,24 +444,18 @@ def extract_ses_master_and_financials():
                             for k, v in g.items():
                                 if float(v) > 0:
                                     net_worth_upd[k] = max(net_worth_upd.get(k, 0.0), float(v))
-
-                        # --- FLUXOS ---
                         else:
+                            # FLUXOS
                             if not (c_receita_l and c_despesa_l):
                                 continue
                             if c_receita_l not in chunk.columns or c_despesa_l not in chunk.columns:
                                 continue
-
                             r = _parse_br_float(chunk[c_receita_l])
                             d = _parse_br_float(chunk[c_despesa_l])
-
-                            # Capitalização: soma sorteiosPagos (se existir) na despesa
                             if file_type == "CAPITALIZACAO" and despesa_extra_l and despesa_extra_l in chunk.columns:
                                 d = d + _parse_br_float(chunk[despesa_extra_l])
-
                             gr = r.groupby(chunk["sid"]).sum()
                             gd = d.groupby(chunk["sid"]).sum()
-
                             for k, v in gr.items():
                                 if float(v) != 0.0:
                                     prem_upd[k] = prem_upd.get(k, 0.0) + float(v)
@@ -524,22 +463,19 @@ def extract_ses_master_and_financials():
                                 if float(v) != 0.0:
                                     clm_upd[k] = clm_upd.get(k, 0.0) + float(v)
 
-                # Finaliza Balanco
+                # Updates
                 if file_type == "PATRIMONIO" and balanco_layout:
                     updated_any = 0
                     for k in set(ativo_sum.keys()) | set(passivo_sum.keys()):
                         equity = float(ativo_sum.get(k, 0.0) - passivo_sum.get(k, 0.0))
-                        # mantém o comportamento “seguro” do pipeline: aplica só se positivo
                         if equity > 0 and equity > companies[k]["net_worth"]:
                             companies[k]["net_worth"] = equity
                             if file_type not in companies[k]["sources_found"]:
                                 companies[k]["sources_found"].append(file_type)
                             updated_any += 1
-
                     print(f"SES: {updated_any} empresas do universo atualizadas via {filename}.")
                     continue
 
-                # aplica updates patrimônio direto
                 updated_any = 0
                 for k, v in net_worth_upd.items():
                     if float(v) > companies[k]["net_worth"]:
@@ -548,7 +484,6 @@ def extract_ses_master_and_financials():
                         companies[k]["sources_found"].append(file_type)
                     updated_any += 1
 
-                # fluxo acumula
                 for k, v in prem_upd.items():
                     companies[k]["premiums"] += float(v)
                     if file_type not in companies[k]["sources_found"]:
@@ -566,8 +501,16 @@ def extract_ses_master_and_financials():
 
     except Exception as e:
         print(f"SES CRITICAL: Erro ao processar ZIP: {e}")
+    finally:
+        # [MODIFICADO] Cleanup do ZIP (evita commit acidental de arquivo gigante)
+        if not KEEP_ZIP:
+            try:
+                if zip_path.exists():
+                    zip_path.unlink()
+                    print(f"SES: ZIP temporário removido ({zip_path})")
+            except Exception as e:
+                print(f"SES WARN: Falha ao remover ZIP temporário: {e}")
 
-    # integridade do universo
     final_count = len(companies)
     if final_count != master_count:
         print(f"SES ERROR: Universo foi alterado! Inicial={master_count}, Final={final_count}")
