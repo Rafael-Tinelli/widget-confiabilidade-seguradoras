@@ -4,7 +4,7 @@ name: refresh data
 on:
   workflow_dispatch:
   schedule:
-    - cron: "17 6 * * 0" # domingo 06:17 UTC
+    - cron: "17 6 * * 0"
 
 permissions:
   contents: write
@@ -24,7 +24,6 @@ jobs:
         with:
           fetch-depth: 0
 
-      # --- SETUP AMBIENTE (PYTHON + NODE) ---
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
@@ -35,27 +34,21 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          # Cache removido para evitar erros de setup inicial
 
-      # --- CONFIGURAÇÃO DE REDE ---
       - name: Configure Network Proxy Bypass
         run: |
           set -euo pipefail
           echo "NO_PROXY=${NO_PROXY:+$NO_PROXY,}dados.mj.gov.br,data.directory.opinbrasil.com.br" >> "$GITHUB_ENV"
           echo "no_proxy=${no_proxy:+$no_proxy,}dados.mj.gov.br,data.directory.opinbrasil.com.br" >> "$GITHUB_ENV"
 
-      # --- INSTALAÇÃO DEPS (MOVIDO PARA CIMA) ---
-      # Instalamos primeiro para garantir que o 'certifi' exista
       - name: Install Python deps
         run: |
           set -euo pipefail
           python -m pip install --upgrade pip
-          # Garante certifi explicitamente caso não esteja no requirements
           pip install certifi 
           pip install -r requirements.txt
           if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
 
-      # --- PIN CA BUNDLE (AGORA VAI FUNCIONAR) ---
       - name: Pin CA bundle for requests
         run: |
           set -euo pipefail
@@ -67,7 +60,6 @@ jobs:
           echo "REQUESTS_CA_BUNDLE=$CA" >> "$GITHUB_ENV"
           echo "SSL_CERT_FILE=$CA" >> "$GITHUB_ENV"
 
-      # --- PIPELINE DE DADOS (PYTHON) ---
       - name: Build JSON (participants)
         run: |
           set -euo pipefail
@@ -89,29 +81,26 @@ jobs:
           set -euo pipefail
           python -m api.build_insurers
         env:
-          SES_ZIP_URL: "https://www2.susep.gov.br/redarq.asp?arq=BaseCompleta%2ezip"
+          # [MODIFICADO] Aponta cache para /tmp para isolar o ZIP gigante
+          SES_CACHE_DIR: "/tmp/ses"
           SES_LISTAEMPRESAS_URL: "https://www2.susep.gov.br/menuestatistica/ses/download/LISTAEMPRESAS.csv"
-          SES_CACHE_DIR: "data/raw/ses"
+          SES_ZIP_URL: "https://www2.susep.gov.br/download/estatisticas/BaseCompleta.zip"
           MIN_INSURERS_COUNT: "200"
           MAX_COUNT_DROP_PCT: "0.20"
           SES_ALLOW_INSECURE_SSL: "1"
 
-      # --- PIPELINE DE FRONTEND (NODE/REACT) ---
       - name: Build Frontend Widget
         working-directory: ./widget-ui
         run: |
           npm install
           npm run build
 
-      # --- VERIFICAÇÃO (SMOKE CHECK) ---
       - name: Smoke-check (outputs + connectivity)
         run: |
           set -euo pipefail
           python - <<'PY'
           import json
           import os
-          import re
-          from datetime import datetime, timezone
           from pathlib import Path
           
           def fail(msg: str) -> None:
@@ -156,15 +145,17 @@ jobs:
           find data/snapshots -maxdepth 1 -name '*.json.gz' -printf '%T@ %p\n' \
             | sort -nr | awk 'NR>60 {print $2}' | xargs -r rm --
 
-      # --- COMMIT FINAL ---
       - name: Commit changes
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           
-          # Adiciona Dados + Frontend (widget-ui/dist)
-          git add -f api/v1 data/raw data/snapshots data/derived widget-ui/dist
+          # [MODIFICADO] Adiciona apenas derivados, nunca data/raw
+          git add api/v1 data/snapshots data/derived
+          
+          # Força apenas o frontend buildado
+          git add -f widget-ui/dist
           
           if git diff --cached --quiet; then
             echo "No changes to commit."
