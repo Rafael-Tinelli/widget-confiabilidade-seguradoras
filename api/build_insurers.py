@@ -76,7 +76,12 @@ def main() -> None:
         rep_entry, match_meta = matcher.get_entry(str(name), cnpj=cnpj_clean or cnpj_fmt)
 
         reputation_data = None
-        if rep_entry:
+        is_b2b_operation = False
+
+        if match_meta and getattr(match_meta, "is_b2b", False):
+            skipped_b2b += 1
+            is_b2b_operation = True
+        elif rep_entry:
             # IMPORTANTE (v3):
             # - Preserva o "statistics" bruto para o motor contextual (Observed vs Expected)
             # - Mantém também métricas simplificadas (compat/backward) se você já usa no frontend
@@ -124,7 +129,7 @@ def main() -> None:
             "id": str(final_id),
             "name": str(name),
             "cnpj": cnpj_fmt,
-            "flags": {"openInsuranceParticipant": is_participant},
+            "flags": {"openInsuranceParticipant": is_participant, "isB2B": is_b2b_operation},
             "data": {
                 # v3 intelligence lê netWorth (camelCase). Mantemos alias net_worth para compat.
                 "netWorth": comp.get("net_worth", 0.0),
@@ -200,6 +205,7 @@ def main() -> None:
             "stats": {
                 "totalInsurers": total_count,
                 "reputationMatched": matched_reputation,
+                "reputationSkippedB2B": skipped_b2b,
                 "openInsuranceParticipants": matched_opin,
             },
         },
