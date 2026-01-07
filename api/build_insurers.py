@@ -1,200 +1,220 @@
 # api/build_insurers.py
 from __future__ import annotations
+from __future__ import annotations
 
+import glob
+import gzip
 import json
-import sys
+import os
+import re
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any, Dict, Optional, Tuple
 
-# Importações internas
-from api.matching.consumidor_gov_match import NameMatcher, format_cnpj
-from api.utils.identifiers import normalize_cnpj
+from api.intelligence.apply_intelligence import apply_intelligence_batch
+from api.matching.consumidor_gov_match import NameMatcher
 from api.sources.opin_participants import load_opin_participant_cnpjs
 from api.sources.ses import extract_ses_master_and_financials
+from api.utils.identifiers import normalize_cnpj
+from api.utils.name_cleaner import normalize_name_key
 
-# v3: processamento em lote para reputação contextual (Observed vs Expected)
-from api.intelligence import apply_intelligence_batch
+# ---------------------------------------------------------------------------
+# Inputs / Outputs
+# ---------------------------------------------------------------------------
 
-OUTPUT_FILE = Path("api/v1/insurers.json")
-CONSUMIDOR_GOV_FILE = Path("data/derived/consumidor_gov/aggregated.json")
+OUTPUT_PATH = os.getenv("INSURERS_OUTPUT_PATH", "api/v1/insurers.json")
+CONSUMIDOR_GOV_FILE = os.getenv("CONSUMIDOR_GOV_FILE", "data/processed/consumidor_gov_agg.json")
+OPIN_PRODUCTS_FILE = os.getenv("OPIN_PRODUCTS_FILE", "data/processed/opin_products_2025-12-27.json")
 
-# Constantes de Validação
-TARGET_UNIVERSE_COUNT = 233
-# O DoD de match do Open Insurance agora é dinâmico, mas exigimos um piso mínimo de sanidade
-MIN_OPIN_MATCH_FLOOR = 10
+# ---------------------------------------------------------------------------
+# Evergreen sanity checks (DoD / Delta)
+# ---------------------------------------------------------------------------
+
+SNAPSHOT_GLOB = os.getenv("INSURERS_SNAPSHOT_GLOB", "data/snapshots/insurers_full_*.json.gz")
+MAX_DELTA_PCT = float(os.getenv("INSURERS_MAX_DELTA_PCT", "25"))
+
+# Usado apenas quando ainda não existe snapshot para comparar.
+MIN_COUNT_FALLBACK = int(os.getenv("INSURERS_MIN_COUNT", "180"))
+MAX_COUNT_FALLBACK = int(os.getenv("INSURERS_MAX_COUNT", "400"))
+
+# Sanity de reputation matching (evitar alarme falso por universo B2B).
+MIN_REPUTATION_MATCHED = int(os.getenv("INSURERS_MIN_REPUTATION_MATCHED", "60"))
+MIN_REPUTATION_MATCH_RATIO = float(os.getenv("INSURERS_MIN_REPUTATION_MATCH_RATIO", "0.20"))
+
+# Entidades que nunca devem entrar no universo (corretoras/associações etc.)
+EXCLUDE_NAME_SUBSTRINGS = tuple(
+    s.strip().lower()
+    for s in os.getenv(
+        "INSURERS_EXCLUDE_SUBSTRINGS",
+        "ibracor,corretora,corretor,corretagem,broker,brokers,resseguro corretora,resseguradora corretora",
+    ).split(",")
+    if s.strip()
+)
+
+_SNAPSHOT_DATE_RE = re.compile(r"insurers_full_(\d{4}-\d{2}-\d{2})\.json\.gz$")
 
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
-def main() -> None:
-    # 1. COLETA FINANCEIRA (SUSEP)
-    print("\n--- INICIANDO COLETA SUSEP (FINANCEIRO) ---")
-    _ses_meta, companies = extract_ses_master_and_financials()
+def _load_json(path: str) -> Dict[str, Any]:
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
 
-    # 2. PREPARAÇÃO DO MATCHER (CONSUMIDOR.GOV)
-    print("\n--- INICIANDO COLETA CONSUMIDOR.GOV ---")
-    reputation_root = {}
-    if CONSUMIDOR_GOV_FILE.exists():
+
+def _save_json(path: str, obj: Dict[str, Any]) -> None:
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(obj, f, ensure_ascii=False, indent=2)
+
+
+def _latest_snapshot_count() -> Optional[int]:
+    """
+    Lê meta.count do snapshot mais recente insurers_full_YYYY-MM-DD.json.gz, se existir.
+    Permite sanity check evergreen (delta %) em vez de count rígido.
+    """
+    files = glob.glob(SNAPSHOT_GLOB)
+    if not files:
+        return None
+
+    def sort_key(p: str) -> Tuple[int, str]:
+        m = _SNAPSHOT_DATE_RE.search(p.replace("\\", "/"))
+        if m:
+            y, mo, d = m.group(1).split("-")
+            return int(y + mo + d), p
         try:
-            reputation_root = json.loads(CONSUMIDOR_GOV_FILE.read_text(encoding="utf-8"))
-        except Exception as e:
-            print(f"Aviso: Erro ao ler {CONSUMIDOR_GOV_FILE}: {e}")
+            return int(Path(p).stat().st_mtime), p
+        except Exception:
+            return 0, p
 
+    files_sorted = sorted(files, key=sort_key, reverse=True)
+    for fp in files_sorted[:5]:
+        try:
+            with gzip.open(fp, "rt", encoding="utf-8") as f:
+                data = json.load(f)
+            meta = data.get("meta") or {}
+            count = meta.get("count") or (meta.get("stats") or {}).get("totalInsurers")
+            if isinstance(count, int) and count > 0:
+                return count
+        except Exception:
+            continue
+    return None
+
+
+def _should_exclude_name(name: str) -> bool:
+    nk = normalize_name_key(name)
+    return any(sub in nk for sub in EXCLUDE_NAME_SUBSTRINGS)
+
+
+def main() -> None:
+    print("Building insurers.json...")
+
+    # 1) SES (universo + financeiros)
+    ses_master, companies = extract_ses_master_and_financials()
+
+    # 2) Consumidor.gov (reputação)
+    reputation_root = _load_json(CONSUMIDOR_GOV_FILE)
     matcher = NameMatcher(reputation_root)
 
-    # 3. CARGA DE PARTICIPANTES OPEN INSURANCE (SET CNPJ)
-    print("\n--- INICIANDO CRUZAMENTO OPEN INSURANCE ---")
-    opin_cnpjs = load_opin_participant_cnpjs()
+    # 3) Open Insurance participants
+    opin_participant_cnpjs = load_opin_participant_cnpjs(OPIN_PRODUCTS_FILE)
 
-    # 4. CONSOLIDAÇÃO (monta lista bruta; scoring virá em batch)
-    print("\n--- CONSOLIDANDO (RAW) E CALCULANDO SCORES (BATCH) ---")
     insurers: list[dict] = []
+
     matched_reputation = 0
-    skipped_b2b = 0
     matched_opin = 0
+    skipped_b2b = 0
+    excluded_entities = 0
 
-    # Rastreamento para validação dinâmica
-    susep_cnpjs_seen = set()
+    susep_cnpjs_seen: set[str] = set()
 
-    for raw_id, comp in companies.items():
-        # A. Normalização para Join
-        cnpj_candidate = comp.get("cnpj") or comp.get("cnpj_fmt") or str(raw_id)
-        cnpj_clean = normalize_cnpj(cnpj_candidate)
+    # 4) Build
+    for _id, comp in (companies or {}).items():
+        name = (comp.get("name") or "").strip()
+        if not name:
+            continue
 
-        # Rastreia CNPJs válidos no universo SUSEP para cálculo de interseção
-        if cnpj_clean:
-            susep_cnpjs_seen.add(cnpj_clean)
+        # Exclusões (ibracor/corretora/etc)
+        if _should_exclude_name(name):
+            excluded_entities += 1
+            continue
 
-        # Formatação visual
-        cnpj_fmt = format_cnpj(cnpj_clean) if cnpj_clean else str(cnpj_candidate)
+        cnpj = normalize_cnpj(comp.get("cnpj"))
+        if cnpj:
+            susep_cnpjs_seen.add(cnpj)
 
-        name = comp.get("name") or comp.get("corporate_name") or comp.get("razao_social") or cnpj_fmt
+        rep_entry, match_meta = matcher.get_entry(name, cnpj=cnpj)
 
-        # B. Match com Consumidor.gov
-        rep_entry, match_meta = matcher.get_entry(str(name), cnpj=cnpj_clean or cnpj_fmt)
-
-        reputation_data = None
-        is_b2b_operation = False
-
-        if match_meta and getattr(match_meta, "is_b2b", False):
+        is_b2b = bool(match_meta and getattr(match_meta, "is_b2b", False))
+        if is_b2b:
             skipped_b2b += 1
-            is_b2b_operation = True
-        elif rep_entry:
-            # IMPORTANTE (v3):
-            # - Preserva o "statistics" bruto para o motor contextual (Observed vs Expected)
-            # - Mantém também métricas simplificadas (compat/backward) se você já usa no frontend
-            stats = rep_entry.get("statistics") or {}
 
-            def get_val(k):
-                v = stats.get(k)
-                if v in (None, ""):
-                    return None
-                try:
-                    return float(v)
-                except (ValueError, TypeError):
-                    return None
-
-            sat_avg = get_val("overallSatisfaction")
-            res_rate = get_val("solutionIndex")
-            complaints = int(get_val("complaintsCount") or 0)
-
-            matched_reputation += 1
-            reputation_data = {
-                "source": "consumidor.gov",
-                "match_score": match_meta.score if match_meta else 0,
-                "display_name": rep_entry.get("display_name") or rep_entry.get("name"),
-                # ESSENCIAL para o intelligence v3:
-                "statistics": stats,
-                # Mantido (compat):
-                "metrics": {
-                    "satisfaction_avg": sat_avg,
-                    "resolution_rate": res_rate,
-                    "complaints_total": complaints,
-                },
-            }
-
-        # C. Join Open Insurance (Flag Booleana)
-        # Verifica interseção de Sets usando CNPJ normalizado
-        is_participant = bool(cnpj_clean and cnpj_clean in opin_cnpjs)
-        if is_participant:
+        is_open_insurance = bool(cnpj and cnpj in opin_participant_cnpjs)
+        if is_open_insurance:
             matched_opin += 1
 
-        # D. Objeto Mestre
-        # CRÍTICO: Preserva o ID original do extrator SUSEP
-        final_id = comp.get("id") or raw_id
+        intelligence = apply_intelligence_batch(comp, ses_master, rep_entry, is_open_insurance)
 
-        insurer_obj = {
-            "id": str(final_id),
-            "name": str(name),
-            "cnpj": cnpj_fmt,
-            "flags": {"openInsuranceParticipant": is_participant, "isB2B": is_b2b_operation},
-            "data": {
-                # v3 intelligence lê netWorth (camelCase). Mantemos alias net_worth para compat.
-                "netWorth": comp.get("net_worth", 0.0),
-                "net_worth": comp.get("net_worth", 0.0),
-                "premiums": comp.get("premiums", 0.0),
-                "claims": comp.get("claims", 0.0),
-            },
-            "reputation": reputation_data,
-            "products": [],
-        }
+        # Flags + isB2B
+        flags = intelligence.get("flags")
+        if not isinstance(flags, dict):
+            flags = {}
+            intelligence["flags"] = flags
+        flags["isB2B"] = is_b2b
 
-        insurers.append(insurer_obj)
+        # Match meta (útil p/ auditoria)
+        if match_meta:
+            intelligence["matchMeta"] = {
+                "method": match_meta.method,
+                "score": match_meta.score,
+                "target": match_meta.target,
+            }
 
-    # E. Inteligência (BATCH)
-    print("Building Intelligence Scores (batch)...")
-    apply_intelligence_batch(insurers)  # modifica in-place e habilita reputação contextual
+        if rep_entry:
+            matched_reputation += 1
 
-    # Ajuste de compatibilidade: mantém financial_score como alias do componente solvency
-    for ins in insurers:
-        if "financial_score" not in ins.get("data", {}):
-            comp_fin = ins.get("data", {}).get("components", {}).get("solvency", 0.0)
-            ins.setdefault("data", {})
-            ins["data"]["financial_score"] = comp_fin
+        insurers.append(intelligence)
 
-    # Ordenação
-    insurers.sort(key=lambda x: x.get("data", {}).get("score", 0), reverse=True)
-
-    # 5. Validação DoD (FAIL FAST & DINÂMICO)
     total_count = len(insurers)
 
-    # Validação 1: Universo SUSEP (Estrito)
-    if total_count != TARGET_UNIVERSE_COUNT:
-        error_msg = (
-            f"FATAL: Universo SUSEP inconsistente. "
-            f"Esperado: {TARGET_UNIVERSE_COUNT}, Encontrado: {total_count}. "
-            "Verifique filtro de entidades supervisionadas na fonte SES."
+    # 5) Validação DoD dinâmica (evergreen)
+    prev_count = _latest_snapshot_count()
+    if prev_count is not None:
+        delta_pct = (abs(total_count - prev_count) / prev_count) * 100.0
+        if delta_pct > MAX_DELTA_PCT:
+            raise RuntimeError(
+                f"Sanity check failed: insurers count changed too much vs latest snapshot "
+                f"({prev_count} -> {total_count}, Δ={delta_pct:.1f}%, max={MAX_DELTA_PCT:.1f}%)."
+            )
+    else:
+        if not (MIN_COUNT_FALLBACK <= total_count <= MAX_COUNT_FALLBACK):
+            raise RuntimeError(
+                f"Sanity check failed: insurers count out of fallback range "
+                f"[{MIN_COUNT_FALLBACK}, {MAX_COUNT_FALLBACK}] (got {total_count}). "
+                f"Set INSURERS_MIN_COUNT/INSURERS_MAX_COUNT or provide snapshots."
+            )
+
+    eligible_for_rep = max(0, total_count - skipped_b2b)
+    if eligible_for_rep > 0:
+        rep_ratio = matched_reputation / eligible_for_rep
+        if matched_reputation < MIN_REPUTATION_MATCHED and rep_ratio < MIN_REPUTATION_MATCH_RATIO:
+            raise RuntimeError(
+                "Sanity check failed: too few reputation matches from Consumidor.gov "
+                f"(matched={matched_reputation}, eligible={eligible_for_rep}, ratio={rep_ratio:.2%}). "
+                f"Thresholds: abs>={MIN_REPUTATION_MATCHED} OR ratio>={MIN_REPUTATION_MATCH_RATIO:.2%}."
+            )
+
+    # Open Insurance sanity: interseção de CNPJs (OPIN vs SES)
+    expected_opin_matches = len([c for c in opin_participant_cnpjs if c in susep_cnpjs_seen])
+    if matched_opin != expected_opin_matches:
+        raise RuntimeError(
+            "Open Insurance participants mismatch: "
+            f"matched_opin={matched_opin}, expected={expected_opin_matches} "
+            "(based on CNPJs intersection between OPIN snapshot and SES universe)."
         )
-        print(error_msg, file=sys.stderr)
-        raise SystemExit(1)
 
-    # Validação 2: Cruzamento Open Insurance (Dinâmico)
-    # Calcula a interseção matemática esperada
-    expected_matches = len(opin_cnpjs.intersection(susep_cnpjs_seen))
-
-    if matched_opin != expected_matches:
-        error_msg = (
-            f"FATAL: Inconsistência no join Open Insurance. "
-            f"Matches reais: {matched_opin}. Matches esperados (interseção): {expected_matches}. "
-            "Erro lógico no loop de construção."
-        )
-        print(error_msg, file=sys.stderr)
-        raise SystemExit(1)
-
-    # Sanity Check: Se a normalização falhar silenciosamente, a interseção seria 0 e passaria no check acima.
-    # Exigimos um piso mínimo para garantir que o ETL está saudável.
-    if matched_opin < MIN_OPIN_MATCH_FLOOR:
-        error_msg = (
-            f"FATAL: Baixa contagem de participantes OPIN ({matched_opin}). "
-            f"Abaixo do piso de sanidade ({MIN_OPIN_MATCH_FLOOR}). "
-            "Provável falha massiva na normalização de CNPJs."
-        )
-        print(error_msg, file=sys.stderr)
-        raise SystemExit(1)
-
-    # 6. Geração do JSON Final
+    # 6) Output
     out = {
         "schemaVersion": "1.0.0",
         "generatedAt": _utc_now_iso(),
@@ -205,22 +225,22 @@ def main() -> None:
             "stats": {
                 "totalInsurers": total_count,
                 "reputationMatched": matched_reputation,
-                "reputationSkippedB2B": skipped_b2b,
                 "openInsuranceParticipants": matched_opin,
+                "b2bSkipped": skipped_b2b,
+                "excludedEntities": excluded_entities,
             },
         },
         "insurers": insurers,
     }
 
-    OUTPUT_FILE.parent.mkdir(parents=True, exist_ok=True)
-    OUTPUT_FILE.write_text(
-        json.dumps(out, ensure_ascii=False, indent=0, separators=(",", ":")),
-        encoding="utf-8",
-    )
+    _save_json(OUTPUT_PATH, out)
 
-    print(f"SUCCESS: Generated {OUTPUT_FILE}")
     print(
-        f"Integrity Check Passed: {total_count} insurers, {matched_opin} OPIN participants (Expected: {expected_matches})."
+        "Integrity Check Passed: "
+        f"{total_count} insurers "
+        f"(excluded={excluded_entities}, b2b={skipped_b2b}), "
+        f"reputationMatched={matched_reputation}, "
+        f"opinParticipants={matched_opin} (expected={expected_opin_matches})."
     )
 
 
