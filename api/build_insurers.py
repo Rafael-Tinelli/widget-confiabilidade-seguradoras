@@ -52,6 +52,7 @@ def main() -> None:
     print("\n--- CONSOLIDANDO (RAW) E CALCULANDO SCORES (BATCH) ---")
     insurers: list[dict] = []
     matched_reputation = 0
+    skipped_b2b = 0
     matched_opin = 0
 
     # Rastreamento para validação dinâmica
