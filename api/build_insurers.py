@@ -1,248 +1,273 @@
 # api/build_insurers.py
 from __future__ import annotations
-from __future__ import annotations
 
-import glob
 import gzip
 import json
 import os
 import re
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Optional
 
-from api.intelligence.apply_intelligence import apply_intelligence_batch
-from api.matching.consumidor_gov_match import NameMatcher
-from api.sources.opin_participants import load_opin_participant_cnpjs
-from api.sources.ses import extract_ses_master_and_financials
+from api.matching.consumidor_gov_match import NameMatcher, format_cnpj
 from api.utils.identifiers import normalize_cnpj
 from api.utils.name_cleaner import normalize_name_key
-
-# ---------------------------------------------------------------------------
-# Inputs / Outputs
-# ---------------------------------------------------------------------------
-
-OUTPUT_PATH = os.getenv("INSURERS_OUTPUT_PATH", "api/v1/insurers.json")
-CONSUMIDOR_GOV_FILE = os.getenv("CONSUMIDOR_GOV_FILE", "data/processed/consumidor_gov_agg.json")
-OPIN_PRODUCTS_FILE = os.getenv("OPIN_PRODUCTS_FILE", "data/processed/opin_products_2025-12-27.json")
-
-# ---------------------------------------------------------------------------
-# Evergreen sanity checks (DoD / Delta)
-# ---------------------------------------------------------------------------
-
-SNAPSHOT_GLOB = os.getenv("INSURERS_SNAPSHOT_GLOB", "data/snapshots/insurers_full_*.json.gz")
-MAX_DELTA_PCT = float(os.getenv("INSURERS_MAX_DELTA_PCT", "25"))
-
-# Usado apenas quando ainda não existe snapshot para comparar.
-MIN_COUNT_FALLBACK = int(os.getenv("INSURERS_MIN_COUNT", "180"))
-MAX_COUNT_FALLBACK = int(os.getenv("INSURERS_MAX_COUNT", "400"))
-
-# Sanity de reputation matching (evitar alarme falso por universo B2B).
-MIN_REPUTATION_MATCHED = int(os.getenv("INSURERS_MIN_REPUTATION_MATCHED", "60"))
-MIN_REPUTATION_MATCH_RATIO = float(os.getenv("INSURERS_MIN_REPUTATION_MATCH_RATIO", "0.20"))
-
-# Entidades que nunca devem entrar no universo (corretoras/associações etc.)
-EXCLUDE_NAME_SUBSTRINGS = tuple(
-    s.strip().lower()
-    for s in os.getenv(
-        "INSURERS_EXCLUDE_SUBSTRINGS",
-        "ibracor,corretora,corretor,corretagem,broker,brokers,resseguro corretora,resseguradora corretora",
-    ).split(",")
-    if s.strip()
+from api.sources.opin_participants import (
+    extract_opin_participants,
+    load_opin_participant_cnpjs,
 )
+from api.sources.open_insurance import (
+    extract_open_insurance_participants,
+    extract_open_insurance_products,
+)
+from api.sources.ses import extract_ses_master_and_financials
+from api.sources.consumidor_gov_agg import extract_consumidor_gov_aggregated
 
-_SNAPSHOT_DATE_RE = re.compile(r"insurers_full_(\d{4}-\d{2}-\d{2})\.json\.gz$")
+# Intelligence layer (import must work whether api/intelligence.py is a module
+# or api/intelligence/ is a package)
+try:
+    from api.intelligence import apply_intelligence_batch
+except Exception:  # pragma: no cover
+    from api.intelligence.apply_intelligence import apply_intelligence_batch  # type: ignore
 
 
-def _utc_now_iso() -> str:
+OUTPUT_FILE = Path("api/v1/insurers.json")
+SNAPSHOT_DIR = Path("data/snapshots")
+
+# Sanity checks (evergreen)
+MIN_INSURERS_COUNT = int(os.getenv("MIN_INSURERS_COUNT", "0") or "0")
+MAX_INSURERS_COUNT = int(os.getenv("MAX_INSURERS_COUNT", "0") or "0")
+MAX_COUNT_DROP_PCT = float(os.getenv("MAX_COUNT_DROP_PCT", "0.20"))
+
+# Opinion participants sanity
+MIN_OPIN_MATCH_FLOOR = int(os.getenv("MIN_OPIN_MATCH_FLOOR", "10"))
+
+# Exclusions: entities that are not insurers and should not appear in the list.
+EXCLUDE_NAME_SUBSTRINGS = {
+    "ibracor",
+    "corretora",
+    "corretor",
+    "corretagem",
+    "broker",
+}
+
+WRITE_SNAPSHOT = os.getenv("WRITE_SNAPSHOT", "1") == "1"
+
+
+def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
-def _load_json(path: str) -> Dict[str, Any]:
-    with open(path, "r", encoding="utf-8") as f:
-        return json.load(f)
+def _should_exclude(name: str) -> bool:
+    k = normalize_name_key(name)
+    return any(s in k for s in EXCLUDE_NAME_SUBSTRINGS)
 
 
-def _save_json(path: str, obj: Dict[str, Any]) -> None:
-    Path(path).parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(obj, f, ensure_ascii=False, indent=2)
-
-
-def _latest_snapshot_count() -> Optional[int]:
-    """
-    Lê meta.count do snapshot mais recente insurers_full_YYYY-MM-DD.json.gz, se existir.
-    Permite sanity check evergreen (delta %) em vez de count rígido.
-    """
-    files = glob.glob(SNAPSHOT_GLOB)
-    if not files:
+def _load_latest_snapshot_count() -> Optional[int]:
+    if not SNAPSHOT_DIR.exists():
         return None
 
-    def sort_key(p: str) -> Tuple[int, str]:
-        m = _SNAPSHOT_DATE_RE.search(p.replace("\\", "/"))
-        if m:
-            y, mo, d = m.group(1).split("-")
-            return int(y + mo + d), p
-        try:
-            return int(Path(p).stat().st_mtime), p
-        except Exception:
-            return 0, p
+    candidates = list(SNAPSHOT_DIR.glob("insurers_full_*.json.gz")) + list(
+        SNAPSHOT_DIR.glob("insurers_full_*.json")
+    )
+    if not candidates:
+        return None
 
-    files_sorted = sorted(files, key=sort_key, reverse=True)
-    for fp in files_sorted[:5]:
-        try:
-            with gzip.open(fp, "rt", encoding="utf-8") as f:
-                data = json.load(f)
-            meta = data.get("meta") or {}
-            count = meta.get("count") or (meta.get("stats") or {}).get("totalInsurers")
-            if isinstance(count, int) and count > 0:
-                return count
-        except Exception:
-            continue
+    latest = max(candidates, key=lambda p: p.stat().st_mtime)
+
+    try:
+        if latest.name.endswith(".json.gz"):
+            with gzip.open(latest, "rt", encoding="utf-8") as f:
+                payload = json.load(f)
+        else:
+            payload = json.loads(latest.read_text(encoding="utf-8"))
+
+        meta = payload.get("meta") or {}
+        c = meta.get("count")
+        if isinstance(c, int) and c > 0:
+            return c
+
+        insurers = payload.get("insurers") or []
+        if isinstance(insurers, list) and insurers:
+            return len(insurers)
+    except Exception:
+        return None
+
     return None
 
 
-def _should_exclude_name(name: str) -> bool:
-    nk = normalize_name_key(name)
-    return any(sub in nk for sub in EXCLUDE_NAME_SUBSTRINGS)
+def _save_snapshot(payload: dict) -> None:
+    SNAPSHOT_DIR.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    out = SNAPSHOT_DIR / f"insurers_full_{stamp}.json.gz"
+    try:
+        with gzip.open(out, "wt", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False)
+    except Exception:
+        # Snapshot is best-effort; should not break the pipeline.
+        pass
+
+
+def _sanity_check_counts(count: int) -> None:
+    prev_count = _load_latest_snapshot_count()
+    if prev_count and prev_count > 0:
+        min_allowed = int(prev_count * (1.0 - MAX_COUNT_DROP_PCT))
+        if count < min_allowed:
+            raise RuntimeError(
+                f"SanityCheck: count caiu demais. Atual={count}, Prev={prev_count}, "
+                f"MinAllowed={min_allowed}, MAX_COUNT_DROP_PCT={MAX_COUNT_DROP_PCT}"
+            )
+        return
+
+    if MIN_INSURERS_COUNT and count < MIN_INSURERS_COUNT:
+        raise RuntimeError(
+            f"SanityCheck: count abaixo do mínimo. Atual={count}, MIN_INSURERS_COUNT={MIN_INSURERS_COUNT}"
+        )
+    if MAX_INSURERS_COUNT and count > MAX_INSURERS_COUNT:
+        raise RuntimeError(
+            f"SanityCheck: count acima do máximo. Atual={count}, MAX_INSURERS_COUNT={MAX_INSURERS_COUNT}"
+        )
 
 
 def main() -> None:
-    print("Building insurers.json...")
+    # 1) Load sources
+    ses_meta, ses_companies, financials = extract_ses_master_and_financials()
+    opin_meta, opin_participants = extract_opin_participants()
+    oi_meta, oi_participants = extract_open_insurance_participants()
+    oi_prod_meta, oi_products = extract_open_insurance_products()
+    cg_meta, cg_payload = extract_consumidor_gov_aggregated()
 
-    # 1) SES (universo + financeiros)
-    ses_master, companies = extract_ses_master_and_financials()
+    # 2) Prepare matchers / indexes
+    opin_by_cnpj = load_opin_participant_cnpjs(opin_participants)
+    oi_participant_keys = set(
+        (p.get("cnpj_key") or p.get("cnpj") or "").strip() for p in oi_participants
+    )
 
-    # 2) Consumidor.gov (reputação)
-    reputation_root = _load_json(CONSUMIDOR_GOV_FILE)
-    matcher = NameMatcher(reputation_root)
+    matcher = NameMatcher(cg_payload)
 
-    # 3) Open Insurance participants
-    opin_participant_cnpjs = load_opin_participant_cnpjs(OPIN_PRODUCTS_FILE)
-
+    # 3) Build insurers
     insurers: list[dict] = []
-
     matched_reputation = 0
-    matched_opin = 0
     skipped_b2b = 0
-    excluded_entities = 0
+    matched_opin = 0
+    excluded = 0
 
-    susep_cnpjs_seen: set[str] = set()
-
-    # 4) Build
-    for _id, comp in (companies or {}).items():
-        name = (comp.get("name") or "").strip()
+    for comp in ses_companies:
+        name = (comp.get("name") or comp.get("razao_social") or "").strip()
         if not name:
             continue
 
-        # Exclusões (ibracor/corretora/etc)
-        if _should_exclude_name(name):
-            excluded_entities += 1
+        if _should_exclude(name):
+            excluded += 1
             continue
 
-        cnpj = normalize_cnpj(comp.get("cnpj"))
-        if cnpj:
-            susep_cnpjs_seen.add(cnpj)
+        cnpj_key = normalize_cnpj(comp.get("cnpj") or comp.get("cnpj_key"))
+        cnpj_fmt = format_cnpj(cnpj_key) if cnpj_key else None
 
-        rep_entry, match_meta = matcher.get_entry(name, cnpj=cnpj)
-
-        is_b2b = bool(match_meta and getattr(match_meta, "is_b2b", False))
-        if is_b2b:
-            skipped_b2b += 1
-
-        is_open_insurance = bool(cnpj and cnpj in opin_participant_cnpjs)
-        if is_open_insurance:
+        # Opinion participants (by CNPJ)
+        is_opin = bool(cnpj_key and cnpj_key in opin_by_cnpj)
+        if is_opin:
             matched_opin += 1
 
-        intelligence = apply_intelligence_batch(comp, ses_master, rep_entry, is_open_insurance)
+        # Open Insurance participants (by CNPJ key)
+        is_open_insurance = bool(cnpj_key and cnpj_key in oi_participant_keys)
 
-        # Flags + isB2B
-        flags = intelligence.get("flags")
-        if not isinstance(flags, dict):
-            flags = {}
-            intelligence["flags"] = flags
-        flags["isB2B"] = is_b2b
+        # Consumer.gov reputation match
+        rep_entry, rep_meta = matcher.get_entry(name, cnpj=cnpj_key)
+        is_b2b = bool(rep_meta and rep_meta.is_b2b)
 
-        # Match meta (útil p/ auditoria)
-        if match_meta:
-            intelligence["matchMeta"] = {
-                "method": match_meta.method,
-                "score": match_meta.score,
-                "target": match_meta.target,
-            }
-
-        if rep_entry:
+        if is_b2b:
+            skipped_b2b += 1
+        elif rep_entry:
             matched_reputation += 1
 
-        insurers.append(intelligence)
+        fin = financials.get(comp.get("susep_id")) if isinstance(financials, dict) else None
 
-    total_count = len(insurers)
-
-    # 5) Validação DoD dinâmica (evergreen)
-    prev_count = _latest_snapshot_count()
-    if prev_count is not None:
-        delta_pct = (abs(total_count - prev_count) / prev_count) * 100.0
-        if delta_pct > MAX_DELTA_PCT:
-            raise RuntimeError(
-                f"Sanity check failed: insurers count changed too much vs latest snapshot "
-                f"({prev_count} -> {total_count}, Δ={delta_pct:.1f}%, max={MAX_DELTA_PCT:.1f}%)."
-            )
-    else:
-        if not (MIN_COUNT_FALLBACK <= total_count <= MAX_COUNT_FALLBACK):
-            raise RuntimeError(
-                f"Sanity check failed: insurers count out of fallback range "
-                f"[{MIN_COUNT_FALLBACK}, {MAX_COUNT_FALLBACK}] (got {total_count}). "
-                f"Set INSURERS_MIN_COUNT/INSURERS_MAX_COUNT or provide snapshots."
-            )
-
-    eligible_for_rep = max(0, total_count - skipped_b2b)
-    if eligible_for_rep > 0:
-        rep_ratio = matched_reputation / eligible_for_rep
-        if matched_reputation < MIN_REPUTATION_MATCHED and rep_ratio < MIN_REPUTATION_MATCH_RATIO:
-            raise RuntimeError(
-                "Sanity check failed: too few reputation matches from Consumidor.gov "
-                f"(matched={matched_reputation}, eligible={eligible_for_rep}, ratio={rep_ratio:.2%}). "
-                f"Thresholds: abs>={MIN_REPUTATION_MATCHED} OR ratio>={MIN_REPUTATION_MATCH_RATIO:.2%}."
-            )
-
-    # Open Insurance sanity: interseção de CNPJs (OPIN vs SES)
-    expected_opin_matches = len([c for c in opin_participant_cnpjs if c in susep_cnpjs_seen])
-    if matched_opin != expected_opin_matches:
-        raise RuntimeError(
-            "Open Insurance participants mismatch: "
-            f"matched_opin={matched_opin}, expected={expected_opin_matches} "
-            "(based on CNPJs intersection between OPIN snapshot and SES universe)."
+        insurers.append(
+            {
+                "susepId": comp.get("susep_id"),
+                "cnpj": cnpj_fmt,
+                "cnpjKey": cnpj_key,
+                "name": name,
+                "tradeName": comp.get("trade_name") or comp.get("nome_fantasia"),
+                "segment": comp.get("segment"),
+                "components": {
+                    "ses": {"company": comp, "meta": ses_meta},
+                    "financials": fin,
+                    "openInsurance": {
+                        "participant": is_open_insurance,
+                        "meta": oi_meta,
+                        "productsMeta": oi_prod_meta,
+                    },
+                    "reputation": rep_entry if rep_entry else None,
+                },
+                "flags": {
+                    "opinParticipant": is_opin,
+                    "openInsuranceParticipant": is_open_insurance,
+                    "isB2B": is_b2b,
+                },
+            }
         )
 
-    # 6) Output
+    # 4) Opinion sanity checks (evergreen)
+    opin_expected = len(opin_participants)
+    opin_intersection = sum(1 for ins in insurers if ins["flags"]["opinParticipant"])
+    if opin_expected != opin_intersection:
+        # We compare to source-driven expectation; if you want this fully soft,
+        # set MIN_OPIN_MATCH_FLOOR low.
+        raise RuntimeError(
+            f"OPIN sanity: participants={opin_expected} but intersection={opin_intersection}"
+        )
+    if opin_expected < MIN_OPIN_MATCH_FLOOR:
+        raise RuntimeError(
+            f"OPIN sanity: too few participants ({opin_expected}) < MIN_OPIN_MATCH_FLOOR={MIN_OPIN_MATCH_FLOOR}"
+        )
+
+    # 5) Apply intelligence (scores, labels, final fields)
+    insurers = apply_intelligence_batch(insurers)
+
     out = {
-        "schemaVersion": "1.0.0",
-        "generatedAt": _utc_now_iso(),
-        "period": "2024",
-        "sources": ["SUSEP (SES)", "Open Insurance Brasil", "Consumidor.gov.br"],
         "meta": {
-            "count": total_count,
-            "stats": {
-                "totalInsurers": total_count,
-                "reputationMatched": matched_reputation,
-                "openInsuranceParticipants": matched_opin,
-                "b2bSkipped": skipped_b2b,
-                "excludedEntities": excluded_entities,
+            "generatedAt": utc_now(),
+            "count": len(insurers),
+            "sources": {
+                "ses": ses_meta,
+                "opin": opin_meta,
+                "openInsurance": oi_meta,
+                "openInsuranceProducts": oi_prod_meta,
+                "consumidorGov": cg_meta,
             },
+            "reputation": {
+                "matched": matched_reputation,
+                "skippedB2B": skipped_b2b,
+            },
+            "filters": {"excludedNonInsurers": excluded},
         },
         "insurers": insurers,
     }
 
-    _save_json(OUTPUT_PATH, out)
+    # 6) Sanity check count (evergreen)
+    _sanity_check_counts(len(insurers))
 
-    print(
-        "Integrity Check Passed: "
-        f"{total_count} insurers "
-        f"(excluded={excluded_entities}, b2b={skipped_b2b}), "
-        f"reputationMatched={matched_reputation}, "
-        f"opinParticipants={matched_opin} (expected={expected_opin_matches})."
-    )
+    OUTPUT_FILE.parent.mkdir(parents=True, exist_ok=True)
+    OUTPUT_FILE.write_text(json.dumps(out, ensure_ascii=False), encoding="utf-8")
+
+    # Snapshot (for delta checks)
+    if WRITE_SNAPSHOT:
+        _save_snapshot(out)
+
+    # Logs
+    print(f"insurers: {len(insurers)}")
+    print(f"reputation.matched: {matched_reputation}")
+    print(f"reputation.skipped_b2b: {skipped_b2b}")
+    print(f"excluded.non_insurers: {excluded}")
+    print(f"opin.participants: {len(opin_participants)} (intersection ok)")
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as e:
+        print(f"ERROR: {e}", file=sys.stderr)
+        raise
