@@ -6,126 +6,247 @@ import os
 import re
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 import requests
 
-OPIN_DIRECTORY_URL = os.getenv("OPIN_DIRECTORY_URL", "https://data.directory.opinbrasil.com.br/participants")
+# ---------------------------------------------------------------------
+# OPIN / Open Insurance Directory participants (source)
+# ---------------------------------------------------------------------
+
+OPIN_DIRECTORY_URL = os.getenv(
+    "OPIN_DIRECTORY_URL",
+    "https://data.directory.opinbrasil.com.br/participants",
+)
+
 CACHE_DIR = Path(os.getenv("OPIN_CACHE_DIR", "data/raw/opin"))
 CACHE_FILE = CACHE_DIR / "participants.json"
 
-_CNPJ_RE = re.compile(r"\D+")
+TIMEOUT = int(os.getenv("OPIN_TIMEOUT", "30"))
+
+# Accept both raw 14 digits and formatted CNPJ
+_CNPJ_DIGITS_RE = re.compile(r"\b(\d{14})\b")
+_CNPJ_FMT_RE = re.compile(r"\b(\d{2}\.?\d{3}\.?\d{3}\/?\d{4}-?\d{2})\b")
+
+# A few common keys that may hold CNPJ / Tax ID in different schemas
+_CNPJ_KEYS = (
+    "cnpj",
+    "CNPJ",
+    "taxId",
+    "TaxId",
+    "tax_id",
+    "TaxID",
+    "registrationNumber",
+    "RegistrationNumber",
+    "registration_id",
+    "RegistrationId",
+    "document",
+    "Documento",
+    "documento",
+    "cpf_cnpj",
+    "CPF/CNPJ",
+)
+
+# Some common container keys where the ID may live
+_CONTAINER_KEYS = (
+    "Organisation",
+    "Organization",
+    "organisation",
+    "organization",
+    "company",
+    "Company",
+    "registrations",
+    "Registrations",
+)
 
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
-def _clean_cnpj(v: Any) -> str | None:
-    d = _CNPJ_RE.sub("", str(v or ""))
-    return d if len(d) == 14 else None
+def _clean_cnpj(raw: Any) -> Optional[str]:
+    if raw is None:
+        return None
+    s = re.sub(r"\D", "", str(raw))
+    if len(s) != 14:
+        return None
+    return s
 
 
-def _iter_values(obj: Any) -> Iterable[Any]:
-    if isinstance(obj, dict):
-        for v in obj.values():
-            yield v
-            yield from _iter_values(v)
-    elif isinstance(obj, list):
-        for v in obj:
-            yield v
-            yield from _iter_values(v)
-
-
-def extract_opin_participants() -> Tuple[dict[str, Any], list[dict[str, Any]]]:
+def _ensure_participants_list(payload: Any) -> List[Dict[str, Any]]:
     """
-    Baixa (ou carrega do cache) o diretório de participantes do OPIN.
-    Retorna (meta, participants_list).
+    Normaliza diferentes schemas possíveis para uma lista de dicts.
     """
-    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    if isinstance(payload, list):
+        return [p for p in payload if isinstance(p, dict)]
 
-    meta: dict[str, Any] = {"url": OPIN_DIRECTORY_URL, "status": "unknown", "fetchedAt": None, "count": 0}
-    participants: list[dict[str, Any]] = []
+    if isinstance(payload, dict):
+        # Common wrappers: {"data":[...]}, {"participants":[...]}, {"result":[...]}, {"items":[...]}
+        for key in ("participants", "data", "result", "items"):
+            v = payload.get(key)
+            if isinstance(v, list):
+                return [p for p in v if isinstance(p, dict)]
 
+    return []
+
+
+def _read_cache() -> Tuple[str, Any]:
+    """
+    Returns (status, payload).
+    status in {"cache", "cache_miss", "cache_error"}.
+    """
+    if not CACHE_FILE.exists():
+        return "cache_miss", None
     try:
-        print(f"OPIN: GET {OPIN_DIRECTORY_URL}")
-        r = requests.get(OPIN_DIRECTORY_URL, timeout=30)
+        payload = json.loads(CACHE_FILE.read_text(encoding="utf-8"))
+        return "cache", payload
+    except Exception:
+        return "cache_error", None
+
+
+def _write_cache(payload: Any) -> None:
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    try:
+        CACHE_FILE.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    except Exception:
+        # cache is best-effort
+        pass
+
+
+def extract_opin_participants() -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
+    """
+    build_insurers.py espera:
+      opin_meta, opin_participants = extract_opin_participants()
+
+    Retorna:
+      - meta: dict com informações de coleta/cache
+      - participants: list[dict] (cada item = participante bruto)
+    """
+    meta: Dict[str, Any] = {
+        "source": "opin_directory",
+        "url": OPIN_DIRECTORY_URL,
+        "generatedAt": _utc_now(),
+        "status": "unknown",
+        "count": 0,
+        "cached": False,
+    }
+
+    # 1) Try live fetch
+    try:
+        headers = {
+            "Accept": "application/json, text/plain;q=0.9, */*;q=0.1",
+            "User-Agent": "Mozilla/5.0 (compatible; SanidaBot/1.0; +https://sanida.com.br)",
+        }
+        r = requests.get(OPIN_DIRECTORY_URL, headers=headers, timeout=TIMEOUT)
         r.raise_for_status()
-        data = r.json()
 
-        if isinstance(data, list):
-            participants = [p for p in data if isinstance(p, dict)]
-        elif isinstance(data, dict):
-            ps = data.get("participants")
-            if isinstance(ps, list):
-                participants = [p for p in ps if isinstance(p, dict)]
-            else:
-                participants = [data]
+        # Some endpoints return JSON; if not, this will raise.
+        payload = r.json()
+        _write_cache(payload)
 
-        CACHE_FILE.write_text(
-            json.dumps(
-                {"source": {"url": OPIN_DIRECTORY_URL, "fetchedAt": _utc_now()}, "participants": participants},
-                ensure_ascii=False,
-            ),
-            encoding="utf-8",
-        )
+        participants = _ensure_participants_list(payload)
         meta["status"] = "live"
-        meta["fetchedAt"] = _utc_now()
+        meta["count"] = len(participants)
+        meta["cached"] = False
+        return meta, participants
 
     except Exception as e:
-        print(f"OPIN WARN: falha no download ({e}). Tentando cache...")
-        if CACHE_FILE.exists():
-            try:
-                cached = json.loads(CACHE_FILE.read_text(encoding="utf-8"))
-                if isinstance(cached, dict) and isinstance(cached.get("participants"), list):
-                    participants = [p for p in cached["participants"] if isinstance(p, dict)]
-                meta["status"] = "cache"
-            except Exception as ce:
-                print(f"OPIN ERROR: cache inválido ({ce})")
-                meta["status"] = "empty"
-        else:
-            meta["status"] = "empty"
+        meta["status"] = "live_failed"
+        meta["error"] = str(e)
 
-    meta["count"] = len(participants)
-    return meta, participants
+    # 2) Fallback to cache
+    status, cached_payload = _read_cache()
+    if status == "cache":
+        participants = _ensure_participants_list(cached_payload)
+        meta["status"] = "cache"
+        meta["count"] = len(participants)
+        meta["cached"] = True
+        return meta, participants
+
+    # 3) Total failure -> empty list
+    meta["status"] = "empty"
+    meta["count"] = 0
+    meta["cached"] = False
+    return meta, []
 
 
-def load_opin_participant_cnpjs(participants: list[dict[str, Any]] | None = None) -> set[str]:
+def _extract_cnpjs_from_any(obj: Any) -> Set[str]:
     """
-    Extrai um set de CNPJs (14 dígitos) dos participantes OPIN.
+    Varredura robusta:
+    - tenta campos diretos (cnpj/taxId/etc.)
+    - tenta containers comuns
+    - faz scan regex no dump JSON do objeto para achar padrões de CNPJ
     """
-    if participants is None:
-        _, participants = extract_opin_participants()
+    found: Set[str] = set()
 
-    cnpjs: set[str] = set()
+    # 1) Direct keys and common containers
+    if isinstance(obj, dict):
+        for k in _CNPJ_KEYS:
+            if k in obj:
+                c = _clean_cnpj(obj.get(k))
+                if c:
+                    found.add(c)
 
-    for p in participants:
-        candidates = [
-            p.get("registrationNumber"),
-            p.get("RegistrationNumber"),
-            p.get("cnpj"),
-            p.get("Cnpj"),
-            p.get("TaxId"),
-            p.get("RegistrationId"),
-        ]
+        for ck in _CONTAINER_KEYS:
+            v = obj.get(ck)
+            if isinstance(v, dict):
+                found |= _extract_cnpjs_from_any(v)
+            elif isinstance(v, list):
+                for it in v:
+                    found |= _extract_cnpjs_from_any(it)
 
-        org_profile = p.get("OrganisationProfile") or p.get("OrganizationProfile")
-        if isinstance(org_profile, dict):
-            legal = org_profile.get("LegalEntity")
-            if isinstance(legal, dict):
-                candidates.append(legal.get("RegistrationNumber"))
-                candidates.append(legal.get("RegistrationId"))
+    elif isinstance(obj, list):
+        for it in obj:
+            found |= _extract_cnpjs_from_any(it)
 
-        for c in candidates:
-            cc = _clean_cnpj(c)
-            if cc:
-                cnpjs.add(cc)
+    # 2) Regex scan (deep fallback)
+    try:
+        dump = json.dumps(obj, ensure_ascii=False)
+        for m in _CNPJ_FMT_RE.findall(dump):
+            c = _clean_cnpj(m)
+            if c:
+                found.add(c)
+        for m in _CNPJ_DIGITS_RE.findall(dump):
+            c = _clean_cnpj(m)
+            if c:
+                found.add(c)
+    except Exception:
+        pass
 
+    return found
+
+
+def load_opin_participant_cnpjs(
+    participants_list: Optional[List[Dict[str, Any]]] = None,
+) -> Set[str]:
+    """
+    build_insurers.py espera:
+      opin_by_cnpj = load_opin_participant_cnpjs(opin_participants)
+
+    Retorna:
+      - Set[str] com CNPJs apenas dígitos (14 chars)
+    """
+    if participants_list is None:
+        _meta, participants_list = extract_opin_participants()
+
+    cnpjs: Set[str] = set()
+    for p in participants_list or []:
+        if not isinstance(p, dict):
+            continue
+
+        # try direct keys first (fast)
+        for k in _CNPJ_KEYS:
+            if k in p:
+                c = _clean_cnpj(p.get(k))
+                if c:
+                    cnpjs.add(c)
+
+        # deep fallback scan for each participant
         if not cnpjs:
-            for v in _iter_values(p):
-                cc = _clean_cnpj(v)
-                if cc:
-                    cnpjs.add(cc)
+            # NOTE: we only do deep scan if set is still empty to reduce cost.
+            cnpjs |= _extract_cnpjs_from_any(p)
+        else:
+            # even if we already have some, still allow capture from this participant
+            cnpjs |= _extract_cnpjs_from_any(p)
 
-    print(f"OPIN: {len(cnpjs)} CNPJs carregados.")
     return cnpjs
