@@ -5,158 +5,189 @@ import re
 import unicodedata
 from typing import Iterable, Set
 
+# ---------------------------------------------------------------------------
+# Single Source of Truth (SSoT) for name normalization and matching helpers.
+# Reutilize este módulo entre SES / Consumidor.gov / Open Insurance.
+# ---------------------------------------------------------------------------
 
-# -------------------------
-# Normalização
-# -------------------------
+# Tokens que normalmente são ruído jurídico/societário para matching de identidade.
+# Mantenha conservador: remover demais pode colapsar marcas distintas.
+STOPWORDS: Set[str] = {
+    # Societário / jurídico
+    "s", "a", "sa", "s.a", "s/a", "s.a.", "s.a", "ltda", "limitada", "me", "epp",
+    "cia", "cia.", "companhia", "companhia.", "comp", "sociedade", "soc", "anonima",
+    "anonima.", "mutual", "cooperativa", "participacoes", "participacoes.", "part",
+    "holding", "group", "grupo", "corp", "corporation", "inc", "llc", "plc", "ltd",
+    "branch", "filial", "sucursal", "se",
+
+    # Preposições e conectivos
+    "do", "da", "de", "dos", "das", "e", "y", "and", "of", "the",
+
+    # Geografia / escopo (cuidado para não matar marcas – evite termos “brand-like”)
+    "brasil", "brazil", "nacional", "international", "internacional", "global",
+    "latina", "latin",
+
+    # Setor (ruído para focar na marca)
+    "seguros", "seguro", "seguradora", "seguridade", "previdencia", "previdência",
+    "capitalizacao", "capitalização", "vida", "saude", "saúde", "dental",
+    "assistencia", "assistência", "garantias", "garantia", "credito", "crédito",
+    "beneficios", "benefícios", "gestora", "fundos", "fundo",
+}
+
+# Sinais fortes de B2B / Resseguro.
+# IMPORTANTE: usado para classificar "N/A correto" em reputação de varejo (Consumidor.gov),
+# não para esconder a entidade.
+B2B_SUBSTRINGS: tuple[str, ...] = (
+    # Resseguro core
+    "resseguro", "resseguradora", "resseguros",
+    "reinsurance", "reinsur", "reinsurer", "retrocession",
+    "ruck", "rueck", "rück", "ruckversicher", "rueckversicher", "rückversicher",
+
+    # B2B / corporate-specialty wording
+    "corporate solutions", "global corporate", "corporate & specialty",
+    "global corporate & specialty", "specialty", "speciality",
+    "marine", "energy", "aviation", "cargo", "surety", "bond", "bonds",
+
+    # Crédito / export credit (muito frequente em players B2B)
+    "credito a exportacao", "credito a exportação",
+    "credito y caucion", "crédito y caución",
+    "credito", "crédito",  # NOTE: isolado é amplo; não decide sozinho (ver heurística).
+    "exportacao", "exportação",
+
+    # Instituições que podem aparecer no dump SES e não são varejo
+    "abgf", "gestora de fundos garantidores", "fundos garantidores",
+    "sbce", "seguradora brasileira de credito a exportacao",
+    "seguradora brasileira de crédito à exportação",
+)
+
+# Hints por marca (substrings normalizadas) para casos de dump BR.
+B2B_BRAND_HINTS: tuple[str, ...] = (
+    "swiss re", "munich re", "munchener", "hannover ruck", "hannover rueck", "scor",
+    "lloyd", "argo re", "axis re", "catlin re", "starr insurance & reinsurance",
+    "financial assurance company", "royal & sun alliance", "factory mutual",
+    # Casos citados por você (dump)
+    "markel", "euler hermes", "atradius", "sbce", "abgf",
+    "credito a exportacao", "credito a exportação", "credito y caucion", "crédito y caución",
+    # Outros comuns em corporate/specialty
+    "xl insurance", "torus", "virginia surety", "westport", "federal insurance company",
+    "allianz global corporate",
+)
+
+
+def _ascii_fold(s: str) -> str:
+    return (
+        unicodedata.normalize("NFKD", s)
+        .encode("ascii", "ignore")
+        .decode("ascii")
+    )
+
 
 def normalize_name_key(name: str) -> str:
-    """Normalização canônica (humana) para chaves e comparações.
-
-    - remove acentos
+    """
+    Normalização canônica para chaves/matching base:
+    - NFKD + ASCII fold (remove acentos)
     - lowercase
-    - substitui tudo que não é [a-z0-9] por espaço
+    - troca não-alfanumérico por espaço
     - colapsa espaços
     """
     if not name:
         return ""
-    s = unicodedata.normalize("NFKD", str(name)).encode("ascii", "ignore").decode("ascii")
-    s = re.sub(r"[^a-z0-9]+", " ", s.lower())
-    return s.strip()
+    s = _ascii_fold(str(name)).lower()
+    s = re.sub(r"[^a-z0-9]+", " ", s).strip()
+    s = re.sub(r"\s+", " ", s)
+    return s
 
 
 def normalize_strong(name: str) -> str:
-    """Normalização forte (compacta): remove acentos e todos separadores.
-
-    Útil para detectar variações de espaçamento e pontuação.
-    Ex.: "Sul América" -> "sulamerica".
     """
-    key = normalize_name_key(name)
-    return key.replace(" ", "")
+    Normalização forte para string similarity (limiares altos).
+    Remove stopwords e retorna string compacta (sem espaços).
+    """
+    base = normalize_name_key(name)
+    if not base:
+        return ""
+    toks = [t for t in base.split() if t and t not in STOPWORDS and len(t) > 1]
+    return "".join(toks)
 
 
-# -------------------------
-# Stopwords (matching de identidade)
-# -------------------------
-
-# Observação: esta lista precisa ser **conservadora**.
-# Se removermos tokens que fazem parte da marca (ex.: "america"), o matcher perde sinal.
-STOPWORDS: Set[str] = {
-    # conectivos / artigos
-    "a", "o", "as", "os", "ao", "aos", "da", "das", "de", "do", "dos", "e", "y", "del", "la", "el",
-
-    # sufixos societários BR
-    "sa", "s a", "s a.", "s.a", "s.a.", "s/a",
-    "ltda", "limitada", "me", "epp", "eireli",
-
-    # sufixos societários/legais internacionais (comuns em resseguro / operações admitidas)
-    "inc", "corp", "corporation", "co", "company", "llc", "lp",
-    "ltd", "limited", "plc", "ag", "nv", "bv", "gmbh", "pte", "pty",
-
-    # termos societários genéricos
-    "cia", "cia.", "companhia", "sociedade", "grupo", "group", "holding", "participacoes", "participacao",
-    "filial", "sucursal", "branch",
-
-    # geografia (genérico, normalmente não é parte da marca)
-    "brasil", "brazil", "nacional", "internacional", "latina",
-
-    # setor (genérico)
-    "seguro", "seguros", "seguradora", "seguridade",
-    "previdencia", "previdenciaria",
-    "capitalizacao", "capitalizadora",
-    "vida", "saude", "dental", "odontologica",
-    "assistencia", "beneficios", "garantias", "garantia",
-    "gestora", "gestao", "fundos",
-
-    # inglês do setor
-    "insurance", "assurance",
-}
+def _add_fused_ngrams(tokens: list[str]) -> Set[str]:
+    """
+    Adiciona bigramas/trigramas fundidos para ajudar casos como:
+      'sul america'  <->  'sulamerica'
+      'porto seguro' <->  'portoseguro'
+    """
+    out: Set[str] = set()
+    for n in (2, 3):
+        for i in range(0, len(tokens) - n + 1):
+            out.add("".join(tokens[i : i + n]))
+    return out
 
 
 def get_name_tokens(name: str) -> Set[str]:
-    """Extrai tokens relevantes para matching fuzzy (marca-identidade)."""
-    key = normalize_name_key(name)
-    if not key:
+    """
+    Tokens úteis para fuzzy matching:
+    - remove stopwords
+    - remove tokens com len <= 1
+    - adiciona n-gramas fundidos
+    """
+    base = normalize_name_key(name)
+    if not base:
         return set()
-    tokens = set(key.split())
-    # Remove stopwords e tokens muito curtos
-    return {t for t in tokens if t not in STOPWORDS and len(t) > 1}
+
+    toks = [t for t in base.split() if t and t not in STOPWORDS and len(t) > 1]
+    out: Set[str] = set(toks)
+    out |= _add_fused_ngrams(toks)
+    return out
 
 
-# -------------------------
-# Heurísticas de B2B / Resseguro / Out-of-scope
-# -------------------------
-
-# Substrings (já normalizadas por normalize_name_key) que caracterizam entidades B2B
-B2B_SUBSTRINGS: Set[str] = {
-    # PT
-    "resseguro",
-    "resseguradora",
-    "corretora de resseguros",
-
-    # EN/ES
-    "reinsurance",
-    "reinsur",
-    "retrocession",
-
-    # mercados corporativos
-    "corporate solutions",
-    "global corporate",
-    "specialty",
-    "marine energy",
-    "trade credit",
-    "credito a exportacao",
-    "credito y caucion",
-
-    # mercados/lócus típicos
-    "lloyd",
-    "syndicate",
-}
-
-# Tokens isolados úteis (com checagens adicionais)
-B2B_TOKENS: Set[str] = {
-    "re",          # Argo RE, Axis Re, etc. (usado com heurística de tamanho)
-    "reinsurer",
-    "reinsurers",
-}
-
-
-def any_keyword_in(key: str, keywords: Iterable[str]) -> bool:
-    return any(kw in key for kw in keywords)
+def _has_any_substring(key: str, needles: Iterable[str]) -> bool:
+    return any(n in key for n in needles)
 
 
 def is_likely_b2b(name: str) -> bool:
-    """Heurística para decidir se reputação de Consumidor.gov é **não aplicável**.
+    """
+    Heurística para classificar entidades que não devem ser avaliadas por reputação varejo
+    (Consumidor.gov): resseguro, corporate-specialty, crédito à exportação etc.
+    Retorna True quando a entidade é provavelmente B2B-only / resseguro.
 
-    Retorna True para:
-    - resseguradoras e operações típicas B2B/corporativas
-    - corretoras de resseguros e entidades fora do escopo do Consumidor.gov
+    Observação: falsos positivos são piores que falsos negativos.
     """
     key = normalize_name_key(name)
-    if not key:
+
+    # Hard blocks: varejo conhecido (evitar falsos positivos)
+    if "sul america" in key or "sulamerica" in key:
+        return False
+    if "porto" in key and "seguro" in key:
+        return False
+    if "bradesco" in key or "itau" in key or "ita" in key:
         return False
 
-    # 1) Substrings fortes
-    if any_keyword_in(key, B2B_SUBSTRINGS):
+    if _has_any_substring(key, B2B_SUBSTRINGS):
+        # "credito" isolado é amplo; exige um cue forte adicional.
+        if "credito" in key or "crédito" in key:
+            strong_credit_cue = any(
+                c in key
+                for c in (
+                    "exportacao",
+                    "exportação",
+                    "credito y",
+                    "caucion",
+                    "caución",
+                    "sbce",
+                    "atradius",
+                    "euler hermes",
+                )
+            )
+            if strong_credit_cue:
+                return True
+        else:
+            return True
+
+    if _has_any_substring(key, B2B_BRAND_HINTS):
         return True
 
-    tokens = key.split()
-    token_set = set(tokens)
-
-    # 2.1) Entidades estrangeiras (normalmente B2B) com "Insurance/Assurance" e sem "Brasil/Brazil" no nome
-    if (("insurance" in token_set) or ("assurance" in token_set)) and ("brasil" not in token_set) and ("brazil" not in token_set):
-        return True
-
-    # 2) "RE" como token isolado (com limite de tamanho para evitar falsos positivos)
-    if "re" in token_set and len(tokens) <= 6:
-        return True
-
-    # 3) Padrões de "Rück" / "Rueck" (normaliza para ascii, então vira ruck/...)
-    if "ruck" in key or "rueck" in key:
-        return True
-
-    # 4) Casos curtos e conhecidos (muito comuns no universo de resseguro)
-    if key in {"scor se", "hannover ruck se", "lloyd s"}:
+    toks = set(key.split())
+    if "resseguro" in toks or "resseguradora" in toks or "resseguros" in toks:
         return True
 
     return False
