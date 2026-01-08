@@ -494,6 +494,10 @@ def main() -> None:
         premiums = _coerce_float(premiums_raw)
         claims = _coerce_float(claims_raw)
 
+        # [PATCH] Extração explícita de net_worth
+        net_worth_val = (fin or {}).get("net_worth") or comp.get("net_worth")
+        net_worth = _coerce_float(net_worth_val)
+
         products: List[Any] = []
         if cnpj_key:
             raw_products = oi_products_by_cnpj.get(cnpj_key, [])
@@ -509,6 +513,7 @@ def main() -> None:
                 "data": {
                     "premiums": premiums,
                     "claims": claims,
+                    "net_worth": net_worth, # [PATCH] Injeção explícita para intelligence
                     # mantém o breakdown sem quebrar o módulo de inteligência:
                     "premiumsRaw": _to_jsonable(premiums_raw) if isinstance(premiums_raw, (dict, list)) else premiums_raw,
                     "claimsRaw": _to_jsonable(claims_raw) if isinstance(claims_raw, (dict, list)) else claims_raw,
@@ -521,6 +526,7 @@ def main() -> None:
                 "cnpj": cnpj_fmt,
                 "cnpjKey": cnpj_key,
                 "tradeName": comp.get("trade_name") or comp.get("nome_fantasia"),
+                "reputation": rep_entry, # [PATCH] Reputação na raiz para intelligence
                 "components": {
                     "ses": {"company": comp, "meta": ses_meta_json},
                     "openInsurance": {
@@ -595,9 +601,9 @@ def main() -> None:
 
     # Logs
     print(f"insurers: {len(insurers)}")
-    print(f"reputation.matched: {0}")  # inteligência pode recomputar; mantemos simples aqui
-    print(f"reputation.skipped_b2b: {0}")
-    print(f"excluded.non_insurers: {0}")
+    print(f"reputation.matched: {matched_reputation}") # [PATCH] Variável real
+    print(f"reputation.skipped_b2b: {skipped_b2b}")   # [PATCH] Variável real
+    print(f"excluded.non_insurers: {excluded}")       # [PATCH] Variável real
     print(
         f"openInsurance.intersection.unique: {observed_opin_intersection} "
         f"(expected={expected_opin_intersection})"
