@@ -10,18 +10,15 @@ from pathlib import Path
 from typing import Optional, Set
 
 from api.matching.consumidor_gov_match import NameMatcher, format_cnpj
-from api.sources.consumidor_gov_agg import extract_consumidor_gov_aggregated
-from api.sources.open_insurance import (
-    extract_open_insurance_participants,
-    extract_open_insurance_products,
-)
+from api.utils.identifiers import normalize_cnpj
+from api.utils.name_cleaner import normalize_name_key, get_name_tokens
 from api.sources.opin_participants import (
     extract_opin_participants,
     load_opin_participant_cnpjs,
 )
+from api.sources.opin_products import extract_open_insurance_products
 from api.sources.ses import extract_ses_master_and_financials
-from api.utils.identifiers import normalize_cnpj
-from api.utils.name_cleaner import get_name_tokens, normalize_name_key
+from api.sources.consumidor_gov_agg import extract_consumidor_gov_aggregated
 
 # Intelligence layer (import must work whether api/intelligence.py is a module
 # or api/intelligence/ is a package)
@@ -139,7 +136,7 @@ def _debug_near_matches(matcher: NameMatcher, name: str) -> None:
     Only runs if DEBUG_MATCH=1.
     """
     try:
-        entries_list = getattr(matcher, "entries_list", None)
+        entries_list = getattr(matcher, "entries", None) or getattr(matcher, "entries_list", None)
         if not entries_list:
             return
 
@@ -148,7 +145,13 @@ def _debug_near_matches(matcher: NameMatcher, name: str) -> None:
             return
 
         scored: list[tuple[float, str]] = []
-        for db_tokens, entry in entries_list:
+        # entries usually: (tokens, strong_key, entry) OR (tokens, entry)
+        for item in entries_list:
+            if len(item) == 3:
+                db_tokens, _, entry = item
+            else:
+                db_tokens, entry = item
+
             inter = len(q.intersection(db_tokens))
             if inter == 0:
                 continue
@@ -182,9 +185,23 @@ def _debug_near_matches(matcher: NameMatcher, name: str) -> None:
 
 def main() -> None:
     # 1) Load sources
-    ses_meta, ses_companies, financials = extract_ses_master_and_financials()
+    
+    # [MODIFICADO] Bloco resiliente para extração SES (suporta retorno de 2 ou 3 valores)
+    ses_out = extract_ses_master_and_financials()
+    if isinstance(ses_out, tuple) and len(ses_out) == 3:
+        ses_meta, ses_companies, financials = ses_out
+    elif isinstance(ses_out, tuple) and len(ses_out) == 2:
+        ses_meta, ses_companies = ses_out
+        financials = {}
+    else:
+        raise RuntimeError(f"SES: retorno inesperado: {type(ses_out)}")
+
+    # ses_companies pode ser list[dict] OU dict[id -> dict]
+    ses_iter = ses_companies.values() if isinstance(ses_companies, dict) else ses_companies
+
     opin_meta, opin_participants = extract_opin_participants()
-    oi_meta, oi_participants = extract_open_insurance_participants()
+    # oi_meta unused directly here, kept for completeness if needed later
+    _oi_meta, oi_participants = extract_opin_participants() # Using same source for now
     oi_prod_meta, _oi_products = extract_open_insurance_products()
     cg_meta, cg_payload = extract_consumidor_gov_aggregated()
 
@@ -210,7 +227,8 @@ def main() -> None:
     susep_cnpjs_seen: Set[str] = set()
     opin_matched_unique: Set[str] = set()
 
-    for comp in ses_companies:
+    # [MODIFICADO] Itera sobre o iterador normalizado (lista ou values)
+    for comp in ses_iter:
         name = (comp.get("name") or comp.get("razao_social") or "").strip()
         if not name:
             continue
@@ -260,7 +278,7 @@ def main() -> None:
                     "financials": fin,
                     "openInsurance": {
                         "participant": is_open_insurance,
-                        "meta": oi_meta,
+                        "meta": opin_meta, # Using opin_meta as generic open insurance meta
                         "productsMeta": oi_prod_meta,
                     },
                     "reputation": rep_entry if rep_entry else None,
@@ -310,7 +328,7 @@ def main() -> None:
             "sources": {
                 "ses": ses_meta,
                 "opin": opin_meta,
-                "openInsurance": oi_meta,
+                "openInsurance": opin_meta, # Mirroring for compatibility
                 "openInsuranceProducts": oi_prod_meta,
                 "consumidorGov": cg_meta,
             },
