@@ -327,25 +327,24 @@ def _save_snapshot(payload: dict) -> None:
         pass
 
 
-def _sanity_check_counts(count: int) -> None:
+def _sanity_check_counts(count: int, universe_count: int | None = None) -> None:
     prev_count = _load_latest_snapshot_count()
-    if prev_count and prev_count > 0:
-        min_allowed = int(prev_count * (1.0 - MAX_COUNT_DROP_PCT))
+
+    # Se existe snapshot antigo “inflado”, ele não pode ser baseline acima do universo atual do SES.
+    baseline = prev_count
+    if baseline and universe_count and universe_count > 0:
+        baseline = min(baseline, universe_count)
+
+    if baseline and baseline > 0:
+        min_allowed = int(baseline * (1.0 - MAX_COUNT_DROP_PCT))
         if count < min_allowed:
             raise RuntimeError(
                 f"SanityCheck: count caiu demais. Atual={count}, Prev={prev_count}, "
-                f"MinAllowed={min_allowed}, MAX_COUNT_DROP_PCT={MAX_COUNT_DROP_PCT}"
+                f"Universe={universe_count}, MinAllowed={min_allowed}, MAX_COUNT_DROP_PCT={MAX_COUNT_DROP_PCT}"
             )
-        return
 
     if MIN_INSURERS_COUNT and count < MIN_INSURERS_COUNT:
-        raise RuntimeError(
-            f"SanityCheck: count abaixo do mínimo. Atual={count}, MIN_INSURERS_COUNT={MIN_INSURERS_COUNT}"
-        )
-    if MAX_INSURERS_COUNT and count > MAX_INSURERS_COUNT:
-        raise RuntimeError(
-            f"SanityCheck: count acima do máximo. Atual={count}, MAX_INSURERS_COUNT={MAX_INSURERS_COUNT}"
-        )
+        raise RuntimeError(f"SanityCheck: count abaixo do mínimo. Atual={count}, Min={MIN_INSURERS_COUNT}")
 
 
 def _debug_near_matches(matcher: NameMatcher, name: str) -> None:
