@@ -192,7 +192,9 @@ def main(months: int = 12) -> None:
             f"Req: abs>={CG_MIN_CNPJ_ABS} ou pct>={CG_MIN_CNPJ_PCT:.1%}"
         )
 
-    # 5. Exportação
+# 5. Exportação
+    by_name_data = {k: v.to_public() for k, v in merged_name.items()}
+
     out = {
         "meta": {
             "generated_at": _utc_now(),
@@ -205,7 +207,8 @@ def main(months: int = 12) -> None:
                 "source_has_cnpj_column": bool(has_cnpj_col_any),
             }
         },
-        "by_name": {k: v.to_public() for k, v in merged_name.items()},
+        "by_name": by_name_data,
+        "by_name_key": by_name_data,  # [PATCH] Alias para compatibilidade
         "by_cnpj_key": {k: v.to_public() for k, v in merged_cnpj.items()},
         "by_name_key_raw": {k: asdict(v) for k, v in merged_name.items()}
     }
