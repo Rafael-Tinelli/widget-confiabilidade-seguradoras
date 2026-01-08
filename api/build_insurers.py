@@ -581,7 +581,8 @@ def main() -> None:
     }
 
     # 10) Evergreen sanity check count
-    _sanity_check_counts(len(insurers))
+    universe_count = len(ses_companies) if isinstance(ses_companies, (dict, list)) else None
+    _sanity_check_counts(len(insurers), universe_count=universe_count)
 
     # 11) Write output
     OUTPUT_FILE.parent.mkdir(parents=True, exist_ok=True)
