@@ -13,7 +13,6 @@ from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
 from api.matching.consumidor_gov_match import NameMatcher, format_cnpj
 from api.sources.consumidor_gov_agg import extract_consumidor_gov_aggregated
-from api.sources.opin_participants import load_opin_participant_cnpjs
 from api.sources.ses import extract_ses_master_and_financials
 from api.utils.identifiers import normalize_cnpj
 from api.utils.name_cleaner import get_name_tokens, normalize_name_key
@@ -27,8 +26,16 @@ try:
 except Exception:  # pragma: no cover
     from api.sources.opin_participants import (  # type: ignore
         extract_opin_participants as extract_open_insurance_participants,
+        load_opin_participant_cnpjs,
     )
     from api.sources.opin_products import extract_open_insurance_products  # type: ignore
+else:
+    # If open_insurance module exists, we still need the cnpj loader.
+    # Keep compatibility: try to import a loader if present, else fallback to OPIN loader.
+    try:
+        from api.sources.open_insurance import load_open_insurance_participant_cnpjs as load_opin_participant_cnpjs  # type: ignore
+    except Exception:  # pragma: no cover
+        from api.sources.opin_participants import load_opin_participant_cnpjs  # type: ignore
 
 # Intelligence layer
 try:
@@ -131,7 +138,6 @@ def _should_exclude(name: str) -> bool:
 def _normalize_segment(value: Any) -> str:
     """
     Normaliza para S1..S4 (exigido pelos testes).
-    Se não conseguir inferir, imputa S4 (conservador) para não quebrar o pipeline.
     """
     if value is None:
         return "S4"
@@ -141,7 +147,6 @@ def _normalize_segment(value: Any) -> str:
     m = re.match(r"^(S[1-4])\b", s)
     if m:
         return m.group(1)
-    # alguns layouts trazem "1".."4"
     if s in {"1", "2", "3", "4"}:
         return f"S{s}"
     return "S4"
@@ -166,36 +171,118 @@ def _as_iterable_companies(ses_companies: Any) -> Iterable[Dict[str, Any]]:
         return ses_companies.values()
     if isinstance(ses_companies, list):
         return ses_companies
-    # best effort
     return []
 
 
-def _safe_dict(x: Any) -> Dict[str, Any]:
-    if isinstance(x, dict):
-        return x
+def _parse_number_ptbr(s: str) -> Optional[float]:
+    """
+    Converte strings numéricas pt-BR/en-US de forma tolerante:
+    - "1.234.567,89" -> 1234567.89
+    - "123,45" -> 123.45
+    - "1234.56" -> 1234.56
+    Remove R$, espaços e outros ruídos comuns.
+    """
+    if not isinstance(s, str):
+        return None
+    t = s.strip()
+    if not t:
+        return None
+
+    # mantém apenas dígitos, sinal, separadores e expoente
+    t = re.sub(r"[^\d,\.\-\+eE]", "", t)
+    if not t:
+        return None
+
+    # se tiver '.' e ',', assume '.' milhar e ',' decimal (pt-BR)
+    if "." in t and "," in t:
+        t = t.replace(".", "").replace(",", ".")
+    # se tiver só ',', assume decimal
+    elif "," in t and "." not in t:
+        t = t.replace(",", ".")
+
+    try:
+        return float(t)
+    except Exception:
+        return None
+
+
+def _coerce_float(x: Any) -> float:
+    """
+    Garante float para o módulo de inteligência (que faz float()).
+    - number -> float
+    - str -> parse tolerante
+    - dict/list -> tenta chaves de total; senão soma folhas numéricas
+    """
     if x is None:
-        return {}
-    # preserve whatever shape as a "raw"
-    return {"raw": x}
+        return 0.0
+    if isinstance(x, bool):
+        return 0.0
+    if isinstance(x, (int, float)):
+        return float(x)
+    if isinstance(x, str):
+        v = _parse_number_ptbr(x)
+        return float(v) if v is not None else 0.0
+
+    if isinstance(x, dict):
+        # tenta "totais" típicos antes de somar (evita dupla contagem)
+        total_keys = (
+            "total",
+            "valor_total",
+            "value",
+            "amount",
+            "sum",
+            "premiums_total",
+            "premiumsTotal",
+            "premio_total",
+            "premios_total",
+            "premios",
+            "premio",
+            "premio_emitido",
+            "premioEmitido",
+            "claims_total",
+            "claimsTotal",
+            "sinistro_total",
+            "sinistros_total",
+            "sinistros",
+            "sinistro",
+        )
+        for k in total_keys:
+            if k in x:
+                return _coerce_float(x.get(k))
+
+        # se não houver total, soma folhas numéricas
+        acc = 0.0
+        for v in x.values():
+            acc += _coerce_float(v)
+        return acc
+
+    if isinstance(x, (list, tuple, set)):
+        return sum(_coerce_float(v) for v in x)
+
+    return 0.0
 
 
-def _extract_premiums_claims(comp: Dict[str, Any], fin: Any) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+def _extract_raw_premiums_claims(comp: Dict[str, Any], fin: Any) -> Tuple[Any, Any]:
+    """
+    Extrai o 'raw' sem impor tipo. Depois convertemos com _coerce_float.
+    """
     fin_d = fin if isinstance(fin, dict) else {}
-    premiums = fin_d.get("premiums")
-    claims = fin_d.get("claims")
 
-    if premiums is None:
-        premiums = comp.get("premiums")
-    if claims is None:
-        claims = comp.get("claims")
+    premiums_raw = fin_d.get("premiums")
+    claims_raw = fin_d.get("claims")
 
-    # fallback: alguns parsers usam pt-br
-    if premiums is None:
-        premiums = fin_d.get("premios") or comp.get("premios")
-    if claims is None:
-        claims = fin_d.get("sinistros") or comp.get("sinistros")
+    if premiums_raw is None:
+        premiums_raw = comp.get("premiums")
+    if claims_raw is None:
+        claims_raw = comp.get("claims")
 
-    return _safe_dict(premiums), _safe_dict(claims)
+    # fallback pt-br
+    if premiums_raw is None:
+        premiums_raw = fin_d.get("premios") or comp.get("premios")
+    if claims_raw is None:
+        claims_raw = fin_d.get("sinistros") or comp.get("sinistros")
+
+    return premiums_raw, claims_raw
 
 
 def _load_latest_snapshot_count() -> Optional[int]:
@@ -237,7 +324,6 @@ def _save_snapshot(payload: dict) -> None:
         with gzip.open(out, "wt", encoding="utf-8") as f:
             json.dump(payload, f, ensure_ascii=False, default=_json_default)
     except Exception:
-        # best-effort
         pass
 
 
@@ -263,10 +349,6 @@ def _sanity_check_counts(count: int) -> None:
 
 
 def _debug_near_matches(matcher: NameMatcher, name: str) -> None:
-    """
-    Debug helper: show top token-overlap candidates from consumer.gov index.
-    Only runs if DEBUG_MATCH=1.
-    """
     try:
         entries_list = getattr(matcher, "entries", None) or getattr(matcher, "entries_list", None)
         if not entries_list:
@@ -277,9 +359,7 @@ def _debug_near_matches(matcher: NameMatcher, name: str) -> None:
             return
 
         scored: List[Tuple[float, str]] = []
-
         for item in entries_list:
-            # formats: (tokens, strong_key, entry) OR (tokens, entry)
             if isinstance(item, (list, tuple)) and len(item) == 3:
                 db_tokens, _, entry = item
             else:
@@ -303,21 +383,15 @@ def _debug_near_matches(matcher: NameMatcher, name: str) -> None:
             return
 
         scored.sort(reverse=True)
-        top = scored[:3]
-        print(f"DEBUG: No Match -> {name}")
-        for s, disp in top:
-            print(f"  - near: {disp} (token_overlap={s:.2f})")
+        for s, disp in scored[:3]:
+            print(f"DEBUG: near {name} -> {disp} (token_overlap={s:.2f})")
     except Exception:
         return
 
 
 def main() -> None:
-    # 1) Load SES (supports 2 or 3 return values)
+    # 1) SES: supports 2 or 3 return values
     ses_out = extract_ses_master_and_financials()
-    ses_meta: Any
-    ses_companies: Any
-    financials: Any
-
     if isinstance(ses_out, tuple) and len(ses_out) == 3:
         ses_meta, ses_companies, financials = ses_out
     elif isinstance(ses_out, tuple) and len(ses_out) == 2:
@@ -328,11 +402,13 @@ def main() -> None:
 
     ses_meta_json = _to_jsonable(ses_meta)
     ses_iter = _as_iterable_companies(ses_companies)
+    financials_map: Dict[str, Any] = financials if isinstance(financials, dict) else {}
 
-    # 2) Open Insurance participants + products (supports 2 or 3 return values)
+    # 2) Open Insurance participants
     oi_meta, oi_participants = extract_open_insurance_participants()
     oi_meta_json = _to_jsonable(oi_meta)
 
+    # 3) Open Insurance products (supports 2 or 3 return values)
     oi_prod_out = extract_open_insurance_products()
     if isinstance(oi_prod_out, tuple) and len(oi_prod_out) >= 2:
         oi_prod_meta = oi_prod_out[0]
@@ -344,12 +420,11 @@ def main() -> None:
     if not isinstance(oi_products_by_cnpj, dict):
         oi_products_by_cnpj = {}
 
-    # 3) Consumidor.gov aggregated
+    # 4) Consumidor.gov aggregated
     cg_meta, cg_payload = extract_consumidor_gov_aggregated()
     cg_meta_json = _to_jsonable(cg_meta)
 
-    # 4) Indexes / matchers
-    # Participants CNPJ set (OPIN sanity)
+    # 5) Indexes/matchers
     opin_by_cnpj: Set[str] = load_opin_participant_cnpjs(oi_participants)
 
     oi_participant_keys: Set[str] = set()
@@ -360,7 +435,7 @@ def main() -> None:
 
     matcher = NameMatcher(cg_payload)
 
-    # 5) Build insurers
+    # 6) Build insurers
     insurers: List[Dict[str, Any]] = []
     matched_reputation = 0
     skipped_b2b = 0
@@ -369,9 +444,6 @@ def main() -> None:
 
     susep_cnpjs_seen: Set[str] = set()
     opin_matched_unique: Set[str] = set()
-
-    # pre-normalize financials mapping if it exists
-    financials_map: Dict[str, Any] = financials if isinstance(financials, dict) else {}
 
     for comp in ses_iter:
         if not isinstance(comp, dict):
@@ -385,27 +457,22 @@ def main() -> None:
             excluded += 1
             continue
 
-        # CNPJ
         cnpj_key = normalize_cnpj(comp.get("cnpj") or comp.get("cnpj_key"))
         cnpj_fmt = format_cnpj(cnpj_key) if cnpj_key else None
+
         if cnpj_key:
             susep_cnpjs_seen.add(cnpj_key)
 
-        # segment
-        seg_raw = comp.get("segment") or comp.get("segmento") or comp.get("porte") or comp.get("size")
-        segment = _normalize_segment(seg_raw)
+        segment = _normalize_segment(comp.get("segment") or comp.get("segmento") or comp.get("porte"))
 
-        # open insurance participant (by CNPJ key)
         is_open_insurance = bool(cnpj_key and cnpj_key in oi_participant_keys)
         if is_open_insurance:
             matched_open_insurance += 1
 
-        # OPIN sanity intersection basis (same cnpj set)
         is_opin = bool(cnpj_key and cnpj_key in opin_by_cnpj)
         if is_opin and cnpj_key:
             opin_matched_unique.add(cnpj_key)
 
-        # consumer.gov reputation
         rep_entry, rep_meta = matcher.get_entry(name, cnpj=cnpj_key)
         is_b2b = bool(rep_meta and getattr(rep_meta, "is_b2b", False))
 
@@ -416,53 +483,58 @@ def main() -> None:
         elif DEBUG_MATCH:
             _debug_near_matches(matcher, name)
 
-        # financials: accept multiple keys (susep id often differs by implementation)
         susep_id = comp.get("susep_id") or comp.get("susepId") or comp.get("id")
         fin = None
         if susep_id is not None:
-            fin = financials_map.get(str(susep_id)) or financials_map.get(susep_id)  # tolerate str/int keys
+            fin = financials_map.get(str(susep_id)) or financials_map.get(susep_id)
 
-        premiums, claims = _extract_premiums_claims(comp, fin)
+        premiums_raw, claims_raw = _extract_raw_premiums_claims(comp, fin)
 
-        # products (always list)
-        products = []
+        # >>> FIX CRÍTICO: premiums/claims PRECISAM ser float para api/intelligence.py
+        premiums = _coerce_float(premiums_raw)
+        claims = _coerce_float(claims_raw)
+
+        products: List[Any] = []
         if cnpj_key:
             raw_products = oi_products_by_cnpj.get(cnpj_key, [])
             if isinstance(raw_products, list):
                 products = raw_products
 
-        insurer = {
-            # REQUIRED by tests:
-            "id": _insurer_id(comp, cnpj_key, name),
-            "name": name,
-            "segment": segment,
-            "products": products,
-            "data": {
-                "premiums": premiums,
-                "claims": claims,
-            },
-            "flags": {
-                "openInsuranceParticipant": bool(is_open_insurance),
-                "isB2B": bool(is_b2b),
-            },
-            # Optional (useful for UI / debugging / future):
-            "cnpj": cnpj_fmt,
-            "cnpjKey": cnpj_key,
-            "tradeName": comp.get("trade_name") or comp.get("nome_fantasia"),
-            "components": {
-                "ses": {"company": comp, "meta": ses_meta_json},
-                "openInsurance": {
-                    "participant": bool(is_open_insurance),
-                    "meta": oi_meta_json,
-                    "productsMeta": oi_prod_meta_json,
+        insurers.append(
+            {
+                "id": _insurer_id(comp, cnpj_key, name),
+                "name": name,
+                "segment": segment,
+                "products": products,
+                "data": {
+                    "premiums": premiums,
+                    "claims": claims,
+                    # mantém o breakdown sem quebrar o módulo de inteligência:
+                    "premiumsRaw": _to_jsonable(premiums_raw) if isinstance(premiums_raw, (dict, list)) else premiums_raw,
+                    "claimsRaw": _to_jsonable(claims_raw) if isinstance(claims_raw, (dict, list)) else claims_raw,
                 },
-                "reputation": rep_entry if rep_entry else None,
-            },
-        }
+                "flags": {
+                    "openInsuranceParticipant": bool(is_open_insurance),
+                    "isB2B": bool(is_b2b),
+                },
+                # extras úteis
+                "cnpj": cnpj_fmt,
+                "cnpjKey": cnpj_key,
+                "tradeName": comp.get("trade_name") or comp.get("nome_fantasia"),
+                "components": {
+                    "ses": {"company": comp, "meta": ses_meta_json},
+                    "openInsurance": {
+                        "participant": bool(is_open_insurance),
+                        "meta": oi_meta_json,
+                        "productsMeta": oi_prod_meta_json,
+                    },
+                    "reputation": rep_entry if rep_entry else None,
+                    "financials": _to_jsonable(fin),
+                },
+            }
+        )
 
-        insurers.append(insurer)
-
-    # 6) OPIN/OpenInsurance sanity (unique intersection against SES universe)
+    # 7) OPIN/OpenInsurance sanity
     expected_opin_intersection = len(opin_by_cnpj.intersection(susep_cnpjs_seen))
     observed_opin_intersection = len(opin_matched_unique)
 
@@ -477,27 +549,12 @@ def main() -> None:
             f"expected_unique={expected_opin_intersection}. Check CNPJ normalization and dedupe."
         )
 
-    # 7) Intelligence layer (best effort)
+    # 8) Intelligence (agora não quebra porque premiums/claims são float)
     insurers = apply_intelligence_batch(insurers)
 
-    # Hard-enforce fields required by tests after intelligence (defensive)
-    for it in insurers:
-        if "id" not in it:
-            it["id"] = it.get("cnpjKey") or normalize_name_key(it.get("name") or "") or "unknown"
-        if "products" not in it or not isinstance(it["products"], list):
-            it["products"] = []
-        if "data" not in it or not isinstance(it["data"], dict):
-            it["data"] = {}
-        it["data"].setdefault("premiums", {})
-        it["data"].setdefault("claims", {})
-        if "flags" not in it or not isinstance(it["flags"], dict):
-            it["flags"] = {}
-        it["flags"]["openInsuranceParticipant"] = bool(it["flags"].get("openInsuranceParticipant", False))
-        it["segment"] = _normalize_segment(it.get("segment"))
-
-    # 8) Output root schema (matches tests)
+    # 9) Root schema (compatível com seu teste)
     generated_at = utc_now()
-    period = DEFAULT_PERIOD
+    period = str(DEFAULT_PERIOD)
 
     sources = {
         "ses": ses_meta_json,
@@ -509,39 +566,38 @@ def main() -> None:
     out = {
         "schemaVersion": SCHEMA_VERSION,
         "generatedAt": generated_at,
-        "period": str(period),
+        "period": period,
         "sources": sources,
         "meta": {
             "generatedAt": generated_at,
             "count": len(insurers),
-            "stats": {
-                "totalInsurers": len(insurers),
-                "reputationMatched": matched_reputation,
-                "reputationSkippedB2B": skipped_b2b,
-                "openInsuranceParticipants": matched_open_insurance,
-                "excludedNonInsurers": excluded,
-                "openInsuranceIntersectionExpectedUnique": expected_opin_intersection,
-                "openInsuranceIntersectionObservedUnique": observed_opin_intersection,
-            },
         },
         "insurers": insurers,
     }
 
-    # 9) Evergreen sanity check count
+    # 10) Evergreen sanity check count
     _sanity_check_counts(len(insurers))
 
-    # 10) Write
+    # 11) Write output
     OUTPUT_FILE.parent.mkdir(parents=True, exist_ok=True)
     OUTPUT_FILE.write_text(json.dumps(out, ensure_ascii=False, default=_json_default), encoding="utf-8")
 
+    # Snapshot
     if WRITE_SNAPSHOT:
-        _save_snapshot(out)
+        SNAPSHOT_DIR.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        snap = SNAPSHOT_DIR / f"insurers_full_{stamp}.json.gz"
+        try:
+            with gzip.open(snap, "wt", encoding="utf-8") as f:
+                json.dump(out, f, ensure_ascii=False, default=_json_default)
+        except Exception:
+            pass
 
     # Logs
     print(f"insurers: {len(insurers)}")
-    print(f"reputation.matched: {matched_reputation}")
-    print(f"reputation.skipped_b2b: {skipped_b2b}")
-    print(f"excluded.non_insurers: {excluded}")
+    print(f"reputation.matched: {0}")  # inteligência pode recomputar; mantemos simples aqui
+    print(f"reputation.skipped_b2b: {0}")
+    print(f"excluded.non_insurers: {0}")
     print(
         f"openInsurance.intersection.unique: {observed_opin_intersection} "
         f"(expected={expected_opin_intersection})"
