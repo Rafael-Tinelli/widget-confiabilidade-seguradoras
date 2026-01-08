@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import re
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
@@ -40,6 +41,10 @@ INTERESTING_RESOURCES: Dict[str, str] = {
 }
 
 
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
 def _ci_get(obj: Any, *keys: str, default: Any = None) -> Any:
     if not isinstance(obj, dict):
         return default
@@ -72,11 +77,14 @@ def _load_participants() -> List[dict]:
     # Try local cache or repo snapshot first
     for p in [CACHE_PARTICIPANTS_FILE, PARTICIPANTS_FILE]:
         if p.exists() and (p == PARTICIPANTS_FILE or _is_cache_fresh(p)):
-            data = json.loads(p.read_text(encoding="utf-8"))
-            if isinstance(data, dict):
-                data = data.get("data", [])
-            if isinstance(data, list):
-                return data
+            try:
+                data = json.loads(p.read_text(encoding="utf-8"))
+                if isinstance(data, dict):
+                    data = data.get("data", [])
+                if isinstance(data, list):
+                    return data
+            except Exception:
+                continue
 
     # Download
     session = _build_session()
@@ -85,9 +93,14 @@ def _load_participants() -> List[dict]:
     payload = r.json()
     participants = payload.get("data") if isinstance(payload, dict) else payload
     if not isinstance(participants, list):
-        raise ValueError("Invalid structure")
+        # Fallback empty list instead of crash
+        return []
 
-    CACHE_PARTICIPANTS_FILE.write_text(json.dumps(participants, ensure_ascii=False, indent=2), encoding="utf-8")
+    try:
+        CACHE_PARTICIPANTS_FILE.write_text(json.dumps(participants, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+        
     return participants
 
 
