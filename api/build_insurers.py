@@ -21,8 +21,7 @@ from api.sources.opin_products import extract_open_insurance_products
 from api.sources.ses import extract_ses_master_and_financials
 from api.sources.consumidor_gov_agg import extract_consumidor_gov_aggregated
 
-# Intelligence layer (import must work whether api/intelligence.py is a module
-# or api/intelligence/ is a package)
+# Intelligence layer
 try:
     from api.intelligence import apply_intelligence_batch
 except Exception:  # pragma: no cover
@@ -31,20 +30,20 @@ except Exception:  # pragma: no cover
 
 OUTPUT_FILE = Path("api/v1/insurers.json")
 SNAPSHOT_DIR = Path("data/snapshots")
+SCHEMA_VERSION = "1.0.0"
 
 # Sanity checks (evergreen)
 MIN_INSURERS_COUNT = int(os.getenv("MIN_INSURERS_COUNT", "0") or "0")
 MAX_INSURERS_COUNT = int(os.getenv("MAX_INSURERS_COUNT", "0") or "0")
 MAX_COUNT_DROP_PCT = float(os.getenv("MAX_COUNT_DROP_PCT", "0.20"))
 
-# Opinion participants sanity (soft floor)
+# Opinion participants sanity
 MIN_OPIN_MATCH_FLOOR = int(os.getenv("MIN_OPIN_MATCH_FLOOR", "10"))
 
-# Debug: prints "near matches" for consumer.gov when no match (can be expensive).
+# Debug
 DEBUG_MATCH = os.getenv("DEBUG_MATCH", "0") == "1"
 
-# Exclusions: entities that are not insurers and should not appear in the list.
-# Keep this conservative: only exclude clear intermediaries.
+# Exclusions
 EXCLUDE_NAME_SUBSTRINGS = {
     "ibracor",
     "corretora",
@@ -139,14 +138,17 @@ def _load_latest_snapshot_count() -> Optional[int]:
         else:
             payload = json.loads(latest.read_text(encoding="utf-8"))
 
+        # Leitura defensiva do count
         meta = payload.get("meta") or {}
         c = meta.get("count")
         if isinstance(c, int) and c > 0:
             return c
-
-        insurers = payload.get("insurers") or []
-        if isinstance(insurers, list) and insurers:
+        
+        # Fallback: contar lista se meta.count falhar
+        insurers = payload.get("insurers")
+        if isinstance(insurers, list):
             return len(insurers)
+            
     except Exception:
         return None
 
@@ -161,7 +163,6 @@ def _save_snapshot(payload: dict) -> None:
         with gzip.open(out, "wt", encoding="utf-8") as f:
             json.dump(payload, f, ensure_ascii=False, default=_json_default)
     except Exception:
-        # Snapshot is best-effort; should not break the pipeline.
         pass
 
 
@@ -187,10 +188,6 @@ def _sanity_check_counts(count: int) -> None:
 
 
 def _debug_near_matches(matcher: NameMatcher, name: str) -> None:
-    """
-    Debug helper: show top token-overlap candidates from consumer.gov index.
-    Only runs if DEBUG_MATCH=1.
-    """
     try:
         entries_list = getattr(matcher, "entries", None) or getattr(matcher, "entries_list", None)
         if not entries_list:
@@ -201,34 +198,25 @@ def _debug_near_matches(matcher: NameMatcher, name: str) -> None:
             return
 
         scored: list[tuple[float, str]] = []
-        # entries usually: (tokens, strong_key, entry) OR (tokens, entry)
         for item in entries_list:
+            # Handle different matcher entry formats
             if len(item) == 3:
                 db_tokens, _, entry = item
             else:
                 db_tokens, entry = item
 
             inter = len(q.intersection(db_tokens))
-            if inter == 0:
-                continue
+            if inter == 0: continue
             denom = min(len(q), len(db_tokens))
-            if denom <= 0:
-                continue
+            if denom <= 0: continue
             score = inter / denom
-            if score <= 0:
-                continue
+            if score <= 0: continue
 
-            disp = (
-                (entry or {}).get("display_name")
-                or (entry or {}).get("name")
-                or (entry or {}).get("displayName")
-                or ""
-            )
+            disp = (entry or {}).get("display_name") or (entry or {}).get("name") or ""
             if disp:
                 scored.append((score, str(disp)))
 
-        if not scored:
-            return
+        if not scored: return
 
         scored.sort(reverse=True)
         top = scored[:3]
@@ -242,7 +230,7 @@ def _debug_near_matches(matcher: NameMatcher, name: str) -> None:
 def main() -> None:
     # 1) Load sources
     
-    # SES: Handle both 2-tuple and 3-tuple returns for compatibility
+    # SES: Handle both 2-tuple and 3-tuple returns
     ses_out = extract_ses_master_and_financials()
     if isinstance(ses_out, tuple) and len(ses_out) == 3:
         ses_meta, ses_companies, financials = ses_out
@@ -252,31 +240,32 @@ def main() -> None:
     else:
         raise RuntimeError(f"SES: retorno inesperado: {type(ses_out)}")
 
-    # [NOVO] Meta SES pode ser objeto (SesMeta). Converta 1x e reutilize.
+    # Convert SES Meta to JSON-safe dict
     ses_meta_json = _to_jsonable(ses_meta)
 
-    # ses_companies pode ser list[dict] OU dict[id -> dict]
+    # Handle list vs dict company structure
     ses_iter = ses_companies.values() if isinstance(ses_companies, dict) else ses_companies
 
+    # OPIN
     opin_meta, opin_participants = extract_opin_participants()
-    # oi_meta unused directly here, kept for completeness if needed later
-    _oi_meta, oi_participants = extract_opin_participants() # Using same source for now
+    # Reuse for "OpenInsurance" meta to avoid duplication
+    oi_participants = opin_participants 
+    
     oi_prod_meta, _oi_products = extract_open_insurance_products()
     cg_meta, cg_payload = extract_consumidor_gov_aggregated()
 
-    # [NOVO] Garanta serialização segura também para outras metas
+    # Convert metas to JSON-safe dicts
     opin_meta_json = _to_jsonable(opin_meta)
     oi_prod_meta_json = _to_jsonable(oi_prod_meta)
     cg_meta_json = _to_jsonable(cg_meta)
 
-    # 2) Prepare matchers / indexes
+    # 2) Prepare matchers
     opin_by_cnpj: Set[str] = load_opin_participant_cnpjs(opin_participants)
-
+    
     oi_participant_keys: Set[str] = set()
     for p in oi_participants:
         k = normalize_cnpj(p.get("cnpj_key") or p.get("cnpj"))
-        if k:
-            oi_participant_keys.add(k)
+        if k: oi_participant_keys.add(k)
 
     matcher = NameMatcher(cg_payload)
 
@@ -287,14 +276,12 @@ def main() -> None:
     matched_opin = 0
     excluded = 0
 
-    # For OPIN sanity (unique intersection against SUSEP universe)
     susep_cnpjs_seen: Set[str] = set()
     opin_matched_unique: Set[str] = set()
 
     for comp in ses_iter:
         name = (comp.get("name") or comp.get("razao_social") or "").strip()
-        if not name:
-            continue
+        if not name: continue
 
         if _should_exclude(name):
             excluded += 1
@@ -306,16 +293,13 @@ def main() -> None:
         if cnpj_key:
             susep_cnpjs_seen.add(cnpj_key)
 
-        # Opinion participants (by CNPJ)
         is_opin = bool(cnpj_key and cnpj_key in opin_by_cnpj)
         if is_opin:
             matched_opin += 1
             opin_matched_unique.add(cnpj_key)
 
-        # Open Insurance participants (by CNPJ key)
         is_open_insurance = bool(cnpj_key and cnpj_key in oi_participant_keys)
 
-        # Consumer.gov reputation match
         rep_entry, rep_meta = matcher.get_entry(name, cnpj=cnpj_key)
         is_b2b = bool(rep_meta and getattr(rep_meta, "is_b2b", False))
 
@@ -328,53 +312,43 @@ def main() -> None:
 
         fin = financials.get(comp.get("susep_id")) if isinstance(financials, dict) else None
 
-        insurers.append(
-            {
-                "susepId": comp.get("susep_id"),
-                "cnpj": cnpj_fmt,
-                "cnpjKey": cnpj_key,
-                "name": name,
-                "tradeName": comp.get("trade_name") or comp.get("nome_fantasia"),
-                "segment": comp.get("segment"),
-                "components": {
-                    "ses": {"company": comp, "meta": ses_meta_json},
-                    "financials": fin,
-                    "openInsurance": {
-                        "participant": is_open_insurance,
-                        "meta": opin_meta_json, # Using opin_meta as generic open insurance meta
-                        "productsMeta": oi_prod_meta_json,
-                    },
-                    "reputation": rep_entry if rep_entry else None,
+        insurers.append({
+            "susepId": comp.get("susep_id"),
+            "cnpj": cnpj_fmt,
+            "cnpjKey": cnpj_key,
+            "name": name,
+            "tradeName": comp.get("trade_name") or comp.get("nome_fantasia"),
+            "segment": comp.get("segment"),
+            "components": {
+                "ses": {"company": comp, "meta": ses_meta_json},
+                "financials": fin,
+                "openInsurance": {
+                    "participant": is_open_insurance,
+                    "meta": opin_meta_json,
+                    "productsMeta": oi_prod_meta_json,
                 },
-                "flags": {
-                    "opinParticipant": is_opin,
-                    "openInsuranceParticipant": is_open_insurance,
-                    "isB2B": is_b2b,
-                },
-            }
-        )
+                "reputation": rep_entry if rep_entry else None,
+            },
+            "flags": {
+                "opinParticipant": is_opin,
+                "openInsuranceParticipant": is_open_insurance,
+                "isB2B": is_b2b,
+            },
+        })
 
-    # 4) OPIN sanity (evergreen, unique-based)
+    # 4) Sanity Checks
     expected_opin_intersection = len(opin_by_cnpj.intersection(susep_cnpjs_seen))
     observed_opin_intersection = len(opin_matched_unique)
 
     if expected_opin_intersection < MIN_OPIN_MATCH_FLOOR:
-        raise RuntimeError(
-            f"OPIN sanity: very low intersection (expected={expected_opin_intersection}) "
-            f"< MIN_OPIN_MATCH_FLOOR={MIN_OPIN_MATCH_FLOOR}"
-        )
+        raise RuntimeError(f"OPIN sanity: very low intersection {expected_opin_intersection} < {MIN_OPIN_MATCH_FLOOR}")
 
-    # If these diverge, we likely have normalization/dedup bugs.
     if observed_opin_intersection != expected_opin_intersection:
-        raise RuntimeError(
-            f"OPIN sanity: intersection mismatch. observed_unique={observed_opin_intersection} "
-            f"expected_unique={expected_opin_intersection}. Check CNPJ normalization and dedupe."
-        )
+        raise RuntimeError(f"OPIN sanity: mismatch observed={observed_opin_intersection} expected={expected_opin_intersection}")
 
-    # 5) Apply intelligence (scores, labels, final fields)
+    # 5) Intelligence
     insurers = apply_intelligence_batch(insurers)
 
-    # Keep schema stable; only enrich nested source meta (non-breaking)
     if isinstance(opin_meta_json, dict):
         opin_meta_json = {
             **opin_meta_json,
@@ -384,14 +358,25 @@ def main() -> None:
             },
         }
 
+    # 6) Output
     out = {
+        "schemaVersion": SCHEMA_VERSION,
+        "generatedAt": utc_now(),
+        "period": "2024",
         "meta": {
             "generatedAt": utc_now(),
             "count": len(insurers),
+            "stats": {
+                "totalInsurers": len(insurers),
+                "reputationMatched": matched_reputation,
+                "reputationSkippedB2B": skipped_b2b,
+                "openInsuranceParticipants": matched_opin,
+                "excludedNonInsurers": excluded,
+            },
             "sources": {
                 "ses": ses_meta_json,
                 "opin": opin_meta_json,
-                "openInsurance": opin_meta_json, # Mirroring for compatibility
+                "openInsurance": opin_meta_json,
                 "openInsuranceProducts": oi_prod_meta_json,
                 "consumidorGov": cg_meta_json,
             },
@@ -404,22 +389,19 @@ def main() -> None:
         "insurers": insurers,
     }
 
-    # 6) Sanity check count (evergreen)
     _sanity_check_counts(len(insurers))
 
     OUTPUT_FILE.parent.mkdir(parents=True, exist_ok=True)
     OUTPUT_FILE.write_text(json.dumps(out, ensure_ascii=False, default=_json_default), encoding="utf-8")
 
-    # Snapshot (for delta checks)
     if WRITE_SNAPSHOT:
         _save_snapshot(out)
 
-    # Logs
     print(f"insurers: {len(insurers)}")
     print(f"reputation.matched: {matched_reputation}")
     print(f"reputation.skipped_b2b: {skipped_b2b}")
     print(f"excluded.non_insurers: {excluded}")
-    print(f"opin.intersection.unique: {observed_opin_intersection} (expected={expected_opin_intersection})")
+    print(f"opin.intersection.unique: {observed_opin_intersection}")
 
 
 if __name__ == "__main__":
