@@ -5,34 +5,46 @@ import math
 from typing import Any, Dict, List, Optional, Tuple
 
 # --------------------------------------------------------------------------------------
-# Intelligence Engine (v3.1)
-#
-# Goals:
-# - Preserve existing public interface: calculate_score(insurer_obj) -> insurer_obj (in-place update)
-# - Preserve aggregation logic (final score composition):
-#     - With reputation: 50% Solvency + 40% Reputation + 10% Innovation
-#     - Without reputation: 80% Solvency + 20% Innovation
-# - Add batch processing (apply_intelligence_batch) to enable contextual "Observed vs Expected"
-#   complaint pressure scoring for reputation.
-# - Keep a legacy reputation scorer as a fallback when contextual benchmarks are unavailable.
+# Intelligence Engine
 # --------------------------------------------------------------------------------------
+#
+# Goal:
+# - Produce stable, explainable scores even when some inputs are missing.
+# - Be robust to upstream data hiccups (e.g., reputation dataset temporarily empty).
+#
+# Output contract (mutations on each insurer object):
+# - insurer["segment"]
+# - insurer["data"]["components"] = {"solvency": float, "reputation": float|None, "innovation": float}
+# - insurer["data"]["score"] = float
+# - insurer["data"]["lossRatio"] = float
+# - if reputation exists: insurer["reputation"]["indexes"] may be enriched
+#
+# NOTE: Keep changes minimal to avoid regressions in the UI/pipeline.
 
-# --- Calibration constants (Observed vs Expected reputation) ---
-ALPHA = 5.0  # Laplacian-style smoothing in "complaints count" space
-
-# [CORREÇÃO] Ajuste de pesos: Equilibra Volume (40%) com Qualidade (60%)
 WEIGHT_PRESSURE = 0.40
 WEIGHT_EFFICIENCY = 0.40
 WEIGHT_SATISFACTION = 0.20
 
-# Minimum premium used for expected complaints estimate (avoid division by zero / micro denominators)
+ALPHA = 5.0
+
+# For expected complaints scaling:
 MIN_PREMIUM_FOR_EXPECTED = 100_000.0
 
-# Premium threshold for market benchmark calculation (exclude micro/noise)
-MIN_PREMIUM_FOR_BENCHMARK = 100_000.0
+# For benchmark market_rate computation:
+# Lowering this improves benchmark stability when few companies have reputation matched.
+MIN_PREMIUM_FOR_BENCHMARK = 10_000.0
 
-# Module-global context set by apply_intelligence_batch (keeps calculate_score signature unchanged)
-_CONTEXT: Dict[str, Any] = {"market_rate": None}
+# If we matched "enough" insurers to reputation but total complaints is still zero,
+# it is overwhelmingly likely the upstream dataset is empty/incorrect (as per recent logs).
+MIN_MATCHED_FOR_SIGNAL_CHECK = 20
+
+_CONTEXT: Dict[str, Any] = {
+    "market_rate": None,
+    "bench_total_complaints": 0,
+    "bench_total_premiums": 0.0,
+    "bench_matched": 0,
+    "reputation_dataset_empty": False,
+}
 
 
 def _clamp(x: float, lo: float = 0.0, hi: float = 100.0) -> float:
@@ -45,57 +57,51 @@ def _safe_div(n: float, d: float, default: float = 0.0) -> float:
 
 def _extract_stats(reputation_data: dict) -> dict:
     """
-    [CORREÇÃO CRÍTICA] Normaliza dados de reputação.
-    Aceita tanto o formato aninhado 'statistics' (v2) quanto o formato plano (v3/dump).
-    Isso impede que a nota zere se a estrutura mudar.
+    Supports both:
+      - our aggregated format (total_claims, resolved_claims, ...), and
+      - a nested { "statistics": { ... } } format.
     """
     if not reputation_data:
         return {}
 
-    # Tenta formato v2 (aninhado - legacy)
-    if "statistics" in reputation_data:
+    if "statistics" in reputation_data and isinstance(reputation_data["statistics"], dict):
         return reputation_data["statistics"]
 
-    # Tenta formato v3 (plano / dump do consumidor.gov)
-    # Mapeia chaves do dump para o padrão interno esperado pelas fórmulas
+    # Our normalized aggregated format (from build_consumidor_gov)
     return {
-        "complaintsCount": reputation_data.get("total_claims", 0),
-        "resolvedCount": reputation_data.get("resolved_claims", 0),
-        "respondedCount": reputation_data.get("responded_claims", 0),
-        "finalizedCount": reputation_data.get("finalized_claims", 0),
+        "complaintsCount": int(reputation_data.get("total_claims") or 0),
+        "resolvedCount": int(reputation_data.get("resolved_claims") or 0),
+        "respondedCount": int(reputation_data.get("responded_claims") or 0),
+        "finalizedCount": int(reputation_data.get("finalized_claims") or 0),
         "overallSatisfaction": _safe_div(
-            float(reputation_data.get("score_sum", 0)),
-            int(reputation_data.get("satisfaction_count", 0))
-        )
+            float(reputation_data.get("score_sum") or 0.0),
+            int(reputation_data.get("satisfaction_count") or 0),
+        ),
     }
 
 
-# -----------------------------
-# Solvency (unchanged from v2)
-# -----------------------------
+# --------------------------------------------------------------------------------------
+# Solvency (financial) score
+# --------------------------------------------------------------------------------------
 def calculate_solvency_score(data: dict) -> float:
     """
-    Calculates solvency score (0-100).
-    60% Net worth (log-scaled) + 40% Loss ratio stability.
+    Combines a (log) net-worth score with a loss-ratio distance-to-ideal score.
     """
     premiums = float(data.get("premiums", 0.0) or 0.0)
     claims = float(data.get("claims", 0.0) or 0.0)
-    
-    # [CORREÇÃO] Lê net_worth explicitamente (snake_case do SES ou camelCase legado)
     net_worth = float(data.get("net_worth", 0.0) or data.get("netWorth", 0.0) or 0.0)
 
-    # 1) Net worth score (log-scaled, softly clipped)
+    # Net worth score (log scale)
     if net_worth <= 100_000:
         net_worth_score = 0.0
     else:
-        # log10(100k)=5 => 0; log10(10mi)=7 => 40; log10(1bi)=9 => 80; log10(10bi)=10 => 100
         log_nw = math.log10(net_worth)
-        net_worth_score = _clamp((log_nw - 5) * 20)
+        net_worth_score = _clamp((log_nw - 5) * 20)  # 10^5 -> 0, 10^10 -> 100
 
-    # 2) Loss ratio score (ideal band ~40%-70%, center 60%)
+    # Loss ratio score (ideal ~0.60)
     lr = claims / premiums if premiums > 0 else 0.0
     if lr <= 0:
-        lr_score = 50.0  # unknown or extremely low, neutral
+        lr_score = 50.0
     else:
         dist = abs(lr - 0.60)
         lr_score = _clamp(100 - (dist * 200))
@@ -104,14 +110,14 @@ def calculate_solvency_score(data: dict) -> float:
     return round(final_score, 1)
 
 
-# --------------------------------------------------------
-# Reputation (legacy / absolute) - preserved as fallback
-# --------------------------------------------------------
+# --------------------------------------------------------------------------------------
+# Reputation scores
+# --------------------------------------------------------------------------------------
 def calculate_reputation_score(reputation_data: dict) -> float:
     """
-    Legacy reputation score (0-100), used when market benchmark is unavailable.
+    Legacy fallback reputation score (absolute, not contextual to market).
+    Returns neutral 50 if data is missing or has zero complaints.
     """
-    # [CORREÇÃO] Usa o extrator robusto
     stats = _extract_stats(reputation_data)
     if not stats:
         return 50.0
@@ -126,48 +132,48 @@ def calculate_reputation_score(reputation_data: dict) -> float:
 
     answered_rate = _safe_div(answered, total)
     solved_rate = _safe_div(solved, total)
-    satisfaction_norm = _clamp((satisfaction - 1) * 25) if satisfaction > 0 else 0.0
 
+    # Satisfaction is typically 1..5 -> map to 0..100
+    sat_norm = _clamp((satisfaction - 1) * 25) if satisfaction > 0 else 0.0
+
+    # Efficiency focuses on response and resolution.
     efficiency = (answered_rate * 40) + (solved_rate * 40)
-    satisfaction_score = (satisfaction_norm / 100) * 20
-    volume_penalty = min(20.0, math.log10(total + 1) * 5)
 
-    final = efficiency + satisfaction_score - volume_penalty
+    # Mild penalty for very large volumes (avoid overpowering)
+    volume_penalty = min(10.0, math.log10(total + 1) * 2)
+
+    final = efficiency + (sat_norm * 0.20) - volume_penalty
     return round(_clamp(final), 1)
 
 
-# --------------------------------------------------------
-# Reputation (contextual) - Observed vs Expected (v3)
-# --------------------------------------------------------
-def calculate_complaint_pressure(
-    observed_complaints: int,
-    premiums_brl: float,
-    market_rate: float,
-) -> Tuple[float, float]:
+def calculate_complaint_pressure(observed: int, premiums: float, market_rate: float) -> Tuple[float, float]:
     """
-    Observed vs Expected complaint pressure.
+    Compute:
+      - pressure index: observed vs expected (Bayesian smoothing via ALPHA)
+      - pressure_score: maps pressure index to 0..100
     """
-    safe_premiums = max(float(premiums_brl or 0.0), MIN_PREMIUM_FOR_EXPECTED)
-    expected = safe_premiums * float(market_rate or 0.0)
+    safe_premiums = max(float(premiums or 0.0), MIN_PREMIUM_FOR_EXPECTED)
 
-    pressure = (float(observed_complaints) + ALPHA) / (float(expected) + ALPHA)
-    
-    # [CORREÇÃO] Suavização da curva de pressão (fator 0.33)
-    # Isso evita que empresas na média (pressure=1) caiam para nota 50. Agora ficam em ~75.
+    # Protect against zero/None market_rate (should not happen if contextual path is used correctly)
+    safe_market_rate = max(float(market_rate or 0.0), 1e-9)
+
+    expected = safe_premiums * safe_market_rate
+
+    pressure = (float(observed) + ALPHA) / (float(expected) + ALPHA)
+
+    # Pressure=1 => ~75; higher pressure decreases score; lower pressure increases score.
     score = 100.0 / (1.0 + (0.33 * pressure))
 
     return _clamp(score), max(0.0, pressure)
 
 
 def calculate_reputation_contextual(
-    reputation_data: dict,
-    premiums_brl: float,
-    market_rate: float,
+    reputation_data: dict, premiums: float, market_rate: float
 ) -> Optional[Dict[str, Any]]:
     """
-    Contextual reputation scorer (Observed vs Expected + operational + satisfaction).
+    Contextual reputation score (market-normalized complaint pressure).
+    Returns None if stats are unavailable.
     """
-    # [CORREÇÃO] Usa o extrator robusto
     stats = _extract_stats(reputation_data)
     if not stats:
         return None
@@ -176,28 +182,22 @@ def calculate_reputation_contextual(
     resolved_count = int(stats.get("resolvedCount") or 0)
     responded_count = int(stats.get("respondedCount") or 0)
     denom_resolution = int(stats.get("finalizedCount") or complaints_total or 0)
-    satisfaction = float(stats.get("overallSatisfaction") or 0.0)  # expected 1.0-5.0
+    satisfaction = float(stats.get("overallSatisfaction") or 0.0)
 
-    # Pillar 1: Complaint pressure (contextual)
     pressure_score, pressure_idx = calculate_complaint_pressure(
-        observed_complaints=complaints_total,
-        premiums_brl=float(premiums_brl or 0.0),
-        market_rate=float(market_rate or 0.0),
+        complaints_total, float(premiums or 0.0), float(market_rate or 0.0)
     )
 
-    # Pillar 2: Operational efficiency
+    # If no complaints, efficiency is neutral.
     if complaints_total <= 0:
-        # No complaints: operational KPIs are not informative; keep neutral.
         efficiency_score = 50.0
     else:
         rate_resp = _safe_div(responded_count, complaints_total)
         rate_sol = _safe_div(resolved_count, denom_resolution)
         efficiency_score = _clamp((rate_resp * 40) + (rate_sol * 60))
 
-    # Pillar 3: Satisfaction (subjective)
     sat_norm = _clamp((satisfaction - 1) * 25) if satisfaction > 0 else 0.0
 
-    # Final weighted reputation score
     if satisfaction > 0:
         final_score = (
             (pressure_score * WEIGHT_PRESSURE)
@@ -205,7 +205,7 @@ def calculate_reputation_contextual(
             + (sat_norm * WEIGHT_SATISFACTION)
         )
     else:
-        # No satisfaction signal: reweight towards pressure, penalize opacity lightly.
+        # If satisfaction is missing, downweight it (do not punish)
         final_score = (pressure_score * 0.90) + (efficiency_score * 0.10)
 
     return {
@@ -219,15 +219,10 @@ def calculate_reputation_contextual(
     }
 
 
-# -----------------------------
-# Innovation (Open Insurance)
-# -----------------------------
+# --------------------------------------------------------------------------------------
+# Innovation / Open Insurance score (simple heuristic)
+# --------------------------------------------------------------------------------------
 def calculate_opin_score(products: list, is_participant: bool) -> float:
-    """
-    Open Insurance innovation score.
-      - +50 if participant
-      - +2 points per product up to +50
-    """
     score = 0.0
     if is_participant:
         score += 50.0
@@ -247,30 +242,38 @@ def determine_segment(data: dict) -> str:
     return "S4"
 
 
-# --------------------------------------------------------
-# Market benchmark + batch processing (new in v3)
-# --------------------------------------------------------
+# --------------------------------------------------------------------------------------
+# Batch context / benchmark
+# --------------------------------------------------------------------------------------
 def compute_market_benchmarks(insurers: List[dict]) -> float:
-    """
-    Computes the global market complaint rate (complaints per BRL of premiums).
-    """
     total_complaints = 0
     total_premiums = 0.0
+    matched = 0
 
     for ins in insurers:
         data = (ins or {}).get("data", {}) or {}
         rep = (ins or {}).get("reputation")
-
         prem = float(data.get("premiums", 0.0) or 0.0)
+
         if not rep or prem < MIN_PREMIUM_FOR_BENCHMARK:
             continue
 
-        stats = _extract_stats(rep) # [CORREÇÃO] Usa o extrator robusto
+        stats = _extract_stats(rep)
         comp = int(stats.get("complaintsCount") or 0)
 
-        # Allow zeros; they still inform the denominator.
+        matched += 1
         total_complaints += max(0, comp)
         total_premiums += prem
+
+    # Persist benchmark diagnostics in context (useful for CI debugging)
+    _CONTEXT["bench_total_complaints"] = int(total_complaints)
+    _CONTEXT["bench_total_premiums"] = float(total_premiums)
+    _CONTEXT["bench_matched"] = int(matched)
+
+    # Detect "empty dataset" signature (many matches, but zero complaints everywhere)
+    _CONTEXT["reputation_dataset_empty"] = bool(
+        matched >= MIN_MATCHED_FOR_SIGNAL_CHECK and total_complaints == 0
+    )
 
     if total_premiums <= 0:
         return 0.0
@@ -279,14 +282,27 @@ def compute_market_benchmarks(insurers: List[dict]) -> float:
 
 
 def apply_intelligence_batch(insurers: List[dict]) -> List[dict]:
-    """
-    Batch processor:
-      1) Computes market benchmark (complaints per BRL).
-      2) Stores it in module context.
-      3) Applies calculate_score() in-place for each insurer.
-    """
     market_rate = compute_market_benchmarks(insurers)
-    _CONTEXT["market_rate"] = market_rate if market_rate > 0 else None
+
+    # If dataset looks empty, we should not use reputation in scoring at all,
+    # otherwise we risk producing misleadingly high/neutral scores.
+    if _CONTEXT.get("reputation_dataset_empty"):
+        _CONTEXT["market_rate"] = None
+        # Keep a CI-visible breadcrumb without breaking logs in local runs.
+        print(
+            "DEBUG: reputation_dataset_empty=True "
+            f"(matched={_CONTEXT.get('bench_matched')}, "
+            f"complaints={_CONTEXT.get('bench_total_complaints')}). "
+            "Disabling reputation in scoring."
+        )
+    else:
+        _CONTEXT["market_rate"] = market_rate if market_rate > 0 else None
+        print(
+            "DEBUG: market_rate="
+            f"{market_rate} (matched={_CONTEXT.get('bench_matched')}, "
+            f"complaints={_CONTEXT.get('bench_total_complaints')}, "
+            f"premiums={_CONTEXT.get('bench_total_premiums')})"
+        )
 
     for ins in insurers:
         calculate_score(ins)
@@ -294,51 +310,58 @@ def apply_intelligence_batch(insurers: List[dict]) -> List[dict]:
     return insurers
 
 
-# -----------------------------
-# Public interface (preserved)
-# -----------------------------
+# --------------------------------------------------------------------------------------
+# Per-insurer scoring
+# --------------------------------------------------------------------------------------
 def calculate_score(insurer_obj: dict) -> dict:
-    """
-    Computes and injects scores.
-    """
     data = insurer_obj.get("data", {}) or {}
     products = insurer_obj.get("products", []) or []
     flags = insurer_obj.get("flags", {}) or {}
-
     premiums = float(data.get("premiums", 0.0) or 0.0)
 
-    # Individual scores
     solvency_score = calculate_solvency_score(data)
     opin_score = calculate_opin_score(products, bool(flags.get("openInsuranceParticipant")))
 
     reputation_raw = insurer_obj.get("reputation")
     reputation_score: Optional[float] = None
 
-    market_rate = _CONTEXT.get("market_rate")
-    if reputation_raw:
+    # If the reputation dataset seems empty, treat as unavailable.
+    if reputation_raw and _CONTEXT.get("reputation_dataset_empty"):
+        # Preserve existing structure but add a diagnostic hint.
+        try:
+            insurer_obj["reputation"].setdefault("indexes", {})
+            insurer_obj["reputation"]["indexes"]["data_quality"] = "empty_dataset"
+        except Exception:
+            pass
+        reputation_score = None
+    elif reputation_raw:
+        market_rate = _CONTEXT.get("market_rate")
+
+        # Contextual path (only if benchmark exists)
         if isinstance(market_rate, (int, float)) and float(market_rate) > 0:
             rep_result = calculate_reputation_contextual(reputation_raw, premiums, float(market_rate))
             if rep_result:
                 reputation_score = float(rep_result["score"])
-                if insurer_obj.get("reputation") is not None:
-                    insurer_obj["reputation"].setdefault("indexes", {})
-                    insurer_obj["reputation"]["indexes"].update(
-                        {
-                            "complaint_pressure": rep_result["pressure_index"],
-                            "components": rep_result["metrics"],
-                        }
-                    )
-        else:
+                insurer_obj["reputation"].setdefault("indexes", {})
+                insurer_obj["reputation"]["indexes"].update(
+                    {
+                        "complaint_pressure": rep_result["pressure_index"],
+                        "components": rep_result["metrics"],
+                    }
+                )
+
+        # If contextual was not possible or returned None, fallback to absolute
+        if reputation_score is None:
             reputation_score = calculate_reputation_score(reputation_raw)
 
-    # Aggregation (preserved)
+    # Final score weighting
     if reputation_score is not None:
         final_score = (solvency_score * 0.50) + (reputation_score * 0.40) + (opin_score * 0.10)
     else:
         final_score = (solvency_score * 0.80) + (opin_score * 0.20)
 
+    # Persist
     insurer_obj["segment"] = determine_segment(data)
-
     insurer_obj.setdefault("data", {})
     insurer_obj["data"].setdefault("components", {})
     insurer_obj["data"]["components"] = {
@@ -348,7 +371,7 @@ def calculate_score(insurer_obj: dict) -> dict:
     }
     insurer_obj["data"]["score"] = round(float(final_score), 1)
 
-    # Ensure loss ratio
+    # Loss ratio
     if premiums > 0:
         insurer_obj["data"]["lossRatio"] = float(data.get("claims", 0.0) or 0.0) / premiums
     else:
