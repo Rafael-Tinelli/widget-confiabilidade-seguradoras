@@ -152,11 +152,30 @@ def _parse_products_payload(payload: Any, resource_code: str) -> List[dict]:
     return out
 
 
-def extract_open_insurance_products() -> Dict[str, List[dict]]:
-    participants = _load_participants()
-    products_by_cnpj = {}
+def extract_open_insurance_products() -> Tuple[Dict[str, Any], Dict[str, List[dict]]]:
+    """
+    Retorna (meta, products_by_cnpj).
+    """
+    # Prepara objeto de metadados
+    meta = {
+        "source": "open_insurance_apis",
+        "generatedAt": _utc_now(),
+        "status": "partial",
+        "endpoints_scanned": 0,
+        "requests": 0
+    }
+    
+    try:
+        participants = _load_participants()
+    except Exception as e:
+        meta["status"] = "participants_load_failed"
+        meta["error"] = str(e)
+        return meta, {}
+
+    products_by_cnpj: Dict[str, List[dict]] = {}
     endpoint_jobs = []
 
+    # 1. Mapeia endpoints
     for p in participants:
         status = _ci_get(p, "Status", "status")
         if status and str(status).lower() != "active":
@@ -176,9 +195,13 @@ def extract_open_insurance_products() -> Dict[str, List[dict]]:
         for ep, ver in _extract_products_services_endpoints(p):
             endpoint_jobs.append((cnpj, ep, ver))
 
-    if not endpoint_jobs:
-        return products_by_cnpj
+    meta["endpoints_scanned"] = len(endpoint_jobs)
 
+    if not endpoint_jobs:
+        meta["status"] = "no_endpoints"
+        return meta, products_by_cnpj
+
+    # 2. Coleta produtos
     session = _build_session()
     seen = {k: set() for k in products_by_cnpj}
     req_count = 0
@@ -186,7 +209,10 @@ def extract_open_insurance_products() -> Dict[str, List[dict]]:
     for cnpj, ep, ver in endpoint_jobs:
         for res_code in INTERESTING_RESOURCES:
             if req_count >= MAX_TOTAL_REQUESTS:
-                return products_by_cnpj
+                meta["status"] = "limit_reached"
+                meta["requests"] = req_count
+                return meta, products_by_cnpj
+            
             req_count += 1
 
             try:
@@ -201,5 +227,8 @@ def extract_open_insurance_products() -> Dict[str, List[dict]]:
                             products_by_cnpj[cnpj].append(it)
             except Exception:
                 continue
-
-    return products_by_cnpj
+    
+    meta["status"] = "completed"
+    meta["requests"] = req_count
+    
+    return meta, products_by_cnpj
