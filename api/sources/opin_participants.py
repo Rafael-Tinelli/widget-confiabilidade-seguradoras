@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
-import requests
+from curl_cffi import requests
 
 # ---------------------------------------------------------------------
 # OPIN / Open Insurance Directory participants (source)
@@ -23,6 +23,7 @@ CACHE_DIR = Path(os.getenv("OPIN_CACHE_DIR", "data/raw/opin"))
 CACHE_FILE = CACHE_DIR / "participants.json"
 
 TIMEOUT = int(os.getenv("OPIN_TIMEOUT", "30"))
+IMPERSONATE = os.getenv("OPIN_IMPERSONATE", "chrome110")
 
 # Accept both raw 14 digits and formatted CNPJ
 _CNPJ_DIGITS_RE = re.compile(r"\b(\d{14})\b")
@@ -137,10 +138,12 @@ def extract_opin_participants() -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
             "Accept": "application/json, text/plain;q=0.9, */*;q=0.1",
             "User-Agent": "Mozilla/5.0 (compatible; SanidaBot/1.0; +https://sanida.com.br)",
         }
-        r = requests.get(OPIN_DIRECTORY_URL, headers=headers, timeout=TIMEOUT)
-        r.raise_for_status()
 
-        # Some endpoints return JSON; if not, this will raise.
+        sess = requests.Session(impersonate=IMPERSONATE)
+        r = sess.get(OPIN_DIRECTORY_URL, headers=headers, timeout=TIMEOUT)
+        if r.status_code != 200:
+            raise RuntimeError(f"HTTP {r.status_code}")
+
         payload = r.json()
         _write_cache(payload)
 
@@ -230,23 +233,27 @@ def load_opin_participant_cnpjs(
         _meta, participants_list = extract_opin_participants()
 
     cnpjs: Set[str] = set()
+
     for p in participants_list or []:
         if not isinstance(p, dict):
             continue
 
-        # try direct keys first (fast)
+        # 1) fast pass (somente neste participante)
+        local: Set[str] = set()
         for k in _CNPJ_KEYS:
             if k in p:
                 c = _clean_cnpj(p.get(k))
                 if c:
-                    cnpjs.add(c)
+                    local.add(c)
 
-        # deep fallback scan for each participant
-        if not cnpjs:
-            # NOTE: we only do deep scan if set is still empty to reduce cost.
-            cnpjs |= _extract_cnpjs_from_any(p)
-        else:
-            # even if we already have some, still allow capture from this participant
-            cnpjs |= _extract_cnpjs_from_any(p)
+        # 2) deep scan só se este participante não rendeu nada no fast pass
+        if not local:
+            local |= _extract_cnpjs_from_any(p)
+
+        cnpjs |= local
+
+    # 3) fallback global (schema pode mudar e esconder em wrapper)
+    if not cnpjs and participants_list:
+        cnpjs |= _extract_cnpjs_from_any(participants_list)
 
     return cnpjs
