@@ -6,7 +6,7 @@ import os
 import re
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Tuple
+from typing import Any, Tuple
 
 
 # Onde fica o agregado final (opcionalmente já gerado)
