@@ -5,9 +5,10 @@ import gzip
 import json
 import os
 import sys
+from dataclasses import asdict, is_dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional, Set
+from typing import Any, Optional, Set
 
 from api.matching.consumidor_gov_match import NameMatcher, format_cnpj
 from api.utils.identifiers import normalize_cnpj
@@ -59,6 +60,61 @@ def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+def _to_jsonable(x: Any) -> Any:
+    """
+    Converte objetos de meta (ex.: SesMeta) em estruturas JSON-serializáveis.
+    Mantém dict/list/str/int/float/bool/None como estão.
+    """
+    if x is None:
+        return None
+    if isinstance(x, (str, int, float, bool)):
+        return x
+    if isinstance(x, dict):
+        return {str(k): _to_jsonable(v) for k, v in x.items()}
+    if isinstance(x, (list, tuple, set)):
+        return [_to_jsonable(v) for v in x]
+
+    # dataclasses
+    try:
+        if is_dataclass(x):
+            return _to_jsonable(asdict(x))
+    except Exception:
+        pass
+
+    # pydantic v2 / v1
+    if hasattr(x, "model_dump"):
+        try:
+            return _to_jsonable(x.model_dump())
+        except Exception:
+            pass
+    if hasattr(x, "dict"):
+        try:
+            return _to_jsonable(x.dict())
+        except Exception:
+            pass
+
+    # namedtuple-like
+    if hasattr(x, "_asdict"):
+        try:
+            return _to_jsonable(x._asdict())
+        except Exception:
+            pass
+
+    # generic object
+    if hasattr(x, "__dict__"):
+        try:
+            return {k: _to_jsonable(v) for k, v in vars(x).items() if not str(k).startswith("_")}
+        except Exception:
+            pass
+
+    # fallback
+    return str(x)
+
+
+def _json_default(o: Any) -> Any:
+    return _to_jsonable(o)
+
+
 def _should_exclude(name: str) -> bool:
     k = normalize_name_key(name)
     return any(s in k for s in EXCLUDE_NAME_SUBSTRINGS)
@@ -103,7 +159,7 @@ def _save_snapshot(payload: dict) -> None:
     out = SNAPSHOT_DIR / f"insurers_full_{stamp}.json.gz"
     try:
         with gzip.open(out, "wt", encoding="utf-8") as f:
-            json.dump(payload, f, ensure_ascii=False)
+            json.dump(payload, f, ensure_ascii=False, default=_json_default)
     except Exception:
         # Snapshot is best-effort; should not break the pipeline.
         pass
@@ -186,7 +242,7 @@ def _debug_near_matches(matcher: NameMatcher, name: str) -> None:
 def main() -> None:
     # 1) Load sources
     
-    # [MODIFICADO] Bloco resiliente para extração SES (suporta retorno de 2 ou 3 valores)
+    # SES: Handle both 2-tuple and 3-tuple returns for compatibility
     ses_out = extract_ses_master_and_financials()
     if isinstance(ses_out, tuple) and len(ses_out) == 3:
         ses_meta, ses_companies, financials = ses_out
@@ -196,6 +252,9 @@ def main() -> None:
     else:
         raise RuntimeError(f"SES: retorno inesperado: {type(ses_out)}")
 
+    # [NOVO] Meta SES pode ser objeto (SesMeta). Converta 1x e reutilize.
+    ses_meta_json = _to_jsonable(ses_meta)
+
     # ses_companies pode ser list[dict] OU dict[id -> dict]
     ses_iter = ses_companies.values() if isinstance(ses_companies, dict) else ses_companies
 
@@ -204,6 +263,11 @@ def main() -> None:
     _oi_meta, oi_participants = extract_opin_participants() # Using same source for now
     oi_prod_meta, _oi_products = extract_open_insurance_products()
     cg_meta, cg_payload = extract_consumidor_gov_aggregated()
+
+    # [NOVO] Garanta serialização segura também para outras metas
+    opin_meta_json = _to_jsonable(opin_meta)
+    oi_prod_meta_json = _to_jsonable(oi_prod_meta)
+    cg_meta_json = _to_jsonable(cg_meta)
 
     # 2) Prepare matchers / indexes
     opin_by_cnpj: Set[str] = load_opin_participant_cnpjs(opin_participants)
@@ -227,7 +291,6 @@ def main() -> None:
     susep_cnpjs_seen: Set[str] = set()
     opin_matched_unique: Set[str] = set()
 
-    # [MODIFICADO] Itera sobre o iterador normalizado (lista ou values)
     for comp in ses_iter:
         name = (comp.get("name") or comp.get("razao_social") or "").strip()
         if not name:
@@ -274,12 +337,12 @@ def main() -> None:
                 "tradeName": comp.get("trade_name") or comp.get("nome_fantasia"),
                 "segment": comp.get("segment"),
                 "components": {
-                    "ses": {"company": comp, "meta": ses_meta},
+                    "ses": {"company": comp, "meta": ses_meta_json},
                     "financials": fin,
                     "openInsurance": {
                         "participant": is_open_insurance,
-                        "meta": opin_meta, # Using opin_meta as generic open insurance meta
-                        "productsMeta": oi_prod_meta,
+                        "meta": opin_meta_json, # Using opin_meta as generic open insurance meta
+                        "productsMeta": oi_prod_meta_json,
                     },
                     "reputation": rep_entry if rep_entry else None,
                 },
@@ -312,9 +375,9 @@ def main() -> None:
     insurers = apply_intelligence_batch(insurers)
 
     # Keep schema stable; only enrich nested source meta (non-breaking)
-    if isinstance(opin_meta, dict):
-        opin_meta = {
-            **opin_meta,
+    if isinstance(opin_meta_json, dict):
+        opin_meta_json = {
+            **opin_meta_json,
             "integrity": {
                 "expectedIntersectionUnique": expected_opin_intersection,
                 "observedIntersectionUnique": observed_opin_intersection,
@@ -326,11 +389,11 @@ def main() -> None:
             "generatedAt": utc_now(),
             "count": len(insurers),
             "sources": {
-                "ses": ses_meta,
-                "opin": opin_meta,
-                "openInsurance": opin_meta, # Mirroring for compatibility
-                "openInsuranceProducts": oi_prod_meta,
-                "consumidorGov": cg_meta,
+                "ses": ses_meta_json,
+                "opin": opin_meta_json,
+                "openInsurance": opin_meta_json, # Mirroring for compatibility
+                "openInsuranceProducts": oi_prod_meta_json,
+                "consumidorGov": cg_meta_json,
             },
             "reputation": {
                 "matched": matched_reputation,
@@ -345,7 +408,7 @@ def main() -> None:
     _sanity_check_counts(len(insurers))
 
     OUTPUT_FILE.parent.mkdir(parents=True, exist_ok=True)
-    OUTPUT_FILE.write_text(json.dumps(out, ensure_ascii=False), encoding="utf-8")
+    OUTPUT_FILE.write_text(json.dumps(out, ensure_ascii=False, default=_json_default), encoding="utf-8")
 
     # Snapshot (for delta checks)
     if WRITE_SNAPSHOT:
