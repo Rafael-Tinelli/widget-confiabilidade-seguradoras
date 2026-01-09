@@ -113,8 +113,10 @@ def _normalize_segment(value: Any) -> str:
     if s in {"S1", "S2", "S3", "S4"}:
         return s
     m = re.match(r"^(S[1-4])\b", s)
-    if m: return m.group(1)
-    if s in {"1", "2", "3", "4"}: return f"S{s}"
+    if m:
+        return m.group(1)
+    if s in {"1", "2", "3", "4"}:
+        return f"S{s}"
     return "S4"
 
 
@@ -138,11 +140,14 @@ def _as_iterable_companies(ses_companies: Any) -> Iterable[Dict[str, Any]]:
 
 
 def _parse_number_ptbr(s: str) -> Optional[float]:
-    if not isinstance(s, str): return None
+    if not isinstance(s, str):
+        return None
     t = s.strip()
-    if not t: return None
+    if not t:
+        return None
     t = re.sub(r"[^\d,\.\-\+eE]", "", t)
-    if not t: return None
+    if not t:
+        return None
     if "." in t and "," in t:
         t = t.replace(".", "").replace(",", ".")
     elif "," in t and "." not in t:
@@ -154,9 +159,12 @@ def _parse_number_ptbr(s: str) -> Optional[float]:
 
 
 def _coerce_float(x: Any) -> float:
-    if x is None: return 0.0
-    if isinstance(x, bool): return 0.0
-    if isinstance(x, (int, float)): return float(x)
+    if x is None:
+        return 0.0
+    if isinstance(x, bool):
+        return 0.0
+    if isinstance(x, (int, float)):
+        return float(x)
     if isinstance(x, str):
         v = _parse_number_ptbr(x)
         return float(v) if v is not None else 0.0
@@ -169,9 +177,11 @@ def _coerce_float(x: Any) -> float:
             "sinistros", "sinistro",
         )
         for k in total_keys:
-            if k in x: return _coerce_float(x.get(k))
+            if k in x:
+                return _coerce_float(x.get(k))
         acc = 0.0
-        for v in x.values(): acc += _coerce_float(v)
+        for v in x.values():
+            acc += _coerce_float(v)
         return acc
     if isinstance(x, (list, tuple, set)):
         return sum(_coerce_float(v) for v in x)
@@ -190,9 +200,11 @@ def _extract_raw_premiums_claims(comp: Dict[str, Any], fin: Any) -> Tuple[Any, A
 
 
 def _load_latest_snapshot_count() -> Optional[int]:
-    if not SNAPSHOT_DIR.exists(): return None
+    if not SNAPSHOT_DIR.exists():
+        return None
     candidates = list(SNAPSHOT_DIR.glob("insurers_full_*.json.gz")) + list(SNAPSHOT_DIR.glob("insurers_full_*.json"))
-    if not candidates: return None
+    if not candidates:
+        return None
     latest = max(candidates, key=lambda p: p.stat().st_mtime)
     try:
         if latest.name.endswith(".json.gz"):
@@ -202,10 +214,13 @@ def _load_latest_snapshot_count() -> Optional[int]:
             payload = json.loads(latest.read_text(encoding="utf-8"))
         meta = payload.get("meta") or {}
         c = meta.get("count")
-        if isinstance(c, int) and c > 0: return c
+        if isinstance(c, int) and c > 0:
+            return c
         insurers = payload.get("insurers")
-        if isinstance(insurers, list) and insurers: return len(insurers)
-    except Exception: return None
+        if isinstance(insurers, list) and insurers:
+            return len(insurers)
+    except Exception:
+        return None
     return None
 
 
@@ -290,7 +305,8 @@ def main() -> None:
     else:
         oi_prod_meta, oi_products_by_cnpj = {"status": "invalid_return"}, {}
     oi_prod_meta_json = _to_jsonable(oi_prod_meta)
-    if not isinstance(oi_products_by_cnpj, dict): oi_products_by_cnpj = {}
+    if not isinstance(oi_products_by_cnpj, dict):
+        oi_products_by_cnpj = {}
 
     cg_meta, cg_payload = extract_consumidor_gov_aggregated()
     cg_meta_json = _to_jsonable(cg_meta)
@@ -299,7 +315,8 @@ def main() -> None:
     oi_participant_keys: Set[str] = set()
     for p in oi_participants:
         k = normalize_cnpj(p.get("cnpj_key") or p.get("cnpj"))
-        if k: oi_participant_keys.add(k)
+        if k:
+            oi_participant_keys.add(k)
 
     matcher = NameMatcher(cg_payload)
 
@@ -313,9 +330,11 @@ def main() -> None:
     opin_matched_unique: Set[str] = set()
 
     for comp in ses_iter:
-        if not isinstance(comp, dict): continue
+        if not isinstance(comp, dict):
+            continue
         name = (comp.get("name") or comp.get("razao_social") or "").strip()
-        if not name: continue
+        if not name:
+            continue
 
         if _should_exclude(name):
             excluded += 1
@@ -323,15 +342,18 @@ def main() -> None:
 
         cnpj_key = normalize_cnpj(comp.get("cnpj") or comp.get("cnpj_key"))
         cnpj_fmt = format_cnpj(cnpj_key) if cnpj_key else None
-        if cnpj_key: susep_cnpjs_seen.add(cnpj_key)
+        if cnpj_key:
+            susep_cnpjs_seen.add(cnpj_key)
 
         segment = _normalize_segment(comp.get("segment") or comp.get("segmento") or comp.get("porte"))
 
         is_open_insurance = bool(cnpj_key and cnpj_key in oi_participant_keys)
-        if is_open_insurance: matched_open_insurance += 1
+        if is_open_insurance:
+            matched_open_insurance += 1
 
         is_opin = bool(cnpj_key and cnpj_key in opin_by_cnpj)
-        if is_opin and cnpj_key: opin_matched_unique.add(cnpj_key)
+        if is_opin and cnpj_key:
+            opin_matched_unique.add(cnpj_key)
 
         # Lógica de Reputação e B2B (FIX: Prioriza exclusão B2B antes de stats)
         rep_entry, rep_meta = matcher.get_entry(name, cnpj=cnpj_key)
@@ -377,7 +399,8 @@ def main() -> None:
         products: List[Any] = []
         if cnpj_key:
             raw_products = oi_products_by_cnpj.get(cnpj_key, [])
-            if isinstance(raw_products, list): products = raw_products
+            if isinstance(raw_products, list):
+                products = raw_products
 
         insurers.append({
             "id": _insurer_id(comp, cnpj_key, name),
@@ -458,7 +481,8 @@ def main() -> None:
         try:
             with gzip.open(snap, "wt", encoding="utf-8") as f:
                 json.dump(out, f, ensure_ascii=False, default=_json_default)
-        except Exception: pass
+        except Exception:
+            pass
 
     print(f"insurers: {len(insurers)}")
     print(f"reputation.matched: {matched_reputation}")
