@@ -14,8 +14,8 @@ import zipfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, BinaryIO, Dict, List, Optional, Tuple
-from urllib.parse import urljoin, quote
+from typing import Any, BinaryIO, Optional, Tuple
+from urllib.parse import quote, urljoin
 
 from curl_cffi import requests
 
@@ -26,23 +26,24 @@ ALLOW_BASECOMPLETA = os.getenv("CG_ALLOW_BASECOMPLETA", "0") == "1"
 
 TIMEOUT = int(os.getenv("CG_TIMEOUT", "600"))
 MIN_BYTES = int(os.getenv("CG_MIN_BYTES", "50000"))
-CHUNK_SIZE = int(os.getenv("CG_CHUNK_SIZE", "1048576")) # 1MB
+CHUNK_SIZE = int(os.getenv("CG_CHUNK_SIZE", "1048576"))  # 1MB
 
 # Diretórios
 RAW_DIR = Path(os.getenv("CG_RAW_DIR", "data/raw/consumidor_gov"))
-# [FIX] Alias para compatibilidade com código legado que importe CACHE_DIR
+# Alias para compatibilidade com código legado que importe CACHE_DIR
 CACHE_DIR = RAW_DIR
 
 # Nota: DERIVED_DIR é usado apenas como default/fallback; as funções honram output_dir
 DEFAULT_DERIVED_DIR = Path(os.getenv("CG_DERIVED_DIR", "data/derived/consumidor_gov"))
 
-# Filtro Rígido
+# Filtro (mantido por compat, mas o parser aplica filtro flexível "seguros" por segurança)
 TARGET_SEGMENT = "Seguros, Capitalização e Previdência"
 
 _CNPJ_RE = re.compile(r"\D+")
 _FILE_RE = re.compile(r"\.(csv|zip|gz)(\?|$)", re.I)
 _FINALIZADAS_OR_BASE_RE = re.compile(r"(finalizadas|basecompleta)", re.I)
 _YM_ANY_RE = re.compile(r"(20\d{2})[^\d]?(0[1-9]|1[0-2])")
+
 DIRECT_DOWNLOAD_PAGE = "https://www.consumidor.gov.br/pages/dadosabertos/externo/"
 
 
@@ -51,6 +52,7 @@ def _utc_now() -> str:
 
 
 # --- VALIDAÇÃO E NORMALIZAÇÃO ---
+
 
 def _safe_float(v: Any) -> float:
     try:
@@ -79,11 +81,18 @@ def _safe_int(v: Any) -> int:
 def _validate_entry(entry: dict[str, Any]) -> bool:
     """Valida se a entrada possui estatísticas mínimas para ser útil."""
     st = entry.get("statistics") or {}
-    keys_to_check = ["complaintsCount", "total_claims", "resolvedCount", "respondedCount", "finalizedCount"]
+    keys_to_check = [
+        "complaintsCount",
+        "total_claims",
+        "resolvedCount",
+        "respondedCount",
+        "finalizedCount",
+    ]
     return any(_safe_int(st.get(k, 0)) > 0 for k in keys_to_check)
 
 
 # --- HELPERS LEGADOS ---
+
 
 def _norm_col(s: str) -> str:
     s = (s or "").strip()
@@ -139,6 +148,7 @@ def normalize_cnpj(v: Optional[str]) -> Optional[str]:
 
 # --- INFRAESTRUTURA DE URL/SCORE ---
 
+
 def _blob(url: str, meta: Optional[dict] = None) -> str:
     b = (url or "").lower()
     if meta:
@@ -177,11 +187,11 @@ def _score_url(url: str, meta: Optional[dict] = None) -> int:
         score += 50_000
     elif u.endswith(".csv"):
         score += 40_000
-    
+
     m = _YM_ANY_RE.search(u)
     if m:
         score += int(m.group(1)) * 100 + int(m.group(2))
-    
+
     if meta:
         lm = meta.get("last_modified") or meta.get("created") or ""
         mm = _YM_ANY_RE.search(str(lm))
@@ -194,77 +204,81 @@ def _score_url(url: str, meta: Optional[dict] = None) -> int:
 class Agg:
     display_name: str
     cnpj_key: Optional[str] = None
-    
+
     total_claims: int = 0
     evaluated_claims: int = 0
     resolved_claims: int = 0
     responded_claims: int = 0
     finalized_claims: int = 0
-    
+
     score_sum: float = 0.0
     response_time_sum: float = 0.0
     response_time_count: int = 0
 
-    def merge_raw(self, raw: Any, *_: Any, **__: Any) -> None:
-    """
-    Compat: usado pelo build_consumidor_gov ao agregar vários meses.
-    Aceita diferentes formatos de payload (top-level ou dentro de 'statistics').
-    """
-    if not isinstance(raw, dict):
-        return
+    def merge_raw(self, *args: Any, **__: Any) -> None:
+        """
+        Compat: usado pelo build_consumidor_gov ao agregar vários meses.
+        Aceita chamadas como merge_raw(raw) ou merge_raw(ym, raw).
+        """
+        raw: Any = None
+        for a in args:
+            if isinstance(a, dict):
+                raw = a
+                break
+        if not isinstance(raw, dict):
+            return
 
-    disp = raw.get("display_name") or raw.get("name") or raw.get("displayName")
-    if disp and not self.display_name:
-        self.display_name = str(disp).strip()
+        disp = raw.get("display_name") or raw.get("name") or raw.get("displayName")
+        if disp and not self.display_name:
+            self.display_name = str(disp).strip()
 
-    cnpj = normalize_cnpj(raw.get("cnpj") or raw.get("cnpjKey") or raw.get("cnpj_key"))
-    if cnpj and not self.cnpj_key:
-        self.cnpj_key = cnpj
+        cnpj = normalize_cnpj(raw.get("cnpj") or raw.get("cnpjKey") or raw.get("cnpj_key"))
+        if cnpj and not self.cnpj_key:
+            self.cnpj_key = cnpj
 
-    st = raw.get("statistics") if isinstance(raw.get("statistics"), dict) else raw
-    if not isinstance(st, dict):
-        return
+        st = raw.get("statistics") if isinstance(raw.get("statistics"), dict) else raw
+        if not isinstance(st, dict):
+            return
 
-    self.total_claims += _safe_int(st.get("complaintsCount") or st.get("total_claims") or st.get("totalClaims") or 0)
-    self.finalized_claims += _safe_int(st.get("finalizedCount") or st.get("finalized_claims") or 0)
-    self.responded_claims += _safe_int(st.get("respondedCount") or st.get("responded_claims") or 0)
-    self.resolved_claims += _safe_int(st.get("resolvedCount") or st.get("resolved_claims") or 0)
+        self.total_claims += _safe_int(
+            st.get("complaintsCount") or st.get("total_claims") or st.get("totalClaims") or 0
+        )
+        self.finalized_claims += _safe_int(st.get("finalizedCount") or st.get("finalized_claims") or 0)
+        self.responded_claims += _safe_int(st.get("respondedCount") or st.get("responded_claims") or 0)
+        self.resolved_claims += _safe_int(st.get("resolvedCount") or st.get("resolved_claims") or 0)
 
-    ec = _safe_int(st.get("evaluatedCount") or st.get("evaluated_claims") or st.get("satisfaction_count") or 0)
-    self.evaluated_claims += ec
+        ec = _safe_int(st.get("evaluatedCount") or st.get("evaluated_claims") or st.get("satisfaction_count") or 0)
+        self.evaluated_claims += ec
 
-    score_sum = _safe_float(st.get("scoreSum") or st.get("score_sum") or 0)
-    if score_sum <= 0 and ec > 0:
-        ov = st.get("overallSatisfaction")
-        ov_f = _safe_float(ov)
-        if ov_f > 0:
-            score_sum = ov_f * ec
-    self.score_sum += score_sum
+        score_sum = _safe_float(st.get("scoreSum") or st.get("score_sum") or 0)
+        if score_sum <= 0 and ec > 0:
+            ov_f = _safe_float(st.get("overallSatisfaction"))
+            if ov_f > 0:
+                score_sum = ov_f * ec
+        self.score_sum += score_sum
 
-    rt_sum = _safe_float(st.get("responseTimeSum") or st.get("response_time_sum") or 0)
-    rt_count = _safe_int(st.get("responseTimeCount") or st.get("response_time_count") or 0)
+        rt_sum = _safe_float(st.get("responseTimeSum") or st.get("response_time_sum") or 0)
+        rt_count = _safe_int(st.get("responseTimeCount") or st.get("response_time_count") or 0)
 
-    # Fallback: se só existir averageResponseTime, tenta ponderar por respondedCount
-    if rt_sum <= 0 and rt_count <= 0:
-        avg = _safe_float(st.get("averageResponseTime") or 0)
-        if avg > 0:
-            rt_count = _safe_int(st.get("responseTimeCount") or st.get("respondedCount") or 0)
-            if rt_count > 0:
-                rt_sum = avg * rt_count
+        if rt_sum <= 0 and rt_count <= 0:
+            avg = _safe_float(st.get("averageResponseTime") or 0)
+            if avg > 0:
+                rt_count = _safe_int(st.get("responseTimeCount") or st.get("respondedCount") or 0)
+                if rt_count > 0:
+                    rt_sum = avg * rt_count
 
-    self.response_time_sum += rt_sum
-    self.response_time_count += rt_count
-
+        self.response_time_sum += rt_sum
+        self.response_time_count += rt_count
 
     def to_public(self) -> dict:
         ec = self.evaluated_claims
         tc = self.total_claims
-        
+
         sat_avg = round(self.score_sum / ec, 2) if ec > 0 else None
-        
+
         denom_sol = ec if ec > 0 else (self.finalized_claims if self.finalized_claims > 0 else tc)
         sol_idx = round(self.resolved_claims / denom_sol, 2) if denom_sol > 0 else None
-        
+
         rc = self.response_time_count
         resp_time = round(self.response_time_sum / rc, 1) if rc > 0 else None
 
@@ -275,23 +289,23 @@ class Agg:
             "statistics": {
                 "complaintsCount": tc,
                 "finalizedCount": self.finalized_claims,
-                "evaluatedCount": ec, 
-                "satisfaction_count": ec, 
+                "evaluatedCount": ec,
+                "satisfaction_count": ec,
                 "respondedCount": self.responded_claims,
                 "resolvedCount": self.resolved_claims,
                 "overallSatisfaction": sat_avg,
                 "solutionIndex": sol_idx,
                 "averageResponseTime": resp_time,
                 "scoreSum": self.score_sum,
-                "responseTimeSum": self.response_time_sum
+                "responseTimeSum": self.response_time_sum,
+                "responseTimeCount": self.response_time_count,
             },
             "indexes": {"b": {"nota": sat_avg}},
-            "responseTimeSum": self.response_time_sum,
-            "responseTimeCount": self.response_time_count
         }
 
 
 # --- REDE ---
+
 
 def _ckan_resource_search(client: requests.Session, term: str, limit: int = 50) -> list[dict]:
     api = urljoin(CKAN_API_BASE, "resource_search")
@@ -311,8 +325,10 @@ def _ckan_resource_search(client: requests.Session, term: str, limit: int = 50) 
 def _get_dump_url_for_month(client: requests.Session, ym: str) -> Optional[str]:
     try:
         terms = [
-            f"finalizadas {ym}", f"finalizadas_{ym}",
-            f"basecompleta{ym}", f"basecompleta {ym}",
+            f"finalizadas {ym}",
+            f"finalizadas_{ym}",
+            f"basecompleta{ym}",
+            f"basecompleta {ym}",
             f"{CKAN_QUERY} {ym}",
         ]
         best: Tuple[int, str] | None = None
@@ -339,7 +355,6 @@ def _get_dump_url_for_month(client: requests.Session, ym: str) -> Optional[str]:
     except Exception as e:
         print(f"CG: CKAN falhou ({ym}): {e}")
 
-    # Fallback HTML
     print(f"CG: Fallback HTML ({ym}) ...")
     try:
         r = client.get(DIRECT_DOWNLOAD_PAGE, timeout=30)
@@ -347,7 +362,7 @@ def _get_dump_url_for_month(client: requests.Session, ym: str) -> Optional[str]:
             return None
         html = r.text or ""
         hrefs = re.findall(r'href\s*=\s*["\']([^"\']+)["\']', html, flags=re.I)
-        candidates = []
+        candidates: list[Tuple[int, str]] = []
         for h in hrefs:
             if not h:
                 continue
@@ -412,7 +427,12 @@ def open_dump_file(path: Path) -> BinaryIO:
             target = max(csvs, key=lambda x: z.getinfo(x).file_size)
             print(f"CG: Extraindo {target}...")
             RAW_DIR.mkdir(parents=True, exist_ok=True)
-            tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".csv", prefix="cg_extract_", dir=str(RAW_DIR))
+            tmp = tempfile.NamedTemporaryFile(
+                delete=False,
+                suffix=".csv",
+                prefix="cg_extract_",
+                dir=str(RAW_DIR),
+            )
             tmp_path = Path(tmp.name)
             with z.open(target) as zfh:
                 shutil.copyfileobj(zfh, tmp)
@@ -426,14 +446,14 @@ def open_dump_file(path: Path) -> BinaryIO:
 
 # --- PROCESSAMENTO PRINCIPAL ---
 
-def process_dump_to_monthly(dump_path: Path, target_yms: List[str], output_dir: str):
+
+def process_dump_to_monthly(dump_path: Path, target_yms: list[str], output_dir: str) -> None:
     """
-    Processa o dump e gera JSONs.
-    FIX: Agora obedece estritamente ao `output_dir` e usa filtro de segmento flexível.
+    Processa o dump e gera JSONs mensais.
+    Obedece estritamente ao `output_dir` e usa filtro de segmento flexível.
     """
     target_set = set(target_yms)
-    
-    # [FIX] Garante path de saída correto
+
     out_base_path = Path(output_dir)
     out_base_path.mkdir(parents=True, exist_ok=True)
 
@@ -443,13 +463,13 @@ def process_dump_to_monthly(dump_path: Path, target_yms: List[str], output_dir: 
         print(f"CG: Falha ao abrir dump: {e}")
         return
 
-    # Detecção de Encoding
     encodings = ["utf-8-sig", "utf-8", "latin1", "cp1252"]
     delimiter = ";"
-    encoding_used = None
+    encoding_used: str | None = None
+
     sample_bytes = csv_stream.read(16384)
     csv_stream.seek(0)
-    
+
     valid_setup = False
     for enc in encodings:
         try:
@@ -458,7 +478,9 @@ def process_dump_to_monthly(dump_path: Path, target_yms: List[str], output_dir: 
             first_line = sample_str.splitlines()[0] if sample_str else ""
             headers = [h.strip().lower() for h in first_line.split(delim)]
             h_norm = [_norm_col(h) for h in headers]
-            if any("segmento" in h for h in h_norm) and any(("nome" in h or "fornecedor" in h or "empresa" in h) for h in h_norm):
+            if any("segmento" in h for h in h_norm) and any(
+                ("nome" in h or "fornecedor" in h or "empresa" in h) for h in h_norm
+            ):
                 encoding_used = enc
                 delimiter = delim
                 valid_setup = True
@@ -466,13 +488,13 @@ def process_dump_to_monthly(dump_path: Path, target_yms: List[str], output_dir: 
         except Exception:
             continue
 
-    if not valid_setup:
+    if not valid_setup or not encoding_used:
         csv_stream.close()
         raise RuntimeError(f"CG: Encoding/headers não detectados em {dump_path.name}")
 
     print(f"CG: Processando CSV (Enc: {encoding_used}, Delim: {delimiter!r})...")
-    
-    monthly_data: Dict[str, Dict[str, Agg]] = {ym: {} for ym in target_set}
+
+    monthly_data: dict[str, dict[str, Agg]] = {ym: {} for ym in target_set}
     rows_total = 0
     rows_eligible = 0
 
@@ -483,105 +505,105 @@ def process_dump_to_monthly(dump_path: Path, target_yms: List[str], output_dir: 
         for row in reader:
             rows_total += 1
 
-            # Filtro de Segmento (Flexible)
             seg = _pick_col(row, ["Segmento de Mercado", "Segmento", "Area"])
             seg_norm = _norm_key(seg)
-            
+
             # Aceita se contiver "seguros" (reduz risco de dataset vazio)
             if "seguros" not in seg_norm:
                 continue
-            
+
             rows_eligible += 1
 
-            # Data
             date_str = _pick_col(row, ["Data Finalizacao", "Data Abertura", "Data da Reclamacao", "Data"])
-            ym = None
-            m1 = re.search(r"(\d{2})[\/-](\d{2})[\/-](\d{4})", date_str)
+            ym: str | None = None
+            m1 = re.search(r"(\d{2})[/-](\d{2})[/-](\d{4})", date_str)
             if m1:
                 ym = f"{m1.group(3)}-{m1.group(2)}"
             else:
-                m2 = re.search(r"(\d{4})[\/-](\d{2})[\/-](\d{2})", date_str)
+                m2 = re.search(r"(\d{4})[/-](\d{2})[/-](\d{2})", date_str)
                 if m2:
                     ym = f"{m2.group(1)}-{m2.group(2)}"
 
             if not ym or ym not in target_set:
                 continue
 
-            # Extração de Dados
             name_raw = _pick_col(row, ["Nome Fantasia", "Nome do Fornecedor", "Fornecedor", "Empresa", "Nome"])
             if not name_raw:
                 continue
-            
+
             nk = _norm_key(name_raw)
             cnpj_key = normalize_cnpj(_pick_col(row, ["CNPJ", "CNPJ do Fornecedor", "Documento", "CPF/CNPJ"]))
 
-            # Métricas
             situ = _pick_col(row, ["Situação", "Situacao", "Status", "Situação da Reclamação"])
             is_finalized = "finaliz" in _norm_col(situ)
-            
+
             resp_val = _pick_col(row, ["Respondida", "Respondida?", "Empresa Respondeu", "Respondeu"])
             is_respondida = _bool_from_pt(resp_val)
-            
+
             aval = _pick_col(row, ["Avaliacao Reclamacao", "Avaliação", "Resolvida", "Resolvida?"])
             aval_norm = _norm_col(aval)
-            is_resolved = ("resolvida" in aval_norm) and ("nao resolvida" not in aval_norm) and (not aval_norm.startswith("nao "))
+            is_resolved = (
+                ("resolvida" in aval_norm)
+                and ("nao resolvida" not in aval_norm)
+                and (not aval_norm.startswith("nao "))
+            )
 
             nota = _safe_float(_pick_col(row, ["Nota do Consumidor", "Nota Consumidor", "Nota"]))
             tempo = _safe_float(_pick_col(row, ["Tempo Resposta", "Tempo de Resposta", "Dias Resposta"]))
 
             if (is_respondida is None or not is_respondida) and tempo > 0:
                 is_respondida = True
-            
-            is_finalized = bool(is_finalized)
-            is_respondida = bool(is_respondida)
-            is_resolved = bool(is_resolved)
 
-            # Agregação
+            is_finalized_b = bool(is_finalized)
+            is_respondida_b = bool(is_respondida)
+            is_resolved_b = bool(is_resolved)
+
             if nk not in monthly_data[ym]:
                 monthly_data[ym][nk] = Agg(display_name=name_raw.strip(), cnpj_key=cnpj_key)
-            
+
             agg = monthly_data[ym][nk]
             agg.total_claims += 1
-            
-            if is_finalized:
+
+            if is_finalized_b:
                 agg.finalized_claims += 1
-            if is_respondida:
+            if is_respondida_b:
                 agg.responded_claims += 1
-            if is_resolved:
+            if is_resolved_b:
                 agg.resolved_claims += 1
-            
+
             if nota > 0:
                 agg.score_sum += nota
                 agg.evaluated_claims += 1
-            
+
             if tempo > 0:
                 agg.response_time_sum += tempo
                 agg.response_time_count += 1
-                
+
             if cnpj_key and not agg.cnpj_key:
                 agg.cnpj_key = cnpj_key
 
     except Exception as e:
         print(f"CG: Erro loop linhas: {e}")
     finally:
-        if hasattr(csv_stream, "close"):
-            csv_stream.close()
         try:
-             p = Path(csv_stream.name) if hasattr(csv_stream, "name") else None
-             if p and p.exists() and "cg_extract_" in p.name:
-                 p.unlink()
+            csv_stream.close()
+        except Exception:
+            pass
+        try:
+            p = Path(csv_stream.name) if hasattr(csv_stream, "name") else None
+            if p and p.exists() and "cg_extract_" in p.name:
+                p.unlink()
         except Exception:
             pass
 
-    # Exportação
     count_files = 0
     for ym, data_map in monthly_data.items():
         if not data_map:
             continue
-        
-        by_name_raw = {}
-        by_cnpj_raw = {}
-        
+
+        by_name_raw: dict[str, Any] = {}
+        by_cnpj_raw: dict[str, Any] = {}
+
         for k, agg in data_map.items():
             raw_obj = agg.to_public()
             if not _validate_entry(raw_obj):
@@ -595,25 +617,24 @@ def process_dump_to_monthly(dump_path: Path, target_yms: List[str], output_dir: 
             out_p = out_base_path / f"consumidor_gov_{ym}.json"
             payload = {
                 "meta": {
-                    "ym": ym, 
+                    "ym": ym,
                     "generated_at": _utc_now(),
-                    "parse": {"rows_total": rows_total, "rows_eligible": rows_eligible}
+                    "parse": {"rows_total": rows_total, "rows_eligible": rows_eligible},
                 },
-                "by_name": by_name_raw, 
+                "by_name": by_name_raw,
                 "by_name_key_raw": by_name_raw,
-                "by_cnpj_key_raw": by_cnpj_raw
+                "by_cnpj_key_raw": by_cnpj_raw,
             }
-            with open(out_p, "w", encoding="utf-8") as f:
-                json.dump(payload, f, ensure_ascii=False)
+            out_p.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
             count_files += 1
 
     print(f"CG: Processamento concluído. {count_files} meses gerados em {out_base_path}.")
 
 
-def sync_monthly_cache_from_dump_if_needed(target_yms: List[str], monthly_dir: str):
+def sync_monthly_cache_from_dump_if_needed(target_yms: list[str], monthly_dir: str) -> None:
     output_path = Path(monthly_dir)
     missing = [ym for ym in target_yms if not (output_path / f"consumidor_gov_{ym}.json").exists()]
-    
+
     if not missing:
         print("CG: Cache completo.")
         return
@@ -626,8 +647,10 @@ def sync_monthly_cache_from_dump_if_needed(target_yms: List[str], monthly_dir: s
         dump_path = download_dump_to_file(env_url, client)
         if dump_path:
             process_dump_to_monthly(dump_path, target_yms, str(output_path))
-            if dump_path.exists():
-                os.remove(dump_path)
+            try:
+                dump_path.unlink()
+            except Exception:
+                pass
         return
 
     for ym in missing:
@@ -638,7 +661,10 @@ def sync_monthly_cache_from_dump_if_needed(target_yms: List[str], monthly_dir: s
         if not dump_path:
             continue
         process_dump_to_monthly(dump_path, [ym], str(output_path))
-        if dump_path.exists():
-            os.remove(dump_path)
+        try:
+            dump_path.unlink()
+        except Exception:
+            pass
+
 
 sync_monthly_cache_from_dump = sync_monthly_cache_from_dump_if_needed
