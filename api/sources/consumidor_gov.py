@@ -205,6 +205,57 @@ class Agg:
     response_time_sum: float = 0.0
     response_time_count: int = 0
 
+    def merge_raw(self, raw: Any, *_: Any, **__: Any) -> None:
+    """
+    Compat: usado pelo build_consumidor_gov ao agregar vários meses.
+    Aceita diferentes formatos de payload (top-level ou dentro de 'statistics').
+    """
+    if not isinstance(raw, dict):
+        return
+
+    disp = raw.get("display_name") or raw.get("name") or raw.get("displayName")
+    if disp and not self.display_name:
+        self.display_name = str(disp).strip()
+
+    cnpj = normalize_cnpj(raw.get("cnpj") or raw.get("cnpjKey") or raw.get("cnpj_key"))
+    if cnpj and not self.cnpj_key:
+        self.cnpj_key = cnpj
+
+    st = raw.get("statistics") if isinstance(raw.get("statistics"), dict) else raw
+    if not isinstance(st, dict):
+        return
+
+    self.total_claims += _safe_int(st.get("complaintsCount") or st.get("total_claims") or st.get("totalClaims") or 0)
+    self.finalized_claims += _safe_int(st.get("finalizedCount") or st.get("finalized_claims") or 0)
+    self.responded_claims += _safe_int(st.get("respondedCount") or st.get("responded_claims") or 0)
+    self.resolved_claims += _safe_int(st.get("resolvedCount") or st.get("resolved_claims") or 0)
+
+    ec = _safe_int(st.get("evaluatedCount") or st.get("evaluated_claims") or st.get("satisfaction_count") or 0)
+    self.evaluated_claims += ec
+
+    score_sum = _safe_float(st.get("scoreSum") or st.get("score_sum") or 0)
+    if score_sum <= 0 and ec > 0:
+        ov = st.get("overallSatisfaction")
+        ov_f = _safe_float(ov)
+        if ov_f > 0:
+            score_sum = ov_f * ec
+    self.score_sum += score_sum
+
+    rt_sum = _safe_float(st.get("responseTimeSum") or st.get("response_time_sum") or 0)
+    rt_count = _safe_int(st.get("responseTimeCount") or st.get("response_time_count") or 0)
+
+    # Fallback: se só existir averageResponseTime, tenta ponderar por respondedCount
+    if rt_sum <= 0 and rt_count <= 0:
+        avg = _safe_float(st.get("averageResponseTime") or 0)
+        if avg > 0:
+            rt_count = _safe_int(st.get("responseTimeCount") or st.get("respondedCount") or 0)
+            if rt_count > 0:
+                rt_sum = avg * rt_count
+
+    self.response_time_sum += rt_sum
+    self.response_time_count += rt_count
+
+
     def to_public(self) -> dict:
         ec = self.evaluated_claims
         tc = self.total_claims
@@ -234,7 +285,9 @@ class Agg:
                 "scoreSum": self.score_sum,
                 "responseTimeSum": self.response_time_sum
             },
-            "indexes": {"b": {"nota": sat_avg}}
+            "indexes": {"b": {"nota": sat_avg}},
+            "responseTimeSum": self.response_time_sum,
+            "responseTimeCount": self.response_time_count
         }
 
 
