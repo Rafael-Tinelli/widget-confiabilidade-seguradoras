@@ -58,10 +58,10 @@ def _safe_float(v: Any) -> float:
             return 0.0
         s = str(v).strip()
         if "," in s and "." in s:
-             if s.rfind(",") > s.rfind("."):
-                 s = s.replace(".", "").replace(",", ".")
-             else:
-                 s = s.replace(",", "")
+            if s.rfind(",") > s.rfind("."):
+                s = s.replace(".", "").replace(",", ".")
+            else:
+                s = s.replace(",", "")
         elif "," in s:
             s = s.replace(",", ".")
         return float(s)
@@ -117,17 +117,22 @@ def _pick_col(row: dict[str, Any], candidates: list[str]) -> str:
     norm_map = {_norm_key(k): k for k in keys if isinstance(k, str)}
 
     for c in candidates:
-        if not c: continue
-        if c in row: return str(row[c])
+        if not c:
+            continue
+        if c in row:
+            return str(row[c])
         cl = c.lower().strip()
-        if cl in lower_map: return str(row[lower_map[cl]])
+        if cl in lower_map:
+            return str(row[lower_map[cl]])
         cn = _norm_key(c)
-        if cn in norm_map: return str(row[norm_map[cn]])
+        if cn in norm_map:
+            return str(row[norm_map[cn]])
     return ""
 
 
 def normalize_cnpj(v: Optional[str]) -> Optional[str]:
-    if not v: return None
+    if not v:
+        return None
     d = _CNPJ_RE.sub("", str(v))
     return d if len(d) == 14 else None
 
@@ -154,26 +159,34 @@ def _blob_has_ym(b: str, ym: str) -> bool:
 
 def _is_monthly_dump_candidate(url: str, meta: Optional[dict] = None) -> bool:
     b = _blob(url, meta)
-    if not _FINALIZADAS_OR_BASE_RE.search(b): return False
-    if "basecompleta" in b and not ALLOW_BASECOMPLETA: return False
+    if not _FINALIZADAS_OR_BASE_RE.search(b):
+        return False
+    if "basecompleta" in b and not ALLOW_BASECOMPLETA:
+        return False
     return ("finalizadas" in b) or ("basecompleta" in b)
 
 
 def _score_url(url: str, meta: Optional[dict] = None) -> int:
     u = (url or "").lower()
     score = 0
-    if "finalizadas" in u: score += 1_000_000
-    if "basecompleta" in u: score -= 250_000
-    if u.endswith(".zip"): score += 50_000
-    elif u.endswith(".csv"): score += 40_000
+    if "finalizadas" in u:
+        score += 1_000_000
+    if "basecompleta" in u:
+        score -= 250_000
+    if u.endswith(".zip"):
+        score += 50_000
+    elif u.endswith(".csv"):
+        score += 40_000
     
     m = _YM_ANY_RE.search(u)
-    if m: score += int(m.group(1)) * 100 + int(m.group(2))
+    if m:
+        score += int(m.group(1)) * 100 + int(m.group(2))
     
     if meta:
         lm = meta.get("last_modified") or meta.get("created") or ""
         mm = _YM_ANY_RE.search(str(lm))
-        if mm: score += int(mm.group(1)) * 100 + int(mm.group(2))
+        if mm:
+            score += int(mm.group(1)) * 100 + int(mm.group(2))
     return score
 
 
@@ -232,9 +245,11 @@ def _ckan_resource_search(client: requests.Session, term: str, limit: int = 50) 
     url = f"{api}?query={quote(term)}&limit={limit}"
     try:
         r = client.get(url, timeout=30)
-        if r.status_code != 200: return []
+        if r.status_code != 200:
+            return []
         data = r.json()
-        if not data.get("success"): return []
+        if not data.get("success"):
+            return []
         return (data.get("result") or {}).get("results") or []
     except Exception:
         return []
@@ -254,10 +269,13 @@ def _get_dump_url_for_month(client: requests.Session, ym: str) -> Optional[str]:
             resources = _ckan_resource_search(client, term)
             for res in resources:
                 u = res.get("url") or ""
-                if not u or not _FILE_RE.search(u): continue
-                if not _is_monthly_dump_candidate(u, res): continue
+                if not u or not _FILE_RE.search(u):
+                    continue
+                if not _is_monthly_dump_candidate(u, res):
+                    continue
                 b = _blob(u, res)
-                if not _blob_has_ym(b, ym): continue
+                if not _blob_has_ym(b, ym):
+                    continue
                 sc = _score_url(u, res)
                 if best is None or sc > best[0]:
                     best = (sc, u)
@@ -272,18 +290,24 @@ def _get_dump_url_for_month(client: requests.Session, ym: str) -> Optional[str]:
     print(f"CG: Fallback HTML ({ym}) ...")
     try:
         r = client.get(DIRECT_DOWNLOAD_PAGE, timeout=30)
-        if r.status_code != 200: return None
+        if r.status_code != 200:
+            return None
         html = r.text or ""
         hrefs = re.findall(r'href\s*=\s*["\']([^"\']+)["\']', html, flags=re.I)
         candidates = []
         for h in hrefs:
-            if not h: continue
+            if not h:
+                continue
             full = urljoin("https://www.consumidor.gov.br", h)
-            if not _FILE_RE.search(full): continue
-            if not _is_monthly_dump_candidate(full): continue
-            if not _blob_has_ym(full, ym): continue
+            if not _FILE_RE.search(full):
+                continue
+            if not _is_monthly_dump_candidate(full):
+                continue
+            if not _blob_has_ym(full, ym):
+                continue
             candidates.append((_score_url(full), full))
-        if not candidates: return None
+        if not candidates:
+            return None
         candidates.sort(reverse=True)
         return candidates[0][1]
     except Exception as e:
@@ -298,7 +322,8 @@ def download_dump_to_file(url: str, client: requests.Session) -> Optional[Path]:
     try:
         r = client.get(url, stream=True, timeout=TIMEOUT)
         if r.status_code != 200:
-            if out_path.exists(): out_path.unlink()
+            if out_path.exists():
+                out_path.unlink()
             return None
         total_bytes = 0
         with open(out_path, "wb") as f:
@@ -307,12 +332,14 @@ def download_dump_to_file(url: str, client: requests.Session) -> Optional[Path]:
                     f.write(chunk)
                     total_bytes += len(chunk)
         if total_bytes < MIN_BYTES:
-            if out_path.exists(): out_path.unlink()
+            if out_path.exists():
+                out_path.unlink()
             return None
         return out_path
     except Exception as e:
         print(f"CG: Exceção download: {e}")
-        if out_path.exists(): out_path.unlink()
+        if out_path.exists():
+            out_path.unlink()
         return None
 
 
@@ -327,7 +354,8 @@ def open_dump_file(path: Path) -> BinaryIO:
         z = zipfile.ZipFile(path, "r")
         try:
             csvs = [n for n in z.namelist() if n.lower().endswith(".csv")]
-            if not csvs: raise ValueError("ZIP sem CSV")
+            if not csvs:
+                raise ValueError("ZIP sem CSV")
             target = max(csvs, key=lambda x: z.getinfo(x).file_size)
             print(f"CG: Extraindo {target}...")
             RAW_DIR.mkdir(parents=True, exist_ok=True)
@@ -382,7 +410,8 @@ def process_dump_to_monthly(dump_path: Path, target_yms: List[str], output_dir: 
                 delimiter = delim
                 valid_setup = True
                 break
-        except: continue
+        except Exception:
+            continue
 
     if not valid_setup:
         csv_stream.close()
@@ -415,17 +444,20 @@ def process_dump_to_monthly(dump_path: Path, target_yms: List[str], output_dir: 
             date_str = _pick_col(row, ["Data Finalizacao", "Data Abertura", "Data da Reclamacao", "Data"])
             ym = None
             m1 = re.search(r"(\d{2})[\/-](\d{2})[\/-](\d{4})", date_str)
-            if m1: ym = f"{m1.group(3)}-{m1.group(2)}"
+            if m1:
+                ym = f"{m1.group(3)}-{m1.group(2)}"
             else:
                 m2 = re.search(r"(\d{4})[\/-](\d{2})[\/-](\d{2})", date_str)
-                if m2: ym = f"{m2.group(1)}-{m2.group(2)}"
+                if m2:
+                    ym = f"{m2.group(1)}-{m2.group(2)}"
 
             if not ym or ym not in target_set:
                 continue
 
             # Extração de Dados
             name_raw = _pick_col(row, ["Nome Fantasia", "Nome do Fornecedor", "Fornecedor", "Empresa", "Nome"])
-            if not name_raw: continue
+            if not name_raw:
+                continue
             
             nk = _norm_key(name_raw)
             cnpj_key = normalize_cnpj(_pick_col(row, ["CNPJ", "CNPJ do Fornecedor", "Documento", "CPF/CNPJ"]))
@@ -458,9 +490,12 @@ def process_dump_to_monthly(dump_path: Path, target_yms: List[str], output_dir: 
             agg = monthly_data[ym][nk]
             agg.total_claims += 1
             
-            if is_finalized: agg.finalized_claims += 1
-            if is_respondida: agg.responded_claims += 1
-            if is_resolved: agg.resolved_claims += 1
+            if is_finalized:
+                agg.finalized_claims += 1
+            if is_respondida:
+                agg.responded_claims += 1
+            if is_resolved:
+                agg.resolved_claims += 1
             
             if nota > 0:
                 agg.score_sum += nota
@@ -476,16 +511,20 @@ def process_dump_to_monthly(dump_path: Path, target_yms: List[str], output_dir: 
     except Exception as e:
         print(f"CG: Erro loop linhas: {e}")
     finally:
-        if hasattr(csv_stream, "close"): csv_stream.close()
+        if hasattr(csv_stream, "close"):
+            csv_stream.close()
         try:
              p = Path(csv_stream.name) if hasattr(csv_stream, "name") else None
-             if p and p.exists() and "cg_extract_" in p.name: p.unlink()
-        except: pass
+             if p and p.exists() and "cg_extract_" in p.name:
+                 p.unlink()
+        except Exception:
+            pass
 
     # Exportação
     count_files = 0
     for ym, data_map in monthly_data.items():
-        if not data_map: continue
+        if not data_map:
+            continue
         
         by_name_raw = {}
         by_cnpj_raw = {}
@@ -534,15 +573,19 @@ def sync_monthly_cache_from_dump_if_needed(target_yms: List[str], monthly_dir: s
         dump_path = download_dump_to_file(env_url, client)
         if dump_path:
             process_dump_to_monthly(dump_path, target_yms, str(output_path))
-            if dump_path.exists(): os.remove(dump_path)
+            if dump_path.exists():
+                os.remove(dump_path)
         return
 
     for ym in missing:
         url = _get_dump_url_for_month(client, ym)
-        if not url: continue
+        if not url:
+            continue
         dump_path = download_dump_to_file(url, client)
-        if not dump_path: continue
+        if not dump_path:
+            continue
         process_dump_to_monthly(dump_path, [ym], str(output_path))
-        if dump_path.exists(): os.remove(dump_path)
+        if dump_path.exists():
+            os.remove(dump_path)
 
 sync_monthly_cache_from_dump = sync_monthly_cache_from_dump_if_needed
