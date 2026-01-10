@@ -308,6 +308,18 @@ def main() -> None:
         oi_products_by_cnpj = {}
 
     cg_meta, cg_payload = extract_consumidor_gov_aggregated()
+    print(
+        "consumidor.gov meta:",
+        {
+            "status": cg_meta.get("status"),
+            "source_file": cg_meta.get("source_file"),
+            "rows_total": cg_meta.get("rows_total"),
+            "rows_segment": cg_meta.get("rows_segment"),
+            "rows_used": cg_meta.get("rows_used"),
+            "companies": cg_meta.get("companies"),
+            "target_segment": cg_meta.get("target_segment"),
+        },
+    )
     cg_meta_json = _to_jsonable(cg_meta)
 
     opin_by_cnpj: Set[str] = load_opin_participant_cnpjs(oi_participants)
