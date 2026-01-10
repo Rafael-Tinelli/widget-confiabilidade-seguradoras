@@ -241,7 +241,6 @@ def _sanity_check_counts(count: int, universe_count: int | None = None) -> None:
 
 
 def _debug_near_matches(matcher: NameMatcher, name: str) -> None:
-    # [FIX] Implementação completa restaurada para evitar erro de lint (unused import)
     try:
         entries_list = getattr(matcher, "entries", None) or getattr(matcher, "entries_list", None)
         if not entries_list:
@@ -356,16 +355,8 @@ def main() -> None:
             opin_matched_unique.add(cnpj_key)
 
         # Lógica de Reputação e B2B (FIX: Prioriza exclusão B2B antes de stats)
-        trade_name = (
-        (comp.get("trade_name") or "")
-        or (comp.get("nome_fantasia") or "")
-        or (comp.get("tradeName") or "")
-            ).strip() or None
-            rep_entry, rep_meta = matcher.get_entry(
-                name=entity_name,
-                trade_name=trade_name,
-                cnpj=entity_cnpj_key,
-            )
+        # Usa as variáveis corretas do loop ('name' e 'cnpj_key')
+        rep_entry, rep_meta = matcher.get_entry(name, cnpj=cnpj_key)
         
         # Tenta detectar se é B2B via metadados do Matcher
         is_b2b_flag = False
