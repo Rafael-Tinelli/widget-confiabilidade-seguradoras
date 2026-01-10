@@ -76,7 +76,7 @@ def main(months: int = 12) -> None:
     
     # Controle de Janela de Tempo
     CG_SKIP_CURRENT_MONTH = _env_bool("CG_SKIP_CURRENT_MONTH", True)
-    CG_PUBLICATION_LAG = _env_int("CG_PUBLICATION_LAG", 3) # Pula +N meses para trás
+    CG_PUBLICATION_LAG = _env_int("CG_PUBLICATION_LAG", 12) # Pula +N meses para trás
 
     # 1. Definir Janela
     today = datetime.now(timezone.utc)
