@@ -356,8 +356,16 @@ def main() -> None:
             opin_matched_unique.add(cnpj_key)
 
         # Lógica de Reputação e B2B (FIX: Prioriza exclusão B2B antes de stats)
-        trade_name = comp.get("trade_name") or comp.get("nome_fantasia") 
-        rep_entry, rep_meta = matcher.get_entry(name, trade_name=trade_name, cnpj=cnpj_key)
+        trade_name = (
+        (comp.get("trade_name") or "")
+        or (comp.get("nome_fantasia") or "")
+        or (comp.get("tradeName") or "")
+            ).strip() or None
+            rep_entry, rep_meta = matcher.get_entry(
+                name=entity_name,
+                trade_name=trade_name,
+                cnpj=entity_cnpj_key,
+            )
         
         # Tenta detectar se é B2B via metadados do Matcher
         is_b2b_flag = False
