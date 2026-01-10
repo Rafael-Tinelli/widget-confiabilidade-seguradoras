@@ -13,7 +13,22 @@ from api.utils.name_cleaner import (
     normalize_strong,
 )
 
+__all__ = ["NameMatcher", "MatchMeta", "format_cnpj"]
 
+
+def format_cnpj(cnpj_digits: str | None) -> str | None:
+    """
+    Formata um CNPJ (apenas dígitos) para o padrão 00.000.000/0000-00.
+    Retorna None se o valor for inválido.
+    """
+    d = normalize_cnpj(cnpj_digits)
+    if not d:
+        return None
+    return f"{d[:2]}.{d[2:5]}.{d[5:8]}/{d[8:12]}-{d[12:]}"
+
+
+# Mantemos ALIASES hardcoded para compatibilidade imediata.
+# (Futuro: migrar para JSON de aliases, se/quando fizer sentido.)
 ALIASES: dict[str, str] = {
     # SulAmérica
     "sulamerica": "sul america",
@@ -22,6 +37,7 @@ ALIASES: dict[str, str] = {
     "eulerhermes": "euler hermes",
     "allianztrade": "euler hermes",
     # crédito/garantia
+    "atradius": "atradius",
     "creditoycaucion": "credito y caucion",
     "creditoexportacao": "credito a exportacao",
     # pedidos explícitos
@@ -41,7 +57,26 @@ class MatchMeta:
     is_b2b: bool = False
 
 
+_INSURANCE_HINTS = (
+    "seguro",
+    "seguros",
+    "seguradora",
+    "capitalizacao",
+    "previdencia",
+    "prev",
+    "resseguro",
+)
+
+
+def _looks_like_insurance_entity(name: str) -> bool:
+    s = normalize_strong(name)
+    return any(h in s for h in _INSURANCE_HINTS)
+
+
 def _token_weights(tokens: set[str]) -> dict[str, float]:
+    """
+    Peso por token: privilegia tokens mais longos (mais discriminantes).
+    """
     w: dict[str, float] = {}
     for t in tokens:
         w[t] = max(1.0, min(6.0, len(t) / 3.0))
@@ -49,21 +84,21 @@ def _token_weights(tokens: set[str]) -> dict[str, float]:
 
 
 def _soft_overlap_weight(q_tokens: set[str], t_tokens: set[str]) -> float:
+    """
+    Overlap "soft": além do match exato, aceita prefixo/substring com penalidade.
+    """
     if not q_tokens or not t_tokens:
         return 0.0
 
     tw = _token_weights(t_tokens)
-    used_q: set[str] = set()
     score = 0.0
 
     for qt in q_tokens:
         best = 0.0
-        best_tt = None
 
         for tt in t_tokens:
             if qt == tt:
                 best = tw.get(tt, 1.0)
-                best_tt = tt
                 break
 
             # prefixo (min 3) penaliza menos
@@ -71,7 +106,6 @@ def _soft_overlap_weight(q_tokens: set[str], t_tokens: set[str]) -> float:
                 cand = tw.get(tt, 1.0) * 0.65
                 if cand > best:
                     best = cand
-                    best_tt = tt
                 continue
 
             # substring (min 4) penaliza mais
@@ -79,16 +113,16 @@ def _soft_overlap_weight(q_tokens: set[str], t_tokens: set[str]) -> float:
                 cand = tw.get(tt, 1.0) * 0.50
                 if cand > best:
                     best = cand
-                    best_tt = tt
 
-        if best_tt and qt not in used_q:
-            used_q.add(qt)
-            score += best
+        score += best
 
     return score
 
 
 def _weighted_dice(q_tokens: set[str], t_tokens: set[str]) -> float:
+    """
+    Dice ponderado (0..1), usando overlap soft.
+    """
     if not q_tokens or not t_tokens:
         return 0.0
 
@@ -106,17 +140,35 @@ def _weighted_dice(q_tokens: set[str], t_tokens: set[str]) -> float:
 
 
 class NameMatcher:
-    def __init__(self, reputation_payload: dict[str, Any]) -> None:
-        if not isinstance(reputation_payload, dict):
-            self.by_name = {}
-            self.by_cnpj = {}
-        else:
-            bn = reputation_payload.get("by_name_key_raw") or reputation_payload.get("by_name") or {}
-            bc = reputation_payload.get("by_cnpj_key_raw") or reputation_payload.get("by_cnpj_key") or {}
+    """
+    Matcher sobre dados agregados do Consumidor.gov.
 
-            self.by_name = {str(k): v for k, v in bn.items() if isinstance(v, dict)} if isinstance(bn, dict) else {}
-            self.by_cnpj = {str(k): v for k, v in bc.items() if isinstance(v, dict)} if isinstance(bc, dict) else {}
+    Premissa: Consumidor.gov (Base Completa) não tem CNPJ da reclamada.
+    Portanto, o "casamento" é majoritariamente por nome (fuzzy).
+    """
 
+    def __init__(self, reputation_root: dict[str, Any] | None) -> None:
+        self.by_name: dict[str, dict[str, Any]] = {}
+        self.by_cnpj: dict[str, dict[str, Any]] = {}
+
+        if not isinstance(reputation_root, dict):
+            return
+
+        # Suporte a chaves legadas e novas (robustez).
+        bn = (
+            reputation_root.get("by_name_key_raw")
+            or reputation_root.get("by_name")
+            or reputation_root.get("by_name_key")
+            or {}
+        )
+        bc = reputation_root.get("by_cnpj_key_raw") or reputation_root.get("by_cnpj_key") or {}
+
+        if isinstance(bn, dict):
+            self.by_name = {str(k): v for k, v in bn.items() if isinstance(v, dict)}
+        if isinstance(bc, dict):
+            self.by_cnpj = {str(k): v for k, v in bc.items() if isinstance(v, dict)}
+
+        # Índice invertido token -> name_keys candidatos.
         self._token_index: dict[str, list[str]] = {}
         for nk, entry in self.by_name.items():
             disp = str(entry.get("display_name") or entry.get("name") or "")
@@ -137,51 +189,66 @@ class NameMatcher:
         cnpj: str | None = None,
         threshold: float = 0.85,
     ) -> tuple[dict[str, Any] | None, MatchMeta]:
+        """
+        Retorna (entry, meta).
+
+        - Primeiro tenta CNPJ (se existir no agregado).
+        - Depois tenta por Razão Social (name).
+        - Depois tenta por Nome Fantasia (trade_name), se fornecido.
+        """
         q_name = (name or "").strip()
         if not q_name:
             return None, MatchMeta(method="empty", score=0.0, query=q_name)
 
-        # B2B guard
-        if is_likely_b2b(q_name):
+        if not self.by_name and not self.by_cnpj:
+            return None, MatchMeta(method="no_data", score=0.0, query=q_name)
+
+        # B2B: aplicamos o skip apenas quando NÃO parece ser entidade de seguros.
+        # (Evita false-negative em seguradoras com razão social "corporativa".)
+        if is_likely_b2b(q_name) and not _looks_like_insurance_entity(q_name):
             return None, MatchMeta(method="b2b_skip", score=0.0, query=q_name, is_b2b=True)
 
-        # 1) CNPJ exato (se existir na base — em Base Completa costuma vir vazio)
+        # 1) CNPJ (prioritário)
         c = normalize_cnpj(cnpj)
         if c and c in self.by_cnpj:
             e = self.by_cnpj[c]
             dn = str(e.get("display_name") or e.get("name") or "")
             return e, MatchMeta(method="cnpj", score=1.0, query=q_name, matched_name=dn, matched_cnpj=c)
 
-        # 2) Match pela razão social
-        e_legal, m_legal = self._match_text_strategy(q_name, threshold)
+        # 2) Match por Razão Social
+        entry_legal, meta_legal = self._match_text_strategy(q_name, threshold)
 
-        # 3) Dual-pass pelo nome fantasia (quando fornecido)
+        # 3) Dual pass por Nome Fantasia (se vier)
         if trade_name and trade_name.strip():
-            t = trade_name.strip()
-            if t.lower() != q_name.lower() and not is_likely_b2b(t):
-                e_trade, m_trade = self._match_text_strategy(t, threshold)
-                if (m_trade.score if m_trade else 0.0) > (m_legal.score if m_legal else 0.0):
-                    if m_trade:
-                        m_trade = MatchMeta(
-                            method=f"{m_trade.method}_trade",
-                            score=m_trade.score,
-                            query=t,
-                            matched_name=m_trade.matched_name,
-                            matched_cnpj=m_trade.matched_cnpj,
-                            is_b2b=m_trade.is_b2b,
-                        )
-                    return e_trade, m_trade
+            t_name = trade_name.strip()
+            if t_name.lower() != q_name.lower() and not (is_likely_b2b(t_name) and not _looks_like_insurance_entity(t_name)):
+                entry_trade, meta_trade = self._match_text_strategy(t_name, threshold)
 
-        return e_legal, m_legal
+                if (meta_trade.score if meta_trade else 0.0) > (meta_legal.score if meta_legal else 0.0):
+                    # marca auditoria (origem do match)
+                    meta_trade = MatchMeta(
+                        method=f"{meta_trade.method}_trade",
+                        score=meta_trade.score,
+                        query=t_name,
+                        matched_name=meta_trade.matched_name,
+                        matched_cnpj=meta_trade.matched_cnpj,
+                        is_b2b=meta_trade.is_b2b,
+                    )
+                    return entry_trade, meta_trade
+
+        return entry_legal, meta_legal
 
     def _match_text_strategy(self, query: str, threshold: float) -> tuple[dict[str, Any] | None, MatchMeta]:
+        """
+        Core matching: Alias -> Dice ponderado -> fallback SequenceMatcher.
+        """
         q2 = self._apply_alias(query)
         q_tokens = set(get_name_tokens(q2))
 
         if not q_tokens:
             return self._fallback_seq(q2, threshold=0.92)
 
-        # candidatos via índice
+        # candidatos via índice invertido
         candidate_keys: set[str] = set()
         for t in q_tokens:
             for nk in self._token_index.get(t, []):
@@ -196,6 +263,7 @@ class NameMatcher:
                 continue
             disp = str(entry.get("display_name") or entry.get("name") or "")
             t_tokens = set(get_name_tokens(disp))
+
             sc = _weighted_dice(q_tokens, t_tokens)
             if sc > best_score:
                 best_score = sc
