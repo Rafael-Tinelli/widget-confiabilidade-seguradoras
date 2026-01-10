@@ -1,210 +1,261 @@
 # api/sources/consumidor_gov_agg.py
+# api/sources/consumidor_gov_agg.py
 from __future__ import annotations
 
+import csv
 import json
 import os
 import re
+from collections import defaultdict
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Tuple
+from typing import Any, Iterable
+
+try:
+    # Preferir o normalizador do projeto (se existir)
+    from api.utils.name_cleaner import normalize_name_key
+except Exception:  # pragma: no cover
+    def normalize_name_key(s: str) -> str:
+        s = (s or "").lower()
+        s = re.sub(r"[^a-z0-9]+", " ", s).strip()
+        s = re.sub(r"\s+", " ", s)
+        return s
 
 
-# Onde fica o agregado final (opcionalmente já gerado)
-AGG_FILE = Path(os.getenv("CG_AGG_FILE", "data/derived/consumidor_gov/aggregated.json"))
+RAW_DIR = Path(os.getenv("CG_RAW_DIR", "data/raw/consumidor_gov"))
+DERIVED_DIR = Path(os.getenv("CG_DERIVED_DIR", "data/derived/consumidor_gov"))
 
-# Onde procurar os arquivos mensais consumidor_gov_YYYY-MM.json
-# (vamos varrer recursivamente para não depender de layout fixo)
-MONTHLY_ROOT = Path(os.getenv("CG_MONTHLY_ROOT", "data/derived/consumidor_gov"))
+TARGET_SEGMENT = os.getenv(
+    "CG_TARGET_SEGMENT",
+    "Seguros, Capitalização e Previdência",
+)
 
-# Se não existir agregado, pode gerar e salvar automaticamente
-WRITE_AGG_IF_MISSING = os.getenv("CG_WRITE_AGG_IF_MISSING", "1") == "1"
-
-_YM_RE = re.compile(r"consumidor_gov_(20\d{2}-[01]\d)\.json$", re.I)
+# Campo padrão da Base Completa
+FIELD_SEGMENT = os.getenv("CG_FIELD_SEGMENT", "Segmento de Mercado")
+FIELD_NAME = os.getenv("CG_FIELD_NAME", "Nome Fantasia")
+FIELD_RESPONDED = os.getenv("CG_FIELD_RESPONDED", "Respondida")
+FIELD_STATUS = os.getenv("CG_FIELD_STATUS", "Situação")
+FIELD_RESOLUTION = os.getenv("CG_FIELD_RESOLUTION", "Avaliação Reclamação")
+FIELD_SCORE = os.getenv("CG_FIELD_SCORE", "Nota do Consumidor")
 
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
-def _safe_read_json(path: Path) -> dict[str, Any] | None:
+def _safe_float(v: Any) -> float:
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        if v is None:
+            return 0.0
+        s = str(v).strip()
+        if s in ("", "NA", "N/A", "-", "nan"):
+            return 0.0
+        return float(s.replace(",", "."))
     except Exception:
-        return None
+        return 0.0
 
 
-def _iter_monthly_files(root: Path) -> list[Path]:
-    if not root.exists():
-        return []
-    files = []
-    for p in root.rglob("consumidor_gov_*.json"):
-        if p.name.lower() == "aggregated.json":
-            continue
-        if _YM_RE.search(p.name):
-            files.append(p)
-    # Ordena por nome (YYYY-MM) para determinismo
-    files.sort(key=lambda x: x.name)
-    return files
+def _detect_delimiter(first_line: str) -> str:
+    # Base Completa costuma vir com ';'
+    return ";" if ";" in first_line else ","
 
 
-def _merge_entry(dst: dict[str, Any], src: dict[str, Any]) -> None:
-    """
-    Mescla estatísticas "por soma" e recalcula médias/índices no final.
-    Espera o formato do seu monthly:
-      entry["statistics"] com counts e também scoreSum/responseTimeSum.
-    """
-    ds = dst.setdefault("statistics", {})
-    ss = (src.get("statistics") or {})
+def _iter_rows(csv_path: Path) -> Iterable[dict[str, str]]:
+    encodings = ("utf-8", "utf-8-sig", "latin1")
+    last_err: Exception | None = None
 
-    # contagens
-    ds["complaintsCount"] = int(ds.get("complaintsCount") or 0) + int(ss.get("complaintsCount") or 0)
-    ds["finalizedCount"] = int(ds.get("finalizedCount") or 0) + int(ss.get("finalizedCount") or 0)
-    ds["evaluatedCount"] = int(ds.get("evaluatedCount") or 0) + int(ss.get("evaluatedCount") or 0)
-    ds["respondedCount"] = int(ds.get("respondedCount") or 0) + int(ss.get("respondedCount") or 0)
-    ds["resolvedCount"] = int(ds.get("resolvedCount") or 0) + int(ss.get("resolvedCount") or 0)
-
-    # somas brutas (para médias)
-    ds["scoreSum"] = float(ds.get("scoreSum") or 0.0) + float(ss.get("scoreSum") or 0.0)
-    ds["responseTimeSum"] = float(ds.get("responseTimeSum") or 0.0) + float(ss.get("responseTimeSum") or 0.0)
-    ds["responseTimeCount"] = int(ds.get("responseTimeCount") or 0) + int(ss.get("responseTimeCount") or 0)
-
-    # cnpj: preserva o primeiro útil
-    if not dst.get("cnpj") and src.get("cnpj"):
-        dst["cnpj"] = src.get("cnpj")
-
-    # display_name: tenta manter o mais “informativo”
-    dn_dst = (dst.get("display_name") or dst.get("name") or "").strip()
-    dn_src = (src.get("display_name") or src.get("name") or "").strip()
-    if dn_src and (not dn_dst or len(dn_src) > len(dn_dst)):
-        dst["display_name"] = dn_src
-        dst["name"] = dn_src  # compat
-
-
-def _finalize_entry(entry: dict[str, Any]) -> None:
-    st = entry.get("statistics") or {}
-    ec = int(st.get("evaluatedCount") or 0)
-    tc = int(st.get("complaintsCount") or 0)
-    fin = int(st.get("finalizedCount") or 0)
-    resolved = int(st.get("resolvedCount") or 0)
-
-    score_sum = float(st.get("scoreSum") or 0.0)
-    rt_sum = float(st.get("responseTimeSum") or 0.0)
-    rt_count = int(st.get("responseTimeCount") or 0)
-
-    overall = round(score_sum / ec, 2) if ec > 0 else None
-
-    denom_sol = ec if ec > 0 else (fin if fin > 0 else tc)
-    sol_idx = round(resolved / denom_sol, 2) if denom_sol > 0 else None
-
-    avg_rt = round(rt_sum / rt_count, 1) if rt_count > 0 else None
-
-    st["overallSatisfaction"] = overall
-    st["solutionIndex"] = sol_idx
-    st["averageResponseTime"] = avg_rt
-
-    # compat com seu formato anterior
-    entry.setdefault("indexes", {})
-    entry["indexes"].setdefault("b", {})
-    entry["indexes"]["b"]["nota"] = overall
-
-
-def _build_aggregated_from_monthlies(monthlies: list[Path]) -> dict[str, Any]:
-    by_name: dict[str, dict[str, Any]] = {}
-    by_cnpj: dict[str, dict[str, Any]] = {}
-
-    yms: list[str] = []
-
-    for p in monthlies:
-        m = _YM_RE.search(p.name)
-        if m:
-            yms.append(m.group(1))
-
-        payload = _safe_read_json(p) or {}
-        entries = payload.get("by_name_key_raw") or payload.get("by_name") or {}
-        if not isinstance(entries, dict):
-            continue
-
-        for k, entry in entries.items():
-            if not isinstance(entry, dict):
-                continue
-
-            # merge por name-key
-            if k not in by_name:
-                # shallow copy
-                by_name[k] = {
-                    "display_name": entry.get("display_name") or entry.get("name") or "",
-                    "name": entry.get("display_name") or entry.get("name") or "",
-                    "cnpj": entry.get("cnpj"),
-                    "statistics": dict(entry.get("statistics") or {}),
-                    "indexes": dict(entry.get("indexes") or {}),
-                }
-            else:
-                _merge_entry(by_name[k], entry)
-
-    # finaliza e monta índice por cnpj
-    for k, entry in by_name.items():
-        _finalize_entry(entry)
-        cnpj = (entry.get("cnpj") or "").strip()
-        if cnpj:
-            by_cnpj[cnpj] = entry
-
-    out = {
-        "meta": {
-            "generated_at": _utc_now(),
-            "months": yms,
-            "monthly_files": len(monthlies),
-            "source": "built_from_monthlies",
-        },
-        "by_name_key_raw": by_name,
-        "by_cnpj_key_raw": by_cnpj,
-    }
-    return out
-
-
-def extract_consumidor_gov_aggregated() -> Tuple[dict[str, Any], dict[str, Any]]:
-    """
-    Retorna (meta, payload) para o build.
-    payload deve conter by_name_key_raw/by_cnpj_key_raw para o NameMatcher.
-    """
-    # 1) Se já existe agregado, usa-o
-    if AGG_FILE.exists():
-        data = _safe_read_json(AGG_FILE)
-        if isinstance(data, dict) and (data.get("by_name_key_raw") or data.get("by_name")):
-            meta = data.get("meta") or {}
-            meta = {
-                **(meta if isinstance(meta, dict) else {}),
-                "status": "loaded_aggregated",
-                "path": str(AGG_FILE),
-            }
-            return meta, data
-
-    # 2) Senão, tenta agregar a partir dos mensais
-    monthlies = _iter_monthly_files(MONTHLY_ROOT)
-    if not monthlies:
-        meta = {
-            "status": "missing",
-            "understood": "no aggregated file and no monthly files found",
-            "agg_path": str(AGG_FILE),
-            "monthly_root": str(MONTHLY_ROOT),
-            "generated_at": _utc_now(),
-        }
-        return meta, {}
-
-    data = _build_aggregated_from_monthlies(monthlies)
-
-    if WRITE_AGG_IF_MISSING:
+    for enc in encodings:
         try:
-            AGG_FILE.parent.mkdir(parents=True, exist_ok=True)
-            AGG_FILE.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+            with csv_path.open("r", encoding=enc, newline="") as f:
+                first = f.readline()
+                if not first:
+                    return
+                delim = _detect_delimiter(first)
+                f.seek(0)
+                reader = csv.DictReader(f, delimiter=delim)
+                for row in reader:
+                    # csv.DictReader pode devolver None em chaves ausentes
+                    yield {str(k): ("" if v is None else str(v)) for k, v in row.items()}
+            return
+        except UnicodeDecodeError as e:
+            last_err = e
+            continue
+
+    raise RuntimeError(f"Consumidor.gov: falha de encoding ao ler {csv_path.name}: {last_err}")
+
+
+def _pick_latest_base_completa(raw_dir: Path, period: str | None) -> Path | None:
+    """
+    Procura basecompletaYYYY-MM*.csv.
+    - Se period (YYYY-MM) for informado, tenta casar esse.
+    - Senão, pega o mais recente (por mtime).
+    """
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    candidates = list(raw_dir.glob("basecompleta*.csv"))
+
+    if period:
+        # Aceita basecompleta2025-12.csv e variações com sufixo
+        wanted = [p for p in candidates if period in p.stem]
+        if wanted:
+            return max(wanted, key=lambda p: p.stat().st_mtime)
+
+    if candidates:
+        return max(candidates, key=lambda p: p.stat().st_mtime)
+
+    return None
+
+
+def extract_consumidor_gov_aggregated() -> tuple[dict[str, Any], dict[str, Any]]:
+    """
+    Lê a Base Completa (transacional), filtra apenas TARGET_SEGMENT e agrega por empresa.
+
+    Retorna:
+      cg_meta: dict com contadores/diagnóstico
+      cg_payload: dict compatível com o matcher (by_name_key_raw, by_cnpj_key_raw, etc.)
+    """
+    RAW_DIR.mkdir(parents=True, exist_ok=True)
+    DERIVED_DIR.mkdir(parents=True, exist_ok=True)
+
+    period = os.getenv("CG_PERIOD")  # opcional: "2025-12"
+    csv_path = _pick_latest_base_completa(RAW_DIR, period)
+
+    if not csv_path:
+        meta = {
+            "status": "missing_raw_csv",
+            "generated_at": _utc_now(),
+            "target_segment": TARGET_SEGMENT,
+            "raw_dir": str(RAW_DIR),
+        }
+        payload = {"by_name_key_raw": {}, "by_cnpj_key_raw": {}}
+        return meta, payload
+
+    # Cache derivado (pequeno): reprocessa se raw for mais novo
+    derived_path = DERIVED_DIR / f"consumidor_gov_{csv_path.stem}.json"
+    if derived_path.exists() and derived_path.stat().st_mtime >= csv_path.stat().st_mtime:
+        try:
+            obj = json.loads(derived_path.read_text(encoding="utf-8"))
+            meta = obj.get("meta", {}) if isinstance(obj, dict) else {}
+            payload = obj.get("payload", {}) if isinstance(obj, dict) else {}
+            if isinstance(meta, dict) and isinstance(payload, dict):
+                return meta, payload
         except Exception:
-            # best-effort: não quebra pipeline
+            # Se cache corromper, cai para reprocessar
             pass
 
-    meta = data.get("meta") or {}
+    rows_total = 0
+    rows_segment = 0
+    rows_used = 0
+
+    # key -> entry
+    by_name_key_raw: dict[str, dict[str, Any]] = {}
+
+    for row in _iter_rows(csv_path):
+        rows_total += 1
+
+        segment = (row.get(FIELD_SEGMENT) or "").strip()
+        if segment != TARGET_SEGMENT:
+            continue
+        rows_segment += 1
+
+        status = (row.get(FIELD_STATUS) or "").strip()
+        # “Cancelada” normalmente é ruído para reputação
+        if "Cancelada" in status:
+            continue
+
+        display_name = (row.get(FIELD_NAME) or "").strip()
+        if not display_name:
+            continue
+
+        key = normalize_name_key(display_name)
+        if not key:
+            continue
+
+        entry = by_name_key_raw.get(key)
+        if not entry:
+            entry = {
+                "name": display_name,
+                "display_name": display_name,
+                "cnpj": "",  # Base Completa normalmente não traz CNPJ do fornecedor reclamado
+                "statistics": {
+                    # padrão “novo”
+                    "complaintsCount": 0,
+                    "respondedCount": 0,
+                    "resolvedCount": 0,
+                    "finalizedCount": 0,
+                    "scoreSum": 0.0,
+                    "scoreCount": 0,
+                    "averageScore": None,
+                    # compatibilidade “legada”
+                    "total_claims": 0,
+                    "responded_claims": 0,
+                    "resolved_claims": 0,
+                    "finalized_claims": 0,
+                },
+            }
+            by_name_key_raw[key] = entry
+
+        stats = entry["statistics"]
+
+        stats["complaintsCount"] += 1
+        stats["total_claims"] += 1
+
+        if (row.get(FIELD_RESPONDED) or "").strip() == "S":
+            stats["respondedCount"] += 1
+            stats["responded_claims"] += 1
+
+        if "Finalizada" in status or "Encerrada" in status:
+            stats["finalizedCount"] += 1
+            stats["finalized_claims"] += 1
+
+        if (row.get(FIELD_RESOLUTION) or "").strip() == "Resolvida":
+            stats["resolvedCount"] += 1
+            stats["resolved_claims"] += 1
+
+        score = _safe_float(row.get(FIELD_SCORE))
+        if score > 0:
+            stats["scoreSum"] += score
+            stats["scoreCount"] += 1
+
+        rows_used += 1
+
+    # pós-processamento: averageScore
+    for e in by_name_key_raw.values():
+        st = e.get("statistics", {})
+        try:
+            sc = float(st.get("scoreCount", 0) or 0)
+            ss = float(st.get("scoreSum", 0.0) or 0.0)
+            st["averageScore"] = round(ss / sc, 4) if sc > 0 else None
+        except Exception:
+            st["averageScore"] = None
+
     meta = {
-        **(meta if isinstance(meta, dict) else {}),
-        "status": "built_from_monthlies",
-        "agg_path": str(AGG_FILE),
-        "monthly_root": str(MONTHLY_ROOT),
+        "status": "processed_base_completa",
+        "generated_at": _utc_now(),
+        "target_segment": TARGET_SEGMENT,
+        "source_file": str(csv_path),
+        "rows_total": rows_total,
+        "rows_segment": rows_segment,
+        "rows_used": rows_used,
+        "companies": len(by_name_key_raw),
     }
-    return meta, data
+
+    payload = {
+        # compatível com o matcher (ele tenta by_name_key_raw ou by_name)
+        "by_name_key_raw": by_name_key_raw,
+        "by_name": by_name_key_raw,
+        # Base Completa não traz CNPJ do fornecedor (na prática, fica vazio)
+        "by_cnpj_key_raw": {},
+        "by_cnpj_key": {},
+    }
+
+    try:
+        derived_path.write_text(
+            json.dumps({"meta": meta, "payload": payload}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+    except Exception:
+        # cache não é crítico
+        pass
+
+    return meta, payload
