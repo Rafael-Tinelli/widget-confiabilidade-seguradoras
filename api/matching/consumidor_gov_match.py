@@ -14,15 +14,6 @@ from api.utils.name_cleaner import (
 )
 
 
-def format_cnpj(cnpj_digits: str | None) -> str | None:
-    d = normalize_cnpj(cnpj_digits)
-    if not d:
-        return None
-    return f"{d[:2]}.{d[2:5]}.{d[5:8]}/{d[8:12]}-{d[12:]}"
-
-
-# [ESTRATÉGIA SEGURA] Mantemos ALIASES hardcoded para garantir compatibilidade imediata.
-# Em uma refatoração futura, isso pode ir para um arquivo JSON externo.
 ALIASES: dict[str, str] = {
     # SulAmérica
     "sulamerica": "sul america",
@@ -31,7 +22,6 @@ ALIASES: dict[str, str] = {
     "eulerhermes": "euler hermes",
     "allianztrade": "euler hermes",
     # crédito/garantia
-    "atradius": "atradius",
     "creditoycaucion": "credito y caucion",
     "creditoexportacao": "credito a exportacao",
     # pedidos explícitos
@@ -52,9 +42,6 @@ class MatchMeta:
 
 
 def _token_weights(tokens: set[str]) -> dict[str, float]:
-    """
-    Peso por token: privilegia tokens mais longos (mais discriminantes).
-    """
     w: dict[str, float] = {}
     for t in tokens:
         w[t] = max(1.0, min(6.0, len(t) / 3.0))
@@ -62,9 +49,6 @@ def _token_weights(tokens: set[str]) -> dict[str, float]:
 
 
 def _soft_overlap_weight(q_tokens: set[str], t_tokens: set[str]) -> float:
-    """
-    Overlap "soft": além do match exato, aceita prefixo/substring com penalidade.
-    """
     if not q_tokens or not t_tokens:
         return 0.0
 
@@ -105,9 +89,6 @@ def _soft_overlap_weight(q_tokens: set[str], t_tokens: set[str]) -> float:
 
 
 def _weighted_dice(q_tokens: set[str], t_tokens: set[str]) -> float:
-    """
-    Dice ponderado (0..1), usando overlap soft.
-    """
     if not q_tokens or not t_tokens:
         return 0.0
 
@@ -125,27 +106,17 @@ def _weighted_dice(q_tokens: set[str], t_tokens: set[str]) -> float:
 
 
 class NameMatcher:
-    """
-    Matcher sobre dados agregados do Consumidor.gov.
-    """
+    def __init__(self, reputation_payload: dict[str, Any]) -> None:
+        if not isinstance(reputation_payload, dict):
+            self.by_name = {}
+            self.by_cnpj = {}
+        else:
+            bn = reputation_payload.get("by_name_key_raw") or reputation_payload.get("by_name") or {}
+            bc = reputation_payload.get("by_cnpj_key_raw") or reputation_payload.get("by_cnpj_key") or {}
 
-    def __init__(self, reputation_root: dict[str, Any]) -> None:
-        self.by_name: dict[str, dict[str, Any]] = {}
-        self.by_cnpj: dict[str, dict[str, Any]] = {}
+            self.by_name = {str(k): v for k, v in bn.items() if isinstance(v, dict)} if isinstance(bn, dict) else {}
+            self.by_cnpj = {str(k): v for k, v in bc.items() if isinstance(v, dict)} if isinstance(bc, dict) else {}
 
-        if not isinstance(reputation_root, dict):
-            return
-
-        # [ROBUSTEZ] Suporte a chaves legadas e novas
-        bn = reputation_root.get("by_name_key_raw") or reputation_root.get("by_name") or {}
-        bc = reputation_root.get("by_cnpj_key_raw") or reputation_root.get("by_cnpj_key") or {}
-
-        if isinstance(bn, dict):
-            self.by_name = {str(k): v for k, v in bn.items() if isinstance(v, dict)}
-        if isinstance(bc, dict):
-            self.by_cnpj = {str(k): v for k, v in bc.items() if isinstance(v, dict)}
-
-        # índice tokens -> name_keys candidatos
         self._token_index: dict[str, list[str]] = {}
         for nk, entry in self.by_name.items():
             disp = str(entry.get("display_name") or entry.get("name") or "")
@@ -162,64 +133,55 @@ class NameMatcher:
     def get_entry(
         self,
         name: str,
-        trade_name: str | None = None, # [NOVO] Suporte a Nome Fantasia (Dual Pass)
+        trade_name: str | None = None,
         cnpj: str | None = None,
-        threshold: float = 0.85, # [AJUSTE] Threshold mais seguro (0.85) para evitar falso positivo
+        threshold: float = 0.85,
     ) -> tuple[dict[str, Any] | None, MatchMeta]:
-        
         q_name = (name or "").strip()
         if not q_name:
             return None, MatchMeta(method="empty", score=0.0, query=q_name)
 
-        # 0) B2B: verificação centralizada (segura e consistente)
+        # B2B guard
         if is_likely_b2b(q_name):
             return None, MatchMeta(method="b2b_skip", score=0.0, query=q_name, is_b2b=True)
 
-        # 1) CNPJ (Exato - Prioridade Máxima)
+        # 1) CNPJ exato (se existir na base — em Base Completa costuma vir vazio)
         c = normalize_cnpj(cnpj)
         if c and c in self.by_cnpj:
             e = self.by_cnpj[c]
             dn = str(e.get("display_name") or e.get("name") or "")
             return e, MatchMeta(method="cnpj", score=1.0, query=q_name, matched_name=dn, matched_cnpj=c)
 
-        # 2) Match por Razão Social (Estratégia Padrão)
-        entry_legal, meta_legal = self._match_text_strategy(q_name, threshold)
+        # 2) Match pela razão social
+        e_legal, m_legal = self._match_text_strategy(q_name, threshold)
 
-        # 3) Match por Nome Fantasia (Estratégia Dual Pass)
-        # Só tenta se trade_name existir, for diferente da razão social e não for B2B
+        # 3) Dual-pass pelo nome fantasia (quando fornecido)
         if trade_name and trade_name.strip():
-            t_name = trade_name.strip()
-            if t_name.lower() != q_name.lower() and not is_likely_b2b(t_name):
-                entry_trade, meta_trade = self._match_text_strategy(t_name, threshold)
-                
-                # Compara os scores e fica com o melhor
-                score_legal = meta_legal.score if meta_legal else 0.0
-                score_trade = meta_trade.score if meta_trade else 0.0
-                
-                if score_trade > score_legal:
-                    # [AUDITORIA] Marca que o match veio pelo nome fantasia
-                    if meta_trade:
-                        meta_trade = MatchMeta(
-                            method=f"{meta_trade.method}_trade", # ex: dice_trade
-                            score=meta_trade.score,
-                            query=t_name,
-                            matched_name=meta_trade.matched_name,
-                            matched_cnpj=meta_trade.matched_cnpj,
-                            is_b2b=meta_trade.is_b2b
+            t = trade_name.strip()
+            if t.lower() != q_name.lower() and not is_likely_b2b(t):
+                e_trade, m_trade = self._match_text_strategy(t, threshold)
+                if (m_trade.score if m_trade else 0.0) > (m_legal.score if m_legal else 0.0):
+                    if m_trade:
+                        m_trade = MatchMeta(
+                            method=f"{m_trade.method}_trade",
+                            score=m_trade.score,
+                            query=t,
+                            matched_name=m_trade.matched_name,
+                            matched_cnpj=m_trade.matched_cnpj,
+                            is_b2b=m_trade.is_b2b,
                         )
-                    return entry_trade, meta_trade # type: ignore
+                    return e_trade, m_trade
 
-        return entry_legal, meta_legal
+        return e_legal, m_legal
 
     def _match_text_strategy(self, query: str, threshold: float) -> tuple[dict[str, Any] | None, MatchMeta]:
-        """Lógica core de match textual (Alias -> Dice -> SequenceMatcher)"""
         q2 = self._apply_alias(query)
         q_tokens = set(get_name_tokens(q2))
-        
+
         if not q_tokens:
             return self._fallback_seq(q2, threshold=0.92)
 
-        # Candidatos via índice invertido
+        # candidatos via índice
         candidate_keys: set[str] = set()
         for t in q_tokens:
             for nk in self._token_index.get(t, []):
@@ -232,10 +194,8 @@ class NameMatcher:
             entry = self.by_name.get(nk)
             if not entry:
                 continue
-            
             disp = str(entry.get("display_name") or entry.get("name") or "")
             t_tokens = set(get_name_tokens(disp))
-            
             sc = _weighted_dice(q_tokens, t_tokens)
             if sc > best_score:
                 best_score = sc
@@ -246,7 +206,6 @@ class NameMatcher:
             dn = str(e.get("display_name") or e.get("name") or "")
             return e, MatchMeta(method="dice", score=round(best_score, 4), query=query, matched_name=dn)
 
-        # Fallback para SequenceMatcher (mais lento, mas pega erros de digitação grosseiros)
         return self._fallback_seq(q2, threshold=0.92)
 
     def _fallback_seq(self, q: str, threshold: float = 0.92) -> tuple[dict[str, Any] | None, MatchMeta]:
