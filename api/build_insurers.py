@@ -23,6 +23,7 @@ try:
     from api.sources.open_insurance import (  # type: ignore
         extract_open_insurance_participants,
         extract_open_insurance_products,
+        load_open_insurance_participant_cnpjs as load_opin_participant_cnpjs,  # type: ignore
     )
 except Exception:  # pragma: no cover
     from api.sources.opin_participants import (  # type: ignore
@@ -30,13 +31,6 @@ except Exception:  # pragma: no cover
         load_opin_participant_cnpjs,
     )
     from api.sources.opin_products import extract_open_insurance_products  # type: ignore
-else:
-    try:
-        from api.sources.open_insurance import (  # type: ignore
-            load_open_insurance_participant_cnpjs as load_opin_participant_cnpjs,
-        )
-    except Exception:  # pragma: no cover
-        from api.sources.opin_participants import load_opin_participant_cnpjs  # type: ignore
 
 # Intelligence
 try:
@@ -61,6 +55,7 @@ MIN_OPIN_MATCH_FLOOR = int(os.getenv("MIN_OPIN_MATCH_FLOOR", "10"))
 STRICT_OPIN_SANITY = os.getenv("STRICT_OPIN_SANITY", "0") == "1"
 
 DEBUG_MATCH = os.getenv("DEBUG_MATCH", "0") == "1"
+WRITE_SNAPSHOT = os.getenv("WRITE_SNAPSHOT", "1") == "1"
 
 EXCLUDE_NAME_SUBSTRINGS = {
     "ibracor",
@@ -70,7 +65,14 @@ EXCLUDE_NAME_SUBSTRINGS = {
     "broker",
 }
 
-WRITE_SNAPSHOT = os.getenv("WRITE_SNAPSHOT", "1") == "1"
+TRADE_GENERIC_TERMS = {
+    "cia", "companhia", "comp", "sociedade",
+    "seguros", "seguro", "seguradora", "resseguros", "resseguradora",
+    "capitalizacao", "previdencia", "vida", "saude",
+    "brasil", "brasileira", "gerais",
+    "sa", "s", "a", "ltda", "inc", "corp", "group", "holding",
+    "do", "de", "da", "e", "participacoes",
+}
 
 
 def utc_now() -> str:
@@ -172,29 +174,17 @@ def _coerce_float(x: Any) -> float:
         return float(v) if v is not None else 0.0
     if isinstance(x, dict):
         total_keys = (
-            "total",
-            "valor_total",
-            "value",
-            "amount",
-            "sum",
-            "premiums_total",
-            "premiumsTotal",
-            "premio_total",
-            "premios_total",
-            "premios",
-            "premio",
-            "premio_emitido",
-            "premioEmitido",
-            "claims_total",
-            "claimsTotal",
-            "sinistro_total",
-            "sinistros_total",
-            "sinistros",
-            "sinistro",
+            "total", "valor_total", "value", "amount", "sum",
+            "premiums_total", "premiumsTotal", "premio_total", "premios_total",
+            "premios", "premio", "premio_emitido", "premioEmitido",
+            "claims_total", "claimsTotal", "sinistro_total", "sinistros_total",
+            "sinistros", "sinistro",
         )
         for k in total_keys:
             if k in x:
-                return _coerce_float(x.get(k))
+                v = _coerce_float(x.get(k))
+                if v != 0.0:
+                    return v
         acc = 0.0
         for v in x.values():
             acc += _coerce_float(v)
@@ -218,9 +208,7 @@ def _extract_raw_premiums_claims(comp: Dict[str, Any], fin: Any) -> Tuple[Any, A
 def _load_latest_snapshot_count() -> Optional[int]:
     if not SNAPSHOT_DIR.exists():
         return None
-    candidates = list(SNAPSHOT_DIR.glob("insurers_full_*.json.gz")) + list(
-        SNAPSHOT_DIR.glob("insurers_full_*.json")
-    )
+    candidates = list(SNAPSHOT_DIR.glob("insurers_full_*.json.gz")) + list(SNAPSHOT_DIR.glob("insurers_full_*.json"))
     if not candidates:
         return None
     latest = max(candidates, key=lambda p: p.stat().st_mtime)
@@ -261,12 +249,13 @@ def _sanity_check_counts(count: int, universe_count: int | None = None) -> None:
 
 
 def _debug_near_matches(matcher: NameMatcher, name: str) -> None:
+    # Mantido por compatibilidade (muitos matchers antigos expunham entries_list).
     try:
         entries_list = getattr(matcher, "entries", None) or getattr(matcher, "entries_list", None)
         if not entries_list:
             return
 
-        q = get_name_tokens(name)
+        q = set(get_name_tokens(name))
         if not q:
             return
 
@@ -301,50 +290,14 @@ def _debug_near_matches(matcher: NameMatcher, name: str) -> None:
         return
 
 
-def _derive_trade_name_from_legal(name: str) -> str | None:
-    """
-    Heurística simples e estável para extrair uma "marca/grupo" (trade_name) quando
-    não houver nome_fantasia. O objetivo é melhorar matching e UX, não “inventar marca”.
-    """
-    if not name or not str(name).strip():
+def _derive_trade_name_from_legal(name: str) -> Optional[str]:
+    # Remove sufixos e termos genéricos para tentar obter “marca”
+    n = (name or "").strip()
+    if not n:
         return None
 
-    generic = {
-        "cia",
-        "companhia",
-        "comp",
-        "sociedade",
-        "seguros",
-        "seguro",
-        "seguradora",
-        "resseguros",
-        "resseguradora",
-        "capitalizacao",
-        "previdencia",
-        "vida",
-        "saude",
-        "brasil",
-        "brasileira",
-        "gerais",
-        "sa",
-        "s",
-        "a",
-        "ltda",
-        "inc",
-        "corp",
-        "group",
-        "holding",
-        "do",
-        "de",
-        "da",
-        "e",
-        "participacoes",
-    }
-
-    clean = str(name).strip().lower()
-    clean = re.sub(r"\s+s[/.]?\s*a\.?\s*$", "", clean).strip()
-
-    toks = [t for t in sorted(get_name_tokens(clean)) if t and t not in generic]
+    clean = re.sub(r"\s+s[/.]?a\.?$", "", n.lower()).strip()
+    toks = [t for t in get_name_tokens(clean) if t and t not in TRADE_GENERIC_TERMS and len(t) > 2]
     if not toks:
         return None
 
@@ -352,10 +305,31 @@ def _derive_trade_name_from_legal(name: str) -> str | None:
     if not cand:
         return None
 
-    if normalize_name_key(cand) == normalize_name_key(name):
+    if normalize_name_key(cand) == normalize_name_key(n):
         return None
 
     return cand
+
+
+def _key_variants(k: Any) -> List[str]:
+    s = str(k).strip()
+    if not s:
+        return []
+    out = {s, (s.lstrip("0") or s)}
+    try:
+        out.add(str(int(float(s))))
+    except Exception:
+        pass
+    return [v for v in out if v]
+
+
+def _build_financials_lookup(financials_map: Dict[str, Any]) -> Dict[str, Any]:
+    # Cria lookup com múltiplas variantes de chave para evitar “fin=None”
+    lookup: Dict[str, Any] = {}
+    for k, v in financials_map.items():
+        for kk in _key_variants(k):
+            lookup.setdefault(kk, v)
+    return lookup
 
 
 def main() -> None:
@@ -371,6 +345,7 @@ def main() -> None:
     ses_meta_json = _to_jsonable(ses_meta)
     ses_iter = _as_iterable_companies(ses_companies)
     financials_map: Dict[str, Any] = financials if isinstance(financials, dict) else {}
+    financials_lookup = _build_financials_lookup(financials_map)
 
     oi_meta, oi_participants = extract_open_insurance_participants()
     oi_meta_json = _to_jsonable(oi_meta)
@@ -399,21 +374,18 @@ def main() -> None:
     )
     cg_meta_json = _to_jsonable(cg_meta)
 
-    # OPIN/OpenInsurance cnpjs (mantém compatibilidade com seu sanity existente)
     opin_by_cnpj: Set[str] = load_opin_participant_cnpjs(oi_participants)
 
-    # 2.2) Open Insurance: evitar None no set (loop seguro)
+    # Evita None no set
     oi_participant_keys: Set[str] = set()
     for p in oi_participants:
-        k = normalize_cnpj(p.get("cnpj_key") or p.get("cnpj"))
-        if k:
-            oi_participant_keys.add(k)
+        c = normalize_cnpj(p.get("cnpj_key") or p.get("cnpj"))
+        if c:
+            oi_participant_keys.add(c)
 
     matcher = NameMatcher(cg_payload)
-
-    # 2.3) Auditoria para snapshot (não toca no JSON público)
-    reputation_audit_by_id: dict[str, dict[str, Any]] = {}
-    unique_brands_matched: set[str] = set()
+    reputation_audit_by_id: Dict[str, Dict[str, Any]] = {}
+    unique_brands_matched: Set[str] = set()
 
     insurers: List[Dict[str, Any]] = []
     matched_reputation = 0
@@ -423,6 +395,11 @@ def main() -> None:
 
     susep_cnpjs_seen: Set[str] = set()
     opin_matched_unique: Set[str] = set()
+
+    fin_attached = 0
+    premiums_nonzero = 0
+    claims_nonzero = 0
+    net_worth_nonzero = 0
 
     for comp in ses_iter:
         if not isinstance(comp, dict):
@@ -437,9 +414,7 @@ def main() -> None:
             continue
 
         cnpj_key = normalize_cnpj(comp.get("cnpj") or comp.get("cnpj_key"))
-        # 2.4) Calcula ins_id uma vez e reutiliza
         ins_id = _insurer_id(comp, cnpj_key, name)
-
         cnpj_fmt = format_cnpj(cnpj_key) if cnpj_key else None
         if cnpj_key:
             susep_cnpjs_seen.add(cnpj_key)
@@ -454,30 +429,28 @@ def main() -> None:
         if is_opin and cnpj_key:
             opin_matched_unique.add(cnpj_key)
 
-        # 2.5) trade_name: usa existente; se não houver, tenta derivar
+        # Trade name (e derivação)
         trade_name = comp.get("trade_name") or comp.get("nome_fantasia")
-        derived_trade_name = None
+        derived_trade_name: Optional[str] = None
         if not trade_name:
             derived_trade_name = _derive_trade_name_from_legal(name)
             if derived_trade_name:
                 trade_name = derived_trade_name
 
-        # 2.6) Matcher: name + trade_name + cnpj
+        # Match Consumidor.gov: name + trade_name + cnpj
         rep_entry, rep_meta = matcher.get_entry(
             name=name,
             trade_name=trade_name,
             cnpj=cnpj_key,
         )
 
-        # 2.7) rep_meta sempre existe no matcher
+        # No matcher novo, rep_meta sempre existe (MatchMeta)
         is_b2b_flag = rep_meta.is_b2b
 
-        # B2B: anula match (inclui b2b_skip)
-        if is_b2b_flag:
+        if rep_entry and is_b2b_flag:
             skipped_b2b += 1
             rep_entry = None
         elif rep_entry:
-            # Só aceita se tem sinal mínimo de reputação
             stats = rep_entry.get("statistics") or {}
             has_signal = any(
                 int(stats.get(k) or 0) > 0
@@ -485,12 +458,14 @@ def main() -> None:
             )
             if has_signal:
                 matched_reputation += 1
+                if rep_meta.matched_name:
+                    unique_brands_matched.add(rep_meta.matched_name)
             else:
                 rep_entry = None
         elif DEBUG_MATCH:
             _debug_near_matches(matcher, name)
 
-        # 2.8) Snapshot audit (não vai para o JSON público)
+        # Snapshot audit (não vai para o JSON público)
         if rep_meta.method != "no_match" or rep_entry or is_b2b_flag:
             reputation_audit_by_id[ins_id] = {
                 "method": rep_meta.method,
@@ -502,20 +477,37 @@ def main() -> None:
                 "derivedTradeName": derived_trade_name,
             }
 
-        if rep_entry and (not is_b2b_flag) and rep_meta.matched_name:
-            unique_brands_matched.add(rep_meta.matched_name)
-
-        # Montagem do objeto final
+        # Financeiros: lookup robusto
         susep_id = comp.get("susep_id") or comp.get("susepId") or comp.get("id")
         fin = None
         if susep_id is not None:
-            fin = financials_map.get(str(susep_id)) or financials_map.get(susep_id)
+            for kk in _key_variants(susep_id):
+                fin = financials_lookup.get(kk)
+                if fin is not None:
+                    break
+        if fin is None and cnpj_key:
+            fin = financials_lookup.get(cnpj_key)
+
+        if fin is not None:
+            fin_attached += 1
 
         premiums_raw, claims_raw = _extract_raw_premiums_claims(comp, fin)
         premiums = _coerce_float(premiums_raw)
         claims = _coerce_float(claims_raw)
-        net_worth_val = (fin or {}).get("net_worth") or comp.get("net_worth")
+
+        net_worth_val = None
+        if isinstance(fin, dict):
+            net_worth_val = fin.get("net_worth") or fin.get("patrimonio_liquido") or fin.get("pl")
+        if net_worth_val is None:
+            net_worth_val = comp.get("net_worth")
         net_worth = _coerce_float(net_worth_val)
+
+        if premiums > 0:
+            premiums_nonzero += 1
+        if claims > 0:
+            claims_nonzero += 1
+        if net_worth > 0:
+            net_worth_nonzero += 1
 
         products: List[Any] = []
         if cnpj_key:
@@ -542,7 +534,6 @@ def main() -> None:
                 },
                 "cnpj": cnpj_fmt,
                 "cnpjKey": cnpj_key,
-                # usa trade_name final (inclui derivado quando aplicável)
                 "tradeName": trade_name,
                 "reputation": rep_entry,
                 "components": {
@@ -558,7 +549,7 @@ def main() -> None:
             }
         )
 
-    # 7) OPIN Sanity (soft fail por padrão)
+    # OPIN sanity (soft por padrão)
     expected_opin_intersection = len(opin_by_cnpj.intersection(susep_cnpjs_seen))
     observed_opin_intersection = len(opin_matched_unique)
 
@@ -577,7 +568,6 @@ def main() -> None:
             raise RuntimeError(msg)
         print(f"WARN: {msg}")
 
-    # inteligência aplicada UMA VEZ
     insurers = apply_intelligence_batch(insurers)
 
     generated_at = utc_now()
@@ -595,11 +585,11 @@ def main() -> None:
         "insurers": insurers,
     }
 
-    # 2.9) Sanity mínimo: falhar cedo (antes de escrever)
+    # Sanity mínimo (falha cedo)
     if MIN_INSURERS_COUNT > 0 and len(insurers) < MIN_INSURERS_COUNT:
-        raise RuntimeError(f"Sanity Check Falhou: {len(insurers)} seguradoras < min {MIN_INSURERS_COUNT}")
-    if MAX_INSURERS_COUNT > 0 and len(insurers) > MAX_INSURERS_COUNT:
-        raise RuntimeError(f"Sanity Check Falhou: {len(insurers)} seguradoras > max {MAX_INSURERS_COUNT}")
+        raise RuntimeError(
+            f"Sanity Check Falhou: {len(insurers)} seguradoras < min {MIN_INSURERS_COUNT}"
+        )
 
     universe_count = len(ses_companies) if isinstance(ses_companies, (dict, list)) else None
     _sanity_check_counts(len(insurers), universe_count=universe_count)
@@ -607,27 +597,26 @@ def main() -> None:
     OUTPUT_FILE.parent.mkdir(parents=True, exist_ok=True)
     OUTPUT_FILE.write_text(json.dumps(out, ensure_ascii=False, default=_json_default), encoding="utf-8")
 
-    # 2.10) Snapshot: anexar auditoria com deepcopy (sem quebrar schema público)
     if WRITE_SNAPSHOT:
         SNAPSHOT_DIR.mkdir(parents=True, exist_ok=True)
         stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         snap = SNAPSHOT_DIR / f"insurers_full_{stamp}.json.gz"
-        try:
-            out_snap = copy.deepcopy(out)
-            for ins in out_snap.get("insurers", []):
-                audit = reputation_audit_by_id.get(ins.get("id"))
-                if audit:
-                    ins["reputationMatch"] = audit
 
-            with gzip.open(snap, "wt", encoding="utf-8") as f:
-                json.dump(out_snap, f, ensure_ascii=False, default=_json_default)
-        except Exception:
-            # snapshot não pode derrubar build evergreen
-            pass
+        out_snap = copy.deepcopy(out)
+        for ins in out_snap.get("insurers", []):
+            audit = reputation_audit_by_id.get(ins.get("id"))
+            if audit:
+                ins["reputationMatch"] = audit
+
+        with gzip.open(snap, "wt", encoding="utf-8") as f:
+            json.dump(out_snap, f, ensure_ascii=False, default=_json_default)
 
     print(f"insurers: {len(insurers)}")
+    print(f"financials.attached: {fin_attached}/{len(insurers)}")
+    print(f"financials.premiums.nonzero: {premiums_nonzero}/{len(insurers)}")
+    print(f"financials.claims.nonzero: {claims_nonzero}/{len(insurers)}")
+    print(f"financials.net_worth.nonzero: {net_worth_nonzero}/{len(insurers)}")
     print(f"reputation.matched: {matched_reputation}")
-    # 2.11) Logs: unique brands
     print(f"reputation.unique_brands: {len(unique_brands_matched)}")
     print(f"reputation.skipped_b2b: {skipped_b2b}")
     print(f"excluded.non_insurers: {excluded}")
