@@ -133,13 +133,27 @@ def _insurer_id(comp: Dict[str, Any], cnpj_key: Optional[str], name: str) -> str
     return nk or f"unknown-{abs(hash(name))}"
 
 
-def _as_iterable_companies(ses_companies: Any) -> Iterable[Dict[str, Any]]:
+def _iter_ses_companies(ses_companies: Any) -> Iterable[tuple[Any | None, Dict[str, Any]]]:
+    """
+    Preserva a chave do dict quando `ses_companies` é dict.
+    Isso é crítico: alguns extratores indexam `financials` pela chave do dict.
+    """
     if isinstance(ses_companies, dict):
-        return ses_companies.values()
-    if isinstance(ses_companies, list):
-        return ses_companies
-    return []
+        for k, v in ses_companies.items():
+            if isinstance(v, dict):
+                yield k, v
+        return
 
+    if isinstance(ses_companies, list):
+        for v in ses_companies:
+            if isinstance(v, dict):
+                yield None, v
+        return
+
+    return
+
+
+# --- FINANCEIRO (robusto PT-BR) ---
 
 def _parse_number_ptbr(s: str) -> Optional[float]:
     if not isinstance(s, str):
@@ -172,15 +186,28 @@ def _coerce_float(x: Any) -> float:
         return float(v) if v is not None else 0.0
     if isinstance(x, dict):
         total_keys = (
-            "total", "valor_total", "value", "amount", "sum",
-            "premiums_total", "premiumsTotal", "premio_total", "premios_total",
-            "premios", "premio", "premio_emitido", "premioEmitido",
-            "claims_total", "claimsTotal", "sinistro_total", "sinistros_total",
-            "sinistros", "sinistro",
-            "net_worth", "netWorth", "patrimonio_liquido", "patrimonioLiquido", "pl",
+            "total",
+            "valor_total",
+            "value",
+            "amount",
+            "sum",
+            "premiums_total",
+            "premiumsTotal",
+            "premio_total",
+            "premios_total",
+            "premios",
+            "premio",
+            "premio_emitido",
+            "premioEmitido",
+            "claims_total",
+            "claimsTotal",
+            "sinistro_total",
+            "sinistros_total",
+            "sinistros",
+            "sinistro",
         )
         for k in total_keys:
-            if k in x and x.get(k) is not None:
+            if k in x:
                 return _coerce_float(x.get(k))
         acc = 0.0
         for v in x.values():
@@ -191,34 +218,18 @@ def _coerce_float(x: Any) -> float:
     return 0.0
 
 
-def _pick_first(d: Dict[str, Any], keys: Iterable[str]) -> Any:
-    for k in keys:
-        if k in d and d.get(k) is not None:
-            return d.get(k)
-    return None
-
-
 def _extract_raw_premiums_claims(comp: Dict[str, Any], fin: Any) -> Tuple[Any, Any]:
     fin_d = fin if isinstance(fin, dict) else {}
-
-    premiums_raw = _pick_first(fin_d, ("premiums", "premios", "premiums_total", "premios_total", "premio_emitido", "premioEmitido"))
+    premiums_raw = fin_d.get("premiums") or comp.get("premiums")
+    claims_raw = fin_d.get("claims") or comp.get("claims")
     if premiums_raw is None:
-        premiums_raw = _pick_first(comp, ("premiums", "premios", "premiums_total", "premios_total", "premio_emitido", "premioEmitido"))
-
-    claims_raw = _pick_first(fin_d, ("claims", "sinistros", "claims_total", "sinistros_total", "sinistro_total"))
+        premiums_raw = fin_d.get("premios") or comp.get("premios")
     if claims_raw is None:
-        claims_raw = _pick_first(comp, ("claims", "sinistros", "claims_total", "sinistros_total", "sinistro_total"))
-
+        claims_raw = fin_d.get("sinistros") or comp.get("sinistros")
     return premiums_raw, claims_raw
 
 
-def _extract_raw_net_worth(comp: Dict[str, Any], fin: Any) -> Any:
-    fin_d = fin if isinstance(fin, dict) else {}
-    nw = _pick_first(fin_d, ("net_worth", "netWorth", "patrimonio_liquido", "patrimonioLiquido", "pl"))
-    if nw is None:
-        nw = _pick_first(comp, ("net_worth", "netWorth", "patrimonio_liquido", "patrimonioLiquido", "pl"))
-    return nw
-
+# --- SANITY ---
 
 def _load_latest_snapshot_count() -> Optional[int]:
     if not SNAPSHOT_DIR.exists():
@@ -250,6 +261,7 @@ def _sanity_check_counts(count: int, universe_count: int | None = None) -> None:
     baseline = prev_count
     if baseline and universe_count and universe_count > 0:
         baseline = min(baseline, universe_count)
+
     if baseline and baseline > 0:
         min_allowed = int(baseline * (1.0 - MAX_COUNT_DROP_PCT))
         if count < min_allowed:
@@ -257,8 +269,10 @@ def _sanity_check_counts(count: int, universe_count: int | None = None) -> None:
                 f"SanityCheck: count caiu demais. Atual={count}, Prev={prev_count}, "
                 f"Universe={universe_count}, MinAllowed={min_allowed}"
             )
+
     if MIN_INSURERS_COUNT and count < MIN_INSURERS_COUNT:
         raise RuntimeError(f"SanityCheck: count abaixo do mínimo. Atual={count}, Min={MIN_INSURERS_COUNT}")
+
     if MAX_INSURERS_COUNT and count > MAX_INSURERS_COUNT:
         raise RuntimeError(f"SanityCheck: count acima do máximo. Atual={count}, Max={MAX_INSURERS_COUNT}")
 
@@ -304,20 +318,46 @@ def _debug_near_matches(matcher: NameMatcher, name: str) -> None:
         return
 
 
-def _derive_trade_name_from_legal(name: str) -> Optional[str]:
+def _derive_trade_name_from_legal(name: str) -> str | None:
     if not name or not str(name).strip():
         return None
 
     generic = {
-        "cia", "companhia", "comp", "sociedade",
-        "seguros", "seguro", "seguradora", "resseguros", "resseguradora",
-        "capitalizacao", "previdencia", "vida", "saude",
-        "brasil", "brasileira", "gerais",
-        "sa", "s", "a", "ltda", "inc", "corp", "group", "holding",
-        "do", "de", "da", "e", "participacoes",
+        "cia",
+        "companhia",
+        "comp",
+        "sociedade",
+        "seguros",
+        "seguro",
+        "seguradora",
+        "resseguros",
+        "resseguradora",
+        "capitalizacao",
+        "previdencia",
+        "vida",
+        "saude",
+        "brasil",
+        "brasileira",
+        "gerais",
+        "sa",
+        "s",
+        "a",
+        "ltda",
+        "inc",
+        "corp",
+        "group",
+        "holding",
+        "do",
+        "de",
+        "da",
+        "e",
+        "participacoes",
     }
 
-    toks = [t for t in get_name_tokens(str(name)) if t and t not in generic]
+    clean = str(name).strip().lower()
+    clean = re.sub(r"\s+s[/.]?\s*a\.?\s*$", "", clean).strip()
+
+    toks = [t for t in get_name_tokens(clean) if t and t not in generic]
     if not toks:
         return None
 
@@ -325,35 +365,66 @@ def _derive_trade_name_from_legal(name: str) -> Optional[str]:
     if not cand:
         return None
 
-    # evita devolver o mesmo nome só “reformatado”
     if normalize_name_key(cand) == normalize_name_key(name):
         return None
 
     return cand
 
 
-def _get_financials(financials_map: Dict[str, Any], comp: Dict[str, Any], ins_id: str, cnpj_key: Optional[str]) -> Any:
-    candidates: List[Any] = []
-    for k in ("susep_id", "susepId", "susepID", "id"):
-        v = comp.get(k)
-        if v is not None and str(v).strip():
-            candidates.append(v)
-            candidates.append(str(v))
-    if cnpj_key:
-        candidates.append(cnpj_key)
-        cnpj_fmt = format_cnpj(cnpj_key)
-        if cnpj_fmt:
-            candidates.append(cnpj_fmt)
-    candidates.append(ins_id)
-
-    for key in candidates:
-        if key is None:
+def _get_financials(
+    financials_root: Dict[str, Any],
+    *,
+    susep_id: Any | None,
+    cnpj_key: str | None,
+    ins_id: str,
+    comp_key: Any | None,
+    comp: Dict[str, Any],
+) -> Any:
+    candidates: list[Any] = []
+    for v in (susep_id, ins_id, cnpj_key, comp_key):
+        if v is None:
             continue
-        if key in financials_map:
-            return financials_map[key]
-        sk = str(key)
-        if sk in financials_map:
-            return financials_map[sk]
+        candidates.append(v)
+        if not isinstance(v, str):
+            candidates.append(str(v))
+
+    # 1) mapa direto
+    for k in candidates:
+        try:
+            if k in financials_root:
+                return financials_root.get(k)
+        except Exception:
+            continue
+
+    # 2) mapas aninhados
+    nested_keys = (
+        "by_susep_id",
+        "by_susepId",
+        "by_id",
+        "by_company_id",
+        "by_companyId",
+        "companies",
+        "by_cnpj_key",
+        "by_cnpjKey",
+        "by_cnpj",
+    )
+    for nk in nested_keys:
+        sub = financials_root.get(nk)
+        if not isinstance(sub, dict):
+            continue
+        for k in candidates:
+            try:
+                if k in sub:
+                    return sub.get(k)
+            except Exception:
+                continue
+
+    # 3) fallback: embutido
+    for ck in ("financials", "financeiro", "fin", "dados_financeiros"):
+        v = comp.get(ck)
+        if v:
+            return v
+
     return None
 
 
@@ -368,8 +439,7 @@ def main() -> None:
         raise RuntimeError(f"SES: retorno inesperado: {type(ses_out)}")
 
     ses_meta_json = _to_jsonable(ses_meta)
-    ses_iter = _as_iterable_companies(ses_companies)
-    financials_map: Dict[str, Any] = financials if isinstance(financials, dict) else {}
+    financials_root: Dict[str, Any] = financials if isinstance(financials, dict) else {}
 
     oi_meta, oi_participants = extract_open_insurance_participants()
     oi_meta_json = _to_jsonable(oi_meta)
@@ -384,42 +454,32 @@ def main() -> None:
         oi_products_by_cnpj = {}
 
     cg_meta, cg_payload = extract_consumidor_gov_aggregated()
-    print(
-        "consumidor.gov meta:",
-        {
-            "status": cg_meta.get("status") if isinstance(cg_meta, dict) else None,
-            "source_file": cg_meta.get("source_file") if isinstance(cg_meta, dict) else None,
-            "companies": cg_meta.get("companies") if isinstance(cg_meta, dict) else None,
-        },
-    )
+    print("consumidor.gov meta:", _to_jsonable(cg_meta))
     cg_meta_json = _to_jsonable(cg_meta)
 
     opin_by_cnpj: Set[str] = load_opin_participant_cnpjs(oi_participants)
 
+    # Open Insurance: evitar None no set
     oi_participant_keys: Set[str] = set()
     for p in oi_participants:
-        k = normalize_cnpj(p.get("cnpj_key") or p.get("cnpj"))
-        if k:
-            oi_participant_keys.add(k)
+        c = normalize_cnpj(p.get("cnpj_key") or p.get("cnpj"))
+        if c:
+            oi_participant_keys.add(c)
 
     matcher = NameMatcher(cg_payload)
-    reputation_audit_by_id: Dict[str, Dict[str, Any]] = {}
-    unique_brands_matched: Set[str] = set()
+    reputation_audit_by_id: dict[str, dict[str, Any]] = {}
+    unique_brands_matched: set[str] = set()
 
     insurers: List[Dict[str, Any]] = []
     matched_reputation = 0
     skipped_b2b = 0
-    matched_open_insurance = 0
     excluded = 0
-    fin_found = 0
+    financials_found = 0
 
     susep_cnpjs_seen: Set[str] = set()
     opin_matched_unique: Set[str] = set()
 
-    for comp in ses_iter:
-        if not isinstance(comp, dict):
-            continue
-
+    for comp_key, comp in _iter_ses_companies(ses_companies):
         name = (comp.get("name") or comp.get("razao_social") or "").strip()
         if not name:
             continue
@@ -428,7 +488,7 @@ def main() -> None:
             excluded += 1
             continue
 
-        cnpj_key = normalize_cnpj(comp.get("cnpj") or comp.get("cnpj_key"))
+        cnpj_key = normalize_cnpj(comp.get("cnpj") or comp.get("cnpj_key") or comp.get("cnpjKey"))
         ins_id = _insurer_id(comp, cnpj_key, name)
         cnpj_fmt = format_cnpj(cnpj_key) if cnpj_key else None
 
@@ -438,33 +498,35 @@ def main() -> None:
         segment = _normalize_segment(comp.get("segment") or comp.get("segmento") or comp.get("porte"))
 
         is_open_insurance = bool(cnpj_key and cnpj_key in oi_participant_keys)
-        if is_open_insurance:
-            matched_open_insurance += 1
 
         is_opin = bool(cnpj_key and cnpj_key in opin_by_cnpj)
         if is_opin and cnpj_key:
             opin_matched_unique.add(cnpj_key)
 
-        trade_name = (comp.get("trade_name") or comp.get("nome_fantasia") or "").strip() or None
+        # Trade name (derivar quando não existir)
+        trade_name = comp.get("trade_name") or comp.get("nome_fantasia")
         derived_trade_name = None
         if not trade_name:
             derived_trade_name = _derive_trade_name_from_legal(name)
             if derived_trade_name:
                 trade_name = derived_trade_name
 
+        # Match Consumidor.gov usando name + trade_name + cnpj
         rep_entry, rep_meta = matcher.get_entry(
             name=name,
             trade_name=trade_name,
             cnpj=cnpj_key,
         )
 
-        # FIX: B2B deve contar mesmo quando rep_entry=None (b2b_skip)
-        is_b2b_flag = bool(getattr(rep_meta, "is_b2b", False))
+        # B2B: meta sempre existe
+        is_b2b_flag = bool(rep_meta.is_b2b)
 
+        # Conta b2b_skip mesmo quando rep_entry é None
         if is_b2b_flag:
             skipped_b2b += 1
             rep_entry = None
-        elif rep_entry:
+
+        if rep_entry:
             stats = rep_entry.get("statistics") or {}
             has_signal = any(
                 int(stats.get(k) or 0) > 0
@@ -477,31 +539,48 @@ def main() -> None:
         elif DEBUG_MATCH:
             _debug_near_matches(matcher, name)
 
-        # Snapshot audit (não vai para o JSON público)
-        if getattr(rep_meta, "method", None) != "no_match" or rep_entry or is_b2b_flag:
+        # Auditoria do match (somente snapshot)
+        if rep_meta.method != "no_match" or rep_entry or is_b2b_flag:
             reputation_audit_by_id[ins_id] = {
-                "method": getattr(rep_meta, "method", None),
-                "score": getattr(rep_meta, "score", None),
-                "query": getattr(rep_meta, "query", None),
-                "matchedName": getattr(rep_meta, "matched_name", None),
-                "matchedCnpj": getattr(rep_meta, "matched_cnpj", None),
-                "isB2B": bool(getattr(rep_meta, "is_b2b", False)),
+                "method": rep_meta.method,
+                "score": rep_meta.score,
+                "query": rep_meta.query,
+                "matchedName": rep_meta.matched_name,
+                "matchedCnpj": rep_meta.matched_cnpj,
+                "isB2B": rep_meta.is_b2b,
                 "derivedTradeName": derived_trade_name,
             }
 
-        if rep_entry and (not is_b2b_flag) and getattr(rep_meta, "matched_name", None):
-            unique_brands_matched.add(str(getattr(rep_meta, "matched_name")))
+        if rep_entry and (not is_b2b_flag) and rep_meta.matched_name:
+            unique_brands_matched.add(rep_meta.matched_name)
 
-        fin = _get_financials(financials_map, comp, ins_id, cnpj_key)
-        if fin is not None:
-            fin_found += 1
+        # FINANCIALS: lookup resiliente (inclui comp_key)
+        susep_id = (
+            comp.get("susep_id")
+            or comp.get("susepId")
+            or comp.get("susepID")
+            or comp.get("id")
+            or comp_key
+        )
+        fin = _get_financials(
+            financials_root,
+            susep_id=susep_id,
+            cnpj_key=cnpj_key,
+            ins_id=ins_id,
+            comp_key=comp_key,
+            comp=comp,
+        )
+        if isinstance(fin, dict) and fin:
+            financials_found += 1
 
         premiums_raw, claims_raw = _extract_raw_premiums_claims(comp, fin)
         premiums = _coerce_float(premiums_raw)
         claims = _coerce_float(claims_raw)
 
-        net_worth_raw = _extract_raw_net_worth(comp, fin)
-        net_worth = _coerce_float(net_worth_raw)
+        net_worth_val = (fin or {}).get("net_worth") if isinstance(fin, dict) else None
+        if net_worth_val is None:
+            net_worth_val = comp.get("net_worth")
+        net_worth = _coerce_float(net_worth_val)
 
         products: List[Any] = []
         if cnpj_key:
@@ -532,18 +611,13 @@ def main() -> None:
                 "reputation": rep_entry,
                 "components": {
                     "ses": {"company": comp, "meta": ses_meta_json},
-                    "openInsurance": {
-                        "participant": bool(is_open_insurance),
-                        "meta": oi_meta_json,
-                        "productsMeta": oi_prod_meta_json,
-                    },
+                    "openInsurance": {"participant": bool(is_open_insurance), "meta": oi_meta_json},
                     "reputation": rep_entry,
                     "financials": _to_jsonable(fin),
                 },
             }
         )
 
-    # OPIN sanity (soft por padrão)
     expected_opin_intersection = len(opin_by_cnpj.intersection(susep_cnpjs_seen))
     observed_opin_intersection = len(opin_matched_unique)
 
@@ -554,10 +628,7 @@ def main() -> None:
         print(f"WARN: {msg}")
 
     if observed_opin_intersection != expected_opin_intersection:
-        msg = (
-            f"OPIN sanity: mismatch. observed={observed_opin_intersection} "
-            f"expected={expected_opin_intersection}."
-        )
+        msg = f"OPIN sanity: mismatch observed={observed_opin_intersection} expected={expected_opin_intersection}"
         if STRICT_OPIN_SANITY:
             raise RuntimeError(msg)
         print(f"WARN: {msg}")
@@ -579,7 +650,7 @@ def main() -> None:
         "insurers": insurers,
     }
 
-    # Fail-fast mínimo (antes de escrever)
+    # Sanity check mínimo: falhar cedo
     if MIN_INSURERS_COUNT > 0 and len(insurers) < MIN_INSURERS_COUNT:
         raise RuntimeError(f"Sanity Check Falhou: {len(insurers)} seguradoras < min {MIN_INSURERS_COUNT}")
 
@@ -589,6 +660,7 @@ def main() -> None:
     OUTPUT_FILE.parent.mkdir(parents=True, exist_ok=True)
     OUTPUT_FILE.write_text(json.dumps(out, ensure_ascii=False, default=_json_default), encoding="utf-8")
 
+    # Snapshot: anexar auditoria sem quebrar contrato (deepcopy)
     if WRITE_SNAPSHOT:
         try:
             SNAPSHOT_DIR.mkdir(parents=True, exist_ok=True)
@@ -607,7 +679,7 @@ def main() -> None:
             pass
 
     print(f"insurers: {len(insurers)}")
-    print(f"financials.found: {fin_found}")
+    print(f"financials.found: {financials_found}")
     print(f"reputation.matched: {matched_reputation}")
     print(f"reputation.unique_brands: {len(unique_brands_matched)}")
     print(f"reputation.skipped_b2b: {skipped_b2b}")
