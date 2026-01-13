@@ -91,9 +91,17 @@ def _canonical_ses_id_series(series: pd.Series) -> pd.Series:
 
 
 def _parse_br_float(series: pd.Series) -> pd.Series:
-    """Converte strings numéricas pt-BR ('1.234,56') para float."""
+    """
+    Converte strings numéricas do SES para float, tolerando:
+    - pt-BR: '1.234,56' (ponto milhar, vírgula decimal)
+    - en-US: '1234.56'  (ponto decimal)
+    Regra: se houver vírgula, assume vírgula como separador decimal e remove pontos.
+    """
     s = series.astype(str).str.strip()
-    s = s.str.replace(".", "", regex=False).str.replace(",", ".", regex=False)
+    # remove lixo comum (mantém dígitos, vírgula, ponto e sinal)
+    s = s.str.replace(r"[^\d,\.\-]", "", regex=True)
+    has_comma = s.str.contains(",", na=False)
+    s = s.where(~has_comma, s.str.replace(".", "", regex=False).str.replace(",", ".", regex=False))
     return pd.to_numeric(s, errors="coerce").fillna(0.0)
 
 
@@ -530,4 +538,20 @@ def extract_ses_master_and_financials():
     if final_count != master_count:
         print(f"SES ERROR: Universo foi alterado! Inicial={master_count}, Final={final_count}")
 
-    return SesMeta(), companies
+    # --- 4) financials_map (3º retorno) ---
+    # O build_insurers registra "financials.found" com base nesse mapa.
+    # Também indexamos por CNPJ (somente dígitos) para facilitar lookups alternativos.
+    financials_map: Dict[str, dict] = {}
+    for sid, c in companies.items():
+        entry = {
+            "premiums": float(c.get("premiums") or 0.0),
+            "claims": float(c.get("claims") or 0.0),
+            "net_worth": float(c.get("net_worth") or 0.0),
+            "sources_found": list(c.get("sources_found") or []),
+        }
+        financials_map[sid] = entry
+        cnpj_digits = "".join(ch for ch in str(c.get("cnpj") or "") if ch.isdigit())
+        if len(cnpj_digits) == 14:
+            financials_map[cnpj_digits] = entry
+    print(f"SES: financials_map gerado: {len(financials_map)} chaves (ses_id + cnpj).")
+    return SesMeta(), companies, financials_map
