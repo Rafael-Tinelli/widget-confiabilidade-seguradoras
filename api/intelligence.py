@@ -344,14 +344,39 @@ def calculate_score(insurer_obj: Dict[str, Any]) -> Dict[str, Any]:
     )
     composite = _clamp(composite, 0.0, 100.0)
 
+    solvency_score = float(solvency.get("score") or 0.0)
+    reputation_score = float(reputation_component.get("score") or 0.0)
+    innovation_score = float(innovation.get("score") or 0.0)
+    
     insurer_obj.setdefault("data", {})
     insurer_obj["data"]["score"] = float(composite)
     insurer_obj["data"]["lossRatio"] = float(solvency.get("lossRatio") or 0.0)
+    
+    # Backward-compat: UI expects numeric component bars.
     insurer_obj["data"]["components"] = {
+        "solvency": solvency_score,
+        "reputation": reputation_score,
+        "innovation": innovation_score,
+        "financial": solvency_score,
+    }
+    insurer_obj["data"]["componentsDetail"] = {
         "solvency": solvency,
         "reputation": reputation_component,
         "innovation": innovation,
     }
+    insurer_obj["data"]["solvencyScore"] = solvency_score
+    insurer_obj["data"]["reputationScore"] = reputation_score
+    insurer_obj["data"]["innovationScore"] = innovation_score
+    insurer_obj["data"]["financialScore"] = solvency_score
+
+    # Also publish the solvency score inside components.financials for UI compatibility.
+    comps = insurer_obj.setdefault("components", {})
+    fin = comps.get("financials")
+    if isinstance(fin, dict):
+        fin.setdefault("score", solvency_score)
+        fin.setdefault("lossRatio", insurer_obj["data"]["lossRatio"])
+        comps["financials"] = fin
+
     insurer_obj["data"]["weights"] = {"solvency": w_sol, "reputation": w_rep, "innovation": w_inn}
     insurer_obj["data"]["segment"] = segment
     insurer_obj["data"]["context"] = {
