@@ -106,16 +106,20 @@ def _soft_overlap_weight(q_tokens: set[str], t_tokens: set[str]) -> float:
 
 class NameMatcher:
     def __init__(self, reputation_root: dict[str, Any]) -> None:
-        self.by_name = {}
-        self.by_cnpj = {}
-
-        if isinstance(reputation_root, dict):
-            bn = reputation_root.get("by_name_key_raw") or reputation_root.get("by_name") or {}
-            bc = reputation_root.get("by_cnpj_key_raw") or reputation_root.get("by_cnpj_key") or {}
-
+        self.by_name: dict[str, dict[str, Any]] = {}
+        self.by_cnpj: dict[str, dict[str, Any]] = {}
+        self.has_reliable_cnpj: bool = True  # retrocompatibilidade (sources antigas podem ter CNPJ)
+            if isinstance(reputation_root, dict):
+                meta = reputation_root.get("meta") or {}
+                semantics = meta.get("semantics") or {}
+            # Se a fonte declara explicitamente que NÃO tem CNPJ confiável, respeitamos.
+            if semantics.get("has_reliable_cnpj") is False:
+                self.has_reliable_cnpj = False
+                bc = reputation_root.get("by_cnpj_key_raw") or reputation_root.get("by_cnpj_key") or {}
             if isinstance(bn, dict):
                 self.by_name = {str(k): v for k, v in bn.items() if isinstance(v, dict)}
-            if isinstance(bc, dict):
+            # Só carrega índice por CNPJ se o contrato permitir.
+            if self.has_reliable_cnpj and isinstance(bc, dict):
                 self.by_cnpj = {str(k): v for k, v in bc.items() if isinstance(v, dict)}
 
         self._token_index: dict[str, list[str]] = {}
@@ -145,8 +149,9 @@ class NameMatcher:
         if not q_name:
             return None, MatchMeta("empty", 0.0, "")
 
-        # 1. CNPJ (Prioridade Máxima - antes de B2B check)
-        c = normalize_cnpj(cnpj)
+        # 1. CNPJ (só aplica se a fonte declarar CNPJ confiável via meta.semantics.has_reliable_cnpj)
+        if self.has_reliable_cnpj:
+            c = normalize_cnpj(cnpj)
         if c and c in self.by_cnpj:
             e = self.by_cnpj[c]
             dn = str(e.get("display_name") or e.get("name") or "")
