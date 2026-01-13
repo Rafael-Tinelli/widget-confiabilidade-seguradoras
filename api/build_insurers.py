@@ -496,10 +496,8 @@ def main() -> None:
             susep_cnpjs_seen.add(cnpj_key)
 
         segment = _normalize_segment(comp.get("segment") or comp.get("segmento") or comp.get("porte"))
-
-        is_open_insurance = bool(cnpj_key and cnpj_key in oi_participant_keys)
-
         is_opin = bool(cnpj_key and cnpj_key in opin_by_cnpj)
+        is_open_insurance = is_opin or bool(cnpj_key and cnpj_key in oi_participant_keys)
         if is_opin and cnpj_key:
             opin_matched_unique.add(cnpj_key)
 
