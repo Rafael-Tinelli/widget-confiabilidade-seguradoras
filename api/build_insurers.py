@@ -601,7 +601,10 @@ def main() -> None:
                 },
                 "flags": {
                     "openInsuranceParticipant": bool(is_open_insurance),
-                    "isB2B": bool(is_b2b_flag),
+                    "open_insurance_participant": bool(is_open_insurance),  # alias (frontend compat)
+                    "opinParticipant": bool(is_opin),
+                    "opin_participant": bool(is_opin),  # alias (frontend compat)
+                    "isB2B": bool(is_b2b),
                 },
                 "cnpj": cnpj_fmt,
                 "cnpjKey": cnpj_key,
@@ -609,7 +612,26 @@ def main() -> None:
                 "reputation": rep_entry,
                 "components": {
                     "ses": {"company": comp, "meta": ses_meta_json},
-                    "openInsurance": {"participant": bool(is_open_insurance), "meta": oi_meta_json},
+                    "openInsurance": {
+                        "participant": bool(is_open_insurance),
+                        "is_participant": bool(is_open_insurance),  # alias (frontend compat)
+                        "meta": oi_meta_json,
+                        "productsMeta": oi_prod_meta_json,
+                    },
+                    "open_insurance": {
+                        "participant": bool(is_open_insurance),
+                        "is_participant": bool(is_open_insurance),
+                        "meta": oi_meta_json,
+                        "productsMeta": oi_prod_meta_json
+                    },
+                    "opin": {
+                        "participant": bool(is_opin),
+                        "is_participant": bool(is_opin),
+                        "meta": {
+                            "segment": "insurance",
+                            "source": "opinDirectory",
+                        },
+                    },
                     "reputation": rep_entry,
                     "financials": _to_jsonable(fin),
                 },
