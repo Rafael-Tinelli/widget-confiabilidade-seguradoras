@@ -604,7 +604,7 @@ def main() -> None:
                     "open_insurance_participant": bool(is_open_insurance),  # alias (frontend compat)
                     "opinParticipant": bool(is_opin),
                     "opin_participant": bool(is_opin),  # alias (frontend compat)
-                    "isB2B": bool(is_b2b),
+                    "isB2B": bool(is_b2b_flag),
                 },
                 "cnpj": cnpj_fmt,
                 "cnpjKey": cnpj_key,
