@@ -323,7 +323,8 @@ def _merge_months(monthly: list[dict[str, Any]]) -> dict[str, Any]:
                 merged[k] = {
                     "name": entry.get("name") or entry.get("display_name") or "",
                     "display_name": entry.get("display_name") or entry.get("name") or "",
-                    "cnpj": entry.get("cnpj") or "",
+                    # Contrato: Consumidor.gov não fornece CNPJ estruturado confiável.
+                    "cnpj": "",
                     "statistics": {
                         "complaintsCount": 0,
                         "respondedCount": 0,
@@ -358,6 +359,15 @@ def _merge_months(monthly: list[dict[str, Any]]) -> dict[str, Any]:
         "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "filter_segment": TARGET_SEGMENT,
         "companies": len(merged),
+        # Contrato explícito (blindagem semântica)
+        "semantics": {
+            "source_role": "reputation",
+            "primary_key": "name_key",
+            "name_key_fn": "normalize_name_key",
+            "has_reliable_cnpj": False,
+            "cnpj_status": "source_does_not_provide_structured_cnpj",
+            "matching_strategy_required": "fuzzy_name_match_against_susep_master",
+        },
     }
 
     return {
@@ -444,6 +454,8 @@ def main() -> int:
     agg_gz = DERIVED_DIR / "consumidor_gov_agg.json.gz"
     _write_json_gz(agg, agg_gz)
     print(f"CG: OK agregado multi-mês -> {agg_gz.as_posix()} (empresas={agg.get('meta',{}).get('companies')})")
+    print("CG: CNPJ: não aplicável (fonte não fornece CNPJ estruturado; matching por nome contra SUSEP).")
+    print("CG: Contrato: meta.semantics.has_reliable_cnpj=False")
 
     return 0
 
