@@ -105,23 +105,31 @@ def _soft_overlap_weight(q_tokens: set[str], t_tokens: set[str]) -> float:
 
 
 class NameMatcher:
-    def __init__(self, reputation_root: dict[str, Any]) -> None:
+def __init__(self, reputation_root: dict[str, Any]) -> None:
         self.by_name: dict[str, dict[str, Any]] = {}
         self.by_cnpj: dict[str, dict[str, Any]] = {}
         self.has_reliable_cnpj: bool = True  # retrocompatibilidade (sources antigas podem ter CNPJ)
-            if isinstance(reputation_root, dict):
-                meta = reputation_root.get("meta") or {}
-                semantics = meta.get("semantics") or {}
+
+        if isinstance(reputation_root, dict):
+            meta = reputation_root.get("meta") or {}
+            semantics = meta.get("semantics") or {}
+
             # Se a fonte declara explicitamente que NÃO tem CNPJ confiável, respeitamos.
             if semantics.get("has_reliable_cnpj") is False:
                 self.has_reliable_cnpj = False
-                bc = reputation_root.get("by_cnpj_key_raw") or reputation_root.get("by_cnpj_key") or {}
+
+            # Carrega índices brutos (Definindo as variáveis antes de usar)
+            bn = reputation_root.get("by_name_key_raw") or reputation_root.get("by_name") or {}
+            bc = reputation_root.get("by_cnpj_key_raw") or reputation_root.get("by_cnpj_key") or {}
+
             if isinstance(bn, dict):
                 self.by_name = {str(k): v for k, v in bn.items() if isinstance(v, dict)}
+
             # Só carrega índice por CNPJ se o contrato permitir.
             if self.has_reliable_cnpj and isinstance(bc, dict):
                 self.by_cnpj = {str(k): v for k, v in bc.items() if isinstance(v, dict)}
 
+        # Reconstrói o índice de tokens (necessário para o matching funcionar)
         self._token_index: dict[str, list[str]] = {}
         for nk, entry in self.by_name.items():
             disp = str(entry.get("display_name") or entry.get("name") or "")
