@@ -1,0 +1,107 @@
+name: debug-audit (workflow_dispatch)
+
+on:
+  workflow_dispatch:
+    inputs:
+      ses_write_audit:
+        description: "Gerar auditoria detalhada do SES (data/derived/audit/ses)"
+        type: boolean
+        required: false
+        default: true
+      ses_fin_year_mode:
+        description: "Ano financeiro: max_year | last_full_year | 2024 (fixo)"
+        type: string
+        required: false
+        default: "last_full_year"
+      cg_force_download:
+        description: "Forçar re-download do Consumidor.gov (CG_FORCE_DOWNLOAD=1)"
+        type: boolean
+        required: false
+        default: false
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install deps
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+
+      - name: Lint (ruff)
+        run: |
+          set -euo pipefail
+          ruff check .
+
+      - name: Build JSON (participants)
+        run: |
+          set -euo pipefail
+          python -m api.build_json
+        env:
+          NO_PROXY: dados.mj.gov.br,data.directory.opinbrasil.com.br
+          no_proxy: dados.mj.gov.br,data.directory.opinbrasil.com.br
+          OPIN_PARTICIPANTS_URL: https://data.directory.opinbrasil.com.br/participants
+
+      - name: Build Consumidor.gov (aggregated)
+        run: |
+          set -euo pipefail
+          python -m api.build_consumidor_gov
+        env:
+          NO_PROXY: dados.mj.gov.br,data.directory.opinbrasil.com.br
+          no_proxy: dados.mj.gov.br,data.directory.opinbrasil.com.br
+          CG_FORCE_DOWNLOAD: ${{ inputs.cg_force_download && '1' || '0' }}
+          SES_LISTAEMPRESAS_URL: https://www2.susep.gov.br/menuestatistica/ses/download/LISTAEMPRESAS.csv
+          SES_CACHE_DIR: data/raw/ses
+
+      - name: Build insurers (with SES audit)
+        run: |
+          set -euo pipefail
+          python -m api.build_insurers
+        env:
+          NO_PROXY: dados.mj.gov.br,data.directory.opinbrasil.com.br
+          no_proxy: dados.mj.gov.br,data.directory.opinbrasil.com.br
+
+          # SUSEP (ZIP gigante isolado)
+          SES_CACHE_DIR: "/tmp/ses"
+          SES_LISTAEMPRESAS_URL: https://www2.susep.gov.br/menuestatistica/ses/download/LISTAEMPRESAS.csv
+          SES_ZIP_URL: https://www2.susep.gov.br/download/estatisticas/BaseCompleta.zip
+          SES_ALLOW_INSECURE_SSL: "1"
+
+          # Sanity
+          MIN_INSURERS_COUNT: "200"
+          MAX_COUNT_DROP_PCT: "0.20"
+
+          # Auditoria SES
+          SES_WRITE_AUDIT: ${{ inputs.ses_write_audit && '1' || '0' }}
+          SES_AUDIT_DIR: data/derived/audit/ses
+          SES_FIN_YEAR_MODE: ${{ inputs.ses_fin_year_mode }}
+
+      - name: Audit insurers.json (contract + anomalies)
+        run: |
+          set -euo pipefail
+          python scripts/audit_insurers_json.py api/v1/insurers.json
+
+      - name: Upload audit artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: audit-artifacts
+          path: |
+            api/v1/insurers.json
+            api/v1/participants.json
+            data/derived/audit/**
+            data/snapshots/**
+            data/derived/consumidor_gov/match_report_insurers.json
