@@ -1,4 +1,4 @@
-name: debug-audit (workflow_dispatch)
+name: Debug Audit
 
 on:
   workflow_dispatch:
@@ -35,46 +35,65 @@ jobs:
           python-version: "3.11"
           cache: "pip"
 
+      # IMPORTANT: setar NO_PROXY e no_proxy via GITHUB_ENV (evita duplicidade no YAML)
+      - name: Configure NO_PROXY for data sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "NO_PROXY=${NO_PROXY:+$NO_PROXY,}dados.mj.gov.br,data.directory.opinbrasil.com.br" >> "$GITHUB_ENV"
+          echo "no_proxy=${no_proxy:+$no_proxy,}dados.mj.gov.br,data.directory.opinbrasil.com.br" >> "$GITHUB_ENV"
+
       - name: Install deps
+        shell: bash
         run: |
           set -euo pipefail
           python -m pip install --upgrade pip
+          pip install certifi
           pip install -r requirements.txt
-          pip install -r requirements-dev.txt
+          if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
+
+      - name: Configure CA bundle for requests
+        shell: bash
+        run: |
+          set -euo pipefail
+          CA="$(python - <<'PY'
+          import certifi
+          print(certifi.where())
+          PY
+          )"
+          echo "REQUESTS_CA_BUNDLE=$CA" >> "$GITHUB_ENV"
+          echo "SSL_CERT_FILE=$CA" >> "$GITHUB_ENV"
 
       - name: Lint (ruff)
+        shell: bash
         run: |
           set -euo pipefail
           ruff check .
 
       - name: Build JSON (participants)
+        shell: bash
         run: |
           set -euo pipefail
           python -m api.build_json
         env:
-          NO_PROXY: dados.mj.gov.br,data.directory.opinbrasil.com.br
-          no_proxy: dados.mj.gov.br,data.directory.opinbrasil.com.br
           OPIN_PARTICIPANTS_URL: https://data.directory.opinbrasil.com.br/participants
 
       - name: Build Consumidor.gov (aggregated)
+        shell: bash
         run: |
           set -euo pipefail
           python -m api.build_consumidor_gov
         env:
-          NO_PROXY: dados.mj.gov.br,data.directory.opinbrasil.com.br
-          no_proxy: dados.mj.gov.br,data.directory.opinbrasil.com.br
           CG_FORCE_DOWNLOAD: ${{ inputs.cg_force_download && '1' || '0' }}
           SES_LISTAEMPRESAS_URL: https://www2.susep.gov.br/menuestatistica/ses/download/LISTAEMPRESAS.csv
           SES_CACHE_DIR: data/raw/ses
 
       - name: Build insurers (with SES audit)
+        shell: bash
         run: |
           set -euo pipefail
           python -m api.build_insurers
         env:
-          NO_PROXY: dados.mj.gov.br,data.directory.opinbrasil.com.br
-          no_proxy: dados.mj.gov.br,data.directory.opinbrasil.com.br
-
           # SUSEP (ZIP gigante isolado)
           SES_CACHE_DIR: "/tmp/ses"
           SES_LISTAEMPRESAS_URL: https://www2.susep.gov.br/menuestatistica/ses/download/LISTAEMPRESAS.csv
@@ -91,14 +110,16 @@ jobs:
           SES_FIN_YEAR_MODE: ${{ inputs.ses_fin_year_mode }}
 
       - name: Audit insurers.json (contract + anomalies)
+        shell: bash
         run: |
           set -euo pipefail
           python scripts/audit_insurers_json.py api/v1/insurers.json
 
       - name: Upload audit artifacts
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: audit-artifacts
+          name: debug-audit-artifacts
           path: |
             api/v1/insurers.json
             api/v1/participants.json
