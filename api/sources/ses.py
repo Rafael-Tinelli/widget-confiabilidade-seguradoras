@@ -2,12 +2,14 @@
 from __future__ import annotations
 
 import io
+import json
 import os
 import re
 import zipfile
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import pandas as pd
 import requests
@@ -42,6 +44,16 @@ KEEP_ZIP = os.getenv("SES_KEEP_ZIP", "0") == "1"
 
 ALLOW_INSECURE_SSL = os.getenv("SES_ALLOW_INSECURE_SSL", "0") == "1"
 
+# Auditoria (sob demanda)
+SES_WRITE_AUDIT = os.getenv("SES_WRITE_AUDIT", "0") == "1"
+SES_AUDIT_DIR = Path(os.getenv("SES_AUDIT_DIR", "data/derived/audit/ses"))
+
+# Ano financeiro (para arquivos não-patrimoniais com damesano=AAAAMM)
+# - "max_year" (default): usa o ano do maior AAAAMM disponível
+# - "last_full_year": se maior mês < 12, usa ano anterior (evita ano parcial)
+# - "2024": força ano fixo
+SES_FIN_YEAR_MODE = os.getenv("SES_FIN_YEAR_MODE", "max_year").strip()
+
 _DIGITS_RE = re.compile(r"\d+")
 
 
@@ -52,6 +64,46 @@ class SesMeta:
     cias_file: str = "LISTAEMPRESAS.csv"
     seguros_file: str = "BaseCompleta.zip"
 
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _safe_audit_name(filename: str) -> str:
+    base = Path(filename).name
+    return re.sub(r"[^A-Za-z0-9._-]+", "_", base)
+
+
+def _write_audit_json(obj: dict[str, Any], path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(obj, ensure_ascii=False, indent=2, default=str),
+        encoding="utf-8",
+    )
+
+
+def _choose_financial_year(max_damesano: int) -> tuple[int, str]:
+    """
+    Decide o ano-alvo para séries não patrimoniais (SEGUROS/PREV/CAP/RESSEGURO)
+    a partir do maior damesano (AAAAMM).
+    """
+    if not max_damesano or max_damesano <= 0:
+        return 0, "no_damesano"
+
+    # força ano por env: SES_FIN_YEAR_MODE="2024"
+    if re.fullmatch(r"\d{4}", SES_FIN_YEAR_MODE):
+        return int(SES_FIN_YEAR_MODE), "forced_year_env"
+
+    y = int(max_damesano) // 100
+    m = int(max_damesano) % 100
+    mode = SES_FIN_YEAR_MODE.lower()
+
+    if mode in ("last_full_year", "ultimo_ano_fechado", "último_ano_fechado"):
+        if m < 12:
+            return y - 1, f"last_full_year (max_month={m} < 12 -> year={y-1})"
+        return y, "last_full_year (max_month=12)"
+
+    # default: max_year
+    return y, "max_year"
 
 def _canonical_ses_id(raw) -> str:
     """Canonicaliza ID SES para 6 dígitos."""
@@ -277,6 +329,18 @@ def extract_ses_master_and_financials():
 
     master_count = len(companies)
     print(f"SES: Universo Travado: {master_count} empresas (master list).")
+    
+    audit_summary: dict[str, Any] | None = None
+    if SES_WRITE_AUDIT:
+        audit_summary = {
+            "generated_at": _utc_now(),
+            "listaempresas_url": SES_LISTAEMPRESAS_URL,
+            "zip_url": SES_ZIP_URL,
+            "zip_url_fallback": SES_ZIP_URL_FALLBACK,
+            "master_count": master_count,
+            "fin_year_mode": SES_FIN_YEAR_MODE,
+            "files": [],
+        }
 
     # --- 2) ZIP (download para disco) ---
     zip_path = CACHE_DIR / "BaseCompleta.zip"
@@ -328,6 +392,7 @@ def extract_ses_master_and_financials():
                 if not file_type:
                     continue
 
+                file_audit: dict[str, Any] | None = None
                 sep, header_orig, header_lower, lower_to_orig = _detect_sep_and_header(z, filename)
                 if not header_lower:
                     print(f"SES SKIP: {filename} sem header legível.")
@@ -394,6 +459,38 @@ def extract_ses_master_and_financials():
                         print(f"SES WARN: Falha ao calcular max_date em {filename}: {e}")
                         max_date = 0
 
+                
+                chosen_year = 0
+                chosen_year_reason = ""
+                if file_type != "PATRIMONIO" and max_date > 0:
+                    chosen_year, chosen_year_reason = _choose_financial_year(int(max_date))
+
+                if SES_WRITE_AUDIT:
+                    file_audit = {
+                        "filename": filename,
+                        "file_type": file_type,
+                        "sep": sep,
+                        "header_sample": header_orig[:120],
+                        "picked": {
+                            "id_col_lower": c_id_l,
+                            "id_col_orig": c_id,
+                            "date_col_lower": c_data_l,
+                            "date_col_orig": c_data,
+                            "patrimonio_col_lower": c_patrimonio_l,
+                            "receita_col_lower": c_receita_l,
+                            "despesa_col_lower": c_despesa_l,
+                            "despesa_extra_col_lower": despesa_extra_l,
+                            "balanco_layout": balanco_layout,
+                        },
+                        "max_damesano": int(max_date) if max_date else 0,
+                        "chosen_year": int(chosen_year) if chosen_year else 0,
+                        "chosen_year_reason": chosen_year_reason,
+                        "rows": {"read": 0, "after_date_filter": 0, "after_sid_filter": 0},
+                        "companies_updated": 0,
+                        "aggregates": {},
+                        "top": {},
+                    }
+                    
                 usecols: List[str] = [c_id]
                 if c_data:
                     usecols.append(c_data)
@@ -415,6 +512,7 @@ def extract_ses_master_and_financials():
                 clm_upd: Dict[str, float] = {}
                 ativo_sum: Dict[str, float] = {}
                 passivo_sum: Dict[str, float] = {}
+                equity_upd: Dict[str, float] = {}
 
                 with z.open(filename) as f:
                     for chunk in pd.read_csv(
@@ -426,6 +524,8 @@ def extract_ses_master_and_financials():
                         on_bad_lines="skip",
                         chunksize=300_000,
                     ):
+                       if file_audit:
+                            file_audit["rows"]["read"] += int(len(chunk))
                         chunk.columns = [c.lower().strip() for c in chunk.columns]
 
                         if c_data and c_data_l and max_date > 0 and c_data_l in chunk.columns:
@@ -433,16 +533,23 @@ def extract_ses_master_and_financials():
                             if file_type == "PATRIMONIO":
                                 chunk = chunk[dates_num == int(max_date)]
                             else:
-                                target_year = str(int(max_date))[:4]
-                                chunk = chunk[dates_num.astype(str).str.startswith(target_year)]
+                                # Ano alvo (opcionalmente último ano completo)
+                                y = chosen_year if chosen_year else int(str(int(max_date))[:4])
+                                chunk = chunk[dates_num.astype(str).str.startswith(str(y))]
                             if chunk.empty:
                                 continue
+                                
+                        if file_audit:
+                            file_audit["rows"]["after_date_filter"] += int(len(chunk))
 
                         sid_series = _canonical_ses_id_series(chunk[c_id_l])
                         chunk["sid"] = sid_series
                         chunk = chunk[(chunk["sid"] != "") & (chunk["sid"].isin(companies))]
                         if chunk.empty:
                             continue
+
+                        if file_audit:
+                            file_audit["rows"]["after_sid_filter"] += int(len(chunk))
 
                         if file_type == "PATRIMONIO" and balanco_layout:
                             if "valor" not in chunk.columns or "quadro" not in chunk.columns:
@@ -491,12 +598,20 @@ def extract_ses_master_and_financials():
                     updated_any = 0
                     for k in set(ativo_sum.keys()) | set(passivo_sum.keys()):
                         equity = float(ativo_sum.get(k, 0.0) - passivo_sum.get(k, 0.0))
+                        if equity > 0:
+                            equity_upd[k] = equity
                         if equity > 0 and equity > companies[k]["net_worth"]:
                             companies[k]["net_worth"] = equity
                             if file_type not in companies[k]["sources_found"]:
                                 companies[k]["sources_found"].append(file_type)
                             updated_any += 1
                     print(f"SES: {updated_any} empresas do universo atualizadas via {filename}.")
+                    +if file_audit:
+                        file_audit["companies_updated"] = int(updated_any)
+                        file_audit["aggregates"] = {
+                            "net_worth_sum": float(sum(equity_upd.values())) if equity_upd else 0.0,
+                            "net_worth_nonzero_companies": int(len([1 for v in equity_upd.values() if float(v) > 0])),
+                        }
                     continue
 
                 updated_any = 0
@@ -521,6 +636,42 @@ def extract_ses_master_and_financials():
                     updated_any = len(set(prem_upd.keys()) | set(clm_upd.keys()))
 
                 print(f"SES: {updated_any} empresas do universo atualizadas via {filename}.")
+                
+                # Auditoria por arquivo (top + somas)
+                if file_audit:
+                    file_audit["companies_updated"] = int(updated_any)
+                    file_audit["aggregates"] = {
+                        "premiums_sum": float(sum(prem_upd.values())) if prem_upd else 0.0,
+                        "claims_sum": float(sum(clm_upd.values())) if clm_upd else 0.0,
+                        "net_worth_sum": float(sum(net_worth_upd.values())) if net_worth_upd else 0.0,
+                        "premiums_nonzero_companies": int(len([1 for v in prem_upd.values() if float(v) != 0.0])),
+                        "claims_nonzero_companies": int(len([1 for v in clm_upd.values() if float(v) != 0.0])),
+                        "net_worth_nonzero_companies": int(len([1 for v in net_worth_upd.values() if float(v) > 0])),
+                    }
+
+                    def _top(dct: Dict[str, float], n: int = 10) -> list[dict[str, Any]]:
+                        items = sorted(dct.items(), key=lambda kv: float(kv[1]), reverse=True)[:n]
+                        out: list[dict[str, Any]] = []
+                        for sid, val in items:
+                            nm = companies.get(sid, {}).get("name")
+                            out.append({"ses_id": sid, "name": nm, "value": float(val)})
+                        return out
+
+                    file_audit["top"] = {
+                        "premiums_top10": _top(prem_upd, 10) if prem_upd else [],
+                        "claims_top10": _top(clm_upd, 10) if clm_upd else [],
+                        "net_worth_top10": _top(net_worth_upd, 10) if net_worth_upd else [],
+                    }
+
+                    # escreve arquivo individual + agrega no summary
+                    try:
+                        SES_AUDIT_DIR.mkdir(parents=True, exist_ok=True)
+                        fn_safe = _safe_audit_name(filename)
+                        _write_audit_json(file_audit, SES_AUDIT_DIR / f"{fn_safe}.audit.json")
+                        if audit_summary is not None:
+                            audit_summary["files"].append(file_audit)
+                    except Exception:
+                        pass
 
     except Exception as e:
         print(f"SES CRITICAL: Erro ao processar ZIP: {e}")
@@ -533,8 +684,17 @@ def extract_ses_master_and_financials():
                     print(f"SES: ZIP temporário removido ({zip_path})")
             except Exception as e:
                 print(f"SES WARN: Falha ao remover ZIP temporário: {e}")
-
-    final_count = len(companies)
+                
+# escreve summary final de auditoria
+if audit_summary is not None:
+   try:
+       SES_AUDIT_DIR.mkdir(parents=True, exist_ok=True)
+       _write_audit_json(audit_summary, SES_AUDIT_DIR / "ses_audit_summary.json")
+       print(f"SES AUDIT: escrito em {SES_AUDIT_DIR.as_posix()}")
+   except Exception as e:
+       print(f"SES AUDIT WARN: falha ao escrever summary: {e}")
+    
+final_count = len(companies)
     if final_count != master_count:
         print(f"SES ERROR: Universo foi alterado! Inicial={master_count}, Final={final_count}")
 
