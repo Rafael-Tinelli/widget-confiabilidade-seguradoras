@@ -349,7 +349,7 @@ def extract_ses_master_and_financials():
         _download_to_file([SES_ZIP_URL, SES_ZIP_URL_FALLBACK], zip_path, timeout=600)
     except Exception as e:
         print(f"SES CRITICAL: Falha ao baixar ZIP: {e}")
-        return SesMeta(), companies
+        return SesMeta(), companies, {}
 
     # --- 3) Processamento ZIP ---
     try:
@@ -424,7 +424,7 @@ def extract_ses_master_and_financials():
                         )
 
                 elif file_type == "SEGUROS":
-                    c_receita_l = _pick_col(header_lower, ["premio_ganho", "premioganho", "premio_emitido", "premioemitido", "premios", "premio"])
+                    c_receita_l = _pick_col(header_lower, ["premio_ganho", "premioganho", "premio_emitido", "premioemitido", "premios", "premio", "premio_direto", "premiodireto"])
                     c_despesa_l = _pick_col(header_lower, ["sinistro_ocorrido", "sinistroocorrido", "sinistro_corrido", "sinistrocorrido", "sinistros", "sinistro"])
 
                 elif file_type == "PREVIDENCIA":
@@ -524,7 +524,7 @@ def extract_ses_master_and_financials():
                         on_bad_lines="skip",
                         chunksize=300_000,
                     ):
-                       if file_audit:
+                        if file_audit:
                             file_audit["rows"]["read"] += int(len(chunk))
                         chunk.columns = [c.lower().strip() for c in chunk.columns]
 
@@ -606,7 +606,7 @@ def extract_ses_master_and_financials():
                                 companies[k]["sources_found"].append(file_type)
                             updated_any += 1
                     print(f"SES: {updated_any} empresas do universo atualizadas via {filename}.")
-                    +if file_audit:
+                    if file_audit:
                         file_audit["companies_updated"] = int(updated_any)
                         file_audit["aggregates"] = {
                             "net_worth_sum": float(sum(equity_upd.values())) if equity_upd else 0.0,
@@ -685,16 +685,16 @@ def extract_ses_master_and_financials():
             except Exception as e:
                 print(f"SES WARN: Falha ao remover ZIP temporário: {e}")
                 
-# escreve summary final de auditoria
-if audit_summary is not None:
-   try:
-       SES_AUDIT_DIR.mkdir(parents=True, exist_ok=True)
-       _write_audit_json(audit_summary, SES_AUDIT_DIR / "ses_audit_summary.json")
-       print(f"SES AUDIT: escrito em {SES_AUDIT_DIR.as_posix()}")
-   except Exception as e:
-       print(f"SES AUDIT WARN: falha ao escrever summary: {e}")
+    # escreve summary final de auditoria
+    if audit_summary is not None:
+        try:
+            SES_AUDIT_DIR.mkdir(parents=True, exist_ok=True)
+            _write_audit_json(audit_summary, SES_AUDIT_DIR / "ses_audit_summary.json")
+            print(f"SES AUDIT: escrito em {SES_AUDIT_DIR.as_posix()}")
+        except Exception as e:
+            print(f"SES AUDIT WARN: falha ao escrever summary: {e}")
     
-final_count = len(companies)
+    final_count = len(companies)
     if final_count != master_count:
         print(f"SES ERROR: Universo foi alterado! Inicial={master_count}, Final={final_count}")
 
@@ -713,5 +713,6 @@ final_count = len(companies)
         cnpj_digits = "".join(ch for ch in str(c.get("cnpj") or "") if ch.isdigit())
         if len(cnpj_digits) == 14:
             financials_map[cnpj_digits] = entry
+    
     print(f"SES: financials_map gerado: {len(financials_map)} chaves (ses_id + cnpj).")
     return SesMeta(), companies, financials_map
