@@ -223,13 +223,43 @@ def _read_csv_bytes(content: bytes) -> pd.DataFrame:
         return pd.DataFrame()
 
 
-def _pick_col(cols_lower: List[str], candidates: List[str]) -> Optional[str]:
+def _pick_col(cols_lower: List[str], candidates: Tuple[str, ...]) -> Optional[str]:
+    """Pick the most likely column for a metric from a list of normalized headers.
+
+    Heuristics:
+    - Prefer exact match over substring.
+    - Never prefer categorical 'tipo_*' columns when a non-tipo alternative exists.
+    - Prefer value-ish columns (vl_/valor/valor_) over generic token matches.
+    - Special-case: when looking for 'cessao', explicitly avoid 'tipo_cessao'.
+    """
+    # 1) exact match first
     for cand in candidates:
-        cand_l = cand.lower()
+        cand_l = (cand or "").strip().lower()
+        if not cand_l:
+            continue
         for c in cols_lower:
-            if cand_l in c:
+            if c == cand_l:
                 return c
-    return None
+
+    # 2) scored substring match
+    value_prefixes = ("vl_", "valor", "valor_", "v_")
+    best: Optional[Tuple[int, int, int, str]] = None  # (tipo_penalty, value_bonus, idx, col)
+    for cand in candidates:
+        cand_l = (cand or "").strip().lower()
+        if not cand_l:
+            continue
+        for idx, c in enumerate(cols_lower):
+            if cand_l not in c:
+                continue
+            # Explicit rule for RESSEGURO: never select tipo_cessao as numeric proxy
+            if cand_l == "cessao" and c == "tipo_cessao":
+                continue
+            tipo_penalty = 1 if (c.startswith("tipo") or c.startswith("tp_") or c.startswith("tipo_")) else 0
+            value_bonus = 1 if c.startswith(value_prefixes) or ("_vl" in c) or ("_valor" in c) else 0
+            key = (tipo_penalty, -value_bonus, idx, c)
+            if best is None or key < best:
+                best = key
+    return best[-1] if best else None
 
 
 def _detect_sep_and_header(z: zipfile.ZipFile, filename: str) -> Tuple[str, List[str], List[str], Dict[str, str]]:
