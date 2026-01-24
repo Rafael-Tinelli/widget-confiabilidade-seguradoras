@@ -560,7 +560,7 @@ def extract_ses_master_and_financials():
 
                         if c_data and c_data_l and max_date > 0 and c_data_l in chunk.columns:
                             dates_num = pd.to_numeric(chunk[c_data_l], errors="coerce").fillna(0).astype(int)
-                            if file_type == "PATRIMONIO":
+                            if file_type in ("PATRIMONIO", "BALANCO"):
                                 chunk = chunk[dates_num == int(max_date)]
                             else:
                                 # Ano alvo (opcionalmente último ano completo)
@@ -581,7 +581,7 @@ def extract_ses_master_and_financials():
                         if file_audit:
                             file_audit["rows"]["after_sid_filter"] += int(len(chunk))
 
-                        if file_type == "PATRIMONIO" and balanco_layout:
+                        if file_type in ("PATRIMONIO", "BALANCO") and balanco_layout:
                             if "valor" not in chunk.columns or "quadro" not in chunk.columns:
                                 continue
                             vals = _parse_br_float(chunk["valor"])
@@ -598,7 +598,7 @@ def extract_ses_master_and_financials():
                                     passivo_sum[k] = passivo_sum.get(k, 0.0) + float(v)
                             continue
 
-                        if file_type == "PATRIMONIO" and c_patrimonio_l:
+                        if file_type in ("PATRIMONIO", "BALANCO") and c_patrimonio_l:
                             if c_patrimonio_l not in chunk.columns:
                                 continue
                             vals = _parse_br_float(chunk[c_patrimonio_l])
@@ -624,7 +624,7 @@ def extract_ses_master_and_financials():
                                 if float(v) != 0.0:
                                     clm_upd[k] = clm_upd.get(k, 0.0) + float(v)
 
-                if file_type == "PATRIMONIO" and balanco_layout:
+                if file_type in ("PATRIMONIO", "BALANCO") and balanco_layout:
                     updated_any = 0
                     for k in set(ativo_sum.keys()) | set(passivo_sum.keys()):
                         equity = float(ativo_sum.get(k, 0.0) - passivo_sum.get(k, 0.0))
