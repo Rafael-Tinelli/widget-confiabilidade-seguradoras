@@ -729,7 +729,7 @@ def main() -> None:
                 "computed_unique_brands": len(unique_brands_local),
                 "computed_skipped_b2b": len(skipped_b2b_list),
                 "method_breakdown": method_breakdown,
-                "reputation_index_companies": int((cg_root.get("meta") or {}).get("companies") or 0),
+                "reputation_index_companies": int(cg_meta.get("companies") or 0),
             },
             "matched": matched_list,
             "unmatched": unmatched_list,
