@@ -680,6 +680,67 @@ def main() -> None:
     OUTPUT_FILE.parent.mkdir(parents=True, exist_ok=True)
     OUTPUT_FILE.write_text(json.dumps(out, ensure_ascii=False, default=_json_default), encoding="utf-8")
 
+    # Match report aligned to the final insurers list (post-filters)
+    try:
+        report_dir = Path("data/derived/consumidor_gov")
+        report_dir.mkdir(parents=True, exist_ok=True)
+        matched_list: List[Dict[str, Any]] = []
+        unmatched_list: List[Dict[str, Any]] = []
+        skipped_b2b_list: List[Dict[str, Any]] = []
+        unique_brands_local: set[str] = set()
+        method_breakdown: Dict[str, int] = {}
+        for ins in insurers:
+            ins_id = str(ins.get("id") or "")
+            audit = reputation_audit_by_id.get(ins_id) or {}
+            method = str(audit.get("method") or "no_match")
+            method_breakdown[method] = method_breakdown.get(method, 0) + 1
+            entry = {
+                "insurer_id": ins_id,
+                "insurer_name": ins.get("name"),
+                "tradeName": ins.get("tradeName"),
+                "cnpjKey": ins.get("cnpjKey"),
+                "segment": ins.get("segment"),
+                "method": method,
+                "score": audit.get("score"),
+                "query": audit.get("query"),
+                "matchedName": audit.get("matchedName"),
+                "matchedCnpj": audit.get("matchedCnpj"),
+                "isB2B": bool(audit.get("isB2B")),
+            }
+            if entry["isB2B"]:
+                skipped_b2b_list.append(entry)
+                continue
+            if ins.get("reputation") is not None:
+                matched_list.append(entry)
+                if entry.get("matchedName"):
+                    unique_brands_local.add(str(entry["matchedName"]))
+            else:
+                unmatched_list.append(entry)
+
+        report = {
+            "generatedAt": datetime.utcnow().replace(microsecond=0).isoformat() + "Z",
+            "scope": "final_insurers",
+            "stats": {
+                "insurers_total": len(insurers),
+                "matched": matched_reputation,
+                "unique_brands": len(unique_brands_matched),
+                "skipped_b2b": skipped_b2b,
+                "computed_matched": len(matched_list),
+                "computed_unique_brands": len(unique_brands_local),
+                "computed_skipped_b2b": len(skipped_b2b_list),
+                "method_breakdown": method_breakdown,
+                "reputation_index_companies": int((cg_root.get("meta") or {}).get("companies") or 0),
+            },
+            "matched": matched_list,
+            "unmatched": unmatched_list,
+            "skipped_b2b_details": skipped_b2b_list,
+        }
+        (report_dir / "match_report_insurers.json").write_text(
+            json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+    except Exception as e:
+        print(f"[REPUTATION] Could not write match report: {e}")
+    
     # Snapshot: anexar auditoria sem quebrar contrato (deepcopy)
     if WRITE_SNAPSHOT:
         try:
