@@ -33,6 +33,8 @@ MONTHS_BACK = int(os.getenv("CG_MONTHS_BACK", "12"))
 FORCE_MONTH = os.getenv("CG_FORCE_MONTH")  # ex: "2025-12"
 FORCE_DOWNLOAD = os.getenv("CG_FORCE_DOWNLOAD", "0").strip() == "1"
 
+# Months with anomalous / incomplete datasets should be skipped from aggregation.
+CG_MIN_MONTH_BYTES = int(os.getenv("CG_MIN_MONTH_BYTES", "20000000"))  # 20MB default
 TARGET_SEGMENT = os.getenv("CG_TARGET_SEGMENT", "Seguros, Capitalização e Previdência").strip()
 
 
@@ -301,7 +303,7 @@ def _write_json_gz(obj: dict[str, Any], out_path_gz: Path) -> None:
         f.write(payload)
 
 
-def _merge_months(monthly: list[dict[str, Any]]) -> dict[str, Any]:
+def _merge_months(monthly: list[dict[str, Any]], invalid_months: list[dict[str, Any]] | None = None) -> dict[str, Any]:
     merged: dict[str, dict[str, Any]] = {}
     months: list[str] = []
 
@@ -421,6 +423,7 @@ def main() -> int:
     print(f"CG: meses a processar (até {MONTHS_BACK}): {months}")
 
     monthly_roots: list[dict[str, Any]] = []
+    invalid_months: list[dict[str, Any]] = []
 
     for m in months:
         res = res_by_month[m]
@@ -442,15 +445,33 @@ def main() -> int:
             print(f"CG: OK download {raw_csv.name} ({raw_csv.stat().st_size} bytes)")
         else:
             print(f"CG: usando cache {raw_csv.name} ({raw_csv.stat().st_size} bytes)")
+        # Sanity check: skip anomalous months (very small dumps)
+        size = raw_csv.stat().st_size if raw_csv.exists() else 0
+        if size < CG_MIN_MONTH_BYTES:
+            print(f"[CG] {m}: invalid month dump (bytes={size} < {CG_MIN_MONTH_BYTES}); skipping month")
+            invalid_months.append({ "month": m, "reason": "bytes_below_threshold", "bytes": size })
+            # Write a minimal marker artifact for traceability
+            root = {"meta": {"month": m, "invalid": True, "reason": "bytes_below_threshold", "raw_csv_bytes": size}}
+            with gzip.open(out_gz, "wt", encoding="utf-8") as f:
+                json.dump(root, f, ensure_ascii=False)
+            continue
 
         root = _aggregate_basecompleta(raw_csv, month=m, resource_url=res.url)
         _write_json_gz(root, out_gz)
         print(f"CG: OK agregado {m} -> {out_gz.as_posix()}")
         meta = root.get("meta") or {}
         print(f"CG:   linhas_total={meta.get('lines_total')} kept={meta.get('lines_kept')} empresas={meta.get('companies')}")
+
+        companies = int(meta.get("companies") or 0)
+        kept = int(meta.get("lines_kept") or 0)
+        if companies == 0 or kept == 0:
+            print(f"[CG] {m}: invalid month aggregate (companies={companies}, kept={kept}); skipping month")
+            invalid_months.append({ "month": m, "reason": "zero_companies_or_kept", "companies": companies, "kept": kept })
+            continue
+
         monthly_roots.append(root)
 
-    agg = _merge_months(monthly_roots)
+    agg = _merge_months(monthly_roots, invalid_months)
     agg_gz = DERIVED_DIR / "consumidor_gov_agg.json.gz"
     _write_json_gz(agg, agg_gz)
     print(f"CG: OK agregado multi-mês -> {agg_gz.as_posix()} (empresas={agg.get('meta',{}).get('companies')})")
