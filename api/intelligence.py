@@ -142,19 +142,30 @@ def calculate_solvency_score(data: Dict[str, Any]) -> Dict[str, Any]:
         or 0.0
     )
 
-    loss_ratio = _safe_div(claims, premiums) if premiums > 0 else 0.0
+    # Sanitization & Loss Ratio Logic
+    loss_ratio_raw = (claims / premiums) if premiums > 0 else None
+    loss_ratio = None
+    loss_ratio_status = "ok"
+
+    if premiums <= 0:
+        loss_ratio_status = "insufficient_premiums"
+        loss_score = 50.0
+    elif claims < 0:
+        loss_ratio_status = "invalid_claims"
+        loss_score = 50.0
+    else:
+        loss_ratio = claims / premiums
+        # Original scoring logic applied only to valid ratios
+        if loss_ratio <= 0.6:
+            loss_score = 90.0
+        elif loss_ratio <= 1.0:
+            loss_score = 90.0 - (loss_ratio - 0.6) * 100.0
+        else:
+            loss_score = 50.0 - min((loss_ratio - 1.0) * 50.0, 45.0)
+
     scale = max(premiums, claims, 1.0)
     net_worth_ratio = _safe_div(net_worth, scale) if net_worth > 0 else 0.0
 
-    # Loss ratio score: 0.6->90, 1.0->50, >1.0 decays.
-    if premiums <= 0:
-        loss_score = 50.0
-    elif loss_ratio <= 0.6:
-        loss_score = 90.0
-    elif loss_ratio <= 1.0:
-        loss_score = 90.0 - (loss_ratio - 0.6) * 100.0
-    else:
-        loss_score = 50.0 - min((loss_ratio - 1.0) * 50.0, 45.0)
     loss_score = _clamp(loss_score, 5.0, 98.0)
 
     # Net worth ratio score in log space.
@@ -168,7 +179,9 @@ def calculate_solvency_score(data: Dict[str, Any]) -> Dict[str, Any]:
 
     return {
         "score": float(solvency_score),
-        "lossRatio": float(loss_ratio),
+        "lossRatio": (loss_ratio if loss_ratio is None else float(loss_ratio)),
+        "lossRatioRaw": (loss_ratio_raw if loss_ratio_raw is None else float(loss_ratio_raw)),
+        "lossRatioStatus": loss_ratio_status,
         "netWorthRatio": float(net_worth_ratio),
     }
 
