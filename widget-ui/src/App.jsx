@@ -19,8 +19,8 @@ function App() {
       .then(res => res.json())
       .then(data => {
         const rawList = data.insurers || [];
-        // 1. CORREÇÃO DE DUPLICATAS
-        const uniqueList = Array.from(new Map(rawList.map(item => [item.cnpj, item])).values());
+        // 1. CORREÇÃO DE DUPLICATAS (Usa ID em vez de CNPJ)
+        const uniqueList = Array.from(new Map(rawList.map(item => [item.id, item])).values());
         setInsurers(uniqueList);
         setLoading(false);
       })
@@ -94,7 +94,7 @@ function App() {
           Ranking de Confiabilidade
         </h1>
         <p className="text-lg text-gray-600 max-w-2xl mx-auto">
-          Analisando <strong>{insurers.length}</strong> seguradoras oficiais (SUSEP).
+          Analisando <strong>{insurers.length}</strong> entidades oficiais (SUSEP).
         </p>
       </div>
 
@@ -107,7 +107,7 @@ function App() {
             </div>
             <input 
               type="text" 
-              placeholder="Buscar seguradora..." 
+              placeholder="Buscar entidade..." 
               className="block w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg bg-gray-50 focus:outline-none focus:ring-2 focus:ring-[#3498db] transition"
               value={searchTerm}
               onChange={e => setSearchTerm(e.target.value)}
@@ -136,7 +136,7 @@ function App() {
                   : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
               }`}
             >
-              <ShieldCheck className="w-4 h-4" /> Porte
+              <ShieldCheck className="w-4 h-4" /> Prêmios
             </button>
           </div>
         </div>
@@ -149,12 +149,12 @@ function App() {
 
       <div className="space-y-4 min-h-[400px]">
         {paginatedData.map(ins => (
-          <InsurerCard key={ins.cnpj} insurer={ins} />
+          <InsurerCard key={ins.id} insurer={ins} />
         ))}
         
         {paginatedData.length === 0 && (
           <div className="text-center py-20 text-gray-500">
-            Nenhuma seguradora encontrada.
+            Nenhuma entidade encontrada.
           </div>
         )}
       </div>
