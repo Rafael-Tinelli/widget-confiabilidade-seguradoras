@@ -108,18 +108,10 @@ def _should_exclude(name: str) -> bool:
     return any(s in k for s in EXCLUDE_NAME_SUBSTRINGS)
 
 
-def _normalize_segment(value: Any) -> str:
-    if value is None:
-        return "S4"
-    s = str(value).strip().upper()
-    if s in {"S1", "S2", "S3", "S4"}:
-        return s
-    m = re.match(r"^(S[1-4])\b", s)
-    if m:
-        return m.group(1)
-    if s in {"1", "2", "3", "4"}:
-        return f"S{s}"
-    return "S4"
+def _normalize_segment(value: Any) -> Optional[str]:
+    # Segmentação S1–S4 não é inferível inequivocamente a partir do BaseCompleta.zip.
+    # Não publicamos segmentação até existir fonte oficial dedicada.
+    return None
 
 
 def _insurer_id(comp: Dict[str, Any], cnpj_key: Optional[str], name: str) -> str:
@@ -495,7 +487,7 @@ def main() -> None:
         if cnpj_key:
             susep_cnpjs_seen.add(cnpj_key)
 
-        segment = _normalize_segment(comp.get("segment") or comp.get("segmento") or comp.get("porte"))
+        segment = None  # segmentação não publicada
         is_opin = bool(cnpj_key and cnpj_key in opin_by_cnpj)
         is_open_insurance = is_opin or bool(cnpj_key and cnpj_key in oi_participant_keys)
         if is_opin and cnpj_key:
@@ -590,7 +582,6 @@ def main() -> None:
             {
                 "id": ins_id,
                 "name": name,
-                "segment": segment,
                 "products": products,
                 "data": {
                     "premiums": premiums,
@@ -699,7 +690,6 @@ def main() -> None:
                 "insurer_name": ins.get("name"),
                 "tradeName": ins.get("tradeName"),
                 "cnpjKey": ins.get("cnpjKey"),
-                "segment": ins.get("segment"),
                 "method": method,
                 "score": audit.get("score"),
                 "query": audit.get("query"),
