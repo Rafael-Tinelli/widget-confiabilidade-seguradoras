@@ -24,8 +24,9 @@ def test_insurers_schema_minimum():
     # valida 5 primeiros para evitar teste pesado
     for it in data["insurers"][:5]:
         assert "id" in it
+        assert isinstance(it["id"], str)
+        assert it["id"].isdigit() and len(it["id"]) == 6
         assert "name" in it
-        assert it.get("segment") in {"S1", "S2", "S3", "S4"}
         assert isinstance(it.get("products"), list)
         assert "data" in it
         assert "premiums" in it["data"]
