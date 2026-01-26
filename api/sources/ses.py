@@ -802,13 +802,11 @@ def extract_ses_master_and_financials():
             financials_map[cnpj_digits] = entry
     
     print(f"SES: financials_map gerado: {len(financials_map)} chaves (ses_id + cnpj).")
-    # Evita NameError (sources_found) e evita depender de kwargs que podem não existir em SesMeta.
-    meta = SesMeta()
-    # Atualiza metadados de forma segura (se existirem no objeto).
-    if hasattr(meta, "cias_file"):
-        meta.cias_file = "Ses_cias.csv"
-    if hasattr(meta, "zip_url"):
-        meta.zip_url = SES_ZIP_URL
-    if hasattr(meta, "seguros_file"):
-        meta.seguros_file = "BaseCompleta.zip"
+    # SesMeta é frozen=True: não é possível atribuir campos após instanciar.
+    # Portanto, criamos a instância já com os valores corretos.
+    meta = SesMeta(
+        zip_url=SES_ZIP_URL,
+        cias_file="Ses_cias.csv",
+        seguros_file="BaseCompleta.zip",
+    )
     return meta, companies, financials_map
