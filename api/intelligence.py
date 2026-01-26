@@ -306,8 +306,6 @@ def calculate_score(insurer_obj: Dict[str, Any]) -> Dict[str, Any]:
     flags = insurer_obj.get("flags") if isinstance(insurer_obj.get("flags"), dict) else {}
     products = insurer_obj.get("products") if isinstance(insurer_obj.get("products"), list) else []
 
-    segment = None  # segmentação não publicada
-
     solvency = calculate_solvency_score(data)
     innovation = calculate_innovation_score(flags, products)
 
