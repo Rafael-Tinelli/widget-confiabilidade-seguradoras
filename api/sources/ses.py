@@ -1,6 +1,7 @@
 # api/sources/ses.py
 from __future__ import annotations
 
+from typing import Dict
 import io
 import json
 import os
@@ -9,7 +10,7 @@ import zipfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Iterable, List, Optional, Tuple
 
 import pandas as pd
 import requests
@@ -309,56 +310,51 @@ def _compute_max_date_in_zipfile(
 def extract_ses_master_and_financials():
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
-    # --- 1) MASTER LIST ---
-    print(f"SES: Baixando master list: {SES_LISTAEMPRESAS_URL}")
+    # --- 1) LISTAEMPRESAS como mapa de CNPJ (não é universo completo) ---
+    # Fonte de verdade do universo SUSEP: Ses_cias.csv (dentro do BaseCompleta.zip).
+    # LISTAEMPRESAS é usada apenas para mapear CNPJ via Coenti == CodigoFIP.
+    print(f"SES: Baixando CNPJ map (LISTAEMPRESAS): {SES_LISTAEMPRESAS_URL}")
     try:
-        df_cias = _read_csv_bytes(_download_bytes(SES_LISTAEMPRESAS_URL, timeout=120))
+        df_lista = _read_csv_bytes(_download_bytes(SES_LISTAEMPRESAS_URL, timeout=120))
     except Exception as e:
-        print(f"SES CRITICAL: Falha ao baixar master list: {e}")
-        df_cias = pd.DataFrame()
+        print(f"SES WARN: Falha ao baixar LISTAEMPRESAS: {e}")
+        df_lista = pd.DataFrame()
 
-    companies: Dict[str, dict] = {}
+    cnpj_by_sid: Dict[str, str] = {}
+    fallback_companies: Dict[str, dict] = {}
 
-    if not df_cias.empty:
-        df_cias.columns = [c.lower().strip() for c in df_cias.columns]
+    if not df_lista.empty:
+        df_lista.columns = [c.lower().strip() for c in df_lista.columns]
+        col_fip = _pick_col(list(df_lista.columns), ("codigofip", "codfip", "coenti"))
+        col_cnpj = _pick_col(list(df_lista.columns), ("cnpj", "cnpjseg", "cnpjcpf"))
+        col_nome = _pick_col(list(df_lista.columns), ("nomeentidade", "noenti", "nome"))
 
-        col_id = _pick_col(list(df_cias.columns), ["codfip", "coenti", "cod_enti", "cod"])
-        col_cnpj = _pick_col(list(df_cias.columns), ["cnpj"])
-        col_nome = _pick_col(list(df_cias.columns), ["razao", "razão", "nome"])
-
-        if not (col_id and col_cnpj and col_nome):
-            print("SES CRITICAL: Master list sem colunas esperadas (id/cnpj/nome).")
-        else:
-            for _, row in df_cias.iterrows():
-                sid = _canonical_ses_id(row.get(col_id))
+        if col_fip and col_cnpj:
+            for _, row in df_lista.iterrows():
+                sid = _canonical_ses_id(str(row.get(col_fip, "") or ""))
                 if not sid:
                     continue
+                cnpj_digits = "".join(ch for ch in str(row.get(col_cnpj, "") or "") if ch.isdigit())
+                if len(cnpj_digits) == 14:
+                    cnpj_by_sid.setdefault(sid, cnpj_digits)
+                nm = str(row.get(col_nome, "") or "").strip()
+                fallback_companies.setdefault(
+                    sid,
+                    {
+                        "id": sid,
+                        "name": nm or sid,
+                        "cnpj": cnpj_by_sid.get(sid) or None,
+                        "premiums": 0.0,
+                        "claims": 0.0,
+                        "net_worth": 0.0,
+                        "sources_found": [],
+                    },
+                )
 
-                raw_cnpj = str(row.get(col_cnpj, "")).strip()
-                cnpj_nums = "".join(ch for ch in raw_cnpj if ch.isdigit())
-                if len(cnpj_nums) == 14:
-                    cnpj = (
-                        f"{cnpj_nums[:2]}.{cnpj_nums[2:5]}.{cnpj_nums[5:8]}/"
-                        f"{cnpj_nums[8:12]}-{cnpj_nums[12:]}"
-                    )
-                else:
-                    cnpj = cnpj_nums
-
-                raw_name = str(row.get(col_nome, "")).strip()
-                
-                companies[sid] = {
-                    "id": sid,
-                    "cnpj": cnpj,
-                    "name": raw_name,
-                    "name_clean": raw_name.lower(),
-                    "net_worth": 0.0,
-                    "premiums": 0.0,
-                    "claims": 0.0,
-                    "sources_found": [],
-                }
+    seed_sids = set(cnpj_by_sid.keys())
+    companies: Dict[str, dict] = {}
 
     master_count = len(companies)
-    print(f"SES: Universo Travado: {master_count} empresas (master list).")
     
     audit_summary: dict[str, Any] | None = None
     if SES_WRITE_AUDIT:
@@ -374,12 +370,15 @@ def extract_ses_master_and_financials():
 
     # --- 2) ZIP (download para disco) ---
     zip_path = CACHE_DIR / "BaseCompleta.zip"
+    period: dict = {}
     print(f"SES: Baixando ZIP: {SES_ZIP_URL}")
     try:
         _download_to_file([SES_ZIP_URL, SES_ZIP_URL_FALLBACK], zip_path, timeout=600)
     except Exception as e:
         print(f"SES CRITICAL: Falha ao baixar ZIP: {e}")
-        return SesMeta(), companies, {}
+        if not companies:
+            companies = fallback_companies
+        return SesMeta(master_source="LISTAEMPRESAS.csv (fallback)", master_count=len(companies)), companies, {}
 
     # --- 3) Processamento ZIP ---
     try:
@@ -395,6 +394,59 @@ def extract_ses_master_and_financials():
 
         with z_obj as z:
             all_files = z.namelist()
+
+            # Universo SUSEP (fonte de verdade): Ses_cias.csv (dentro do ZIP)
+            if not companies:
+                cias_name = None
+                for fn in all_files:
+                    if fn.lower().endswith("ses_cias.csv"):
+                        cias_name = fn
+                        break
+
+                if not cias_name:
+                    print("SES WARN: Ses_cias.csv não encontrado no ZIP; usando fallback LISTAEMPRESAS como universo.")
+                    companies = fallback_companies.copy()
+                else:
+                    try:
+                        with z.open(cias_name) as f_cias:
+                            df_cias = pd.read_csv(f_cias, sep=";", encoding="latin1", dtype=str, on_bad_lines="skip")
+                    except Exception as e:
+                        print(f"SES WARN: Falha ao ler {cias_name}: {e}. Usando fallback LISTAEMPRESAS como universo.")
+                        df_cias = pd.DataFrame()
+
+                    if df_cias.empty:
+                        companies = fallback_companies.copy()
+                    else:
+                        df_cias.columns = [c.lower().strip() for c in df_cias.columns]
+                        col_id = _pick_col(list(df_cias.columns), ("coenti", "co_entidade", "codigo", "codfip"))
+                        col_name = _pick_col(list(df_cias.columns), ("noenti", "nomeentidade", "nome", "razaosocial"))
+
+                        if not (col_id and col_name):
+                            print("SES WARN: colunas esperadas não encontradas em Ses_cias.csv; usando fallback LISTAEMPRESAS.")
+                            companies = fallback_companies.copy()
+                        else:
+                            tmp: Dict[str, dict] = {}
+                            for _, row in df_cias.iterrows():
+                                sid = _canonical_ses_id(str(row.get(col_id, "") or ""))
+                                if not sid:
+                                    continue
+                                nm = str(row.get(col_name, "") or "").strip()
+                                if sid not in tmp:
+                                    tmp[sid] = {
+                                        "id": sid,
+                                        "name": nm or sid,
+                                        "cnpj": cnpj_by_sid.get(sid) or None,
+                                        "premiums": 0.0,
+                                        "claims": 0.0,
+                                        "net_worth": 0.0,
+                                        "sources_found": [],
+                                    }
+                            companies = tmp
+
+                master_count = len(companies)
+                print(f"SES: Universo carregado (Ses_cias.csv): {master_count} entidades (seed com CNPJ: {len(seed_sids)}).")
+
+            sids_seen_in_data: set[str] = set()
 
             targets = [
                 ("pl_margem", "PATRIMONIO"),
@@ -575,6 +627,8 @@ def extract_ses_master_and_financials():
                         sid_series = _canonical_ses_id_series(chunk[c_id_l])
                         chunk["sid"] = sid_series
                         chunk = chunk[(chunk["sid"] != "") & (chunk["sid"].isin(companies))]
+                        if not chunk.empty:
+                            sids_seen_in_data.update(chunk["sid"].unique().tolist())
                         if chunk.empty:
                             continue
 
@@ -724,9 +778,12 @@ def extract_ses_master_and_financials():
         except Exception as e:
             print(f"SES AUDIT WARN: falha ao escrever summary: {e}")
     
+    # Filtra universo: manter tudo que (a) tem CNPJ via LISTAEMPRESAS ou (b) apareceu em dados do período
+    active_sids = set(seed_sids) | set(sids_seen_in_data) if "sids_seen_in_data" in locals() else set(seed_sids)
+    if active_sids:
+        companies = {sid: c for sid, c in companies.items() if sid in active_sids}
     final_count = len(companies)
-    if final_count != master_count:
-        print(f"SES ERROR: Universo foi alterado! Inicial={master_count}, Final={final_count}")
+    print(f"SES: Universo final (ativo + seed): {final_count} (raw Ses_cias={master_count})")
 
     # --- 4) financials_map (3º retorno) ---
     # O build_insurers registra "financials.found" com base nesse mapa.
@@ -745,4 +802,11 @@ def extract_ses_master_and_financials():
             financials_map[cnpj_digits] = entry
     
     print(f"SES: financials_map gerado: {len(financials_map)} chaves (ses_id + cnpj).")
-    return SesMeta(), companies, financials_map
+    return SesMeta(
+        master_source="Ses_cias.csv",
+        master_count=final_count,
+        zip_url=SES_ZIP_URL,
+        zip_path=str(zip_path),
+        period=period,
+        sources_found=sources_found,
+    ), companies, financials_map
