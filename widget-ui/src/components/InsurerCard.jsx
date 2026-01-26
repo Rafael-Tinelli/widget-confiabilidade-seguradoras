@@ -86,14 +86,11 @@ export default function InsurerCard({ insurer }) {
             {insurer.name}
           </h3>
           <div className="text-xs text-gray-400 font-mono mt-0.5">
-            CNPJ: {insurer.cnpj}
+            SUSEP: {insurer.id} | CNPJ: {insurer.cnpj || 'não informado pela SUSEP'}
           </div>
           
           <div className="flex gap-2 mt-1">
-            <span className="text-[10px] px-2 py-0.5 bg-blue-50 text-blue-700 rounded border border-blue-100 font-semibold">
-              {insurer.segment || 'S4'}
-            </span>
-            {flags.openInsuranceParticipant && (
+            {(flags.openInsuranceParticipant || flags.opinParticipant) && (
               <span className="text-[10px] px-2 py-0.5 bg-purple-50 text-purple-700 rounded border border-purple-100 flex items-center gap-1">
                 <CheckCircle2 className="w-3 h-3" /> OPIN
               </span>
