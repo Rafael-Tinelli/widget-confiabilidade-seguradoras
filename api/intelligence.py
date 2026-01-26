@@ -306,9 +306,7 @@ def calculate_score(insurer_obj: Dict[str, Any]) -> Dict[str, Any]:
     flags = insurer_obj.get("flags") if isinstance(insurer_obj.get("flags"), dict) else {}
     products = insurer_obj.get("products") if isinstance(insurer_obj.get("products"), list) else []
 
-    segment = str(insurer_obj.get("segment") or "S4").strip().upper()
-    if segment not in {"S1", "S2", "S3", "S4"}:
-        segment = "S4"
+    segment = None  # segmentação não publicada
 
     solvency = calculate_solvency_score(data)
     innovation = calculate_innovation_score(flags, products)
@@ -337,18 +335,11 @@ def calculate_score(insurer_obj: Dict[str, Any]) -> Dict[str, Any]:
                     }
                 )
 
-    # Weights by segment
+    # Pesos fixos (sem depender de segmento S1–S4)
     if not _CONTEXT.get("reputation_enabled", True):
         w_sol, w_rep, w_inn = 0.6, 0.0, 0.4
     else:
-        if segment == "S1":
-            w_sol, w_rep, w_inn = 0.45, 0.40, 0.15
-        elif segment == "S2":
-            w_sol, w_rep, w_inn = 0.40, 0.45, 0.15
-        elif segment == "S3":
-            w_sol, w_rep, w_inn = 0.35, 0.50, 0.15
-        else:
-            w_sol, w_rep, w_inn = 0.35, 0.45, 0.20
+        w_sol, w_rep, w_inn = 0.40, 0.45, 0.15
 
     composite = (
         float(solvency.get("score") or 0.0) * w_sol
@@ -391,7 +382,6 @@ def calculate_score(insurer_obj: Dict[str, Any]) -> Dict[str, Any]:
         comps["financials"] = fin
 
     insurer_obj["data"]["weights"] = {"solvency": w_sol, "reputation": w_rep, "innovation": w_inn}
-    insurer_obj["data"]["segment"] = segment
     insurer_obj["data"]["context"] = {
         "reputationEnabled": bool(_CONTEXT.get("reputation_enabled", True)),
         "reputationDatasetEmpty": bool(_CONTEXT.get("reputation_dataset_empty", False)),
