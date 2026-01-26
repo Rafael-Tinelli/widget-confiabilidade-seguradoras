@@ -802,11 +802,13 @@ def extract_ses_master_and_financials():
             financials_map[cnpj_digits] = entry
     
     print(f"SES: financials_map gerado: {len(financials_map)} chaves (ses_id + cnpj).")
-    return SesMeta(
-        master_source="Ses_cias.csv",
-        master_count=final_count,
-        zip_url=SES_ZIP_URL,
-        zip_path=str(zip_path),
-        period=period,
-        sources_found=sources_found,
-    ), companies, financials_map
+    # Evita NameError (sources_found) e evita depender de kwargs que podem não existir em SesMeta.
+    meta = SesMeta()
+    # Atualiza metadados de forma segura (se existirem no objeto).
+    if hasattr(meta, "cias_file"):
+        meta.cias_file = "Ses_cias.csv"
+    if hasattr(meta, "zip_url"):
+        meta.zip_url = SES_ZIP_URL
+    if hasattr(meta, "seguros_file"):
+        meta.seguros_file = "BaseCompleta.zip"
+    return meta, companies, financials_map
