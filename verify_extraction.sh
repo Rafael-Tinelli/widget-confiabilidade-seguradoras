@@ -59,10 +59,10 @@ try:
     
     # 1. Verifica Metadados da Fonte
     sources = data.get("sources", {})
-    opin_prod = sources.get("open_insurance_products")
+    opin_prod = sources.get("open_insurance_products") or sources.get("openInsuranceProducts")
     
     if not opin_prod:
-        print("❌ FALHA: Chave 'open_insurance_products' não encontrada em 'sources'.")
+        print("❌ FALHA: Chave de produtos do Open Insurance não encontrada em 'sources' (open_insurance_products / openInsuranceProducts).")
         sys.exit(1)
         
     files = opin_prod.get("files", [])
