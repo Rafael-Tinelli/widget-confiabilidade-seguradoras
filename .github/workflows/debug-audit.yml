@@ -1,142 +1,270 @@
 name: Debug Audit
 
 on:
-  workflow_dispatch: # Permite rodar manualmente pelo botão
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "fast = só audita o que já está commitado; full = refaz build (download/derived) e audita"
+        type: choice
+        options: [fast, full]
+        default: full
+      tag:
+        description: "Tag/snapshot opcional (ex.: 2026-01-27). Se vazio, o build decide."
+        required: false
+        type: string
+      since_days:
+        description: "Consumidor.gov: janela (dias) para baixar/atualizar"
+        required: false
+        type: string
+        default: "365"
+      cg_force_download:
+        description: "Consumidor.gov: forçar download mesmo se já existir cache/arquivos"
+        type: boolean
+        default: false
+      ses_write_audit:
+        description: "SES: gerar arquivos *.audit.json + ses_audit_summary.json durante build"
+        type: boolean
+        default: true
+      ses_fin_year_mode:
+        description: "SES: modo do ano-base (latest|calendar|rolling)"
+        type: choice
+        options: [latest, calendar, rolling]
+        default: latest
+
+  push:
+    paths:
+      - api/v1/insurers.json
+      - api/v1/participants.json
+      - data/derived/**/*
+      - data/snapshots/**/*
+      - scripts/**/*
+      - api/**/*
+      - requirements*.txt
+      - .github/workflows/debug-audit.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: debug-audit-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  audit:
+  debug-audit:
     runs-on: ubuntu-latest
+    env:
+      PYTHONUNBUFFERED: "1"
+      OPIN_PARTICIPANTS_URL: "https://raw.githubusercontent.com/OpenInsurance-Brasil/open-insurance/master/documentation/source/files/participants.json"
+      CONSUMIDOR_GOV_DATASET_URL: "https://dados.mj.gov.br/dataset/consumidor-gov-br"
+      SES_ZIP_URL: "https://www2.susep.gov.br/download/estatisticas/BaseCompleta.zip"
+
     steps:
-      - name: Checkout code
+      - name: Checkout
         uses: actions/checkout@v4
 
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          cache: "pip"
+
+      - name: Configure NO_PROXY for dados.mj.gov.br
+        run: |
+          echo "NO_PROXY=dados.mj.gov.br" >> $GITHUB_ENV
+          echo "no_proxy=dados.mj.gov.br" >> $GITHUB_ENV
+
+      - name: Resolve params (inputs vs push defaults)
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "MODE=${{ inputs.mode }}" >> $GITHUB_ENV
+            echo "TAG=${{ inputs.tag }}" >> $GITHUB_ENV
+            echo "CG_SINCE_DAYS=${{ inputs.since_days }}" >> $GITHUB_ENV
+            echo "CG_FORCE_DOWNLOAD=${{ inputs.cg_force_download && '1' || '0' }}" >> $GITHUB_ENV
+            echo "SES_WRITE_AUDIT=${{ inputs.ses_write_audit && '1' || '0' }}" >> $GITHUB_ENV
+            echo "SES_FIN_YEAR_MODE=${{ inputs.ses_fin_year_mode }}" >> $GITHUB_ENV
+          else
+            echo "MODE=fast" >> $GITHUB_ENV
+            echo "TAG=" >> $GITHUB_ENV
+            echo "CG_SINCE_DAYS=365" >> $GITHUB_ENV
+            echo "CG_FORCE_DOWNLOAD=0" >> $GITHUB_ENV
+            echo "SES_WRITE_AUDIT=0" >> $GITHUB_ENV
+            echo "SES_FIN_YEAR_MODE=latest" >> $GITHUB_ENV
+          fi
 
       - name: Install dependencies
-        run: pip install pandas requests textdistance
-
-      - name: Run Audit Script
         run: |
-          python - <<EOF
+          python -m pip install -U pip
+          python -m pip install -r requirements.txt -r requirements-dev.txt
+          python -m pip install certifi
+
+      - name: Lint (ruff)
+        run: ruff check .
+
+      # ----------------------------
+      # FULL MODE: rebuild + audit
+      # ----------------------------
+      - name: Build participants (Open Insurance)
+        if: ${{ env.MODE == 'full' }}
+        run: python -m api.build_participants
+
+      - name: Build consumidor.gov.br derived data
+        if: ${{ env.MODE == 'full' }}
+        env:
+          CG_SINCE_DAYS: ${{ env.CG_SINCE_DAYS }}
+          CG_FORCE_DOWNLOAD: ${{ env.CG_FORCE_DOWNLOAD }}
+        run: |
+          echo "CG_SINCE_DAYS=$CG_SINCE_DAYS"
+          echo "CG_FORCE_DOWNLOAD=$CG_FORCE_DOWNLOAD"
+          python -m api.build_consumidor_gov
+
+      - name: Build insurers (SES + matching)
+        if: ${{ env.MODE == 'full' }}
+        env:
+          TAG: ${{ env.TAG }}
+          SES_WRITE_AUDIT: ${{ env.SES_WRITE_AUDIT }}
+          SES_FIN_YEAR_MODE: ${{ env.SES_FIN_YEAR_MODE }}
+          MIN_INSURERS_COUNT: "200"
+          MAX_COUNT_DROP_PCT: "0.20"
+          REQUESTS_CA_BUNDLE: ${{ env.PythonLocation }}/lib/python3.11/site-packages/certifi/cacert.pem
+        run: |
+          echo "TAG=${TAG}"
+          echo "SES_WRITE_AUDIT=${SES_WRITE_AUDIT}"
+          echo "SES_FIN_YEAR_MODE=${SES_FIN_YEAR_MODE}"
+          echo "SES_ZIP_URL=${SES_ZIP_URL}"
+          python -m api.build_insurers
+
+      # ----------------------------
+      # ALWAYS: audit committed/built artifacts
+      # ----------------------------
+      - name: Audit insurers.json (script)
+        run: |
+          test -f scripts/audit_insurers_json.py
+          python scripts/audit_insurers_json.py api/v1/insurers.json
+
+      - name: Debug summary (matching + OPIN + SES audit sanity)
+        run: |
+          python - <<'PY'
+          import glob
           import json
-          import re
-          import unicodedata
-          from pathlib import Path
-          
-          # --- 1. SIMULAÇÃO DO ALGORITMO DE MATCH (Cópia da sua lógica atual) ---
-          def _norm(s):
-              s = unicodedata.normalize("NFKD", str(s or "")).encode("ASCII", "ignore").decode("ASCII")
-              s = s.lower().strip()
-              s = re.sub(r"[^a-z0-9\s]", " ", s)
-              s = re.sub(r"\s+", " ", s)
-              return s.strip()
+          import os
+          import sys
+          from collections import Counter
 
-          # SUAS STOPWORDS ATUAIS (Para vermos se elas estão atrapalhando)
-          STOPWORDS = {
-              "s", "sa", "s.a", "cia", "companhia", "comp", "ltda", "me", "epp", 
-              "de", "da", "do", "das", "dos", "em", "para", "por", "e", "the", "of",
-              "grupo", "holding", "participacoes"
-              # "seguro", "seguros" -> REMOVIDOS no último fix, certo?
-          }
+          def load_json(path):
+              with open(path, "r", encoding="utf-8") as f:
+                  return json.load(f)
 
-          def _tokens(s):
-              return {t for t in _norm(s).split() if t not in STOPWORDS and len(t) >= 2}
+          errors = []
+          warns = []
 
-          def _jaccard(a, b):
-              if not a or not b: return 0.0
-              return len(a & b) / len(a | b)
+          insurers_path = "api/v1/insurers.json"
+          if not os.path.exists(insurers_path):
+              print(f"ERROR: missing {insurers_path}")
+              sys.exit(1)
 
-          # --- 2. CARREGAR DADOS ---
-          print("\n🔎 --- AUDITORIA DE REPUTAÇÃO (MATCHING) ---")
-          
-          # Carrega JSON final (Insurers)
-          try:
-              with open("api/v1/insurers.json") as f:
-                  insurers = json.load(f).get("insurers", [])
-          except FileNotFoundError:
-              print("❌ api/v1/insurers.json não encontrado. O deploy anterior falhou totalmente?")
-              exit(1)
+          data = load_json(insurers_path)
+          insurers = data.get("insurers", [])
+          meta = data.get("meta", {})
 
-          # Carrega Base Consumidor.gov (Tenta achar o arquivo gerado)
-          cons_data = {}
-          cons_path = Path("data/derived/consumidor_gov/aggregated.json")
-          if cons_path.exists():
-              with open(cons_path) as f:
-                  cons_data = json.load(f)
+          print("=== insurers.json meta ===")
+          print(json.dumps(meta, ensure_ascii=False, indent=2))
+
+          if not isinstance(insurers, list) or not insurers:
+              errors.append("insurers.json: insurers[] vazio ou inválido")
+
+          # Campos essenciais
+          missing_core = []
+          for i, ins in enumerate(insurers[:50]):
+              for k in ["coenti", "name"]:
+                  if k not in ins:
+                      missing_core.append((i, k))
+          if missing_core:
+              errors.append(f"insurers.json: faltando campos essenciais (amostra): {missing_core[:10]}")
+
+          # Duplicidade de coenti
+          coentis = [str(x.get("coenti")) for x in insurers if x.get("coenti") is not None]
+          dup = [k for k, v in Counter(coentis).items() if v > 1]
+          if dup:
+              errors.append(f"Duplicidade de coenti em insurers.json (ex.: {dup[:10]})")
+
+          # Consumidor.gov match report (CNPJ keys)
+          mr_path = "data/derived/consumidor_gov/match_report_insurers.json"
+          if os.path.exists(mr_path):
+              mr = load_json(mr_path)
+              by_cnpj = mr.get("by_cnpj_key") or {}
+              print(f"match_report_insurers.json: by_cnpj_key={len(by_cnpj)}")
+              # Heurística: se temos muita seguradora e 0 chaves por CNPJ, isso quase sempre é bug de parsing/matching
+              if len(insurers) >= 50 and len(by_cnpj) == 0:
+                  errors.append("match_report_insurers.json: by_cnpj_key=0 com insurers>=50 (forte indício de matching quebrado)")
           else:
-              print("⚠️ Base Consumidor.gov não encontrada no repo. Baixando amostra para teste...")
-              # (Aqui poderíamos baixar, mas vamos assumir que o refresh-data gerou isso)
-              print("❌ Sem a base do Consumidor.gov, não consigo simular o match.")
-              exit(0)
+              warns.append(f"match_report ausente: {mr_path}")
 
-          # Prepara base de busca
-          cons_tokens = {name: _tokens(name) for name in cons_data.keys()}
-
-          # --- 3. ANÁLISE DOS FALHOS ---
-          # Pega as 10 maiores empresas que ficaram sem reputação (N/A)
-          failed_matches = [
-              i for i in insurers 
-              if i.get("data", {}).get("components", {}).get("reputation") is None
-          ]
-          # Ordena por Patrimônio (Net Worth) para ver as importantes
-          failed_matches.sort(key=lambda x: x.get("data", {}).get("net_worth", 0), reverse=True)
-
-          print(f"Total de empresas: {len(insurers)}")
-          print(f"Total sem Match: {len(failed_matches)}")
-          print("\nTOP 10 EMPRESAS QUE FALHARAM NO MATCH (E POR QUÊ):")
-          print("-" * 60)
-
-          for ins in failed_matches[:10]:
-              susep_name = ins.get("name")
-              susep_tok = _tokens(susep_name)
-              
-              print(f"\n🏢 SUSEP: '{susep_name}'")
-              print(f"   Tokens: {susep_tok}")
-              
-              # Tenta encontrar o melhor candidato na força bruta
-              best_match = None
-              best_score = 0.0
-              
-              for cons_name, c_tok in cons_tokens.items():
-                  score = _jaccard(susep_tok, c_tok)
-                  if score > best_score:
-                      best_score = score
-                      best_match = cons_name
-              
-              print(f"   🎯 Melhor Candidato (Consumidor.gov): '{best_match}'")
-              print(f"   📊 Score Calculado: {best_score:.2f}")
-              
-              if best_score > 0.85:
-                  print("   ✅ Deveria ter dado match! Verifique se o CNPJ/Nome mudou.")
-              elif best_score > 0.50:
-                  print("   ⚠️ Score MÉDIO. Talvez baixar o threshold para 0.60 resolva?")
-              else:
-                  print("   ❌ Score MUITO BAIXO. O nome no Consumidor.gov deve ser totalmente diferente.")
-
-          # --- 4. AUDITORIA OPIN ---
-          print("\n\n📱 --- AUDITORIA OPEN INSURANCE (PRODUTOS) ---")
-          
-          # Verifica arquivo de participantes
-          try:
-              with open("api/v1/participants.json") as f:
-                  parts = json.load(f)
-              print(f"Participantes OPIN listados: {len(parts)}")
-          except:
-              print("Arquivo de participantes não encontrado.")
-
-          # Verifica quem tem produtos
-          with_products = [i for i in insurers if len(i.get("products", [])) > 0]
-          print(f"Seguradoras com produtos baixados: {len(with_products)}")
-          
-          if with_products:
-              print("Exemplos de sucesso:")
-              for i in with_products[:3]:
-                  print(f" - {i['name']}: {len(i['products'])} produtos")
+          # Consumidor.gov agregado (sanity)
+          agg_path = "data/derived/consumidor_gov/agg_insurers.json"
+          if os.path.exists(agg_path):
+              agg = load_json(agg_path)
+              by_key = agg.get("by_cnpj_key") or {}
+              print(f"agg_insurers.json: by_cnpj_key={len(by_key)}")
           else:
-              print("❌ Nenhuma seguradora tem produtos vinculados.")
-              print("   Dica: Verifique se o 'opin_products.py' está salvando o campo '_source_cnpj' corretamente.")
+              warns.append(f"agregado ausente: {agg_path}")
 
-          EOF
+          # SES audit summary sanity
+          ses_sum = "data/derived/audit/ses/ses_audit_summary.json"
+          if os.path.exists(ses_sum):
+              ss = load_json(ses_sum)
+              master_count = ss.get("master_count", 0)
+              print(f"ses_audit_summary.json: master_count={master_count}")
+              if not master_count:
+                  errors.append("ses_audit_summary.json: master_count=0 (indício de auditoria não populada/merge falhou)")
+
+              bad = []
+              for f in ss.get("files", []) or []:
+                  if (f.get("chosen_year") in (0, None)) or (f.get("master_count") in (0, None)):
+                      bad.append(f.get("name"))
+              if bad:
+                  errors.append(f"ses_audit_summary.json: arquivos com chosen_year/master_count inválido (ex.: {bad[:10]})")
+          else:
+              warns.append(f"SES audit summary ausente: {ses_sum}")
+
+          # *.audit.json existence (quando pasta audit existe)
+          if os.path.isdir("data/derived/audit"):
+              audits = glob.glob("data/derived/audit/**/*.audit.json", recursive=True)
+              print(f"*.audit.json encontrados: {len(audits)}")
+              if len(audits) == 0:
+                  errors.append("data/derived/audit existe, mas não há nenhum *.audit.json")
+
+          # OPIN sanity
+          opin_count = 0
+          for ins in insurers:
+              opin = ins.get("opin", {})
+              if isinstance(opin, dict) and opin.get("is_participant"):
+                  opin_count += 1
+          print(f"OPIN participants (insurers.json): {opin_count}")
+
+          print("\n=== WARNINGS ===")
+          for w in warns:
+              print("WARN:", w)
+
+          if errors:
+              print("\n=== ERRORS ===")
+              for e in errors:
+                  print("ERROR:", e)
+              sys.exit(1)
+
+          print("\nOK: debug audit concluído sem erros bloqueantes.")
+          PY
+
+      - name: Upload audit artifacts
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-audit-${{ github.run_id }}
+          if-no-files-found: warn
+          path: |
+            api/v1/insurers.json
+            api/v1/participants.json
+            data/derived/consumidor_gov/match_report_insurers.json
+            data/derived/consumidor_gov/agg_insurers.json
+            data/derived/audit/**
+            data/snapshots/**
