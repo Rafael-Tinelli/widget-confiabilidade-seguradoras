@@ -1,190 +1,148 @@
-import { useState, useEffect, useMemo } from 'react';
-import { Search, ShieldCheck, Award, ChevronLeft, ChevronRight } from 'lucide-react';
-import InsurerCard from './components/InsurerCard';
+import React, { useEffect, useMemo, useState } from "react";
+import InsurerCard from "./InsurerCard.jsx";
+import InsurerScoreModal from "./InsurerScoreModal.jsx";
 
-const API_URL = '/api/v1/insurers.json'; 
-
-function App() {
+export default function App() {
+  const [meta, setMeta] = useState(null);
   const [insurers, setInsurers] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [searchTerm, setSearchTerm] = useState('');
-  const [sortKey, setSortKey] = useState('score'); // 'score' | 'premiums'
-  
-  // Paginação
-  const [currentPage, setCurrentPage] = useState(1);
-  const itemsPerPage = 10;
+  const [error, setError] = useState(null);
+
+  const [searchTerm, setSearchTerm] = useState("");
+  const [segment, setSegment] = useState("Todos");
+  const [selectedInsurer, setSelectedInsurer] = useState(null);
 
   useEffect(() => {
-    fetch(API_URL)
-      .then(res => res.json())
-      .then(data => {
-        const rawList = data.insurers || [];
-        // 1. CORREÇÃO DE DUPLICATAS (Usa ID em vez de CNPJ)
-        const uniqueList = Array.from(new Map(rawList.map(item => [item.id, item])).values());
-        setInsurers(uniqueList);
+    let alive = true;
+
+    async function run() {
+      try {
+        setLoading(true);
+        setError(null);
+
+        const res = await fetch("/api/v1/insurers.json", { cache: "no-store" });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+        const json = await res.json();
+        if (!alive) return;
+
+        setMeta(json?.meta ?? null);
+        setInsurers(Array.isArray(json?.insurers) ? json.insurers : []);
+      } catch (e) {
+        if (!alive) return;
+        setError(e?.message ?? "Falha ao carregar dados");
+      } finally {
+        if (!alive) return;
         setLoading(false);
-      })
-      .catch(err => {
-        console.error("Erro carregando dados:", err);
-        setLoading(false);
-      });
-  }, []);
-
-  useEffect(() => {
-    setCurrentPage(1);
-  }, [searchTerm, sortKey]);
-
-  const processedData = useMemo(() => {
-    let res = [...insurers];
-
-    // 2. BUSCA
-    if (searchTerm) {
-      const t = searchTerm.toLowerCase();
-      res = res.filter(i => 
-        (i.name && i.name.toLowerCase().includes(t)) || 
-        (i.cnpj && i.cnpj.includes(t))
-      );
+      }
     }
 
-    // 3. ORDENAÇÃO CORRIGIDA (Lê financial_score ou score antigo)
-    res.sort((a, b) => {
-      const dataA = a.data || {};
-      const dataB = b.data || {};
+    run();
+    return () => {
+      alive = false;
+    };
+  }, []);
 
-      // Compatibilidade: Lê financial_score (novo) ou score (antigo)
-      const scoreA = Number(dataA.financial_score) || Number(dataA.score) || 0;
-      const scoreB = Number(dataB.financial_score) || Number(dataB.score) || 0;
-      
-      const premA  = Number(dataA.premiums) || 0;
-      const premB  = Number(dataB.premiums) || 0;
+  const segments = useMemo(() => {
+    const s = new Set();
+    for (const ins of insurers) {
+      for (const seg of ins?.segments ?? []) s.add(seg);
+    }
+    return ["Todos", ...Array.from(s).sort((a, b) => a.localeCompare(b))];
+  }, [insurers]);
 
-      if (sortKey === 'score') {
-        if (scoreB !== scoreA) return scoreB - scoreA; // Maior nota primeiro
-        return premB - premA; // Desempate por prêmio
-      }
-      
-      if (sortKey === 'premiums') {
-        return premB - premA;
-      }
-      
-      return 0;
-    });
+  const filtered = useMemo(() => {
+    const q = searchTerm.trim().toLowerCase();
 
-    return res;
-  }, [insurers, searchTerm, sortKey]);
+    const bySeg = (ins) =>
+      segment === "Todos" || (ins?.segments ?? []).includes(segment);
 
-  // 4. PAGINAÇÃO
-  const totalPages = Math.ceil(processedData.length / itemsPerPage);
-  const paginatedData = processedData.slice(
-    (currentPage - 1) * itemsPerPage,
-    currentPage * itemsPerPage
-  );
+    const byQuery = (ins) => {
+      if (!q) return true;
+      const name = (ins?.name ?? "").toLowerCase();
+      const slug = (ins?.slug ?? "").toLowerCase();
+      const cnpj = (ins?.cnpj ?? "").toString();
+      const susep = (ins?.susep_code ?? "").toString();
+      return (
+        name.includes(q) ||
+        slug.includes(q) ||
+        cnpj.includes(q) ||
+        susep.includes(q)
+      );
+    };
 
-  if (loading) return (
-    <div className="flex justify-center items-center h-64">
-      <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-[#3498db]"></div>
-    </div>
-  );
+    const scoreOf = (ins) => ins?.data?.score;
+    return [...insurers]
+      .filter(bySeg)
+      .filter(byQuery)
+      .sort((a, b) => (scoreOf(b) ?? -1) - (scoreOf(a) ?? -1));
+  }, [insurers, searchTerm, segment]);
 
   return (
-    <div className="w-full max-w-[1100px] mx-auto px-4 pt-24 pb-12 font-sans text-[#373739]">
-      
-      <div className="text-center mb-10">
-        <h1 className="text-3xl md:text-4xl font-bold text-[#3498db] mb-3">
-          Ranking de Confiabilidade
-        </h1>
-        <p className="text-lg text-gray-600 max-w-2xl mx-auto">
-          Analisando <strong>{insurers.length}</strong> entidades oficiais (SUSEP).
-        </p>
-      </div>
+    <div className="min-h-screen bg-slate-950 text-slate-100">
+      <div className="mx-auto max-w-6xl px-4 py-6">
+        <header className="mb-6 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+          <div>
+            <h1 className="text-2xl font-semibold">Widget de Confiabilidade</h1>
+            <p className="text-sm text-slate-300">
+              Clique em um card para ver a matemática e as fontes da nota.
+              {meta?.generated_at ? (
+                <span className="ml-2 text-slate-400">
+                  (dados: {meta.generated_at})
+                </span>
+              ) : null}
+            </p>
+          </div>
 
-      <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 mb-8 sticky top-20 z-40">
-        <div className="flex flex-col md:flex-row gap-4 justify-between items-center">
-          
-          <div className="relative w-full md:w-1/2">
-            <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-              <Search className="h-5 w-5 text-gray-400" />
-            </div>
-            <input 
-              type="text" 
-              placeholder="Buscar entidade..." 
-              className="block w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg bg-gray-50 focus:outline-none focus:ring-2 focus:ring-[#3498db] transition"
+          <div className="flex flex-col gap-2 md:flex-row md:items-center">
+            <input
+              className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm outline-none focus:border-slate-600 md:w-80"
+              placeholder="Buscar por nome, SUSEP ou CNPJ…"
               value={searchTerm}
-              onChange={e => setSearchTerm(e.target.value)}
+              onChange={(e) => setSearchTerm(e.target.value)}
             />
-          </div>
 
-          <div className="flex items-center gap-2 w-full md:w-auto justify-end overflow-x-auto">
-            <span className="text-sm font-medium text-gray-500 hidden md:block mr-2">
-              Ordenar:
-            </span>
-            <button 
-              onClick={() => setSortKey('score')}
-              className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-bold transition-all border ${
-                sortKey === 'score' 
-                  ? 'bg-[#72f951] text-[#373739] border-[#72f951]' 
-                  : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
-              }`}
+            <select
+              className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm outline-none focus:border-slate-600"
+              value={segment}
+              onChange={(e) => setSegment(e.target.value)}
             >
-              <Award className="w-4 h-4" /> Nota
-            </button>
-            <button 
-              onClick={() => setSortKey('premiums')}
-              className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-bold transition-all border ${
-                sortKey === 'premiums' 
-                  ? 'bg-[#72f951] text-[#373739] border-[#72f951]' 
-                  : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
-              }`}
-            >
-              <ShieldCheck className="w-4 h-4" /> Prêmios
-            </button>
+              {segments.map((s) => (
+                <option key={s} value={s}>
+                  {s}
+                </option>
+              ))}
+            </select>
           </div>
-        </div>
-      </div>
+        </header>
 
-      <div className="flex justify-between items-center mb-2 px-2 text-sm text-gray-500">
-        <span>Mostrando {paginatedData.length} de {processedData.length} resultados</span>
-        <span>Página {currentPage} de {totalPages || 1}</span>
-      </div>
-
-      <div className="space-y-4 min-h-[400px]">
-        {paginatedData.map(ins => (
-          <InsurerCard key={ins.id} insurer={ins} />
-        ))}
-        
-        {paginatedData.length === 0 && (
-          <div className="text-center py-20 text-gray-500">
-            Nenhuma entidade encontrada.
+        {loading ? (
+          <div className="rounded-xl border border-slate-800 bg-slate-900 p-4 text-sm text-slate-300">
+            Carregando seguradoras…
+          </div>
+        ) : error ? (
+          <div className="rounded-xl border border-red-900 bg-red-950/40 p-4 text-sm text-red-200">
+            Erro: {error}
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+            {filtered.map((ins) => (
+              <InsurerCard
+                key={ins.id}
+                insurer={ins}
+                onClick={() => setSelectedInsurer(ins)}
+              />
+            ))}
           </div>
         )}
       </div>
 
-      {totalPages > 1 && (
-        <div className="flex justify-center gap-2 mt-8">
-          <button
-            onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-            disabled={currentPage === 1}
-            className="p-2 rounded-lg border border-gray-300 disabled:opacity-50 hover:bg-gray-100"
-          >
-            <ChevronLeft className="w-5 h-5" />
-          </button>
-          
-          <span className="flex items-center px-4 font-bold text-gray-700">
-            {currentPage}
-          </span>
-
-          <button
-            onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
-            disabled={currentPage === totalPages}
-            className="p-2 rounded-lg border border-gray-300 disabled:opacity-50 hover:bg-gray-100"
-          >
-            <ChevronRight className="w-5 h-5" />
-          </button>
-        </div>
-      )}
-
+      <InsurerScoreModal
+        isOpen={!!selectedInsurer}
+        insurer={selectedInsurer}
+        meta={meta}
+        onClose={() => setSelectedInsurer(null)}
+      />
     </div>
   );
 }
-
-export default App;
