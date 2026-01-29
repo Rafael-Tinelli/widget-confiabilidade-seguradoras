@@ -1,342 +1,374 @@
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo } from 'react';
+import { X, Info, Calculator, Database, ShieldCheck } from 'lucide-react';
 
-function clamp(n, min, max) {
-  return Math.max(min, Math.min(max, n));
+function safeNumber(value, fallback = null) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
 }
 
-function fmtBRL(v) {
-  if (v === null || v === undefined || Number.isNaN(Number(v))) return "—";
-  return new Intl.NumberFormat("pt-BR", {
-    style: "currency",
-    currency: "BRL",
-    maximumFractionDigits: 0,
-  }).format(Number(v));
+function round2(n) {
+  const x = safeNumber(n, 0);
+  return Math.round(x * 100) / 100;
 }
 
-function fmtNum(v, digits = 2) {
-  if (v === null || v === undefined || Number.isNaN(Number(v))) return "—";
-  return new Intl.NumberFormat("pt-BR", {
-    maximumFractionDigits: digits,
-    minimumFractionDigits: digits,
-  }).format(Number(v));
+function fmtPct(n) {
+  const x = safeNumber(n, null);
+  if (x === null) return '—';
+  return `${round2(x)}%`;
 }
 
-function fmtPct(v, digits = 2) {
-  if (v === null || v === undefined || Number.isNaN(Number(v))) return "—";
-  return `${fmtNum(Number(v) * 100, digits)}%`;
+function fmtNum(n) {
+  const x = safeNumber(n, null);
+  if (x === null) return '—';
+  return round2(x).toLocaleString('pt-BR');
 }
 
-/**
- * Repete (no frontend) a “mesma lógica” descrita no intelligence.py
- * para exibir a matemática e os passos intermediários.
- */
-function calcLossScore(lossRatio) {
-  if (lossRatio === null || lossRatio === undefined || Number.isNaN(Number(lossRatio))) return null;
-  const lr = Number(lossRatio);
-  if (lr <= 0.6) return 100;
-  if (lr <= 0.8) return 80;
-  if (lr <= 1.0) return 60;
-  if (lr <= 1.2) return 40;
-  if (lr <= 1.5) return 20;
-  return 0;
-}
+export default function InsurerScoreModal({ insurer, sources, onClose }) {
+  const isOpen = Boolean(insurer);
 
-function calcRatioScore(netWorthRatio) {
-  if (netWorthRatio === null || netWorthRatio === undefined || Number.isNaN(Number(netWorthRatio))) return null;
-  const r = Number(netWorthRatio);
-  if (r <= 0) return 0;
-  // ratio_score = clamp(50 + 20*log10(netWorthRatio), 0..100)
-  const score = 50 + 20 * Math.log10(r);
-  return clamp(score, 0, 100);
-}
-
-function calcPressureScore(pressureIdx) {
-  if (pressureIdx === null || pressureIdx === undefined || Number.isNaN(Number(pressureIdx))) return null;
-  const p = Number(pressureIdx);
-  if (p <= 0.5) return 100;
-  if (p <= 1.0) return 70;
-  if (p <= 1.5) return 40;
-  return 10;
-}
-
-function calcSatisfactionScore(satisfaction) {
-  if (satisfaction === null || satisfaction === undefined || Number.isNaN(Number(satisfaction))) return null;
-  const s = Number(satisfaction);
-  if (s >= 4.0) return 100;
-  if (s >= 3.0) return 70;
-  if (s >= 2.0) return 40;
-  return 10;
-}
-
-function fmtISODate(iso) {
-  if (!iso) return null;
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return null;
-  return d.toLocaleString("pt-BR");
-}
-
-export default function InsurerScoreModal({ insurer, meta, onClose }) {
-  // ESC fecha
   useEffect(() => {
-    function onKeyDown(e) {
-      if (e.key === "Escape") onClose?.();
-    }
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [onClose]);
+    if (!isOpen) return undefined;
+    const onKeyDown = (e) => {
+      if (e.key === 'Escape') onClose?.();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [isOpen, onClose]);
 
-  const computed = useMemo(() => {
-    const data = insurer?.data || {};
-    const cd = data.componentsDetail || {};
+  const view = useMemo(() => {
+    if (!insurer) return null;
 
-    const weights = data.weights || { solvency: 0.35, reputation: 0.45, innovation: 0.20 };
+    const name = insurer.name || '—';
+    const id = insurer.id || '—';
+    const cnpj = insurer.cnpj || insurer.cnpjKey || null;
 
-    // Pilar 1: Solvência (SES)
-    const solv = cd.solvency || {};
-    const lossRatio = solv.lossRatio ?? data.lossRatio ?? null;
-    const netWorthRatio = solv.netWorthRatio ?? data.netWorthRatio ?? null;
-    const premiums = solv.premiums ?? data.premiums ?? null;
-    const claims = solv.claims ?? data.claims ?? null;
-    const netWorth = solv.netWorth ?? data.net_worth ?? null;
+    const d = insurer.data || {};
+    const weights = d.weights || { solvency: 0.4, reputation: 0.45, innovation: 0.15 };
 
-    const lossScore = calcLossScore(lossRatio);
-    const ratioScore = calcRatioScore(netWorthRatio);
-    const solvCalcScore =
-      (ratioScore === null || lossScore === null)
-        ? null
-        : clamp(0.7 * ratioScore + 0.3 * lossScore, 0, 100);
+    const solvencyScore = safeNumber(d.solvencyScore ?? d.financialScore ?? d.financial_score, 0) || 0;
+    const reputationScore = safeNumber(d.reputationScore ?? d.reputation_score, 0) || 0;
+    const innovationScore = safeNumber(d.innovationScore, 0) || 0;
 
-    const solvScore = solv.score ?? data.components?.solvency ?? data.score?.components?.solvency ?? null;
+    const repStatus = d.componentsDetail?.reputation?.reputationStatus;
+    const hasReputation = Boolean(repStatus);
 
-    // Pilar 2: Reputação (Consumidor.gov)
-    const rep = cd.reputation || {};
-    const pressureIdx = rep.pressureIdx ?? null;
-    const satisfaction = rep.satisfaction ?? null;
-    const complaintsIndex = rep.complaintsIndex ?? null;
-    const marketRatePerBRL = rep.marketRatePerBRL ?? null;
-    const observedRatePerBRL = rep.observedRatePerBRL ?? null;
+    // Nota final = soma ponderada.
+    // Se não existe reputação (sem match no Consumidor.gov), a contribuição do pilar vira 0 (peso não é redistribuído).
+    const contribSolvency = (weights.solvency || 0) * solvencyScore;
+    const contribReputation = hasReputation ? (weights.reputation || 0) * reputationScore : 0;
+    const contribInnovation = (weights.innovation || 0) * innovationScore;
 
-    const pressureScore = calcPressureScore(pressureIdx);
-    const satisfactionScore = calcSatisfactionScore(satisfaction);
-    const repCalcScore =
-      pressureScore === null
-        ? null
-        : (satisfaction === 0 || satisfaction === null)
-          ? pressureScore
-          : clamp(0.8 * pressureScore + 0.2 * (satisfactionScore ?? 0), 0, 100);
+    const computed = round2(contribSolvency + contribReputation + contribInnovation);
+    const score = safeNumber(d.score, computed) ?? computed;
 
-    const repScore = rep.score ?? data.components?.reputation ?? null;
+    const solv = d.componentsDetail?.solvency || {};
+    const rep = d.componentsDetail?.reputation || {};
+    const inn = d.componentsDetail?.innovation || {};
 
-    // Pilar 3: Inovação (Open Insurance)
-    const inn = cd.innovation || {};
-    const isOpenInsurance = Boolean(inn.isOpenInsurance ?? data.isOpenInsurance);
-    const productsCount = Number(inn.productsCount ?? data.openInsuranceProductsCount ?? 0);
-    const productsScore = clamp(productsCount / 50, 0, 1);
-    const innCalcScore = clamp(60 + 20 * (isOpenInsurance ? 1 : 0) + 20 * productsScore, 0, 100);
-
-    const innScore = inn.score ?? data.components?.innovation ?? null;
-
-    // Nota final
-    const usedSolv = Number.isFinite(Number(solvScore)) ? Number(solvScore) : solvCalcScore ?? 0;
-    const usedRep = Number.isFinite(Number(repScore)) ? Number(repScore) : repCalcScore ?? 0;
-    const usedInn = Number.isFinite(Number(innScore)) ? Number(innScore) : innCalcScore ?? 0;
-
-    const final =
-      clamp(
-        usedSolv * (weights.solvency ?? 0) +
-          usedRep * (weights.reputation ?? 0) +
-          usedInn * (weights.innovation ?? 0),
-        0,
-        100
-      );
+    const srcSes = sources?.ses || null;
+    const srcCg = sources?.consumidorGov || null;
+    const srcOi = sources?.openInsurance || null;
 
     return {
+      name,
+      id,
+      cnpj,
+      score: round2(score),
       weights,
-      solv: { lossRatio, netWorthRatio, premiums, claims, netWorth, lossScore, ratioScore, solvCalcScore, solvScore, usedSolv },
-      rep: { pressureIdx, satisfaction, complaintsIndex, marketRatePerBRL, observedRatePerBRL, pressureScore, satisfactionScore, repCalcScore, repScore, usedRep },
-      inn: { isOpenInsurance, productsCount, productsScore, innCalcScore, innScore, usedInn },
-      final,
+      hasReputation,
+      solvencyScore: round2(solvencyScore),
+      reputationScore: round2(reputationScore),
+      innovationScore: round2(innovationScore),
+      contribSolvency: round2(contribSolvency),
+      contribReputation: round2(contribReputation),
+      contribInnovation: round2(contribInnovation),
+      computed,
+      solv,
+      rep,
+      inn,
+      srcSes,
+      srcCg,
+      srcOi,
+      raw: insurer,
     };
-  }, [insurer]);
+  }, [insurer, sources]);
 
-  if (!insurer) return null;
-
-  const updatedAt = fmtISODate(meta?.generatedAt);
+  if (!isOpen) return null;
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+      className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 p-4 sm:items-center"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Detalhes da nota"
       onMouseDown={(e) => {
-        // click fora fecha (mas não fecha ao clicar dentro)
         if (e.target === e.currentTarget) onClose?.();
       }}
-      aria-modal="true"
-      role="dialog"
     >
-      <div className="w-full max-w-4xl rounded-2xl bg-white shadow-xl">
-        <div className="flex items-start justify-between gap-4 border-b p-5">
+      <div className="w-full max-w-3xl rounded-2xl bg-white shadow-xl ring-1 ring-black/10">
+        {/* Header */}
+        <div className="flex items-start justify-between gap-3 border-b border-slate-100 p-5">
           <div>
-            <h2 className="text-xl font-bold leading-tight text-gray-900">{insurer.name}</h2>
-            <div className="mt-1 text-sm text-gray-600">
-              <span className="font-medium">CNPJ:</span> {insurer.cnpj || "não informado"}{" "}
-              {insurer.coenti ? (
-                <>
-                  <span className="mx-2 text-gray-300">•</span>
-                  <span className="font-medium">SUSEP (Coenti):</span> {insurer.coenti}
-                </>
-              ) : null}
-              {updatedAt ? (
-                <>
-                  <span className="mx-2 text-gray-300">•</span>
-                  <span className="font-medium">Dados gerados:</span> {updatedAt}
-                </>
-              ) : null}
+            <div className="flex items-center gap-2">
+              <ShieldCheck className="h-5 w-5 text-slate-700" />
+              <h2 className="text-base font-semibold text-slate-900">Como a nota é calculada</h2>
             </div>
+
+            <p className="mt-2 text-sm text-slate-700">
+              <span className="font-semibold">{view?.name}</span>
+              <span className="text-slate-500"> • SUSEP: </span>
+              <span className="font-mono text-slate-700">{view?.id}</span>
+              {view?.cnpj ? (
+                <>
+                  <span className="text-slate-500"> • CNPJ: </span>
+                  <span className="font-mono text-slate-700">{view?.cnpj}</span>
+                </>
+              ) : null}
+            </p>
           </div>
 
           <button
-            className="rounded-full border px-3 py-1 text-sm font-semibold text-gray-700 hover:bg-gray-50"
-            onClick={onClose}
+            type="button"
+            className="rounded-xl p-2 text-slate-600 hover:bg-slate-100"
+            aria-label="Fechar"
+            onClick={() => onClose?.()}
           >
-            Fechar
+            <X className="h-5 w-5" />
           </button>
         </div>
 
-        <div className="max-h-[80vh] overflow-y-auto p-5">
-          {/* Nota final */}
-          <div className="rounded-xl border bg-gray-50 p-4">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <div className="text-sm font-semibold text-gray-700">Nota final</div>
-                <div className="text-3xl font-extrabold text-gray-900">{fmtNum(computed.final, 2)}</div>
+        {/* Body */}
+        <div className="max-h-[70vh] overflow-y-auto p-5">
+          {/* Resumo matemático */}
+          <div className="rounded-2xl bg-slate-50 p-4 ring-1 ring-slate-200">
+            <div className="flex items-center gap-2">
+              <Calculator className="h-4 w-4 text-slate-700" />
+              <h3 className="text-sm font-semibold text-slate-900">Fórmula da nota final</h3>
+            </div>
+
+            <p className="mt-2 text-sm text-slate-700">
+              A nota final é a soma dos 3 pilares ponderados por peso.
+              Quando <strong>não existe dado de reputação</strong> (sem match no Consumidor.gov), a contribuição desse pilar vira <strong>0</strong> — o peso não é redistribuído.
+            </p>
+
+            <div className="mt-3 grid gap-3 sm:grid-cols-4">
+              <div className="rounded-xl bg-white p-3 ring-1 ring-slate-200">
+                <div className="text-xs text-slate-500">Nota final</div>
+                <div className="mt-1 text-2xl font-semibold text-slate-900">{view?.score?.toFixed(0)}</div>
+                <div className="mt-1 text-[11px] text-slate-500">Calculado: {view?.computed}</div>
               </div>
-              <div className="text-sm text-gray-700">
-                <div className="font-semibold">Fórmula</div>
-                <code className="block rounded bg-white px-2 py-1 text-xs">
-                  final = (solvência × {fmtNum(computed.weights.solvency, 2)}) + (reputação × {fmtNum(computed.weights.reputation, 2)}) + (inovação × {fmtNum(computed.weights.innovation, 2)})
-                </code>
+
+              <div className="rounded-xl bg-white p-3 ring-1 ring-slate-200">
+                <div className="text-xs text-slate-500">Solvência</div>
+                <div className="mt-1 text-sm font-semibold text-slate-900">
+                  {view?.solvencyScore} × {fmtPct((view?.weights?.solvency || 0) * 100)}
+                </div>
+                <div className="mt-1 text-xs text-slate-600">Contribuição: {view?.contribSolvency}</div>
+              </div>
+
+              <div className="rounded-xl bg-white p-3 ring-1 ring-slate-200">
+                <div className="text-xs text-slate-500">Reputação</div>
+                <div className="mt-1 text-sm font-semibold text-slate-900">
+                  {view?.hasReputation ? view?.reputationScore : '—'} × {fmtPct((view?.weights?.reputation || 0) * 100)}
+                </div>
+                <div className="mt-1 text-xs text-slate-600">
+                  Contribuição: {view?.hasReputation ? view?.contribReputation : 0}
+                </div>
+                {!view?.hasReputation ? (
+                  <div className="mt-1 text-[11px] text-amber-700">Sem dados Consumidor.gov: contribuição zerada.</div>
+                ) : null}
+              </div>
+
+              <div className="rounded-xl bg-white p-3 ring-1 ring-slate-200">
+                <div className="text-xs text-slate-500">Open Insurance</div>
+                <div className="mt-1 text-sm font-semibold text-slate-900">
+                  {view?.innovationScore} × {fmtPct((view?.weights?.innovation || 0) * 100)}
+                </div>
+                <div className="mt-1 text-xs text-slate-600">Contribuição: {view?.contribInnovation}</div>
               </div>
             </div>
           </div>
 
-          {/* 3 pilares */}
-          <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-3">
-            {/* Solvência */}
-            <div className="rounded-xl border p-4">
-              <div className="flex items-baseline justify-between">
-                <div className="text-sm font-bold text-gray-900">Pilar 1 — Solvência</div>
-                <div className="text-xs font-semibold text-gray-500">peso {fmtNum(computed.weights.solvency, 2)}</div>
+          {/* Fontes */}
+          <div className="mt-5 grid gap-3 sm:grid-cols-3">
+            <div className="rounded-2xl bg-white p-4 ring-1 ring-slate-200">
+              <div className="flex items-center gap-2">
+                <Database className="h-4 w-4 text-slate-700" />
+                <h4 className="text-sm font-semibold text-slate-900">SUSEP (SES)</h4>
               </div>
-
-              <div className="mt-2 text-2xl font-extrabold text-gray-900">
-                {fmtNum(computed.solv.usedSolv, 2)}
-              </div>
-
-              <div className="mt-3 space-y-2 text-sm text-gray-700">
-                <div className="flex justify-between gap-3"><span>Prêmios</span><span className="font-semibold">{fmtBRL(computed.solv.premiums)}</span></div>
-                <div className="flex justify-between gap-3"><span>Sinistros</span><span className="font-semibold">{fmtBRL(computed.solv.claims)}</span></div>
-                <div className="flex justify-between gap-3"><span>PL / Patrimônio Líquido</span><span className="font-semibold">{fmtBRL(computed.solv.netWorth)}</span></div>
-                <div className="flex justify-between gap-3"><span>Loss ratio</span><span className="font-semibold">{fmtPct(computed.solv.lossRatio, 2)}</span></div>
-                <div className="flex justify-between gap-3"><span>PL/Prêmios</span><span className="font-semibold">{fmtNum(computed.solv.netWorthRatio, 4)}</span></div>
-              </div>
-
-              <div className="mt-4 text-xs text-gray-600">
-                <div className="font-semibold text-gray-800">Matemática (transparência)</div>
-                <code className="mt-1 block rounded bg-gray-50 px-2 py-1">
-                  ratioScore = clamp(50 + 20·log10(PL/Prêmios), 0..100) = {computed.solv.ratioScore === null ? "—" : fmtNum(computed.solv.ratioScore, 2)}
-                </code>
-                <code className="mt-1 block rounded bg-gray-50 px-2 py-1">
-                  lossScore (faixas) = {computed.solv.lossScore === null ? "—" : fmtNum(computed.solv.lossScore, 0)}
-                </code>
-                <code className="mt-1 block rounded bg-gray-50 px-2 py-1">
-                  solvência = 0.7·ratioScore + 0.3·lossScore = {computed.solv.solvCalcScore === null ? "—" : fmtNum(computed.solv.solvCalcScore, 2)}
-                </code>
-              </div>
-
-              <div className="mt-3 text-xs text-gray-500">
-                Fonte: SUSEP/SES (Base Completa) — prêmios, sinistros e PL.
-              </div>
+              <p className="mt-2 text-xs text-slate-600">
+                Fonte: BaseCompleta.zip (prêmios, sinistros, indicadores contábeis)
+              </p>
+              <p className="mt-2 text-xs text-slate-500">
+                Atualização do snapshot: {view?.srcSes?.generatedAt ? new Date(view.srcSes.generatedAt).toLocaleString('pt-BR') : '—'}
+              </p>
             </div>
 
-            {/* Reputação */}
-            <div className="rounded-xl border p-4">
-              <div className="flex items-baseline justify-between">
-                <div className="text-sm font-bold text-gray-900">Pilar 2 — Reputação</div>
-                <div className="text-xs font-semibold text-gray-500">peso {fmtNum(computed.weights.reputation, 2)}</div>
+            <div className="rounded-2xl bg-white p-4 ring-1 ring-slate-200">
+              <div className="flex items-center gap-2">
+                <Database className="h-4 w-4 text-slate-700" />
+                <h4 className="text-sm font-semibold text-slate-900">Consumidor.gov</h4>
               </div>
-
-              <div className="mt-2 text-2xl font-extrabold text-gray-900">
-                {fmtNum(computed.rep.usedRep, 2)}
-              </div>
-
-              <div className="mt-3 space-y-2 text-sm text-gray-700">
-                <div className="flex justify-between gap-3"><span>Índice de reclamações</span><span className="font-semibold">{fmtNum(computed.rep.complaintsIndex, 2)}</span></div>
-                <div className="flex justify-between gap-3"><span>Pressão (observado/mercado)</span><span className="font-semibold">{fmtNum(computed.rep.pressureIdx, 2)}</span></div>
-                <div className="flex justify-between gap-3"><span>Satisfação (0–5)</span><span className="font-semibold">{computed.rep.satisfaction ?? "—"}</span></div>
-              </div>
-
-              <div className="mt-4 text-xs text-gray-600">
-                <div className="font-semibold text-gray-800">Matemática (transparência)</div>
-                <code className="mt-1 block rounded bg-gray-50 px-2 py-1">
-                  pressãoScore (faixas por pressão) = {computed.rep.pressureScore === null ? "—" : fmtNum(computed.rep.pressureScore, 0)}
-                </code>
-                <code className="mt-1 block rounded bg-gray-50 px-2 py-1">
-                  satisfaçãoScore (faixas) = {computed.rep.satisfactionScore === null ? "—" : fmtNum(computed.rep.satisfactionScore, 0)}
-                </code>
-                <code className="mt-1 block rounded bg-gray-50 px-2 py-1">
-                  reputação = (satisfação=0 ? pressãoScore : 0.8·pressãoScore + 0.2·satisfaçãoScore) = {computed.rep.repCalcScore === null ? "—" : fmtNum(computed.rep.repCalcScore, 2)}
-                </code>
-              </div>
-
-              <div className="mt-3 text-xs text-gray-500">
-                Fonte: Consumidor.gov.br (dados abertos) — volume e qualidade de atendimento (normalizado).
-              </div>
+              <p className="mt-2 text-xs text-slate-600">
+                Fonte: Dados Abertos (reclamações e indicadores de atendimento)
+              </p>
+              <p className="mt-2 text-xs text-slate-500">
+                Atualização do snapshot: {view?.srcCg?.generatedAt ? new Date(view.srcCg.generatedAt).toLocaleString('pt-BR') : '—'}
+              </p>
             </div>
 
-            {/* Inovação */}
-            <div className="rounded-xl border p-4">
-              <div className="flex items-baseline justify-between">
-                <div className="text-sm font-bold text-gray-900">Pilar 3 — Inovação</div>
-                <div className="text-xs font-semibold text-gray-500">peso {fmtNum(computed.weights.innovation, 2)}</div>
+            <div className="rounded-2xl bg-white p-4 ring-1 ring-slate-200">
+              <div className="flex items-center gap-2">
+                <Database className="h-4 w-4 text-slate-700" />
+                <h4 className="text-sm font-semibold text-slate-900">Open Insurance</h4>
               </div>
-
-              <div className="mt-2 text-2xl font-extrabold text-gray-900">
-                {fmtNum(computed.inn.usedInn, 2)}
-              </div>
-
-              <div className="mt-3 space-y-2 text-sm text-gray-700">
-                <div className="flex justify-between gap-3"><span>Open Insurance</span><span className="font-semibold">{computed.inn.isOpenInsurance ? "Sim" : "Não"}</span></div>
-                <div className="flex justify-between gap-3"><span>Produtos no Open Insurance</span><span className="font-semibold">{computed.inn.productsCount}</span></div>
-              </div>
-
-              <div className="mt-4 text-xs text-gray-600">
-                <div className="font-semibold text-gray-800">Matemática (transparência)</div>
-                <code className="mt-1 block rounded bg-gray-50 px-2 py-1">
-                  productsScore = clamp(produtos/50, 0..1) = {fmtNum(computed.inn.productsScore, 2)}
-                </code>
-                <code className="mt-1 block rounded bg-gray-50 px-2 py-1">
-                  inovação = 60 + 20·(OpenInsurance) + 20·productsScore = {fmtNum(computed.inn.innCalcScore, 2)}
-                </code>
-              </div>
-
-              <div className="mt-3 text-xs text-gray-500">
-                Fonte: Open Insurance Brasil — participação e quantidade de produtos publicados.
-              </div>
+              <p className="mt-2 text-xs text-slate-600">
+                Fonte: participantes / dados públicos do ecossistema
+              </p>
+              <p className="mt-2 text-xs text-slate-500">
+                Atualização do snapshot: {view?.srcOi?.generatedAt ? new Date(view.srcOi.generatedAt).toLocaleString('pt-BR') : '—'}
+              </p>
             </div>
           </div>
 
-          {/* Fontes e notas */}
-          <div className="mt-5 rounded-xl border p-4">
-            <div className="text-sm font-bold text-gray-900">De onde vêm os dados (resumo)</div>
-            <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-gray-700">
-              <li><b>SUSEP/SES (Base Completa):</b> prêmios, sinistros e patrimônio líquido (PL) para compor Solvência.</li>
-              <li><b>Consumidor.gov.br (dados abertos):</b> reclamações e satisfação (normalizado por “pressão” vs mercado) para Reputação.</li>
-              <li><b>Open Insurance Brasil:</b> participação e volume de produtos publicados para Inovação.</li>
-            </ul>
-            <div className="mt-3 text-xs text-gray-500">
-              Observação: quando algum insumo não existe ou é zero (ex.: prêmios muito baixos), a conta pode perder significado estatístico — por isso a auditoria e o modal mostram os insumos.
-            </div>
+          {/* Detalhes por pilar */}
+          <div className="mt-5 grid gap-4">
+            <section className="rounded-2xl bg-white p-4 ring-1 ring-slate-200">
+              <div className="flex items-center gap-2">
+                <Info className="h-4 w-4 text-slate-700" />
+                <h3 className="text-sm font-semibold text-slate-900">Pilar 1 — Solvência (SES/SUSEP)</h3>
+              </div>
+
+              <div className="mt-3 grid gap-3 sm:grid-cols-3">
+                <div className="rounded-xl bg-slate-50 p-3 ring-1 ring-slate-200">
+                  <div className="text-xs text-slate-500">Prêmios (média 5 anos)</div>
+                  <div className="mt-1 text-sm font-semibold text-slate-900">{fmtNum(view?.solv?.avgPrem5y ?? view?.solv?.premiums ?? view?.raw?.components?.financials?.premiums)}</div>
+                </div>
+                <div className="rounded-xl bg-slate-50 p-3 ring-1 ring-slate-200">
+                  <div className="text-xs text-slate-500">Sinistros (média 5 anos)</div>
+                  <div className="mt-1 text-sm font-semibold text-slate-900">{fmtNum(view?.solv?.avgClaims5y ?? view?.solv?.claims ?? view?.raw?.components?.financials?.claims)}</div>
+                </div>
+                <div className="rounded-xl bg-slate-50 p-3 ring-1 ring-slate-200">
+                  <div className="text-xs text-slate-500">Loss ratio</div>
+                  <div className="mt-1 text-sm font-semibold text-slate-900">
+                    {view?.solv?.lossRatio === null || view?.solv?.lossRatio === undefined ? '—' : fmtPct(view?.solv?.lossRatio * 100)}
+                  </div>
+                  <div className="mt-1 text-[11px] text-slate-500">
+                    Fórmula: sinistros ÷ prêmios (mesma janela)
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                <div className="rounded-xl bg-slate-50 p-3 ring-1 ring-slate-200">
+                  <div className="text-xs text-slate-500">Net worth ratio</div>
+                  <div className="mt-1 text-sm font-semibold text-slate-900">
+                    {view?.solv?.netWorthRatio === null || view?.solv?.netWorthRatio === undefined ? '—' : fmtPct(view?.solv?.netWorthRatio * 100)}
+                  </div>
+                  <div className="mt-1 text-[11px] text-slate-500">
+                    Indicador do pipeline (razão patrimonial).
+                  </div>
+                </div>
+
+                <div className="rounded-xl bg-slate-50 p-3 ring-1 ring-slate-200">
+                  <div className="text-xs text-slate-500">Status</div>
+                  <div className="mt-1 text-sm font-semibold text-slate-900">{view?.solv?.lossRatioStatus || '—'}</div>
+                  <div className="mt-1 text-[11px] text-slate-500">
+                    Ajuda a entender quando há dados insuficientes/inválidos.
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            <section className="rounded-2xl bg-white p-4 ring-1 ring-slate-200">
+              <div className="flex items-center gap-2">
+                <Info className="h-4 w-4 text-slate-700" />
+                <h3 className="text-sm font-semibold text-slate-900">Pilar 2 — Reputação (Consumidor.gov)</h3>
+              </div>
+
+              {!view?.hasReputation ? (
+                <div className="mt-3 rounded-xl bg-amber-50 p-3 text-sm text-amber-900 ring-1 ring-amber-200">
+                  Sem dados associados a esta empresa no Consumidor.gov (matching por nome/CNPJ não encontrado).
+                  Por isso, a contribuição deste pilar na nota final é <strong>0</strong>.
+                </div>
+              ) : (
+                <div className="mt-3 grid gap-3 sm:grid-cols-4">
+                  <div className="rounded-xl bg-slate-50 p-3 ring-1 ring-slate-200">
+                    <div className="text-xs text-slate-500">Índice</div>
+                    <div className="mt-1 text-sm font-semibold text-slate-900">{fmtNum(view?.rep?.complaintsPerPremium)}</div>
+                    <div className="mt-1 text-[11px] text-slate-500">Reclamações por prêmio</div>
+                  </div>
+                  <div className="rounded-xl bg-slate-50 p-3 ring-1 ring-slate-200">
+                    <div className="text-xs text-slate-500">Satisfação</div>
+                    <div className="mt-1 text-sm font-semibold text-slate-900">{fmtNum(view?.rep?.satScore)}</div>
+                  </div>
+                  <div className="rounded-xl bg-slate-50 p-3 ring-1 ring-slate-200">
+                    <div className="text-xs text-slate-500">Resolvida</div>
+                    <div className="mt-1 text-sm font-semibold text-slate-900">
+                      {view?.rep?.resolutionRate === null || view?.rep?.resolutionRate === undefined ? '—' : fmtPct(view?.rep?.resolutionRate * 100)}
+                    </div>
+                  </div>
+                  <div className="rounded-xl bg-slate-50 p-3 ring-1 ring-slate-200">
+                    <div className="text-xs text-slate-500">Tempo (dias)</div>
+                    <div className="mt-1 text-sm font-semibold text-slate-900">{fmtNum(view?.rep?.responseTimeDays)}</div>
+                  </div>
+                </div>
+              )}
+
+              <div className="mt-3 text-xs text-slate-500">
+                Status: <span className="font-mono text-slate-700">{view?.rep?.reputationStatus || '—'}</span>
+              </div>
+            </section>
+
+            <section className="rounded-2xl bg-white p-4 ring-1 ring-slate-200">
+              <div className="flex items-center gap-2">
+                <Info className="h-4 w-4 text-slate-700" />
+                <h3 className="text-sm font-semibold text-slate-900">Pilar 3 — Open Insurance</h3>
+              </div>
+
+              <div className="mt-3 grid gap-3 sm:grid-cols-3">
+                <div className="rounded-xl bg-slate-50 p-3 ring-1 ring-slate-200">
+                  <div className="text-xs text-slate-500">Participação</div>
+                  <div className="mt-1 text-sm font-semibold text-slate-900">
+                    {view?.inn?.openInsurance === true ? 'Participa' : 'Sem indicação'}
+                  </div>
+                </div>
+                <div className="rounded-xl bg-slate-50 p-3 ring-1 ring-slate-200">
+                  <div className="text-xs text-slate-500">Score do pilar</div>
+                  <div className="mt-1 text-sm font-semibold text-slate-900">{view?.innovationScore}</div>
+                </div>
+                <div className="rounded-xl bg-slate-50 p-3 ring-1 ring-slate-200">
+                  <div className="text-xs text-slate-500">Status</div>
+                  <div className="mt-1 text-sm font-semibold text-slate-900">{view?.inn?.participantsStatus || '—'}</div>
+                </div>
+              </div>
+
+              <p className="mt-3 text-xs text-slate-500">
+                Regra atual do widget: empresas participantes recebem score superior (ex.: 80) neste pilar.
+              </p>
+            </section>
+
+            {/* Debug opcional */}
+            <details className="rounded-2xl bg-white p-4 ring-1 ring-slate-200">
+              <summary className="cursor-pointer text-sm font-semibold text-slate-900">
+                Dados brutos (debug)
+              </summary>
+              <pre className="mt-3 max-h-72 overflow-auto rounded-xl bg-slate-50 p-3 text-xs text-slate-800 ring-1 ring-slate-200">
+{JSON.stringify(view?.raw, null, 2)}
+              </pre>
+            </details>
           </div>
+        </div>
+
+        {/* Footer */}
+        <div className="flex items-center justify-end gap-2 border-t border-slate-100 p-4">
+          <button
+            type="button"
+            className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800"
+            onClick={() => onClose?.()}
+          >
+            Fechar
+          </button>
         </div>
       </div>
     </div>
