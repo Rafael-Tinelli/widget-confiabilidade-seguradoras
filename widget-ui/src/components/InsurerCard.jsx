@@ -1,165 +1,157 @@
-import React from 'react';
-import { CheckCircle2 } from 'lucide-react';
+import { ShieldCheck, Award, BadgeCheck } from 'lucide-react';
 
-export default function InsurerCard({ insurer }) {
-  // --- BLINDAGEM E NORMALIZAÇÃO DE DADOS ---
-  const data = insurer.data || {};
-  const components = data.components || {};
-  const flags = insurer.flags || {};
+function clampPct(n) {
+  const x = Number(n);
+  if (!Number.isFinite(x)) return 0;
+  return Math.max(0, Math.min(100, x));
+}
 
-  // 1. TRADUÇÃO DO SCORE (O JSON novo usa 'financial_score')
-  // Se 'score' não existir, usa 'financial_score'.
-  const score = Number(data.score) || Number(data.financial_score) || 0;
-  
-  // 2. TRADUÇÃO DA SOLVÊNCIA (O JSON novo usa 'components.financial.value')
-  const financialComp = components.financial || {};
-  // Tenta ler do formato antigo (solvency) ou novo (financial.value)
-  const solvency = Number(components.solvency) || Number(financialComp.value) || 0;
-  
-  // 3. TRADUÇÃO DA REPUTAÇÃO (O JSON novo retorna um OBJETO, não um número direto)
-  const repObj = components.reputation;
-  let reputationScore = 0;
-  let hasReputation = false;
+function safeNumber(value, fallback = 0) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
 
-  if (typeof repObj === 'number') {
-    // Formato antigo (número direto)
-    reputationScore = repObj;
-    hasReputation = true;
-  } else if (repObj && typeof repObj === 'object') {
-    // Novo formato (objeto com detalhes)
-    // Tenta pegar a nota em várias chaves possíveis do scraper
-    const rawNota = repObj.satisfaction_avg || repObj.overallSatisfaction || repObj.nota || 0;
-    
-    if (rawNota > 0) {
-      hasReputation = true;
-      // Normaliza para escala 0-100
-      // Se a nota for pequena (ex: 4.5 de 5), multiplica por 20.
-      // Se for média (ex: 8.5 de 10), multiplica por 10.
-      reputationScore = rawNota <= 5 ? rawNota * 20 : rawNota * 10;
+export default function InsurerCard({ insurer, onOpenScoreModal }) {
+  const name = insurer?.name || '—';
+  const id = insurer?.id || '';
+  const cnpj = insurer?.cnpj || insurer?.cnpjKey || null;
+
+  const data = insurer?.data || {};
+  const flags = insurer?.flags || {};
+
+  // Nota final (0–100)
+  const score = safeNumber(data.score ?? data.final_score ?? data.financial_score, 0);
+
+  // 3 pilares (compatível com snapshots antigos e novos)
+  const solvencyScore = safeNumber(
+    data.solvencyScore ?? data.financialScore ?? data.financial_score,
+    0
+  );
+  const reputationScore = safeNumber(data.reputationScore ?? data.reputation_score, 0);
+  const innovationScore = safeNumber(data.innovationScore, 0);
+
+  // Disponibilidade de reputação (sem match no Consumidor.gov => pilar não entra no cálculo final)
+  const repStatus = data.componentsDetail?.reputation?.reputationStatus;
+  const hasReputation = Boolean(repStatus);
+
+  const openInsurance = Boolean(
+    data.openInsuranceParticipant === true ||
+      data.open_insurance === true ||
+      flags.openInsuranceParticipant === true ||
+      flags.open_insurance_participant === true ||
+      flags.opinParticipant === true ||
+      flags.opin === true ||
+      innovationScore >= 80
+  );
+
+  const handleOpen = () => onOpenScoreModal?.(insurer);
+  const handleKeyDown = (e) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      handleOpen();
     }
-  }
-
-  // Prêmios (Para tooltip)
-  const premiums = Number(data.premiums) || 0;
-  const formattedPremiums = new Intl.NumberFormat('pt-BR', { 
-    style: 'currency', 
-    currency: 'BRL',
-    notation: "compact"
-  }).format(premiums);
-
-  // --- LÓGICA DE CORES E LABELS ---
-  let scoreColor = 'text-red-600 bg-red-50 border-red-100';
-  let label = 'EM ANÁLISE';
-  
-  // Ajuste de sensibilidade: Se tiver score financeiro alto, já não é "Em Análise"
-  if (score > 0 || solvency > 0) {
-    if (score === 0 && solvency > 0) {
-        // Caso onde só tem financeiro mas não reputação
-        label = 'DADOS PARCIAIS';
-        scoreColor = 'text-gray-600 bg-gray-50 border-gray-100';
-    } else if (score < 50) {
-        label = 'ATENÇÃO';
-        scoreColor = 'text-red-600 bg-red-50 border-red-100';
-    } else if (score < 70) { 
-        label = 'REGULAR'; 
-        scoreColor = 'text-yellow-600 bg-yellow-50 border-yellow-100';
-    } else if (score < 85) { 
-        label = 'BOM'; 
-        scoreColor = 'text-blue-600 bg-blue-50 border-blue-100';
-    } else { 
-        label = 'EXCELENTE'; 
-        scoreColor = 'text-green-600 bg-green-50 border-green-100';
-    }
-  }
+  };
 
   return (
-    <div className="bg-white rounded-lg border border-gray-200 p-4 hover:shadow-md transition-shadow flex flex-col md:flex-row gap-4 items-center">
-      
-      {/* 1. Identidade da Seguradora */}
-      <div className="flex-1 w-full flex items-center gap-3 overflow-hidden">
-        <div className="w-10 h-10 shrink-0 rounded-full bg-gray-100 flex items-center justify-center font-bold text-gray-400 text-sm border border-gray-200">
-          {insurer.name ? insurer.name.substring(0, 2).toUpperCase() : '??'}
-        </div>
-        
-        <div className="min-w-0">
-          <h3 className="font-bold text-[#373739] text-lg leading-tight truncate" title={insurer.name}>
-            {insurer.name}
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={handleOpen}
+      onKeyDown={handleKeyDown}
+      aria-label={`Ver detalhes da nota de ${name}`}
+      className="group relative cursor-pointer rounded-2xl bg-white p-6 shadow-sm ring-1 ring-black/5 transition hover:-translate-y-0.5 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-slate-300"
+    >
+      {/* Header */}
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h3 className="text-base font-semibold leading-tight text-slate-900">
+            {name}
           </h3>
-          <div className="text-xs text-gray-400 font-mono mt-0.5">
-            SUSEP: {insurer.id} | CNPJ: {insurer.cnpj || 'não informado pela SUSEP'}
-          </div>
-          
-          <div className="flex gap-2 mt-1">
-            {(flags.openInsuranceParticipant || flags.opinParticipant) && (
-              <span className="text-[10px] px-2 py-0.5 bg-purple-50 text-purple-700 rounded border border-purple-100 flex items-center gap-1">
-                <CheckCircle2 className="w-3 h-3" /> OPIN
-              </span>
-            )}
+          <p className="mt-1 text-xs text-slate-500">
+            SUSEP: <span className="font-mono">{id || '—'}</span>
+            {cnpj ? (
+              <>
+                {' '}• CNPJ: <span className="font-mono">{cnpj}</span>
+              </>
+            ) : null}
+          </p>
+        </div>
+
+        {/* Score */}
+        <div className="flex items-center gap-2 rounded-xl bg-slate-50 px-3 py-2 ring-1 ring-black/5">
+          <ShieldCheck className="h-5 w-5 text-slate-700" />
+          <div className="text-right">
+            <div className="text-xs font-medium text-slate-500">Nota</div>
+            <div className="text-lg font-semibold text-slate-900">
+              {score.toFixed(0)}
+            </div>
           </div>
         </div>
       </div>
 
-      {/* 2. Métricas */}
-      <div className="flex-1 w-full grid grid-cols-2 gap-4">
-        
-        {/* Financeiro */}
+      {/* Pilares */}
+      <div className="mt-4 grid grid-cols-3 gap-3">
         <div>
-          <div className="flex justify-between text-xs text-gray-500 mb-1">
-            <span title={`Faturamento: ${formattedPremiums}`}>Financeiro</span>
-            <strong>{solvency > 0 ? solvency.toFixed(0) : '-'}</strong>
+          <div className="flex items-center justify-between text-xs text-slate-600">
+            <span>Solvência</span>
+            <span className="font-semibold text-slate-900">{solvencyScore.toFixed(0)}</span>
           </div>
-          <div className="w-full bg-gray-100 rounded-full h-1.5">
-            <div 
-              className={`h-1.5 rounded-full transition-all duration-500 ${solvency > 50 ? 'bg-blue-500' : 'bg-blue-300'}`} 
-              style={{ width: `${solvency}%` }}
-            ></div>
+          <div className="mt-1 h-2 w-full rounded-full bg-slate-100">
+            <div
+              className="h-2 rounded-full bg-slate-900/70"
+              style={{ width: `${clampPct(solvencyScore)}%` }}
+            />
           </div>
         </div>
 
-        {/* Reputação */}
         <div>
-          <div className="flex justify-between text-xs text-gray-500 mb-1">
+          <div className="flex items-center justify-between text-xs text-slate-600">
             <span>Reputação</span>
-            <strong>
-              {hasReputation ? (
-                reputationScore.toFixed(0)
-              ) : (
-                <span className="text-[10px] text-gray-400 px-1 rounded bg-gray-50">N/A</span>
-              )}
-            </strong>
+            <span className="font-semibold text-slate-900">
+              {hasReputation ? reputationScore.toFixed(0) : '—'}
+            </span>
           </div>
-          
-          <div className="w-full bg-gray-100 rounded-full h-1.5 relative overflow-hidden">
-            {hasReputation ? (
-              <div 
-                className={`h-1.5 rounded-full transition-all duration-500 ${reputationScore >= 60 ? 'bg-orange-400' : 'bg-red-400'}`} 
-                style={{ width: `${reputationScore}%` }}
-              ></div>
-            ) : (
-              <div 
-                className="w-full h-full opacity-30"
-                style={{ 
-                  backgroundImage: 'repeating-linear-gradient(45deg, #ccc 0, #ccc 5px, transparent 5px, transparent 10px)' 
-                }}
-              ></div>
-            )}
+          <div className="mt-1 h-2 w-full rounded-full bg-slate-100">
+            <div
+              className="h-2 rounded-full bg-slate-900/50"
+              style={{ width: `${clampPct(hasReputation ? reputationScore : 0)}%` }}
+            />
           </div>
+          {!hasReputation ? (
+            <div className="mt-1 text-[10px] text-slate-500">Sem dados do Consumidor.gov</div>
+          ) : null}
         </div>
 
-      </div>
-
-      {/* 3. Score Final */}
-      <div className="w-full md:w-auto flex items-center justify-between md:justify-center gap-4 border-t md:border-t-0 md:border-l border-gray-100 pt-3 md:pt-0 md:pl-4">
-        <div className="text-right md:text-center min-w-[80px]">
-          <div className={`text-[10px] font-bold px-2 py-0.5 rounded-full border inline-block mb-1 whitespace-nowrap ${scoreColor}`}>
-            {label}
+        <div>
+          <div className="flex items-center justify-between text-xs text-slate-600">
+            <span>Open Insurance</span>
+            <span className="font-semibold text-slate-900">{innovationScore.toFixed(0)}</span>
           </div>
-          <div className="text-3xl font-black text-[#373739] leading-none tracking-tight">
-            {score > 0 ? score.toFixed(1) : '--'}
+          <div className="mt-1 h-2 w-full rounded-full bg-slate-100">
+            <div
+              className="h-2 rounded-full bg-slate-900/40"
+              style={{ width: `${clampPct(innovationScore)}%` }}
+            />
           </div>
         </div>
       </div>
 
+      {/* Badges e dica */}
+      <div className="mt-4 flex flex-wrap items-center gap-2">
+        {openInsurance ? (
+          <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-800 ring-1 ring-emerald-200">
+            <BadgeCheck className="h-4 w-4" />
+            Participante OPIN
+          </span>
+        ) : (
+          <span className="inline-flex items-center gap-1 rounded-full bg-slate-50 px-3 py-1 text-xs font-medium text-slate-700 ring-1 ring-slate-200">
+            <Award className="h-4 w-4" />
+            Sem sinal OPIN
+          </span>
+        )}
+
+        <span className="text-xs text-slate-500">Clique para ver a metodologia</span>
+      </div>
     </div>
   );
 }
