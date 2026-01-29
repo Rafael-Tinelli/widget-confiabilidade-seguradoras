@@ -2,6 +2,11 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Fallback do offset do topo para barras sticky do widget */
+:root {
+  --sanida-sticky-top: 0px;
+}
+
 /* Garante que o widget não herde estilos quebrados do site pai */
 #widget-root {
   font-family: 'Blinker', 'Roboto', sans-serif;
