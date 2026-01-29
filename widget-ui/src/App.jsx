@@ -30,52 +30,6 @@ function App() {
       });
   }, []);
 
-  // Ajuste automático para headers fixos/sticky do site host (evita sobrepor o header e a 1ª linha de cards)
-  useEffect(() => {
-    const root = document.getElementById("widget-root");
-    if (!root) return;
-
-    const header =
-      document.querySelector("#header") ||
-      document.querySelector("header") ||
-      document.querySelector(".site-header") ||
-      document.querySelector(".header");
-
-    if (!header) return;
-
-    const shouldApplyOffset = () => {
-      const cs = window.getComputedStyle(header);
-      const pos = cs.position;
-      if (pos !== "fixed" && pos !== "sticky") return false;
-      // Headers fixos geralmente ficam em top: 0
-      return cs.top === "0px" || cs.top === "auto";
-    };
-
-    const update = () => {
-      if (!shouldApplyOffset()) {
-        root.style.setProperty("--host-header-offset", "0px");
-        return;
-      }
-      const h = Math.ceil(header.getBoundingClientRect().height || 0);
-      // Gap de segurança: evita ficar "colado" e compensa sombras
-      root.style.setProperty("--host-header-offset", `${h + 12}px`);
-    };
-
-    update();
-
-    let ro;
-    if (typeof ResizeObserver !== "undefined") {
-      ro = new ResizeObserver(update);
-      ro.observe(header);
-    }
-    window.addEventListener("resize", update);
-
-    return () => {
-      if (ro) ro.disconnect();
-      window.removeEventListener("resize", update);
-    };
-  }, []);
-
   useEffect(() => {
     setCurrentPage(1);
   }, [searchTerm, sortKey]);
@@ -133,7 +87,7 @@ function App() {
   );
 
   return (
-    <div className="w-full max-w-[1100px] mx-auto px-4 pb-12 font-sans text-[#373739]" style={{ paddingTop: "calc(var(--host-header-offset, 0px) + 24px)" }}>
+    <div className="w-full max-w-[1100px] mx-auto px-4 pt-24 pb-12 font-sans text-[#373739]">
       
       <div className="text-center mb-10">
         <h1 className="text-3xl md:text-4xl font-bold text-[#3498db] mb-3">
@@ -144,7 +98,7 @@ function App() {
         </p>
       </div>
 
-      <div className="bg-white/95 p-4 rounded-2xl shadow-sm border border-slate-200 sticky z-10 backdrop-blur" style={{ top: "calc(var(--host-header-offset, 0px) + 16px)" }}>
+      <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 mb-8 sticky top-20 z-40">
         <div className="flex flex-col md:flex-row gap-4 justify-between items-center">
           
           <div className="relative w-full md:w-1/2">
