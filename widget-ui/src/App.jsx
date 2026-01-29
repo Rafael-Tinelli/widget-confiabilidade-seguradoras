@@ -1,148 +1,198 @@
-import React, { useEffect, useMemo, useState } from "react";
-import InsurerCard from "./InsurerCard.jsx";
-import InsurerScoreModal from "./InsurerScoreModal.jsx";
+import { useState, useEffect, useMemo } from 'react';
+import { Search, ShieldCheck, Award, ChevronLeft, ChevronRight } from 'lucide-react';
+import InsurerCard from './components/InsurerCard';
+import InsurerScoreModal from './InsurerScoreModal';
 
-export default function App() {
-  const [meta, setMeta] = useState(null);
+const API_URL = `${import.meta.env.BASE_URL}api/v1/insurers.json`;
+
+function App() {
   const [insurers, setInsurers] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-
-  const [searchTerm, setSearchTerm] = useState("");
-  const [segment, setSegment] = useState("Todos");
+  const [sources, setSources] = useState(null);
   const [selectedInsurer, setSelectedInsurer] = useState(null);
 
+  const [searchTerm, setSearchTerm] = useState('');
+  const [sortBy, setSortBy] = useState('score'); // score (novo) / final_score (legado) / financial_score (legado)
+  const [currentPage, setCurrentPage] = useState(1);
+  const [itemsPerPage] = useState(24);
+
   useEffect(() => {
-    let alive = true;
+    setLoading(true);
 
-    async function run() {
-      try {
-        setLoading(true);
-        setError(null);
+    fetch(API_URL)
+      .then(res => res.json())
+      .then(data => {
+        setSources(data.sources || null);
 
-        const res = await fetch("/api/v1/insurers.json", { cache: "no-store" });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-
-        const json = await res.json();
-        if (!alive) return;
-
-        setMeta(json?.meta ?? null);
-        setInsurers(Array.isArray(json?.insurers) ? json.insurers : []);
-      } catch (e) {
-        if (!alive) return;
-        setError(e?.message ?? "Falha ao carregar dados");
-      } finally {
-        if (!alive) return;
-        setLoading(false);
-      }
-    }
-
-    run();
-    return () => {
-      alive = false;
-    };
+        const rawList = Array.isArray(data.insurers) ? data.insurers : [];
+        setInsurers(rawList);
+      })
+      .catch(err => {
+        console.error('Erro ao carregar insurers.json:', err);
+        setInsurers([]);
+        setSources(null);
+      })
+      .finally(() => setLoading(false));
   }, []);
 
-  const segments = useMemo(() => {
-    const s = new Set();
-    for (const ins of insurers) {
-      for (const seg of ins?.segments ?? []) s.add(seg);
-    }
-    return ["Todos", ...Array.from(s).sort((a, b) => a.localeCompare(b))];
-  }, [insurers]);
+  const filteredInsurers = useMemo(() => {
+    if (!searchTerm.trim()) return insurers;
 
-  const filtered = useMemo(() => {
     const q = searchTerm.trim().toLowerCase();
+    return insurers.filter(i => {
+      const name = (i.name || '').toLowerCase();
+      const cnpj = (i.cnpj || '').toLowerCase();
+      const id = (i.id || '').toLowerCase();
+      return name.includes(q) || cnpj.includes(q) || id.includes(q);
+    });
+  }, [insurers, searchTerm]);
 
-    const bySeg = (ins) =>
-      segment === "Todos" || (ins?.segments ?? []).includes(segment);
+  const openScoreModal = (insurer) => setSelectedInsurer(insurer);
+  const closeScoreModal = () => setSelectedInsurer(null);
 
-    const byQuery = (ins) => {
-      if (!q) return true;
-      const name = (ins?.name ?? "").toLowerCase();
-      const slug = (ins?.slug ?? "").toLowerCase();
-      const cnpj = (ins?.cnpj ?? "").toString();
-      const susep = (ins?.susep_code ?? "").toString();
-      return (
-        name.includes(q) ||
-        slug.includes(q) ||
-        cnpj.includes(q) ||
-        susep.includes(q)
-      );
-    };
+  const sortedInsurers = useMemo(() => {
+    const list = [...filteredInsurers];
 
-    const scoreOf = (ins) => ins?.data?.score;
-    return [...insurers]
-      .filter(bySeg)
-      .filter(byQuery)
-      .sort((a, b) => (scoreOf(b) ?? -1) - (scoreOf(a) ?? -1));
-  }, [insurers, searchTerm, segment]);
+    list.sort((a, b) => {
+      const dataA = a?.data || {};
+      const dataB = b?.data || {};
+
+      const scoreA = Number(dataA.score ?? dataA.final_score ?? dataA.financial_score) || 0;
+      const scoreB = Number(dataB.score ?? dataB.final_score ?? dataB.financial_score) || 0;
+
+      if (sortBy === 'score') return scoreB - scoreA;
+      if (sortBy === 'name') return String(a?.name || '').localeCompare(String(b?.name || ''), 'pt-BR');
+
+      return scoreB - scoreA;
+    });
+
+    return list;
+  }, [filteredInsurers, sortBy]);
+
+  const totalPages = Math.max(1, Math.ceil(sortedInsurers.length / itemsPerPage));
+  const safeCurrentPage = Math.min(currentPage, totalPages);
+
+  const paginatedInsurers = useMemo(() => {
+    const startIndex = (safeCurrentPage - 1) * itemsPerPage;
+    return sortedInsurers.slice(startIndex, startIndex + itemsPerPage);
+  }, [sortedInsurers, safeCurrentPage, itemsPerPage]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchTerm, sortBy]);
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100">
-      <div className="mx-auto max-w-6xl px-4 py-6">
-        <header className="mb-6 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
-          <div>
-            <h1 className="text-2xl font-semibold">Widget de Confiabilidade</h1>
-            <p className="text-sm text-slate-300">
-              Clique em um card para ver a matemática e as fontes da nota.
-              {meta?.generated_at ? (
-                <span className="ml-2 text-slate-400">
-                  (dados: {meta.generated_at})
-                </span>
-              ) : null}
-            </p>
+    <div className="min-h-screen bg-slate-50">
+      <header className="border-b border-slate-200 bg-white">
+        <div className="mx-auto max-w-7xl px-4 py-6">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+            <div>
+              <h1 className="flex items-center gap-2 text-xl font-semibold text-slate-900">
+                <ShieldCheck className="h-6 w-6 text-slate-700" />
+                Confiabilidade de Seguradoras
+              </h1>
+              <p className="mt-1 text-sm text-slate-600">
+                Score composto por Solvência (SES/SUSEP), Reputação (Consumidor.gov) e Open Insurance (OPIN).
+              </p>
+            </div>
+
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+              <div className="relative">
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                <input
+                  type="text"
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  placeholder="Buscar por nome, CNPJ ou SUSEP..."
+                  className="w-full rounded-xl border border-slate-200 bg-white py-2 pl-9 pr-3 text-sm text-slate-900 shadow-sm outline-none ring-0 placeholder:text-slate-400 focus:border-slate-300 sm:w-80"
+                />
+              </div>
+
+              <div className="flex items-center gap-2">
+                <Award className="h-4 w-4 text-slate-500" />
+                <select
+                  value={sortBy}
+                  onChange={(e) => setSortBy(e.target.value)}
+                  className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm outline-none focus:border-slate-300"
+                >
+                  <option value="score">Ordenar por score</option>
+                  <option value="name">Ordenar por nome</option>
+                </select>
+              </div>
+            </div>
           </div>
 
-          <div className="flex flex-col gap-2 md:flex-row md:items-center">
-            <input
-              className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm outline-none focus:border-slate-600 md:w-80"
-              placeholder="Buscar por nome, SUSEP ou CNPJ…"
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-            />
-
-            <select
-              className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm outline-none focus:border-slate-600"
-              value={segment}
-              onChange={(e) => setSegment(e.target.value)}
-            >
-              {segments.map((s) => (
-                <option key={s} value={s}>
-                  {s}
-                </option>
-              ))}
-            </select>
+          <div className="mt-4 text-sm text-slate-600">
+            {loading ? (
+              <span>Carregando…</span>
+            ) : (
+              <span>
+                {sortedInsurers.length.toLocaleString('pt-BR')} seguradoras encontradas
+              </span>
+            )}
           </div>
-        </header>
+        </div>
+      </header>
 
+      <main className="mx-auto max-w-7xl px-4 py-8">
         {loading ? (
-          <div className="rounded-xl border border-slate-800 bg-slate-900 p-4 text-sm text-slate-300">
-            Carregando seguradoras…
+          <div className="rounded-2xl bg-white p-8 text-center text-slate-600 ring-1 ring-black/5">
+            Carregando lista…
           </div>
-        ) : error ? (
-          <div className="rounded-xl border border-red-900 bg-red-950/40 p-4 text-sm text-red-200">
-            Erro: {error}
+        ) : sortedInsurers.length === 0 ? (
+          <div className="rounded-2xl bg-white p-8 text-center text-slate-600 ring-1 ring-black/5">
+            Nenhuma seguradora encontrada.
           </div>
         ) : (
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-            {filtered.map((ins) => (
-              <InsurerCard
-                key={ins.id}
-                insurer={ins}
-                onClick={() => setSelectedInsurer(ins)}
-              />
-            ))}
-          </div>
-        )}
-      </div>
+          <>
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {paginatedInsurers.map((insurer) => (
+                <InsurerCard
+                  key={insurer.id}
+                  insurer={insurer}
+                  onOpenScoreModal={openScoreModal}
+                />
+              ))}
+            </div>
 
-      <InsurerScoreModal
-        isOpen={!!selectedInsurer}
-        insurer={selectedInsurer}
-        meta={meta}
-        onClose={() => setSelectedInsurer(null)}
-      />
+            {/* Paginação */}
+            <div className="mt-8 flex items-center justify-between gap-3">
+              <button
+                type="button"
+                onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                disabled={safeCurrentPage <= 1}
+                className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-900 shadow-sm disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <ChevronLeft className="h-4 w-4" />
+                Anterior
+              </button>
+
+              <div className="text-sm text-slate-600">
+                Página <span className="font-semibold text-slate-900">{safeCurrentPage}</span> de{' '}
+                <span className="font-semibold text-slate-900">{totalPages}</span>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                disabled={safeCurrentPage >= totalPages}
+                className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-900 shadow-sm disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Próxima
+                <ChevronRight className="h-4 w-4" />
+              </button>
+            </div>
+          </>
+        )}
+
+        <InsurerScoreModal
+          insurer={selectedInsurer}
+          sources={sources}
+          onClose={closeScoreModal}
+        />
+      </main>
     </div>
   );
 }
+
+export default App;
