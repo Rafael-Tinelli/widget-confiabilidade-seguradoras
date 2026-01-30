@@ -102,7 +102,7 @@ export default function InsurerScoreModal({ insurer, sources, onClose }) {
 
   return (
     <div
-      className="fixed inset-0 z-[9999] flex items-end justify-center bg-black/60 p-4 sm:items-center backdrop-blur-sm"
+      className="fixed inset-0 z-[99999] flex items-end justify-center bg-black/60 p-4 sm:items-center backdrop-blur-sm"
       role="dialog"
       aria-modal="true"
       aria-label="Detalhes da nota"
