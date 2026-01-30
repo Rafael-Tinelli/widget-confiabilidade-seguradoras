@@ -89,7 +89,6 @@ export default function App() {
 
     return () => {
       window.removeEventListener("resize", updateStickyTop);
-      window.removeEventListener("scroll", updateStickyTop);
       cancelAnimationFrame(raf);
       timers.forEach(clearTimeout);
     };
