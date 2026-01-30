@@ -65,9 +65,13 @@ export default function App() {
           const cs = window.getComputedStyle(el);
           if (cs.position !== "fixed" && cs.position !== "sticky") continue;
           const r = el.getBoundingClientRect();
-          if (r.height < 20) continue;
+          if (r.height < 10) continue; // Ignora elementos muito pequenos/invisíveis
           if (r.bottom <= 0) continue;
-          if (r.top > 100) continue; // só barras realmente no topo
+          
+          // Aumentamos a tolerância para 100px. 
+          // Se houver uma barra do WP ou Promo Bar antes do header, o header começa mais baixo.
+          if (r.top > 100) continue; 
+          
           offset = Math.max(offset, r.bottom);
         }
 
@@ -79,10 +83,16 @@ export default function App() {
     window.addEventListener("resize", updateStickyTop, { passive: true });
     window.addEventListener("scroll", updateStickyTop, { passive: true });
 
+    // Fallback: Verifica algumas vezes nos primeiros segundos para pegar carregamentos tardios
+    // sem usar MutationObserver no body (que causa o "pisca" no final da página).
+    const intervals = [500, 1500, 3000];
+    const timers = intervals.map(t => setTimeout(updateStickyTop, t));
+
     return () => {
       window.removeEventListener("resize", updateStickyTop);
       window.removeEventListener("scroll", updateStickyTop);
       cancelAnimationFrame(raf);
+      timers.forEach(clearTimeout);
     };
   }, []);
 
@@ -150,18 +160,19 @@ export default function App() {
   );
 
   return (
-<div 
+    <div 
       className="min-h-screen bg-[#f4f5f5]"
       // CORREÇÃO: paddingTop garante que o título comece DEPOIS do header fixo do site.
       // Adicionamos +24px de respiro visual.
       style={{ paddingTop: "calc(var(--sanida-sticky-top, 0px) + 24px)" }}
     >
-      {/* HEADER DO WIDGET (Troquei <header> por <div> para evitar conflito semântico com o site) */}
-      <div className="max-w-6xl mx-auto px-4 pb-6">
+      {/* HEADER DO WIDGET */}
+      {/* Ajuste de padding-top (pt-6) e tamanho do H1 para não brigar com a logo */}
+      <div className="max-w-6xl mx-auto px-4 pt-6 pb-6">
         <div className="flex items-start gap-2">
           <ShieldCheck className="w-8 h-8 text-[#3498db] mt-1 shrink-0" />
           <div>
-            <h1 className="text-2xl md:text-3xl font-bold text-[#1f2937] leading-tight">
+            <h1 className="text-xl md:text-2xl font-bold text-[#1f2937] leading-tight">
               Confiabilidade de Seguradoras
             </h1>
             <p className="text-sm md:text-base text-gray-600 mt-2">
@@ -180,9 +191,9 @@ export default function App() {
         <div className="max-w-6xl mx-auto px-4 py-3">
           <div className="flex flex-col md:flex-row gap-3 items-center justify-between">
             
-            {/* Contador de resultados */}
+            {/* Contador de resultados: Texto ajustado e apenas visível em Desktop */}
             <div className="hidden md:block text-sm text-gray-500 font-medium whitespace-nowrap">
-               {filtered.length} <span className="font-normal">entidades</span>
+               {filtered.length} <span className="font-normal">seguradoras encontradas</span>
             </div>
 
             <div className="flex flex-col sm:flex-row gap-3 w-full md:w-auto">
@@ -219,20 +230,18 @@ export default function App() {
         </div>
       </div>
 
-      <main className="max-w-6xl mx-auto px-4 py-6">
-        <div className="flex items-center justify-between mb-4">
-          <p className="text-sm text-gray-500">
-            {filtered.length} seguradoras encontradas
-          </p>
-        </div>
+      <main className="max-w-6xl mx-auto px-4 py-8">
+        {/* Contagem removida daqui para evitar duplicidade. Só aparece na barra sticky (Desktop). */}
 
         {paginatedData.length === 0 ? (
-          <div className="text-center py-20 text-gray-500">
-            Nenhuma entidade encontrada.
+          <div className="flex flex-col items-center justify-center py-20 text-gray-500 bg-white rounded-xl border border-gray-200 border-dashed">
+            <Search className="w-12 h-12 text-gray-300 mb-3" />
+            <p className="text-lg font-medium">Nenhuma entidade encontrada</p>
+            <p className="text-sm">Tente buscar por outro termo ou CNPJ</p>
           </div>
         ) : (
           <>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               {paginatedData.map((insurer) => (
                 <InsurerCard
                   key={insurer.id}
@@ -244,25 +253,25 @@ export default function App() {
 
             {/* Paginação */}
             {totalPages > 1 && (
-              <div className="flex justify-center gap-2 mt-8">
+              <div className="flex justify-center items-center gap-4 mt-12">
                 <button
                   onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
                   disabled={safeCurrentPage <= 1}
-                  className="p-2 rounded-lg border border-gray-300 disabled:opacity-50 hover:bg-gray-100"
+                  className="flex items-center gap-1 px-4 py-2 rounded-lg bg-white border border-gray-200 text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-sm font-medium text-sm"
                 >
-                  <ChevronLeft className="w-5 h-5" />
+                  <ChevronLeft className="w-4 h-4" /> Anterior
                 </button>
                 
-                <span className="flex items-center px-4 font-bold text-gray-700">
-                  {safeCurrentPage} de {totalPages}
+                <span className="text-sm font-medium text-gray-600 bg-white px-4 py-2 rounded-lg border border-gray-100">
+                  Página <strong className="text-gray-900">{safeCurrentPage}</strong> de {totalPages}
                 </span>
 
                 <button
                   onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
                   disabled={safeCurrentPage >= totalPages}
-                  className="p-2 rounded-lg border border-gray-300 disabled:opacity-50 hover:bg-gray-100"
+                  className="flex items-center gap-1 px-4 py-2 rounded-lg bg-white border border-gray-200 text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-sm font-medium text-sm"
                 >
-                  <ChevronRight className="w-5 h-5" />
+                  Próxima <ChevronRight className="w-4 h-4" />
                 </button>
               </div>
             )}
