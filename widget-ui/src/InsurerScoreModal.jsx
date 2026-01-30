@@ -31,8 +31,13 @@ export default function InsurerScoreModal({ insurer, sources, onClose }) {
     const onKeyDown = (e) => {
       if (e.key === 'Escape') onClose?.();
     };
+    // Scroll Lock: impede rolagem do site enquanto modal está aberto
+    document.body.style.overflow = 'hidden';
     window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      document.body.style.overflow = '';
+    };
   }, [isOpen, onClose]);
 
   const view = useMemo(() => {
@@ -97,7 +102,7 @@ export default function InsurerScoreModal({ insurer, sources, onClose }) {
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 p-4 sm:items-center"
+      className="fixed inset-0 z-[9999] flex items-end justify-center bg-black/60 p-4 sm:items-center backdrop-blur-sm"
       role="dialog"
       aria-modal="true"
       aria-label="Detalhes da nota"
@@ -361,10 +366,10 @@ export default function InsurerScoreModal({ insurer, sources, onClose }) {
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-end gap-2 border-t border-slate-100 p-4">
+        <div className="flex items-center justify-center md:justify-end gap-2 border-t border-slate-100 p-4 bg-slate-50 rounded-b-2xl">
           <button
             type="button"
-            className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800"
+            className="w-full md:w-auto rounded-xl bg-slate-900 px-6 py-3 text-sm font-bold text-white hover:bg-slate-800 shadow-lg"
             onClick={() => onClose?.()}
           >
             Fechar
