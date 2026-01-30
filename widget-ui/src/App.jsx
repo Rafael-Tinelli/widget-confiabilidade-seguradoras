@@ -150,50 +150,71 @@ export default function App() {
   );
 
   return (
-    <div className="min-h-screen bg-[#f4f5f5]" style={{ paddingTop: "var(--sanida-sticky-top, 0px)" }}>
-      <header className="max-w-6xl mx-auto px-4 pt-8 pb-4">
+<div 
+      className="min-h-screen bg-[#f4f5f5]"
+      // CORREÇÃO: paddingTop garante que o título comece DEPOIS do header fixo do site.
+      // Adicionamos +24px de respiro visual.
+      style={{ paddingTop: "calc(var(--sanida-sticky-top, 0px) + 24px)" }}
+    >
+      {/* HEADER DO WIDGET (Troquei <header> por <div> para evitar conflito semântico com o site) */}
+      <div className="max-w-6xl mx-auto px-4 pb-6">
         <div className="flex items-start gap-2">
-          <ShieldCheck className="w-6 h-6 text-gray-700 mt-1" />
+          <ShieldCheck className="w-8 h-8 text-[#3498db] mt-1 shrink-0" />
           <div>
-            <h1 className="text-xl md:text-2xl font-bold text-[#1f2937]">
+            <h1 className="text-2xl md:text-3xl font-bold text-[#1f2937] leading-tight">
               Confiabilidade de Seguradoras
             </h1>
-            <p className="text-sm text-gray-500 mt-1">
+            <p className="text-sm md:text-base text-gray-600 mt-2">
               Score composto por Solvência (SES/SUSEP), Reputação (Consumidor.gov) e Open Insurance (OPIN).
             </p>
           </div>
         </div>
-      </header>
+      </div>
 
-      {/* Barra sticky do ranking (abaixo do header do site) */}
+      {/* BARRA DE FERRAMENTAS STICKY */}
+      {/* Fica grudada logo abaixo do header do site ao rolar */}
       <div
-        className="sticky z-30 border-b border-gray-200 bg-[#f4f5f5]/95 backdrop-blur"
+        className="sticky z-30 border-y border-gray-200 bg-[#f4f5f5]/95 backdrop-blur shadow-sm"
         style={{ top: "var(--sanida-sticky-top, 0px)" }}
       >
-        <div className="max-w-6xl mx-auto px-4 py-4">
-          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-end">
-            <div className="relative w-full md:max-w-md">
-              <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
-              <input
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="Buscar por nome, CNPJ ou SUSEP..."
-                className="w-full pl-9 pr-3 py-2 rounded-xl border border-gray-200 bg-white text-sm outline-none focus:ring-2 focus:ring-gray-200"
-              />
+        <div className="max-w-6xl mx-auto px-4 py-3">
+          <div className="flex flex-col md:flex-row gap-3 items-center justify-between">
+            
+            {/* Contador de resultados */}
+            <div className="hidden md:block text-sm text-gray-500 font-medium whitespace-nowrap">
+               {filtered.length} <span className="font-normal">entidades</span>
             </div>
 
-            <div className="flex items-center gap-2 w-full md:w-auto md:justify-end">
-              <SlidersHorizontal className="w-4 h-4 text-gray-400" />
-              <select
-                value={sortBy}
-                onChange={(e) => setSortBy(e.target.value)}
-                className="w-full md:w-auto px-3 py-2 rounded-xl border border-gray-200 bg-white text-sm outline-none focus:ring-2 focus:ring-gray-200"
-              >
-                <option value="score_desc">Ordenar por score</option>
-                <option value="name_asc">Ordenar por nome</option>
-                <option value="premiums_desc">Ordenar por prêmios</option>
-              </select>
+            <div className="flex flex-col sm:flex-row gap-3 w-full md:w-auto">
+              {/* Campo de Busca */}
+              <div className="relative w-full sm:w-72">
+                <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder="Buscar nome, CNPJ ou SUSEP..."
+                  className="w-full pl-9 pr-3 py-2 rounded-lg border border-gray-300 bg-white text-sm outline-none focus:ring-2 focus:ring-[#3498db] focus:border-transparent transition-all"
+                />
+              </div>
+
+              {/* Select de Ordenação */}
+              <div className="relative w-full sm:w-auto">
+                <SlidersHorizontal className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                <select
+                  value={sortBy}
+                  onChange={(e) => setSortBy(e.target.value)}
+                  className="w-full sm:w-auto pl-9 pr-8 py-2 rounded-lg border border-gray-300 bg-white text-sm outline-none focus:ring-2 focus:ring-[#3498db] focus:border-transparent appearance-none cursor-pointer transition-all hover:bg-gray-50"
+                >
+                  <option value="score_desc">Melhor Nota</option>
+                  <option value="name_asc">Nome (A-Z)</option>
+                  <option value="premiums_desc">Maior Faturamento</option>
+                </select>
+                <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none border-l border-gray-200 pl-2">
+                   <span className="text-[10px] text-gray-400">▼</span>
+                </div>
+              </div>
             </div>
+
           </div>
         </div>
       </div>
