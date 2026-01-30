@@ -81,7 +81,6 @@ export default function App() {
 
     updateStickyTop();
     window.addEventListener("resize", updateStickyTop, { passive: true });
-    window.addEventListener("scroll", updateStickyTop, { passive: true });
 
     // Fallback: Verifica algumas vezes nos primeiros segundos para pegar carregamentos tardios
     // sem usar MutationObserver no body (que causa o "pisca" no final da página).
