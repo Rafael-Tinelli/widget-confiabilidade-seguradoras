@@ -67,7 +67,7 @@ export default function App() {
           const r = el.getBoundingClientRect();
           if (r.height < 20) continue;
           if (r.bottom <= 0) continue;
-          if (r.top > 16) continue; // só barras realmente no topo
+          if (r.top > 100) continue; // só barras realmente no topo
           offset = Math.max(offset, r.bottom);
         }
 
@@ -150,7 +150,7 @@ export default function App() {
   );
 
   return (
-    <div className="min-h-screen bg-[#f4f5f5]">
+    <div className="min-h-screen bg-[#f4f5f5]" style={{ paddingTop: "var(--sanida-sticky-top, 0px)" }}>
       <header className="max-w-6xl mx-auto px-4 pt-8 pb-4">
         <div className="flex items-start gap-2">
           <ShieldCheck className="w-6 h-6 text-gray-700 mt-1" />
