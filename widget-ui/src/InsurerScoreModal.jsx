@@ -102,7 +102,7 @@ export default function InsurerScoreModal({ insurer, sources, onClose }) {
 
   return (
     <div
-      className="fixed inset-0 z-[99999] flex items-end justify-center bg-black/60 p-4 sm:items-center backdrop-blur-sm"
+      className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
       role="dialog"
       aria-modal="true"
       aria-label="Detalhes da nota"
@@ -110,7 +110,8 @@ export default function InsurerScoreModal({ insurer, sources, onClose }) {
         if (e.target === e.currentTarget) onClose?.();
       }}
     >
-      <div className="w-full max-w-3xl rounded-2xl bg-white shadow-xl ring-1 ring-black/10">
+      {/* Ajuste Mobile: max-h-[85dvh] usa a altura dinâmica da viewport (desconta barra do navegador) */}
+      <div className="w-full max-w-3xl rounded-2xl bg-white shadow-xl ring-1 ring-black/10 flex flex-col max-h-[85dvh]">
         {/* Header */}
         <div className="flex items-start justify-between gap-3 border-b border-slate-100 p-5">
           <div>
