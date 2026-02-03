@@ -42,6 +42,7 @@ export default function App() {
     const root = document.getElementById("widget-root");
     if (!root) return;
 
+    let lastOffset = -1; // Memória para evitar re-render desnecessário (o "pisca")
     let raf = 0;
     const updateStickyTop = () => {
       cancelAnimationFrame(raf);
@@ -75,7 +76,13 @@ export default function App() {
           offset = Math.max(offset, r.bottom);
         }
 
-        root.style.setProperty("--sanida-sticky-top", `${Math.ceil(offset)}px`);
++      
+      const finalVal = Math.ceil(offset);
+      // Só aplica no DOM se o valor realmente mudou. Isso mata o "pisca".
+      if (finalVal !== lastOffset) {
+        lastOffset = finalVal;
+        root.style.setProperty("--sanida-sticky-top", `${finalVal}px`);
+      }
       });
     };
 
