@@ -83,12 +83,8 @@ export default function App() {
       // Só aplica no DOM se o valor realmente mudou. Isso mata o "pisca".
       if (finalVal !== lastOffset) {
         lastOffset = finalVal;
-        const finalVal = Math.ceil(offset);
-        // Só aplica no DOM se o valor mudou (elimina o efeito "pisca/flicker")
-        if (finalVal !== lastOffset) {
-          lastOffset = finalVal;
-          root.style.setProperty("--sanida-sticky-top", `${finalVal}px`);
-        }
+        root.style.setProperty("--sanida-sticky-top", `${finalVal}px`);
+      }
       });
     };
 
