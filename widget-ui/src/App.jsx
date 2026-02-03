@@ -42,11 +42,14 @@ export default function App() {
     const root = document.getElementById("widget-root");
     if (!root) return;
 
-    let lastOffset = -1; // Memória para evitar re-render desnecessário (o "pisca")
-    let raf = 0;
+    let isWidgetVisible = true; // Controle para pausar cálculo fora da tela
+    let lastOffset = -1;let raf = 0;
     const updateStickyTop = () => {
       cancelAnimationFrame(raf);
       raf = requestAnimationFrame(() => {
+        // Se o widget não está visível, não gasta processamento (evita travamento no rodapé)
+        if (!isWidgetVisible) return;
+
         const candidates = [];
 
         // WP Admin Bar (quando logado)
@@ -86,6 +89,7 @@ export default function App() {
     };
 
     updateStickyTop();
+
     window.addEventListener("resize", updateStickyTop, { passive: true });
     window.addEventListener("scroll", updateStickyTop, { passive: true });
 
