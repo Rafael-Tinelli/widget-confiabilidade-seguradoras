@@ -38,71 +38,114 @@ export default function App() {
 
   // --- Sticky abaixo do header do site (WordPress / Sanida) ---
   // Ajusta automaticamente o top do sticky para não sobrepor o header fixo/sticky do site.
+  // SEM recalcular em scroll (elimina layout thrash / flicker).
   useLayoutEffect(() => {
     const root = document.getElementById("widget-root");
     if (!root) return;
 
-    let isWidgetVisible = true; // Controle para pausar cálculo fora da tela
-    let lastOffset = -1;let raf = 0;
-    const updateStickyTop = () => {
-      cancelAnimationFrame(raf);
-      raf = requestAnimationFrame(() => {
-        // Se o widget não está visível, não gasta processamento (evita travamento no rodapé)
-        if (!isWidgetVisible) return;
+    // Elementos que de fato ocupam o topo do viewport no legado:
+    // - WP Admin Bar (quando logado)
+    // - Header fixo do site (id="menu")
+    const header = document.getElementById("menu");
+    const adminBar = document.getElementById("wpadminbar");
+    const targets = [adminBar, header].filter(Boolean);
 
-        const candidates = [];
+    let rafId = 0;
+    let last = Number.NaN;
+    let trackingTransition = false;
 
-        // WP Admin Bar (quando logado)
-        const adminBar = document.getElementById("wpadminbar");
-        if (adminBar) candidates.push(adminBar);
-
-        // Headers do site (fora do widget)
-        const allHeaders = Array.from(document.querySelectorAll("header"));
-        for (const h of allHeaders) {
-          if (root.contains(h)) continue; // ignora o header do próprio widget
-          candidates.push(h);
-        }
-
-        // Calcula o "bottom" máximo dos elementos fixos/sticky que ocupam o topo.
-        let offset = 0;
-        for (const el of candidates) {
-          const cs = window.getComputedStyle(el);
-          if (cs.position !== "fixed" && cs.position !== "sticky") continue;
-          const r = el.getBoundingClientRect();
-          if (r.height < 10) continue; // Ignora elementos muito pequenos/invisíveis
-          if (r.bottom <= 0) continue;
-          
-          // Aumentamos a tolerância para 100px. 
-          // Se houver uma barra do WP ou Promo Bar antes do header, o header começa mais baixo.
-          if (r.top > 100) continue; 
-          
-          offset = Math.max(offset, r.bottom);
-        }
-      
-      const finalVal = Math.ceil(offset);
-      // Só aplica no DOM se o valor realmente mudou. Isso mata o "pisca".
-      if (finalVal !== lastOffset) {
-        lastOffset = finalVal;
-        root.style.setProperty("--sanida-sticky-top", `${finalVal}px`);
+    const computeOffset = () => {
+      let offset = 0;
+      for (const el of targets) {
+        const cs = window.getComputedStyle(el);
+        if (cs.position !== "fixed" && cs.position !== "sticky") continue;
+        const r = el.getBoundingClientRect();
+        if (r.height < 8) continue;
+        if (r.bottom <= 0) continue;
+        if (r.top > 120) continue;
+        offset = Math.max(offset, r.bottom);
       }
+      // round + tolerância evita oscilações de subpixel (0/1px) que causam tremor
+      return Math.max(0, Math.round(offset));
+    };
+
+    const apply = () => {
+      cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(() => {
+        const next = computeOffset();
+        if (!Number.isFinite(last) || Math.abs(next - last) > 1) {
+          last = next;
+          root.style.setProperty("--sanida-sticky-top", `${next}px`);
+        }
       });
     };
 
-    updateStickyTop();
+    // Se o header muda com transição (shrink/expand), acompanhamos só durante a transição.
+    const startTransitionTracking = () => {
+      if (trackingTransition) return;
+      trackingTransition = true;
+      const tick = () => {
+        if (!trackingTransition) return;
+        apply();
+        rafId = requestAnimationFrame(tick);
+      };
+      tick();
+    };
+    const stopTransitionTracking = () => {
+      trackingTransition = false;
+      apply();
+    };
 
-    window.addEventListener("resize", updateStickyTop, { passive: true });
-    window.addEventListener("scroll", updateStickyTop, { passive: true });
+    apply();
 
-    // Fallback: Verifica algumas vezes nos primeiros segundos para pegar carregamentos tardios
-    // sem usar MutationObserver no body (que causa o "pisca" no final da página).
-    const intervals = [500, 1500, 3000];
-    const timers = intervals.map(t => setTimeout(updateStickyTop, t));
+    // Observa mudanças reais (altura/layout) sem depender de scroll.
+    const ro = new ResizeObserver(apply);
+    const mo = new MutationObserver(apply);
+
+    for (const el of targets) {
+      ro.observe(el);
+      // Normalmente o legado alterna classes (estado “scrolled”, “compact”, etc.)
+      // Observa class e style apenas no header/admin bar.
+      mo.observe(el, { attributes: true, attributeFilter: ["class", "style"] });
+
+      el.addEventListener("transitionrun", startTransitionTracking, { passive: true });
+      el.addEventListener("transitionend", stopTransitionTracking, { passive: true });
+      el.addEventListener("transitioncancel", stopTransitionTracking, { passive: true });
+      el.addEventListener("animationstart", startTransitionTracking, { passive: true });
+      el.addEventListener("animationend", stopTransitionTracking, { passive: true });
+    }
+
+    // Muitos temas/plugins controlam o header via classe no <html> ou <body>.
+    // Observe só class aqui (bem barato e sem spam).
+    if (document.documentElement) {
+      mo.observe(document.documentElement, { attributes: true, attributeFilter: ["class"] });
+    }
+    if (document.body) {
+      mo.observe(document.body, { attributes: true, attributeFilter: ["class"] });
+    }
+
+    window.addEventListener("resize", apply, { passive: true });
+    // Mobile: mudanças do viewport (barra de endereço) afetam o layout percebido.
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener("resize", apply, { passive: true });
+    }
 
     return () => {
-      window.removeEventListener("resize", updateStickyTop);
-      window.removeEventListener("scroll", updateStickyTop);
-      cancelAnimationFrame(raf);
-      timers.forEach(clearTimeout);
+      window.removeEventListener("resize", apply);
+      if (window.visualViewport) {
+        window.visualViewport.removeEventListener("resize", apply);
+      }
+      trackingTransition = false;
+      cancelAnimationFrame(rafId);
+      ro.disconnect();
+      mo.disconnect();
+      for (const el of targets) {
+        el.removeEventListener("transitionrun", startTransitionTracking);
+        el.removeEventListener("transitionend", stopTransitionTracking);
+        el.removeEventListener("transitioncancel", stopTransitionTracking);
+        el.removeEventListener("animationstart", startTransitionTracking);
+        el.removeEventListener("animationend", stopTransitionTracking);
+      }
     };
   }, []);
 
