@@ -1,4 +1,4 @@
-import React, { useLayoutEffect, useMemo, useState, useEffect } from "react";
+import React, { useLayoutEffect, useMemo, useState, useEffect, useRef } from "react";
 import InsurerCard from "./components/InsurerCard";
 import InsurerScoreModal from "./InsurerScoreModal";
 import { Search, SlidersHorizontal, ShieldCheck, ChevronLeft, ChevronRight, Award } from "lucide-react";
@@ -6,6 +6,179 @@ import { Search, SlidersHorizontal, ShieldCheck, ChevronLeft, ChevronRight, Awar
 const API_URL = '/api/v1/insurers.json'; 
 
 export default function App() {
+  const topSentinelRef = useRef(null);
+  const bottomSentinelRef = useRef(null);
+
+  // Sticky abaixo do header do site (sem thrash e SEM mexer no fluxo da página)
+  useLayoutEffect(() => {
+    const root = document.getElementById("widget-root");
+    if (!root) return;
+
+    const header = document.getElementById("menu");
+    const adminBar = document.getElementById("wpadminbar");
+    const topEl = topSentinelRef.current;
+    const bottomEl = bottomSentinelRef.current;
+    if (!topEl || !bottomEl) return;
+    if (!header && !adminBar) return;
+
+    // 1) SAFE padding: deve ser ESTÁVEL (não pode oscilar com scroll)
+    // Regra: só aumenta (max), e só reseta em resize.
+    let safeMax = 0;
+    const computeSafe = () =>
+      (adminBar ? adminBar.offsetHeight : 0) +
+      (header ? header.offsetHeight : 0);
+
+    const setHeaderSafeMax = (force = false) => {
+      const safeNow = computeSafe();
+      if (force || safeNow > safeMax) {
+        safeMax = safeNow;
+        root.style.setProperty("--sanida-header-safe", `${safeMax}px`);
+      }
+    };
+    setHeaderSafeMax(true);
+
+    // 2) Sticky top: acompanha a "borda visível" do header (não altera fluxo)
+    let enabled = false;
+    let rafCommitId = 0;
+    let rafTrackId = 0;
+    let scheduled = false;
+    let lastSticky = Number.NaN;
+    let tracking = false;
+    let scrollBound = false;
+
+    const readStickyTop = () => {
+      let offset = 0;
+      if (adminBar) offset = Math.max(offset, adminBar.getBoundingClientRect().bottom);
+      if (header) offset = Math.max(offset, header.getBoundingClientRect().bottom);
+      return Math.max(0, Math.round(offset));
+    };
+
+    const commitSticky = () => {
+      scheduled = false;
+      if (!enabled) return;
+      const next = readStickyTop();
+      if (!Number.isFinite(lastSticky) || next !== lastSticky) {
+        lastSticky = next;
+        root.style.setProperty("--sanida-sticky-top", `${next}px`);
+      }
+    };
+
+    const scheduleSticky = () => {
+      if (!enabled) return;
+      if (scheduled) return;
+      scheduled = true;
+      cancelAnimationFrame(rafCommitId);
+      rafCommitId = requestAnimationFrame(commitSticky);
+    };
+    // Fallback: se o header se move via JS em scroll (sem transition/animation),
+    // precisamos "amostrar" o bottom enquanto o widget estiver ativo.
+    const onScroll = () => scheduleSticky();
+    const bindScroll = () => {
+      if (scrollBound) return;
+      scrollBound = true;
+      window.addEventListener("scroll", onScroll, { passive: true });
+    };
+    const unbindScroll = () => {
+      if (!scrollBound) return;
+      scrollBound = false;
+      window.removeEventListener("scroll", onScroll);
+    };
+
+    // Track curto APENAS durante transição/animação do header
+    const startTrack = () => {
+      if (!enabled || tracking) return;
+      tracking = true;
+      const tick = () => {
+        if (!enabled || !tracking) return;
+        // 1 leitura + 1 escrita por frame, somente durante a transição
+        commitSticky();
+        rafTrackId = requestAnimationFrame(tick);
+      };
+      tick();
+    };
+    const stopTrack = () => {
+      tracking = false;
+      scheduleSticky();
+    };
+
+    // Liga/desliga tudo com base no range do widget (sentinelas)
+    let topRect = topEl.getBoundingClientRect();
+    let bottomRect = bottomEl.getBoundingClientRect();
+    const recomputeEnabled = () => {
+      const vh = window.innerHeight || document.documentElement.clientHeight || 0;
+      const inRange = topRect.top < vh && bottomRect.bottom > 0;
+      if (inRange === enabled) return;
+      enabled = inRange;
+      if (!enabled) {
+        unbindScroll();
+         tracking = false;
+         lastSticky = Number.NaN;
+        scheduled = false;
+        cancelAnimationFrame(rafCommitId);
+        cancelAnimationFrame(rafTrackId);
+         root.style.setProperty("--sanida-sticky-top", "0px");
+       } else {
+        bindScroll();
+         scheduleSticky();
+       }
+     };
+
+    const io = new IntersectionObserver(
+      (entries) => {
+        for (const e of entries) {
+          if (e.target === topEl) topRect = e.boundingClientRect;
+          if (e.target === bottomEl) bottomRect = e.boundingClientRect;
+        }
+        recomputeEnabled();
+      },
+      {
+        threshold: 0,
+        // Importante: pequeno, para DESLIGAR rápido quando o widget sai da tela
+        rootMargin: "200px 0px 200px 0px",
+      }
+    );
+    io.observe(topEl);
+    io.observe(bottomEl);
+    recomputeEnabled();
+
+    // Eventos de transição/animação do header (show/hide)
+    if (header) {
+      // Alguns browsers/temas disparam transitionstart (nem sempre transitionrun)
+      header.addEventListener("transitionstart", startTrack, { passive: true });
+      header.addEventListener("transitionrun", startTrack, { passive: true });
+      header.addEventListener("transitionend", stopTrack, { passive: true });
+      header.addEventListener("transitioncancel", stopTrack, { passive: true });
+      header.addEventListener("animationstart", startTrack, { passive: true });
+      header.addEventListener("animationend", stopTrack, { passive: true });
+    }
+
+    const handleResize = () => {
+      // resize é o único momento em que o "safe" pode recalcular para baixo
+      safeMax = 0;
+      setHeaderSafeMax(true);
+      scheduleSticky();
+    };
+    window.addEventListener("resize", handleResize, { passive: true });
+    const vv = window.visualViewport;
+    if (vv) vv.addEventListener("resize", handleResize, { passive: true });
+
+    return () => {
+      io.disconnect();
+      unbindScroll();
+      cancelAnimationFrame(rafCommitId);
+      cancelAnimationFrame(rafTrackId);
+      if (header) {
+        header.removeEventListener("transitionstart", startTrack);
+        header.removeEventListener("transitionrun", startTrack);
+        header.removeEventListener("transitionend", stopTrack);
+        header.removeEventListener("transitioncancel", stopTrack);
+        header.removeEventListener("animationstart", startTrack);
+        header.removeEventListener("animationend", stopTrack);
+      }
+      window.removeEventListener("resize", handleResize);
+      if (vv) vv.removeEventListener("resize", handleResize);
+    };
+  }, []);
   const [insurersData, setInsurers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState("");
@@ -34,119 +207,6 @@ export default function App() {
         setInsurers([]);
         setLoading(false);
       });
-  }, []);
-
-  // --- Sticky abaixo do header do site (WordPress / Sanida) ---
-  // Ajusta automaticamente o top do sticky para não sobrepor o header fixo/sticky do site.
-  // SEM recalcular em scroll (elimina layout thrash / flicker).
-  useLayoutEffect(() => {
-    const root = document.getElementById("widget-root");
-    if (!root) return;
-
-    // Elementos que de fato ocupam o topo do viewport no legado:
-    // - WP Admin Bar (quando logado)
-    // - Header fixo do site (id="menu")
-    const header = document.getElementById("menu");
-    const adminBar = document.getElementById("wpadminbar");
-    const targets = [adminBar, header].filter(Boolean);
-
-    let rafId = 0;
-    let last = Number.NaN;
-    let trackingTransition = false;
-
-    const computeOffset = () => {
-      let offset = 0;
-      for (const el of targets) {
-        const cs = window.getComputedStyle(el);
-        if (cs.position !== "fixed" && cs.position !== "sticky") continue;
-        const r = el.getBoundingClientRect();
-        if (r.height < 8) continue;
-        if (r.bottom <= 0) continue;
-        if (r.top > 120) continue;
-        offset = Math.max(offset, r.bottom);
-      }
-      // round + tolerância evita oscilações de subpixel (0/1px) que causam tremor
-      return Math.max(0, Math.round(offset));
-    };
-
-    const apply = () => {
-      cancelAnimationFrame(rafId);
-      rafId = requestAnimationFrame(() => {
-        const next = computeOffset();
-        if (!Number.isFinite(last) || Math.abs(next - last) > 1) {
-          last = next;
-          root.style.setProperty("--sanida-sticky-top", `${next}px`);
-        }
-      });
-    };
-
-    // Se o header muda com transição (shrink/expand), acompanhamos só durante a transição.
-    const startTransitionTracking = () => {
-      if (trackingTransition) return;
-      trackingTransition = true;
-      const tick = () => {
-        if (!trackingTransition) return;
-        apply();
-        rafId = requestAnimationFrame(tick);
-      };
-      tick();
-    };
-    const stopTransitionTracking = () => {
-      trackingTransition = false;
-      apply();
-    };
-
-    apply();
-
-    // Observa mudanças reais (altura/layout) sem depender de scroll.
-    const ro = new ResizeObserver(apply);
-    const mo = new MutationObserver(apply);
-
-    for (const el of targets) {
-      ro.observe(el);
-      // Normalmente o legado alterna classes (estado “scrolled”, “compact”, etc.)
-      // Observa class e style apenas no header/admin bar.
-      mo.observe(el, { attributes: true, attributeFilter: ["class", "style"] });
-
-      el.addEventListener("transitionrun", startTransitionTracking, { passive: true });
-      el.addEventListener("transitionend", stopTransitionTracking, { passive: true });
-      el.addEventListener("transitioncancel", stopTransitionTracking, { passive: true });
-      el.addEventListener("animationstart", startTransitionTracking, { passive: true });
-      el.addEventListener("animationend", stopTransitionTracking, { passive: true });
-    }
-
-    // Muitos temas/plugins controlam o header via classe no <html> ou <body>.
-    // Observe só class aqui (bem barato e sem spam).
-    if (document.documentElement) {
-      mo.observe(document.documentElement, { attributes: true, attributeFilter: ["class"] });
-    }
-    if (document.body) {
-      mo.observe(document.body, { attributes: true, attributeFilter: ["class"] });
-    }
-
-    window.addEventListener("resize", apply, { passive: true });
-    // Mobile: mudanças do viewport (barra de endereço) afetam o layout percebido.
-    if (window.visualViewport) {
-      window.visualViewport.addEventListener("resize", apply, { passive: true });
-    }
-
-    return () => {
-      window.removeEventListener("resize", apply);
-      if (window.visualViewport) {
-        window.visualViewport.removeEventListener("resize", apply);
-      }
-      trackingTransition = false;
-      cancelAnimationFrame(rafId);
-      ro.disconnect();
-      mo.disconnect();
-      for (const el of targets) {
-        el.removeEventListener("transitionrun", startTransitionTracking);
-        el.removeEventListener("transitionend", stopTransitionTracking);
-        el.removeEventListener("transitioncancel", stopTransitionTracking);
-        el.removeEventListener("animationstart", startTransitionTracking);
-        el.removeEventListener("animationend", stopTransitionTracking);
-      }
-    };
   }, []);
 
   const insurers = insurersData;
@@ -217,8 +277,9 @@ export default function App() {
       className="min-h-screen bg-[#f4f5f5]"
       // CORREÇÃO: paddingTop garante que o título comece DEPOIS do header fixo do site.
       // Adicionamos +24px de respiro visual.
-      style={{ paddingTop: "calc(var(--sanida-sticky-top, 0px) + 24px)" }}
+      style={{ paddingTop: "calc(var(--sanida-header-safe, 0px) + 24px)" }}
     >
+      <div ref={topSentinelRef} aria-hidden="true" style={{ height: 1, pointerEvents: "none" }} />
       {/* HEADER DO WIDGET */}
       {/* Ajuste de padding-top (pt-6) e tamanho do H1 para não brigar com a logo */}
       <div className="max-w-6xl mx-auto px-4 pt-6 pb-6">
@@ -331,6 +392,7 @@ export default function App() {
           </>
         )}
       </main>
+      <div ref={bottomSentinelRef} aria-hidden="true" style={{ height: 1, pointerEvents: "none" }} />
 
       <InsurerScoreModal
         insurer={selectedInsurer}
