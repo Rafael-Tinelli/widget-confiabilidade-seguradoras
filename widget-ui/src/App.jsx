@@ -42,63 +42,144 @@ export default function App() {
     const root = document.getElementById("widget-root");
     if (!root) return;
 
-    let lastOffset = -1; // Memória para evitar re-render desnecessário (o "pisca")
-    let raf = 0;
-    const updateStickyTop = () => {
-      cancelAnimationFrame(raf);
-      raf = requestAnimationFrame(() => {
-        const candidates = [];
+    const header = document.getElementById("menu");
+    const adminBar = document.getElementById("wpadminbar");
 
-        // WP Admin Bar (quando logado)
-        const adminBar = document.getElementById("wpadminbar");
-        if (adminBar) candidates.push(adminBar);
-
-        // Headers do site (fora do widget)
-        const allHeaders = Array.from(document.querySelectorAll("header"));
-        for (const h of allHeaders) {
-          if (root.contains(h)) continue; // ignora o header do próprio widget
-          candidates.push(h);
-        }
-
-        // Calcula o "bottom" máximo dos elementos fixos/sticky que ocupam o topo.
-        let offset = 0;
-        for (const el of candidates) {
-          const cs = window.getComputedStyle(el);
-          if (cs.position !== "fixed" && cs.position !== "sticky") continue;
-          const r = el.getBoundingClientRect();
-          if (r.height < 10) continue; // Ignora elementos muito pequenos/invisíveis
-          if (r.bottom <= 0) continue;
-          
-          // Aumentamos a tolerância para 100px. 
-          // Se houver uma barra do WP ou Promo Bar antes do header, o header começa mais baixo.
-          if (r.top > 100) continue; 
-          
-          offset = Math.max(offset, r.bottom);
-        }
-      
-      const finalVal = Math.ceil(offset);
-      // Só aplica no DOM se o valor realmente mudou. Isso mata o "pisca".
-      if (finalVal !== lastOffset) {
-        lastOffset = finalVal;
-        root.style.setProperty("--sanida-sticky-top", `${finalVal}px`);
+    // ----------------------------
+    // (A) SAFE padding (estável)
+    // ----------------------------
+    let safeMax = 0;
+    const computeSafe = () =>
+      (adminBar ? adminBar.offsetHeight : 0) +
+      (header ? header.offsetHeight : 0);
+    const setHeaderSafeMax = (force = false) => {
+      const v = computeSafe();
+      if (force || v > safeMax) {
+        safeMax = v;
+        root.style.setProperty("--sanida-header-safe", `${safeMax}px`);
       }
-      });
     };
 
-    updateStickyTop();
-    window.addEventListener("resize", updateStickyTop, { passive: true });
-    window.addEventListener("scroll", updateStickyTop, { passive: true });
+    // ----------------------------
+    // (B) Sticky top (dinâmico)
+    // ----------------------------
+    let enabled = false;          // só calcula quando widget está no viewport (ou perto)
+    let scheduled = false;
+    let rafCommit = 0;
+    let lastSticky = Number.NaN;
 
-    // Fallback: Verifica algumas vezes nos primeiros segundos para pegar carregamentos tardios
-    // sem usar MutationObserver no body (que causa o "pisca" no final da página).
-    const intervals = [500, 1500, 3000];
-    const timers = intervals.map(t => setTimeout(updateStickyTop, t));
+    const readStickyTop = () => {
+      let offset = 0;
+      if (adminBar) offset = Math.max(offset, adminBar.getBoundingClientRect().bottom);
+      if (header)   offset = Math.max(offset, header.getBoundingClientRect().bottom);
+      return Math.max(0, Math.round(offset));
+    };
+
+    const commit = () => {
+      scheduled = false;
+      if (!enabled) return;
+      const next = readStickyTop();
+      if (!Number.isFinite(lastSticky) || next !== lastSticky) {
+        lastSticky = next;
+        root.style.setProperty("--sanida-sticky-top", `${next}px`);
+      }
+    };
+
+    const schedule = () => {
+      if (!enabled) return;
+      if (scheduled) return;
+      scheduled = true;
+      cancelAnimationFrame(rafCommit);
+      rafCommit = requestAnimationFrame(commit);
+    };
+
+    // ----------------------------
+    // (C) Range do widget (sem sentinelas)
+    // ----------------------------
+    let widgetTop = 0;
+    let widgetBottom = 0;
+    const margin = 240; // tolerância: liga antes de entrar e desliga pouco depois de sair
+
+    const measureRange = () => {
+      const y = window.scrollY || window.pageYOffset || 0;
+      const rect = root.getBoundingClientRect();
+      widgetTop = rect.top + y;
+      widgetBottom = widgetTop + root.offsetHeight;
+    };
+
+    const isInRange = () => {
+      const y = window.scrollY || window.pageYOffset || 0;
+      const vh = window.innerHeight || document.documentElement.clientHeight || 0;
+      const viewTop = y;
+      const viewBottom = y + vh;
+      return viewBottom > (widgetTop - margin) && viewTop < (widgetBottom + margin);
+    };
+
+    const setEnabled = (nextEnabled) => {
+      if (nextEnabled === enabled) return;
+      enabled = nextEnabled;
+      if (!enabled) {
+        lastSticky = Number.NaN;
+        scheduled = false;
+        cancelAnimationFrame(rafCommit);
+        root.style.setProperty("--sanida-sticky-top", "0px");
+        return;
+      }
+      // Entrou em range: garante valor correto imediatamente (evita ficar em 0)
+      schedule();
+    };
+
+    const onScroll = () => {
+      setEnabled(isInRange());
+      if (enabled) schedule();
+    };
+
+    // ----------------------------
+    // (D) Observa mudanças reais sem “observer barulhento”
+    // ----------------------------
+    const ro = new ResizeObserver(() => {
+      // muda conteúdo do widget / header / admin bar
+      measureRange();
+      setHeaderSafeMax(); // só sobe (max), não causa shift
+      onScroll();
+    });
+    ro.observe(root);
+    if (header) ro.observe(header);
+    if (adminBar) ro.observe(adminBar);
+
+    // init
+    setHeaderSafeMax(true);
+    measureRange();
+    setEnabled(isInRange());
+    schedule();
+
+    window.addEventListener("scroll", onScroll, { passive: true });
+   const onResize = () => {
+      safeMax = 0;              // resize é o único momento em que o safe pode “recalcular pra baixo”
+      setHeaderSafeMax(true);
+      measureRange();
+      onScroll();
+    };
+   window.addEventListener("resize", onResize, { passive: true });
+    const vv = window.visualViewport;
+    if (vv) vv.addEventListener("resize", onResize, { passive: true });
+
+    // settle rápido pra capturar layout tardio (sem MutationObserver global)
+    const timers = [200, 700, 1400].map((t) =>
+      setTimeout(() => {
+        setHeaderSafeMax();
+        measureRange();
+        onScroll();
+      }, t)
+    );
 
     return () => {
-      window.removeEventListener("resize", updateStickyTop);
-      window.removeEventListener("scroll", updateStickyTop);
-      cancelAnimationFrame(raf);
       timers.forEach(clearTimeout);
+      ro.disconnect();
+      window.removeEventListener("scroll", onScroll);
+      window.removeEventListener("resize", onResize);
+      if (vv) vv.removeEventListener("resize", onResize);
+      cancelAnimationFrame(rafCommit);
     };
   }, []);
 
@@ -170,7 +251,7 @@ export default function App() {
       className="min-h-screen bg-[#f4f5f5]"
       // CORREÇÃO: paddingTop garante que o título comece DEPOIS do header fixo do site.
       // Adicionamos +24px de respiro visual.
-      style={{ paddingTop: "calc(var(--sanida-sticky-top, 0px) + 24px)" }}
+      style={{ paddingTop: "calc(var(--sanida-header-safe, var(--sanida-sticky-top, 0px)) + 24px)" }}
     >
       {/* HEADER DO WIDGET */}
       {/* Ajuste de padding-top (pt-6) e tamanho do H1 para não brigar com a logo */}
