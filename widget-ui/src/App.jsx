@@ -1,4 +1,4 @@
-import React, { useLayoutEffect, useMemo, useState, useEffect, useRef } from "react";
+import React, { useLayoutEffect, useMemo, useState, useEffect } from "react";
 import InsurerCard from "./components/InsurerCard";
 import InsurerScoreModal from "./InsurerScoreModal";
 import { Search, SlidersHorizontal, ShieldCheck, ChevronLeft, ChevronRight, Award } from "lucide-react";
@@ -6,179 +6,6 @@ import { Search, SlidersHorizontal, ShieldCheck, ChevronLeft, ChevronRight, Awar
 const API_URL = '/api/v1/insurers.json'; 
 
 export default function App() {
-  const topSentinelRef = useRef(null);
-  const bottomSentinelRef = useRef(null);
-
-  // Sticky abaixo do header do site (sem thrash e SEM mexer no fluxo da página)
-  useLayoutEffect(() => {
-    const root = document.getElementById("widget-root");
-    if (!root) return;
-
-    const header = document.getElementById("menu");
-    const adminBar = document.getElementById("wpadminbar");
-    const topEl = topSentinelRef.current;
-    const bottomEl = bottomSentinelRef.current;
-    if (!topEl || !bottomEl) return;
-    if (!header && !adminBar) return;
-
-    // 1) SAFE padding: deve ser ESTÁVEL (não pode oscilar com scroll)
-    // Regra: só aumenta (max), e só reseta em resize.
-    let safeMax = 0;
-    const computeSafe = () =>
-      (adminBar ? adminBar.offsetHeight : 0) +
-      (header ? header.offsetHeight : 0);
-
-    const setHeaderSafeMax = (force = false) => {
-      const safeNow = computeSafe();
-      if (force || safeNow > safeMax) {
-        safeMax = safeNow;
-        root.style.setProperty("--sanida-header-safe", `${safeMax}px`);
-      }
-    };
-    setHeaderSafeMax(true);
-
-    // 2) Sticky top: acompanha a "borda visível" do header (não altera fluxo)
-    let enabled = false;
-    let rafCommitId = 0;
-    let rafTrackId = 0;
-    let scheduled = false;
-    let lastSticky = Number.NaN;
-    let tracking = false;
-    let scrollBound = false;
-
-    const readStickyTop = () => {
-      let offset = 0;
-      if (adminBar) offset = Math.max(offset, adminBar.getBoundingClientRect().bottom);
-      if (header) offset = Math.max(offset, header.getBoundingClientRect().bottom);
-      return Math.max(0, Math.round(offset));
-    };
-
-    const commitSticky = () => {
-      scheduled = false;
-      if (!enabled) return;
-      const next = readStickyTop();
-      if (!Number.isFinite(lastSticky) || next !== lastSticky) {
-        lastSticky = next;
-        root.style.setProperty("--sanida-sticky-top", `${next}px`);
-      }
-    };
-
-    const scheduleSticky = () => {
-      if (!enabled) return;
-      if (scheduled) return;
-      scheduled = true;
-      cancelAnimationFrame(rafCommitId);
-      rafCommitId = requestAnimationFrame(commitSticky);
-    };
-    // Fallback: se o header se move via JS em scroll (sem transition/animation),
-    // precisamos "amostrar" o bottom enquanto o widget estiver ativo.
-    const onScroll = () => scheduleSticky();
-    const bindScroll = () => {
-      if (scrollBound) return;
-      scrollBound = true;
-      window.addEventListener("scroll", onScroll, { passive: true });
-    };
-    const unbindScroll = () => {
-      if (!scrollBound) return;
-      scrollBound = false;
-      window.removeEventListener("scroll", onScroll);
-    };
-
-    // Track curto APENAS durante transição/animação do header
-    const startTrack = () => {
-      if (!enabled || tracking) return;
-      tracking = true;
-      const tick = () => {
-        if (!enabled || !tracking) return;
-        // 1 leitura + 1 escrita por frame, somente durante a transição
-        commitSticky();
-        rafTrackId = requestAnimationFrame(tick);
-      };
-      tick();
-    };
-    const stopTrack = () => {
-      tracking = false;
-      scheduleSticky();
-    };
-
-    // Liga/desliga tudo com base no range do widget (sentinelas)
-    let topRect = topEl.getBoundingClientRect();
-    let bottomRect = bottomEl.getBoundingClientRect();
-    const recomputeEnabled = () => {
-      const vh = window.innerHeight || document.documentElement.clientHeight || 0;
-      const inRange = topRect.top < vh && bottomRect.bottom > 0;
-      if (inRange === enabled) return;
-      enabled = inRange;
-      if (!enabled) {
-        unbindScroll();
-         tracking = false;
-         lastSticky = Number.NaN;
-        scheduled = false;
-        cancelAnimationFrame(rafCommitId);
-        cancelAnimationFrame(rafTrackId);
-         root.style.setProperty("--sanida-sticky-top", "0px");
-       } else {
-        bindScroll();
-         scheduleSticky();
-       }
-     };
-
-    const io = new IntersectionObserver(
-      (entries) => {
-        for (const e of entries) {
-          if (e.target === topEl) topRect = e.boundingClientRect;
-          if (e.target === bottomEl) bottomRect = e.boundingClientRect;
-        }
-        recomputeEnabled();
-      },
-      {
-        threshold: 0,
-        // Importante: pequeno, para DESLIGAR rápido quando o widget sai da tela
-        rootMargin: "200px 0px 200px 0px",
-      }
-    );
-    io.observe(topEl);
-    io.observe(bottomEl);
-    recomputeEnabled();
-
-    // Eventos de transição/animação do header (show/hide)
-    if (header) {
-      // Alguns browsers/temas disparam transitionstart (nem sempre transitionrun)
-      header.addEventListener("transitionstart", startTrack, { passive: true });
-      header.addEventListener("transitionrun", startTrack, { passive: true });
-      header.addEventListener("transitionend", stopTrack, { passive: true });
-      header.addEventListener("transitioncancel", stopTrack, { passive: true });
-      header.addEventListener("animationstart", startTrack, { passive: true });
-      header.addEventListener("animationend", stopTrack, { passive: true });
-    }
-
-    const handleResize = () => {
-      // resize é o único momento em que o "safe" pode recalcular para baixo
-      safeMax = 0;
-      setHeaderSafeMax(true);
-      scheduleSticky();
-    };
-    window.addEventListener("resize", handleResize, { passive: true });
-    const vv = window.visualViewport;
-    if (vv) vv.addEventListener("resize", handleResize, { passive: true });
-
-    return () => {
-      io.disconnect();
-      unbindScroll();
-      cancelAnimationFrame(rafCommitId);
-      cancelAnimationFrame(rafTrackId);
-      if (header) {
-        header.removeEventListener("transitionstart", startTrack);
-        header.removeEventListener("transitionrun", startTrack);
-        header.removeEventListener("transitionend", stopTrack);
-        header.removeEventListener("transitioncancel", stopTrack);
-        header.removeEventListener("animationstart", startTrack);
-        header.removeEventListener("animationend", stopTrack);
-      }
-      window.removeEventListener("resize", handleResize);
-      if (vv) vv.removeEventListener("resize", handleResize);
-    };
-  }, []);
   const [insurersData, setInsurers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState("");
@@ -207,6 +34,72 @@ export default function App() {
         setInsurers([]);
         setLoading(false);
       });
+  }, []);
+
+  // --- Sticky abaixo do header do site (WordPress / Sanida) ---
+  // Ajusta automaticamente o top do sticky para não sobrepor o header fixo/sticky do site.
+  useLayoutEffect(() => {
+    const root = document.getElementById("widget-root");
+    if (!root) return;
+
+    let lastOffset = -1; // Memória para evitar re-render desnecessário (o "pisca")
+    let raf = 0;
+    const updateStickyTop = () => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => {
+        const candidates = [];
+
+        // WP Admin Bar (quando logado)
+        const adminBar = document.getElementById("wpadminbar");
+        if (adminBar) candidates.push(adminBar);
+
+        // Headers do site (fora do widget)
+        const allHeaders = Array.from(document.querySelectorAll("header"));
+        for (const h of allHeaders) {
+          if (root.contains(h)) continue; // ignora o header do próprio widget
+          candidates.push(h);
+        }
+
+        // Calcula o "bottom" máximo dos elementos fixos/sticky que ocupam o topo.
+        let offset = 0;
+        for (const el of candidates) {
+          const cs = window.getComputedStyle(el);
+          if (cs.position !== "fixed" && cs.position !== "sticky") continue;
+          const r = el.getBoundingClientRect();
+          if (r.height < 10) continue; // Ignora elementos muito pequenos/invisíveis
+          if (r.bottom <= 0) continue;
+          
+          // Aumentamos a tolerância para 100px. 
+          // Se houver uma barra do WP ou Promo Bar antes do header, o header começa mais baixo.
+          if (r.top > 100) continue; 
+          
+          offset = Math.max(offset, r.bottom);
+        }
+      
+      const finalVal = Math.ceil(offset);
+      // Só aplica no DOM se o valor realmente mudou. Isso mata o "pisca".
+      if (finalVal !== lastOffset) {
+        lastOffset = finalVal;
+        root.style.setProperty("--sanida-sticky-top", `${finalVal}px`);
+      }
+      });
+    };
+
+    updateStickyTop();
+    window.addEventListener("resize", updateStickyTop, { passive: true });
+    window.addEventListener("scroll", updateStickyTop, { passive: true });
+
+    // Fallback: Verifica algumas vezes nos primeiros segundos para pegar carregamentos tardios
+    // sem usar MutationObserver no body (que causa o "pisca" no final da página).
+    const intervals = [500, 1500, 3000];
+    const timers = intervals.map(t => setTimeout(updateStickyTop, t));
+
+    return () => {
+      window.removeEventListener("resize", updateStickyTop);
+      window.removeEventListener("scroll", updateStickyTop);
+      cancelAnimationFrame(raf);
+      timers.forEach(clearTimeout);
+    };
   }, []);
 
   const insurers = insurersData;
@@ -277,9 +170,8 @@ export default function App() {
       className="min-h-screen bg-[#f4f5f5]"
       // CORREÇÃO: paddingTop garante que o título comece DEPOIS do header fixo do site.
       // Adicionamos +24px de respiro visual.
-      style={{ paddingTop: "calc(var(--sanida-header-safe, 0px) + 24px)" }}
+      style={{ paddingTop: "calc(var(--sanida-sticky-top, 0px) + 24px)" }}
     >
-      <div ref={topSentinelRef} aria-hidden="true" style={{ height: 1, pointerEvents: "none" }} />
       {/* HEADER DO WIDGET */}
       {/* Ajuste de padding-top (pt-6) e tamanho do H1 para não brigar com a logo */}
       <div className="max-w-6xl mx-auto px-4 pt-6 pb-6">
@@ -392,7 +284,6 @@ export default function App() {
           </>
         )}
       </main>
-      <div ref={bottomSentinelRef} aria-hidden="true" style={{ height: 1, pointerEvents: "none" }} />
 
       <InsurerScoreModal
         insurer={selectedInsurer}
@@ -402,3 +293,4 @@ export default function App() {
     </div>
   );
 }
+
