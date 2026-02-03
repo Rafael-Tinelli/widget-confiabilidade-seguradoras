@@ -75,8 +75,7 @@ export default function App() {
           
           offset = Math.max(offset, r.bottom);
         }
-
-+      
+      
       const finalVal = Math.ceil(offset);
       // Só aplica no DOM se o valor realmente mudou. Isso mata o "pisca".
       if (finalVal !== lastOffset) {
