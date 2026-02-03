@@ -47,6 +47,9 @@ export default function App() {
     const updateStickyTop = () => {
       cancelAnimationFrame(raf);
       raf = requestAnimationFrame(() => {
+        // Se o widget não está visível na tela, não gasta processamento (evita travamento no rodapé)
+        if (!isWidgetVisible) return;
+
         const candidates = [];
 
         // WP Admin Bar (quando logado)
@@ -80,12 +83,28 @@ export default function App() {
       // Só aplica no DOM se o valor realmente mudou. Isso mata o "pisca".
       if (finalVal !== lastOffset) {
         lastOffset = finalVal;
-        root.style.setProperty("--sanida-sticky-top", `${finalVal}px`);
-      }
+        const finalVal = Math.ceil(offset);
+        // Só aplica no DOM se o valor mudou (elimina o efeito "pisca/flicker")
+        if (finalVal !== lastOffset) {
+          lastOffset = finalVal;
+          root.style.setProperty("--sanida-sticky-top", `${finalVal}px`);
+        }
       });
     };
 
     updateStickyTop();
+
+    // Observer: Desliga o cálculo quando o usuário rola para longe do widget
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        isWidgetVisible = entry.isIntersecting;
+        // Se voltou a aparecer, força um update imediato
+        if (isWidgetVisible) updateStickyTop();
+      },
+      { rootMargin: "200px 0px" } // Margem de segurança: liga antes de entrar totalmente
+    );
+    observer.observe(root);
+
     window.addEventListener("resize", updateStickyTop, { passive: true });
     window.addEventListener("scroll", updateStickyTop, { passive: true });
 
@@ -95,6 +114,7 @@ export default function App() {
     const timers = intervals.map(t => setTimeout(updateStickyTop, t));
 
     return () => {
+      observer.disconnect();
       window.removeEventListener("resize", updateStickyTop);
       window.removeEventListener("scroll", updateStickyTop);
       cancelAnimationFrame(raf);
