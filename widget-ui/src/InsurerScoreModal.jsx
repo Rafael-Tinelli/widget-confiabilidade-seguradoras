@@ -22,39 +22,7 @@ function fmtNum(n) {
   if (x === null) return '—';
   return round2(x).toLocaleString('pt-BR');
 }
-function pick(obj, ...keys) {
-  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return null;
-  for (const k of keys) {
-    const v = obj[k];
-    if (v !== undefined && v !== null) return v;
-  }
-  return null;
-}
 
-function hasReputationData(rep) {
-  if (!rep || typeof rep !== 'object' || Array.isArray(rep)) return false;
-  const knownKeys = [
-    'complaintsCount',
-    'respondedCount',
-    'resolvedCount',
-    'finalizedCount',
-    'scoreSum',
-    'satisfactionCount',
-    'averageScore',
-    'total_claims',
-    'responded_claims',
-    'resolved_claims',
-    'finalized_claims',
-    'complaintsPerPremium',
-    'complaints_per_premium',
-    'satScore',
-    'resolutionRate',
-    'responseTimeDays',
-  ];
-  const hasKnownKey = knownKeys.some((k) => Object.prototype.hasOwnProperty.call(rep, k));
-  if (!hasKnownKey) return false;
-  return Object.values(rep).some((v) => v !== undefined && v !== null);
-}
 function pick(obj, ...keys) {
   if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return null;
   for (const k of keys) {
@@ -145,6 +113,7 @@ export default function InsurerScoreModal({ insurer, sources, onClose }) {
     const resolutionRate =
       pick(repRaw, 'resolutionRate', 'resolution_rate') ??
       (resolvedCount !== null && complaintsCount ? resolvedCount / complaintsCount : null);
+
     const responseTimeDays = pick(
       repRaw,
       'responseTimeDays',
@@ -182,7 +151,6 @@ export default function InsurerScoreModal({ insurer, sources, onClose }) {
     const score = safeNumber(d.score, computed) ?? computed;
 
     const solv = d.componentsDetail?.solvency || {};
-    const rep = repView || {};
     const rep = repView || {};
     const inn = d.componentsDetail?.innovation || {};
 
