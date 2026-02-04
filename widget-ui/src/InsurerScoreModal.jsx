@@ -57,6 +57,10 @@ function hasReputationData(rep) {
   return Object.values(rep).some((v) => v !== undefined && v !== null);
 }
 
+function isPlainObject(v) {
+  return v !== null && typeof v === 'object' && !Array.isArray(v);
+}
+
 export default function InsurerScoreModal({ insurer, sources, onClose }) {
   const isOpen = Boolean(insurer);
 
@@ -88,11 +92,27 @@ export default function InsurerScoreModal({ insurer, sources, onClose }) {
     const reputationScore = safeNumber(d.reputationScore ?? d.reputation_score, 0) || 0;
     const innovationScore = safeNumber(d.innovationScore, 0) || 0;
 
-    const repRaw =
-      d?.components?.reputation ??
-      insurer?.components?.reputation ??
-      d?.componentsDetail?.reputation ??
+    // Reputação:
+    // - `d.components.reputation` hoje é **numérico** (score) e NÃO contém as estatísticas do Consumidor.gov.
+    // - As estatísticas/índices vêm em `insurer.reputation.statistics` (ou `insurer.components.reputation.statistics`).
+    // - `d.componentsDetail.reputation` pode ter score/índices calculados pelo pipeline.
+    const repStats =
+      insurer?.reputation?.statistics ??
+      insurer?.components?.reputation?.statistics ??
       null;
+
+    const repIndexes =
+      insurer?.reputation?.indexes ??
+      insurer?.components?.reputation?.indexes ??
+      null;
+
+    const repDetail = d?.componentsDetail?.reputation ?? null;
+
+    const repRaw = {
+      ...(isPlainObject(repStats) ? repStats : {}),
+      ...(isPlainObject(repIndexes) ? repIndexes : {}),
+      ...(isPlainObject(repDetail) ? repDetail : {}),
+    };
 
     const hasReputation = hasReputationData(repRaw);
 
@@ -124,16 +144,14 @@ export default function InsurerScoreModal({ insurer, sources, onClose }) {
     const repHasResponseTimeDays = responseTimeDays !== null;
 
     const repView = {
-      ...((repRaw && typeof repRaw === 'object' && !Array.isArray(repRaw)) ? repRaw : {}),
-      // Campos esperados pelo modal (snapshots antigos) com fallback para o schema atual.
+      ...(isPlainObject(repRaw) ? repRaw : {}),
       complaintsPerPremium: repHasComplaintsPerPremium ? complaintsPerPremium : complaintsCount,
-      satScore: pick(repRaw, 'satScore') ?? averageScore,
+      satScore: pick(repRaw, 'satScore', 'overallSatisfaction') ?? averageScore,
       resolutionRate,
       responseTimeDays: repHasResponseTimeDays ? responseTimeDays : respondedCount,
       reputationStatus: pick(repRaw, 'reputationStatus', 'reputation_status', 'status'),
       _hasComplaintsPerPremium: repHasComplaintsPerPremium,
       _hasResponseTimeDays: repHasResponseTimeDays,
-      // Expondo contagens básicas também (útil para debug/inspeção)
       complaintsCount,
       respondedCount,
       resolvedCount,
@@ -332,20 +350,22 @@ export default function InsurerScoreModal({ insurer, sources, onClose }) {
               <div className="mt-3 grid gap-3 sm:grid-cols-3">
                 <div className="rounded-xl bg-slate-50 p-3 ring-1 ring-slate-200">
                   <div className="text-xs text-slate-500">Prêmios (média 5 anos)</div>
-                  <div className="mt-1 text-sm font-semibold text-slate-900">{fmtNum(view?.solv?.avgPrem5y ?? view?.solv?.premiums ?? view?.raw?.components?.financials?.premiums)}</div>
+                  <div className="mt-1 text-sm font-semibold text-slate-900">
+                    {fmtNum(view?.solv?.avgPrem5y ?? view?.solv?.premiums ?? view?.raw?.components?.financials?.premiums)}
+                  </div>
                 </div>
                 <div className="rounded-xl bg-slate-50 p-3 ring-1 ring-slate-200">
                   <div className="text-xs text-slate-500">Sinistros (média 5 anos)</div>
-                  <div className="mt-1 text-sm font-semibold text-slate-900">{fmtNum(view?.solv?.avgClaims5y ?? view?.solv?.claims ?? view?.raw?.components?.financials?.claims)}</div>
+                  <div className="mt-1 text-sm font-semibold text-slate-900">
+                    {fmtNum(view?.solv?.avgClaims5y ?? view?.solv?.claims ?? view?.raw?.components?.financials?.claims)}
+                  </div>
                 </div>
                 <div className="rounded-xl bg-slate-50 p-3 ring-1 ring-slate-200">
                   <div className="text-xs text-slate-500">Loss ratio</div>
                   <div className="mt-1 text-sm font-semibold text-slate-900">
                     {view?.solv?.lossRatio === null || view?.solv?.lossRatio === undefined ? '—' : fmtPct(view?.solv?.lossRatio * 100)}
                   </div>
-                  <div className="mt-1 text-[11px] text-slate-500">
-                    Fórmula: sinistros ÷ prêmios (mesma janela)
-                  </div>
+                  <div className="mt-1 text-[11px] text-slate-500">Fórmula: sinistros ÷ prêmios (mesma janela)</div>
                 </div>
               </div>
 
@@ -355,17 +375,13 @@ export default function InsurerScoreModal({ insurer, sources, onClose }) {
                   <div className="mt-1 text-sm font-semibold text-slate-900">
                     {view?.solv?.netWorthRatio === null || view?.solv?.netWorthRatio === undefined ? '—' : fmtPct(view?.solv?.netWorthRatio * 100)}
                   </div>
-                  <div className="mt-1 text-[11px] text-slate-500">
-                    Indicador do pipeline (razão patrimonial).
-                  </div>
+                  <div className="mt-1 text-[11px] text-slate-500">Indicador do pipeline (razão patrimonial).</div>
                 </div>
 
                 <div className="rounded-xl bg-slate-50 p-3 ring-1 ring-slate-200">
                   <div className="text-xs text-slate-500">Status</div>
                   <div className="mt-1 text-sm font-semibold text-slate-900">{view?.solv?.lossRatioStatus || '—'}</div>
-                  <div className="mt-1 text-[11px] text-slate-500">
-                    Ajuda a entender quando há dados insuficientes/inválidos.
-                  </div>
+                  <div className="mt-1 text-[11px] text-slate-500">Ajuda a entender quando há dados insuficientes/inválidos.</div>
                 </div>
               </div>
             </section>
@@ -378,8 +394,7 @@ export default function InsurerScoreModal({ insurer, sources, onClose }) {
 
               {!view?.hasReputation ? (
                 <div className="mt-3 rounded-xl bg-amber-50 p-3 text-sm text-amber-900 ring-1 ring-amber-200">
-                  Sem dados associados a esta empresa no Consumidor.gov (matching por nome/CNPJ não encontrado).
-                  Por isso, a contribuição deste pilar na nota final é <strong>0</strong>.
+                  Sem dados associados a esta empresa no Consumidor.gov (matching por nome/CNPJ não encontrado). Por isso, a contribuição deste pilar na nota final é <strong>0</strong>.
                 </div>
               ) : (
                 <div className="mt-3 grid gap-3 sm:grid-cols-4">
@@ -440,9 +455,7 @@ export default function InsurerScoreModal({ insurer, sources, onClose }) {
 
             {/* Debug opcional */}
             <details className="rounded-2xl bg-white p-4 ring-1 ring-slate-200">
-              <summary className="cursor-pointer text-sm font-semibold text-slate-900">
-                Dados brutos (debug)
-              </summary>
+              <summary className="cursor-pointer text-sm font-semibold text-slate-900">Dados brutos (debug)</summary>
               <pre className="mt-3 max-h-72 overflow-auto rounded-xl bg-slate-50 p-3 text-xs text-slate-800 ring-1 ring-slate-200">
 {JSON.stringify(view?.raw, null, 2)}
               </pre>
