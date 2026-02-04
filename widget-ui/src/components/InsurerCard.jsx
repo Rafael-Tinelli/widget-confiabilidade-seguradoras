@@ -30,9 +30,41 @@ export default function InsurerCard({ insurer, onOpenScoreModal }) {
   const reputationScore = safeNumber(data.reputationScore ?? data.reputation_score, 0);
   const innovationScore = safeNumber(data.innovationScore, 0);
 
-  // Disponibilidade de reputação (sem match no Consumidor.gov => pilar não entra no cálculo final)
-  const repStatus = data.componentsDetail?.reputation?.reputationStatus;
-  const hasReputation = Boolean(repStatus);
+  // Disponibilidade de reputação (Consumidor.gov) — compatível com snapshots antigos e novos
+  const rep =
+    data?.components?.reputation ??
+    insurer?.components?.reputation ??
+    data?.componentsDetail?.reputation ??
+    null;
+
+  const hasReputation = (() => {
+    if (!rep || typeof rep !== 'object' || Array.isArray(rep)) return false;
+
+    const knownKeys = [
+      'complaintsCount',
+      'respondedCount',
+      'resolvedCount',
+      'finalizedCount',
+      'scoreSum',
+      'satisfactionCount',
+      'averageScore',
+      'total_claims',
+      'responded_claims',
+      'resolved_claims',
+      'finalized_claims',
+      'complaintsPerPremium',
+      'complaints_per_premium',
+      'satScore',
+      'resolutionRate',
+      'responseTimeDays',
+    ];
+
+    const hasKnownKey = knownKeys.some((k) => Object.prototype.hasOwnProperty.call(rep, k));
+    if (!hasKnownKey) return false;
+
+    const hasAnyValue = Object.values(rep).some((v) => v !== undefined && v !== null);
+    return hasAnyValue;
+  })();
 
   const openInsurance = Boolean(
     data.openInsuranceParticipant === true ||
