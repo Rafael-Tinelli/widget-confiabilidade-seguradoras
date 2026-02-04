@@ -32,14 +32,18 @@ export default function InsurerCard({ insurer, onOpenScoreModal }) {
 
   // Disponibilidade de reputação (Consumidor.gov) — compatível com snapshots antigos e novos
   const rep =
-    data?.components?.reputation ??
+    insurer?.reputation ??
     insurer?.components?.reputation ??
     data?.componentsDetail?.reputation ??
     null;
 
   const hasReputation = (() => {
     if (!rep || typeof rep !== 'object' || Array.isArray(rep)) return false;
-
+    
+    const repStats =
+      rep.statistics && typeof rep.statistics === 'object' ? rep.statistics : rep;
+    const repIdx =
+      rep.indexes && typeof rep.indexes === 'object' ? rep.indexes : rep;
     const knownKeys = [
       'complaintsCount',
       'respondedCount',
@@ -59,10 +63,17 @@ export default function InsurerCard({ insurer, onOpenScoreModal }) {
       'responseTimeDays',
     ];
 
-    const hasKnownKey = knownKeys.some((k) => Object.prototype.hasOwnProperty.call(rep, k));
+    const hasKnownKey = knownKeys.some(
+      (k) =>
+        Object.prototype.hasOwnProperty.call(rep, k) ||
+        Object.prototype.hasOwnProperty.call(repStats, k) ||
+        Object.prototype.hasOwnProperty.call(repIdx, k)
+    );
     if (!hasKnownKey) return false;
 
-    const hasAnyValue = Object.values(rep).some((v) => v !== undefined && v !== null);
+    const hasAnyValue =
+      Object.values(repStats).some((v) => v !== undefined && v !== null) ||
+      Object.values(repIdx).some((v) => v !== undefined && v !== null);
     return hasAnyValue;
   })();
 
