@@ -22,6 +22,39 @@ function fmtNum(n) {
   if (x === null) return '—';
   return round2(x).toLocaleString('pt-BR');
 }
+function pick(obj, ...keys) {
+  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return null;
+  for (const k of keys) {
+    const v = obj[k];
+    if (v !== undefined && v !== null) return v;
+  }
+  return null;
+}
+
+function hasReputationData(rep) {
+  if (!rep || typeof rep !== 'object' || Array.isArray(rep)) return false;
+  const knownKeys = [
+    'complaintsCount',
+    'respondedCount',
+    'resolvedCount',
+    'finalizedCount',
+    'scoreSum',
+    'satisfactionCount',
+    'averageScore',
+    'total_claims',
+    'responded_claims',
+    'resolved_claims',
+    'finalized_claims',
+    'complaintsPerPremium',
+    'complaints_per_premium',
+    'satScore',
+    'resolutionRate',
+    'responseTimeDays',
+  ];
+  const hasKnownKey = knownKeys.some((k) => Object.prototype.hasOwnProperty.call(rep, k));
+  if (!hasKnownKey) return false;
+  return Object.values(rep).some((v) => v !== undefined && v !== null);
+}
 
 export default function InsurerScoreModal({ insurer, sources, onClose }) {
   const isOpen = Boolean(insurer);
@@ -54,8 +87,58 @@ export default function InsurerScoreModal({ insurer, sources, onClose }) {
     const reputationScore = safeNumber(d.reputationScore ?? d.reputation_score, 0) || 0;
     const innovationScore = safeNumber(d.innovationScore, 0) || 0;
 
-    const repStatus = d.componentsDetail?.reputation?.reputationStatus;
-    const hasReputation = Boolean(repStatus);
+    const repRaw =
+      d?.components?.reputation ??
+      insurer?.components?.reputation ??
+      d?.componentsDetail?.reputation ??
+      null;
+
+    const hasReputation = hasReputationData(repRaw);
+
+    const complaintsCount = pick(repRaw, 'complaintsCount', 'total_claims', 'complaints_count');
+    const respondedCount = pick(repRaw, 'respondedCount', 'responded_claims', 'responded_count');
+    const resolvedCount = pick(repRaw, 'resolvedCount', 'resolved_claims', 'resolved_count');
+    const finalizedCount = pick(repRaw, 'finalizedCount', 'finalized_claims', 'finalized_count');
+
+    const scoreSum = pick(repRaw, 'scoreSum', 'score_sum');
+    const satisfactionCount = pick(repRaw, 'satisfactionCount', 'satisfaction_count');
+    const averageScore =
+      pick(repRaw, 'averageScore', 'avgScore', 'average_score') ??
+      (scoreSum !== null && satisfactionCount ? scoreSum / satisfactionCount : null);
+
+    const complaintsPerPremium = pick(repRaw, 'complaintsPerPremium', 'complaints_per_premium');
+    const repHasComplaintsPerPremium = complaintsPerPremium !== null;
+
+    const resolutionRate =
+      pick(repRaw, 'resolutionRate', 'resolution_rate') ??
+      (resolvedCount !== null && complaintsCount ? resolvedCount / complaintsCount : null);
+
+    const responseTimeDays = pick(
+      repRaw,
+      'responseTimeDays',
+      'response_time_days',
+      'avgResponseTimeDays',
+      'avg_response_time_days'
+    );
+    const repHasResponseTimeDays = responseTimeDays !== null;
+
+    const repView = {
+      ...((repRaw && typeof repRaw === 'object' && !Array.isArray(repRaw)) ? repRaw : {}),
+      // Campos esperados pelo modal (snapshots antigos) com fallback para o schema atual.
+      complaintsPerPremium: repHasComplaintsPerPremium ? complaintsPerPremium : complaintsCount,
+      satScore: pick(repRaw, 'satScore') ?? averageScore,
+      resolutionRate,
+      responseTimeDays: repHasResponseTimeDays ? responseTimeDays : respondedCount,
+      reputationStatus: pick(repRaw, 'reputationStatus', 'reputation_status', 'status'),
+      _hasComplaintsPerPremium: repHasComplaintsPerPremium,
+      _hasResponseTimeDays: repHasResponseTimeDays,
+      // Expondo contagens básicas também (útil para debug/inspeção)
+      complaintsCount,
+      respondedCount,
+      resolvedCount,
+      finalizedCount,
+      averageScore,
+    };
 
     // Nota final = soma ponderada.
     // Se não existe reputação (sem match no Consumidor.gov), a contribuição do pilar vira 0 (peso não é redistribuído).
@@ -67,7 +150,7 @@ export default function InsurerScoreModal({ insurer, sources, onClose }) {
     const score = safeNumber(d.score, computed) ?? computed;
 
     const solv = d.componentsDetail?.solvency || {};
-    const rep = d.componentsDetail?.reputation || {};
+    const rep = repView || {};
     const inn = d.componentsDetail?.innovation || {};
 
     const srcSes = sources?.ses || null;
@@ -300,9 +383,9 @@ export default function InsurerScoreModal({ insurer, sources, onClose }) {
               ) : (
                 <div className="mt-3 grid gap-3 sm:grid-cols-4">
                   <div className="rounded-xl bg-slate-50 p-3 ring-1 ring-slate-200">
-                    <div className="text-xs text-slate-500">Índice</div>
+                    <div className="text-xs text-slate-500">{view?.rep?._hasComplaintsPerPremium ? 'Índice' : 'Reclamações'}</div>
                     <div className="mt-1 text-sm font-semibold text-slate-900">{fmtNum(view?.rep?.complaintsPerPremium)}</div>
-                    <div className="mt-1 text-[11px] text-slate-500">Reclamações por prêmio</div>
+                    <div className="mt-1 text-[11px] text-slate-500">{view?.rep?._hasComplaintsPerPremium ? 'Reclamações por prêmio' : 'Reclamações (total)'}</div>
                   </div>
                   <div className="rounded-xl bg-slate-50 p-3 ring-1 ring-slate-200">
                     <div className="text-xs text-slate-500">Satisfação</div>
@@ -315,7 +398,7 @@ export default function InsurerScoreModal({ insurer, sources, onClose }) {
                     </div>
                   </div>
                   <div className="rounded-xl bg-slate-50 p-3 ring-1 ring-slate-200">
-                    <div className="text-xs text-slate-500">Tempo (dias)</div>
+                    <div className="text-xs text-slate-500">{view?.rep?._hasResponseTimeDays ? 'Tempo (dias)' : 'Respondidas'}</div>
                     <div className="mt-1 text-sm font-semibold text-slate-900">{fmtNum(view?.rep?.responseTimeDays)}</div>
                   </div>
                 </div>
