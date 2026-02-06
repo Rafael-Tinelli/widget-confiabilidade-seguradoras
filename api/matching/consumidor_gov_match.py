@@ -158,6 +158,7 @@ class NameMatcher:
             return None, MatchMeta("empty", 0.0, "")
 
         # 1. CNPJ (só aplica se a fonte declarar CNPJ confiável via meta.semantics.has_reliable_cnpj)
+        c = None
         if self.has_reliable_cnpj:
             c = normalize_cnpj(cnpj)
         if c and c in self.by_cnpj:
@@ -200,10 +201,37 @@ class NameMatcher:
     ) -> tuple[dict[str, Any] | None, MatchMeta]:
         q2 = self._apply_alias(query)
         q_tokens = set(get_name_tokens(q2))
+        
+        q_strong = normalize_strong(query)
+
+        def _semantic_mismatch(qs: str, ds: str) -> bool:
+            """Bloqueia saltos entre segmentos: ex. 'seguradora' casar em 'capitalização'."""
+            qs = qs or ""
+            ds = ds or ""
+            q_has_seg = ("seguradora" in qs) or ("seguros" in qs)
+            d_has_seg = ("seguradora" in ds) or ("seguros" in ds)
+            q_has_cap = "capitaliz" in qs
+            d_has_cap = "capitaliz" in ds
+            q_has_prev = "previd" in qs
+            d_has_prev = "previd" in ds
+
+            if q_has_seg and (d_has_cap or d_has_prev) and not (q_has_cap or q_has_prev):
+                return True
+            if (q_has_cap or q_has_prev) and d_has_seg and not (d_has_cap or d_has_prev):
+               return True
+            return False
 
         relevant = [t for t in q_tokens if t not in GENERIC_TERMS]
         if not relevant:
             return self._fallback(q2, seq_threshold)
+            
+        # Guard: 1 token relevante (ex.: "CAIXA") é altamente ambíguo.
+        # Só aceitamos via tokens quando o token é único na base; caso contrário, exigimos seq quase-exato.
+        if len(relevant) == 1:
+            t = relevant[0]
+            cand_list = self._token_index.get(t, [])
+            if len(set(cand_list)) > 1:
+                return self._fallback(q2, max(seq_threshold, 0.985))
 
         candidates = set()
         for t in relevant:
@@ -233,6 +261,11 @@ class NameMatcher:
 
             e = self.by_name[best_k]
             dn = str(e.get("display_name") or e.get("name") or "")
+
+            # Guard semântico: seguradora ≠ capitalização/previdência (a não ser que o query também tenha)
+            if _semantic_mismatch(q_strong, normalize_strong(dn)):
+                return None, MatchMeta("semantic_rejected", round(best_s, 4), query, dn)
+
             return e, MatchMeta("smart_dice", round(best_s, 4), query, dn)
 
         return self._fallback(q2, seq_threshold)
