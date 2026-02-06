@@ -62,20 +62,25 @@ def _extract_stats(reputation_data: Dict[str, Any]) -> Dict[str, Any]:
     responded = int(_pick("respondedCount", "responded_claims", "responded_count") or 0)
     finalized = int(_pick("finalizedCount", "finalized_claims", "finalized_count") or 0)
 
-    overall = _pick("overallSatisfaction", "overall_satisfaction")
+    sat_count = float(_pick("satisfactionCount", "satisfaction_count") or 0.0)
+    score_sum = float(_pick("scoreSum", "score_sum", "satisfactionSum", "satisfaction_sum") or 0.0)
 
+    overall = _pick("overallSatisfaction", "averageScore", "average_score", "overall_satisfaction")
     if overall is None:
-        score_sum = _pick("scoreSum", "score_sum", "satisfactionSum", "satisfaction_sum")
-        sat_count = _pick("satisfactionCount", "satisfaction_count")
-        overall = _safe_div(float(score_sum or 0.0), float(sat_count or 0.0))
-    else:
-        overall = float(overall or 0.0)
+        overall = _safe_div(score_sum, sat_count)
+    overall = float(overall or 0.0)
+
+    # Consumidor.gov costuma vir em 0..5 → normaliza para 0..10
+    if sat_count > 0 and 0.0 < overall <= 5.0:
+        overall *= 2.0
+    overall = _clamp(overall, 0.0, 10.0)
 
     return {
         "complaintsCount": complaints,
         "resolvedCount": resolved,
         "respondedCount": responded,
         "finalizedCount": finalized,
+        "satisfactionCount": int(sat_count),
         "overallSatisfaction": float(overall or 0.0),
     }
 
@@ -177,6 +182,12 @@ def calculate_solvency_score(data: Dict[str, Any]) -> Dict[str, Any]:
 
     solvency_score = _clamp(ratio_score * 0.7 + loss_score * 0.3, 0.0, 100.0)
 
+    # Anti-zebra por volume baixo: indicadores financeiros oscilam muito com prêmio pequeno.
+    # Encolhe levemente para um prior neutro (65) quando premiums é baixo.
+    if premiums > 0:
+        scale_conf = 1.0 - math.exp(-premiums / 200_000_000.0)
+        solvency_score = _clamp(65.0 * (1.0 - scale_conf) + solvency_score * scale_conf, 0.0, 100.0)
+ 
     return {
         "score": float(solvency_score),
         "lossRatio": (loss_ratio if loss_ratio is None else float(loss_ratio)),
@@ -243,9 +254,16 @@ def calculate_reputation_contextual(
         return None
 
     complaints = int(stats.get("complaintsCount") or 0)
+    resolved = int(stats.get("resolvedCount") or 0)
+    responded = int(stats.get("respondedCount") or 0)
     satisfaction = float(stats.get("overallSatisfaction") or 0.0)
+    sat_count = int(stats.get("satisfactionCount") or 0)
 
-    observed_rate, pressure_idx = calculate_complaint_pressure(complaints, premiums_brl, market_rate)
+    # 0 reclamações = sinal insuficiente (não “perfeito”)
+    if complaints <= 0:
+        observed_rate, pressure_idx = 0.0, 1.0
+    else:
+        observed_rate, pressure_idx = calculate_complaint_pressure(complaints, premiums_brl, market_rate)
 
     # Pressure -> score
     if pressure_idx <= 1.0:
@@ -258,9 +276,27 @@ def calculate_reputation_contextual(
     sat_norm = (sat - 5.0) / 5.0
     satisfaction_score = _clamp(70.0 + sat_norm * 30.0, 10.0, 100.0)
 
-    final_score = pressure_score
-    if sat > 0:
-        final_score = _clamp(pressure_score * 0.8 + satisfaction_score * 0.2, 0.0, 100.0)
+    if complaints > 0:
+        resolved_score = _clamp(_safe_div(resolved, complaints) * 100.0, 0.0, 100.0)
+        responded_score = _clamp(_safe_div(responded, complaints) * 100.0, 0.0, 100.0)
+    else:
+        resolved_score = 0.0
+        responded_score = 0.0
+
+    # Mix do pilar
+    final_score = _clamp(
+        pressure_score * 0.70 +
+        satisfaction_score * 0.15 +
+        resolved_score * 0.10 +
+        responded_score * 0.05,
+        0.0, 100.0
+    )
+
+    # Shrinkage por amostra: poucos casos → puxa para 80
+    conf_n = 1.0 - math.exp(-float(max(complaints, 0)) / 30.0)
+    conf_s = 1.0 - math.exp(-float(max(sat_count, 0)) / 25.0)
+    confidence = _clamp(max(conf_n, conf_s), 0.0, 1.0)
+    final_score = _clamp(80.0 * (1.0 - confidence) + final_score * confidence, 0.0, 100.0)
 
     return {
         "score": float(final_score),
@@ -282,12 +318,18 @@ def compute_market_benchmarks(insurers: List[Dict[str, Any]]) -> float:
 
     for ins in insurers:
         rep = _get_reputation_blob(ins)
-        if rep:
-            stats = _extract_stats(rep)
-            total_complaints += int(stats.get("complaintsCount") or 0)
-
+        if not rep:
+            continue
+        stats = _extract_stats(rep)
+        complaints = int(stats.get("complaintsCount") or 0)
+        if complaints <= 0:
+            continue
         data = ins.get("data") if isinstance(ins.get("data"), dict) else {}
-        total_premiums += float(data.get("premiums") or 0.0)
+        premiums = float(data.get("premiums") or 0.0)
+        if premiums <= 0:
+            continue
+        total_complaints += complaints
+        total_premiums += premiums
 
     if total_premiums <= 0:
         return 0.0
