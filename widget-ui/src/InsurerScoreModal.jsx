@@ -211,6 +211,53 @@ export default function InsurerScoreModal({ insurer, sources, onClose }) {
       raw: insurer,
     };
   }, [insurer, sources]);
+  
+  // Open Insurance (Pilar 3):
+  // O selo "Participante OPIN" pode vir de chaves diferentes (srcOi / inn / badges).
+  // Consolidamos aqui para manter o modal consistente com o card.
+  const oiParticipant =
+    Boolean(
+      pick(
+        view?.srcOi,
+        'participant',
+        'isParticipant',
+        'is_participant',
+        'opinParticipant',
+        'opin_participant',
+        'openInsurance',
+        'open_insurance'
+      ) ??
+        pick(
+          view?.inn,
+          'openInsurance',
+          'open_insurance',
+          'opinParticipant',
+          'opin_participant',
+          'participant',
+          'isParticipant',
+          'is_participant'
+        ) ??
+        pick(
+          view?.raw?.badges ?? view?.raw?.badge ?? view?.raw?.flags,
+          'opin',
+          'opinParticipant',
+          'opin_participant',
+          'openInsurance',
+          'open_insurance'
+        )
+    ) || safeNumber(view?.innovationScore, 0) > 0;
+
+  const oiStatus =
+    pick(
+      view?.srcOi,
+      'status',
+      'participantsStatus',
+      'participantStatus',
+      'participationStatus',
+      'participation_status'
+    ) ??
+    view?.inn?.participantsStatus ??
+    (oiParticipant ? 'Participante OPIN' : null);
 
   if (!isOpen) return null;
 
@@ -460,7 +507,7 @@ export default function InsurerScoreModal({ insurer, sources, onClose }) {
                 <div className="rounded-xl bg-slate-50 p-3 ring-1 ring-slate-200">
                   <div className="text-xs text-slate-500">Participação</div>
                   <div className="mt-1 text-sm font-semibold text-slate-900">
-                    {view?.inn?.openInsurance === true ? 'Participa' : 'Sem indicação'}
+                    {oiParticipant ? 'Participa' : 'Sem indicação'}
                   </div>
                 </div>
                 <div className="rounded-xl bg-slate-50 p-3 ring-1 ring-slate-200">
@@ -469,7 +516,7 @@ export default function InsurerScoreModal({ insurer, sources, onClose }) {
                 </div>
                 <div className="rounded-xl bg-slate-50 p-3 ring-1 ring-slate-200">
                   <div className="text-xs text-slate-500">Status</div>
-                  <div className="mt-1 text-sm font-semibold text-slate-900">{view?.inn?.participantsStatus || '—'}</div>
+                  <div className="mt-1 text-sm font-semibold text-slate-900">{oiStatus || '—'}</div>
                 </div>
               </div>
 
