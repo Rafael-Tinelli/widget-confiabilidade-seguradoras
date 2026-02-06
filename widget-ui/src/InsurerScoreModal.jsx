@@ -115,8 +115,17 @@ export default function InsurerScoreModal({ insurer, sources, onClose }) {
     };
 
     const hasReputation = hasReputationData(repRaw);
+    // Transparência: qual registro do Consumidor.gov foi associado.
+    const repEntityName =
+      insurer?.reputation?.display_name ??
+      insurer?.reputation?.name ??
+      insurer?.components?.reputation?.display_name ??
+      insurer?.components?.reputation?.name ??
+      null;
 
     const complaintsCount = pick(repRaw, 'complaintsCount', 'total_claims', 'complaints_count');
+    const complaintsCountNum = Number(complaintsCount || 0) || 0;
+    const isSmallSample = hasReputation && complaintsCountNum > 0 && complaintsCountNum < 15;
     const respondedCount = pick(repRaw, 'respondedCount', 'responded_claims', 'responded_count');
     const resolvedCount = pick(repRaw, 'resolvedCount', 'resolved_claims', 'resolved_count');
     const finalizedCount = pick(repRaw, 'finalizedCount', 'finalized_claims', 'finalized_count');
@@ -183,6 +192,9 @@ export default function InsurerScoreModal({ insurer, sources, onClose }) {
       score: round2(score),
       weights,
       hasReputation,
+      repEntityName,
+      isSmallSample,
+      complaintsCountNum,
       solvencyScore: round2(solvencyScore),
       reputationScore: round2(reputationScore),
       innovationScore: round2(innovationScore),
@@ -391,6 +403,19 @@ export default function InsurerScoreModal({ insurer, sources, onClose }) {
                 <Info className="h-4 w-4 text-slate-700" />
                 <h3 className="text-sm font-semibold text-slate-900">Pilar 2 — Reputação (Consumidor.gov)</h3>
               </div>
+              
+              {view?.repEntityName ? (
+                <div className="mt-1 text-xs text-slate-500">
+                  Match no Consumidor.gov:{' '}
+                  <span className="font-medium text-slate-700">{view.repEntityName}</span>
+                </div>
+              ) : null}
+
+              {view?.hasReputation && view?.isSmallSample ? (
+                <div className="mt-3 rounded-xl bg-amber-50 p-3 text-sm text-amber-900 ring-1 ring-amber-200">
+                  Amostra pequena ({view.complaintsCountNum} reclamações). O score deste pilar é suavizado para evitar distorções.
+                </div>
+              ) : null}
 
               {!view?.hasReputation ? (
                 <div className="mt-3 rounded-xl bg-amber-50 p-3 text-sm text-amber-900 ring-1 ring-amber-200">
