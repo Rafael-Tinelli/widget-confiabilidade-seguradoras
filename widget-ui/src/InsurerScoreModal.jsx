@@ -61,6 +61,17 @@ function isPlainObject(v) {
   return v !== null && typeof v === 'object' && !Array.isArray(v);
 }
 
+function flagTrue(v) {
+  if (v === true) return true;
+  if (v === false || v === null || v === undefined) return false;
+  if (typeof v === 'number') return v !== 0;
+  if (typeof v === 'string') {
+    const s = v.trim().toLowerCase();
+    return s === 'true' || s === '1' || s === 'yes' || s === 'sim' || s === 'opin' || s === 'participante' || s === 'participant';
+  }
+  return false;
+}
+
 export default function InsurerScoreModal({ insurer, sources, onClose }) {
   const isOpen = Boolean(insurer);
 
@@ -211,41 +222,48 @@ export default function InsurerScoreModal({ insurer, sources, onClose }) {
       raw: insurer,
     };
   }, [insurer, sources]);
-  
-  // Open Insurance (Pilar 3):
-  // O selo "Participante OPIN" pode vir de chaves diferentes (srcOi / inn / badges).
-  // Consolidamos aqui para manter o modal consistente com o card.
+
+  // Open Insurance (Pilar 3): uma única fonte de verdade (srcOi / inn / badges/flags).
+  const oiParticipantRaw =
+    pick(
+      view?.srcOi,
+      'participant',
+      'isParticipant',
+      'is_participant',
+      'opin',
+      'opinParticipant',
+      'opin_participant',
+      'participantOpin',
+      'participant_opin',
+      'openInsurance',
+      'open_insurance'
+    ) ??
+    pick(
+      view?.inn,
+      'participant',
+      'isParticipant',
+      'is_participant',
+      'opin',
+      'opinParticipant',
+      'opin_participant',
+      'participantOpin',
+      'participant_opin',
+      'openInsurance',
+      'open_insurance'
+    ) ??
+    pick(
+      view?.raw?.badges ?? view?.raw?.badge ?? view?.raw?.flags,
+      'opin',
+      'opinParticipant',
+      'opin_participant',
+      'participantOpin',
+      'participant_opin',
+      'openInsurance',
+      'open_insurance'
+    );
+
   const oiParticipant =
-    Boolean(
-      pick(
-        view?.srcOi,
-        'participant',
-        'isParticipant',
-        'is_participant',
-        'opinParticipant',
-        'opin_participant',
-        'openInsurance',
-        'open_insurance'
-      ) ??
-        pick(
-          view?.inn,
-          'openInsurance',
-          'open_insurance',
-          'opinParticipant',
-          'opin_participant',
-          'participant',
-          'isParticipant',
-          'is_participant'
-        ) ??
-        pick(
-          view?.raw?.badges ?? view?.raw?.badge ?? view?.raw?.flags,
-          'opin',
-          'opinParticipant',
-          'opin_participant',
-          'openInsurance',
-          'open_insurance'
-        )
-    ) || safeNumber(view?.innovationScore, 0) > 0;
+    flagTrue(oiParticipantRaw) || safeNumber(view?.innovationScore, 0) > 0;
 
   const oiStatus =
     pick(
@@ -507,7 +525,7 @@ export default function InsurerScoreModal({ insurer, sources, onClose }) {
                 <div className="rounded-xl bg-slate-50 p-3 ring-1 ring-slate-200">
                   <div className="text-xs text-slate-500">Participação</div>
                   <div className="mt-1 text-sm font-semibold text-slate-900">
-                    {oiParticipant ? 'Participa' : 'Sem indicação'}
+                    {oiParticipant ? 'Participante OPIN' : 'Sem indicação'}
                   </div>
                 </div>
                 <div className="rounded-xl bg-slate-50 p-3 ring-1 ring-slate-200">
