@@ -64,7 +64,8 @@ function isPlainObject(v) {
 function flagTrue(v) {
   if (v === true) return true;
   if (v === false || v === null || v === undefined) return false;
-  if (typeof v === 'number') return v !== 0;
+  // Para flags numéricas, só 1 é true (0 é false). Evita score 60/80 virar "true".
+  if (typeof v === 'number') return v === 1;
   if (typeof v === 'string') {
     const s = v.trim().toLowerCase();
     return s === 'true' || s === '1' || s === 'yes' || s === 'sim' || s === 'opin' || s === 'participante' || s === 'participant';
@@ -224,58 +225,43 @@ export default function InsurerScoreModal({ insurer, sources, onClose }) {
   }, [insurer, sources]);
 
   // Open Insurance (Pilar 3): uma única fonte de verdade (srcOi / inn / badges/flags).
-  const oiParticipantRaw =
-    pick(
-      view?.srcOi,
-      'participant',
-      'isParticipant',
-      'is_participant',
-      'opin',
-      'opinParticipant',
-      'opin_participant',
-      'participantOpin',
-      'participant_opin',
-      'openInsurance',
-      'open_insurance'
-    ) ??
-    pick(
-      view?.inn,
-      'participant',
-      'isParticipant',
-      'is_participant',
-      'opin',
-      'opinParticipant',
-      'opin_participant',
-      'participantOpin',
-      'participant_opin',
-      'openInsurance',
-      'open_insurance'
-    ) ??
-    pick(
-      view?.raw?.badges ?? view?.raw?.badge ?? view?.raw?.flags,
-      'opin',
-      'opinParticipant',
-      'opin_participant',
-      'participantOpin',
-      'participant_opin',
-      'openInsurance',
-      'open_insurance'
-    );
+ const oiParticipantRaw =
+   pick(
+     view?.inn,
+     'participant',
+     'isParticipant',
+     'is_participant',
+     'opin',
+     'opinParticipant',
+     'opin_participant',
+     'participantOpin',
+     'participant_opin'
+   ) ??
+   pick(
+     view?.raw?.badges ?? view?.raw?.badge ?? view?.raw?.flags,
+     'opin',
+     'opinParticipant',
+     'opin_participant',
+     'participantOpin',
+     'participant_opin'
+   );
 
-  const oiParticipant =
-    flagTrue(oiParticipantRaw) || safeNumber(view?.innovationScore, 0) > 0;
+ // Fallback por score só se você realmente quiser (e com limiar alto).
+ // Se seu padrão for: participante = 80, não-participante = 60, isso resolve.
+ const OI_PARTICIPANT_SCORE = 80;
+ const oiParticipant =
+   flagTrue(oiParticipantRaw) || safeNumber(view?.innovationScore, 0) >= OI_PARTICIPANT_SCORE;
 
-  const oiStatus =
-    pick(
-      view?.srcOi,
-      'status',
-      'participantsStatus',
-      'participantStatus',
-      'participationStatus',
-      'participation_status'
-    ) ??
-    view?.inn?.participantsStatus ??
-    (oiParticipant ? 'Participante OPIN' : null);
+ const oiStatusRaw =
+   pick(
+     view?.inn,
+     'status',
+     'participantsStatus',
+     'participantStatus',
+     'participationStatus',
+     'participation_status'
+   );
+ const oiStatus = oiParticipant ? (oiStatusRaw ?? null) : null;
 
   if (!isOpen) return null;
 
