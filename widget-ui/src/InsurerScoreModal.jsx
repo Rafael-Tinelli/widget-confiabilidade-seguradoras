@@ -1,6 +1,28 @@
 import { useEffect, useMemo } from 'react';
 import { X, Info, Calculator, Database, ShieldCheck } from 'lucide-react';
 
+function flagBinary(v) {
+  if (v === true) return true;
+  if (v === false) return false;
+  if (v === null || v === undefined) return null;
+
+  if (typeof v === 'number') {
+    if (v === 1) return true;
+    if (v === 0) return false;
+    return null; // 60/80/etc = não é flag
+  }
+
+  if (typeof v === 'string') {
+    const s = v.trim().toLowerCase();
+    if (['true', '1', 'yes', 'sim'].includes(s)) return true;
+    if (['false', '0', 'no', 'nao', 'não'].includes(s)) return false;
+    if (s === 'opin' || s === 'participante opin') return true;
+    return null; // "live", "participante", etc => trata como desconhecido
+  }
+
+  return null; // objetos/arrays => desconhecido
+}
+
 function safeNumber(value, fallback = null) {
   const n = Number(value);
   return Number.isFinite(n) ? n : fallback;
@@ -69,6 +91,23 @@ function flagTrue(v) {
   if (typeof v === 'string') {
     const s = v.trim().toLowerCase();
     return s === 'true' || s === '1' || s === 'yes' || s === 'sim' || s === 'opin' || s === 'participante' || s === 'participant';
+  }
+  return false;
+}
+
+// Flags BINÁRIOS (true/false, 0/1, strings equivalentes).
+// Evita falso positivo quando algum campo vem como score (ex.: 60) ou outro número.
+function flagBinaryTrue(v) {
+  if (v === true) return true;
+  if (v === false || v === null || v === undefined) return false;
+  if (typeof v === 'number') return v === 1;
+  if (typeof v === 'string') {
+    const s = v.trim().toLowerCase();
+    if (s === 'true' || s === '1' || s === 'yes' || s === 'sim') return true;
+    if (s === 'false' || s === '0' || s === 'no' || s === 'nao' || s === 'não') return false;
+    // alguns pipelines gravam o selo como texto
+    if (s === 'opin' || s === 'participante opin') return true;
+    return false;
   }
   return false;
 }
@@ -224,44 +263,60 @@ export default function InsurerScoreModal({ insurer, sources, onClose }) {
     };
   }, [insurer, sources]);
 
-  // Open Insurance (Pilar 3): uma única fonte de verdade (srcOi / inn / badges/flags).
- const oiParticipantRaw =
-   pick(
-     view?.inn,
-     'participant',
-     'isParticipant',
-     'is_participant',
-     'opin',
-     'opinParticipant',
-     'opin_participant',
-     'participantOpin',
-     'participant_opin'
-   ) ??
-   pick(
-     view?.raw?.badges ?? view?.raw?.badge ?? view?.raw?.flags,
-     'opin',
-     'opinParticipant',
-     'opin_participant',
-     'participantOpin',
-     'participant_opin'
-   );
 
- // Fallback por score só se você realmente quiser (e com limiar alto).
- // Se seu padrão for: participante = 80, não-participante = 60, isso resolve.
- const OI_PARTICIPANT_SCORE = 80;
- const oiParticipant =
-   flagTrue(oiParticipantRaw) || safeNumber(view?.innovationScore, 0) >= OI_PARTICIPANT_SCORE;
+// Pilar 3 — Open Insurance
+// Regra: primeiro procurar FLAG binária por seguradora.
+// Fallback: SOMENTE se não existir flag em lugar nenhum, usar score (>=80) como proxy.
 
- const oiStatusRaw =
-   pick(
-     view?.inn,
-     'status',
-     'participantsStatus',
-     'participantStatus',
-     'participationStatus',
-     'participation_status'
-   );
- const oiStatus = oiParticipant ? (oiStatusRaw ?? null) : null;
+const OPIN_SCORE_THRESHOLD = 80;
+
+const oiParticipantRaw =
+  // 1) flags (mais comum/estável)
+  pick(
+    view?.raw?.flags,
+    'opinParticipant', 'opin_participant',
+    'opin', 'openInsurance', 'open_insurance',
+    'participantOpin', 'participant_opin',
+    'isParticipant', 'is_participant'
+  ) ??
+  // 2) badges (alguns builds colocam aqui)
+  pick(
+    view?.raw?.badges ?? view?.raw?.badge,
+    'opinParticipant', 'opin_participant',
+    'opin', 'openInsurance', 'open_insurance',
+    'participantOpin', 'participant_opin',
+    'isParticipant', 'is_participant'
+  ) ??
+  // 3) componente estruturado
+  pick(
+    view?.raw?.components?.openInsurance ?? view?.raw?.components?.open_insurance,
+    'participant', 'isParticipant', 'is_participant',
+    'opinParticipant', 'opin_participant',
+    'opin'
+  ) ??
+  // 4) innovation detail (legado)
+  pick(
+    view?.inn,
+    'opinParticipant', 'opin_participant',
+    'openInsurance', 'open_insurance',
+    'participant', 'isParticipant', 'is_participant',
+    'opin'
+  );
+
+const oiFlag = flagBinary(oiParticipantRaw);
+
+const oiIsParticipant =
+  oiFlag === true ||
+  (oiFlag === null && safeNumber(view?.innovationScore, 0) >= OPIN_SCORE_THRESHOLD);
+
+const oiStatusRaw =
+  pick(view?.raw?.components?.openInsurance?.meta, 'status') ??
+  pick(view?.raw?.components?.openInsurance, 'status') ??
+  pick(view?.raw?.components?.open_insurance?.meta, 'status') ??
+  pick(view?.raw?.components?.open_insurance, 'status') ??
+  pick(view?.inn, 'status', 'participantsStatus', 'participantStatus', 'participationStatus', 'participation_status');
+
+const oiStatus = oiIsParticipant ? (oiStatusRaw || '—') : '—';
 
   if (!isOpen) return null;
 
@@ -511,7 +566,7 @@ export default function InsurerScoreModal({ insurer, sources, onClose }) {
                 <div className="rounded-xl bg-slate-50 p-3 ring-1 ring-slate-200">
                   <div className="text-xs text-slate-500">Participação</div>
                   <div className="mt-1 text-sm font-semibold text-slate-900">
-                    {oiParticipant ? 'Participante OPIN' : 'Sem indicação'}
+                    {oiIsParticipant ? 'Participante OPIN' : 'Sem indicação'}
                   </div>
                 </div>
                 <div className="rounded-xl bg-slate-50 p-3 ring-1 ring-slate-200">
