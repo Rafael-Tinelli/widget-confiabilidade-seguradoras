@@ -1,6 +1,6 @@
 {
   "source": "https://www.gov.br/susep/pt-br/assuntos/sandbox-regulatorio/copy_of_sociedades-seguradoras-participantes-do-sandbox",
-  "fetchedAt": "2026-02-23T20:34:14.885825+00:00",
+  "fetchedAt": "2026-02-23T23:41:32.922406+00:00",
   "items": [
     {
       "name": "88i Seguradora Digital S.A",
@@ -105,30 +105,6 @@
       "cnpj": "47.701.110/0001-44",
       "start": "17/08/2022",
       "end": "15/10/2025"
-    },
-    {
-      "name": "Seguros de Danos",
-      "edition": "1ª edição do Sandbox",
-      "status": "",
-      "cnpj": "",
-      "start": "",
-      "end": ""
-    },
-    {
-      "name": "Seguros de Danos e Pessoas",
-      "edition": "2ª edição do Sandbox",
-      "status": "",
-      "cnpj": "",
-      "start": "",
-      "end": ""
-    },
-    {
-      "name": "Seguros de Pessoas",
-      "edition": "1ª edição do Sandbox",
-      "status": "",
-      "cnpj": "",
-      "start": "",
-      "end": ""
     },
     {
       "name": "Split Risk Seguradora S.A.",
