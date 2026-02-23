@@ -1,0 +1,42 @@
+# .github/workflows/update-susep-sandbox.yml
+name: Update SUSEP Sandbox list
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "15 6 * * 1"  # segunda 06:15 UTC (descola do “topo da hora”)
+
+permissions:
+  contents: write
+
+concurrency:
+  group: update-json-main
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install deps
+        run: pip install requests
+
+      - name: Fetch & generate JSON
+        run: python tools/fetch_susep_sandbox.py
+
+      - name: Commit if changed
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+
+          git add public/api/v1/susep-sandbox-participants.json
+          git diff --cached --quiet || git commit -m "chore: update SUSEP sandbox participants"
+
+          # evita falha se não houve commit
+          git pull --rebase || true
+          git push || true
