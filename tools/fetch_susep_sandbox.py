@@ -12,6 +12,12 @@ OUT = Path("api/v1/susep-sandbox-participants.json")  # alinhado ao /api/v1/
 
 RE_EDICAO = re.compile(r"^\s*\d+ª\s+edi[cç][aã]o\s+do\s+Sandbox\s*$", re.I)
 
+SANDBOX_SECTION_TITLES = {
+    "seguros de danos",
+    "seguros de danos e pessoas",
+    "seguros de pessoas",
+}
+
 def extract_date(s: str) -> str:
     m = re.search(r"\b\d{2}/\d{2}/\d{4}\b", s or "")
     return m.group(0) if m else (s or "").strip()
@@ -37,6 +43,9 @@ def clean_lines(html: str) -> list[str]:
 
 def looks_like_company(line: str, lines: list[str], i: int) -> bool:
     if not line:
+        return False
+    low = line.strip().lower()
+    if low in SANDBOX_SECTION_TITLES:
         return False
     up = line.upper()
     # evita rótulos/headers
