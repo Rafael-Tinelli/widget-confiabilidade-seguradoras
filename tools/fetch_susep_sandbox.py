@@ -8,7 +8,7 @@ from html import unescape
 import requests
 
 URL = "https://www.gov.br/susep/pt-br/assuntos/sandbox-regulatorio/copy_of_sociedades-seguradoras-participantes-do-sandbox"
-OUT = Path("public/api/v1/susep-sandbox-participants.json")  # alinhado ao /api/v1/
+OUT = Path("api/v1/susep-sandbox-participants.json")  # alinhado ao /api/v1/
 
 RE_EDICAO = re.compile(r"^\s*\d+ª\s+edi[cç][aã]o\s+do\s+Sandbox\s*$", re.I)
 
