@@ -34,7 +34,7 @@ jobs:
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
 
-          git add public/api/v1/susep-sandbox-participants.json
+          git add api/v1/susep-sandbox-participants.json
           git diff --cached --quiet || git commit -m "chore: update SUSEP sandbox participants"
 
           # evita falha se não houve commit
