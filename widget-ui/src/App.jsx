@@ -263,7 +263,7 @@ export default function App() {
               Ranking de Seguradoras: Lista de Seguradoras SUSEP
             </h1>
             <p className="text-sm md:text-base text-gray-600 mt-2">
-              Score composto por Solvência (SES/SUSEP), Reputação (Consumidor.gov) e Open Insurance (OPIN).
+              Score composto por Solvência (Superintendência de Seguros Privados SUSEP), Reputação (Consumidor.gov) e Open Insurance (OPIN).
             </p>
           </div>
         </div>
