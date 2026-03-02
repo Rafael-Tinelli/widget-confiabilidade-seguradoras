@@ -1,6 +1,6 @@
 {
   "source": "https://www.gov.br/susep/pt-br/assuntos/sandbox-regulatorio/copy_of_sociedades-seguradoras-participantes-do-sandbox",
-  "fetchedAt": "2026-02-23T23:41:32.922406+00:00",
+  "fetchedAt": "2026-03-02T07:15:04.252620+00:00",
   "items": [
     {
       "name": "88i Seguradora Digital S.A",
@@ -13,7 +13,7 @@
     {
       "name": "Agrimutual Seguros S.A.",
       "edition": "2ª edição do Sandbox",
-      "status": "Autorizada",
+      "status": "Autorização cancelada",
       "cnpj": "47.125.399/0001-09",
       "start": "30/08/2022",
       "end": "28/10/2025"
