@@ -260,7 +260,7 @@ export default function App() {
           <ShieldCheck className="w-8 h-8 text-[#3498db] mt-1 shrink-0" />
           <div>
             <h1 className="text-xl md:text-2xl font-bold text-[#1f2937] leading-tight">
-              Ranking de Seguradoras: Lista de Seguradoras SUSEP
+              Ranking de Seguradoras: Lista de Seguradoras SUSEP - Qual a melhor seguradora e quais são confiáveis?
             </h1>
             <p className="text-sm md:text-base text-gray-600 mt-2">
               Score composto por Solvência (Superintendência de Seguros Privados SUSEP), Reputação (Consumidor.gov) e Open Insurance (OPIN).
