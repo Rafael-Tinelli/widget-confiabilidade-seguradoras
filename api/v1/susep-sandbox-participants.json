@@ -1,6 +1,6 @@
 {
   "source": "https://www.gov.br/susep/pt-br/assuntos/sandbox-regulatorio/copy_of_sociedades-seguradoras-participantes-do-sandbox",
-  "fetchedAt": "2026-03-23T07:38:26.523872+00:00",
+  "fetchedAt": "2026-03-30T07:59:12.053646+00:00",
   "items": [
     {
       "name": "Agrimutual Seguros S.A.",
@@ -73,14 +73,6 @@
       "cnpj": "50.182.327/0001-08",
       "start": "31/10/2023",
       "end": "30/10/2026"
-    },
-    {
-      "name": "Now Seguros S.A.(Finx)",
-      "edition": "2ª edição do Sandbox",
-      "status": "Autorizada",
-      "cnpj": "46.973.571/0001-03",
-      "start": "18/10/2022",
-      "end": "16/12/2025"
     },
     {
       "name": "Oon Seguradora S.A.",
