@@ -1,110 +1,166 @@
 {
-  "source": "https://www.gov.br/susep/pt-br/assuntos/sandbox-regulatorio/copy_of_sociedades-seguradoras-participantes-do-sandbox",
-  "fetchedAt": "2026-05-11T09:58:27.829012+00:00",
+  "source": "https://www.gov.br/susep/pt-br/assuntos/sandbox-regulatorio/sandbox-regulatorio-1a-edicao | https://www.gov.br/susep/pt-br/assuntos/sandbox-regulatorio/sandbox-regulatorio-2a-edicao | https://www.gov.br/susep/pt-br/assuntos/sandbox-regulatorio/sandbox-regulatorio-3a-edicao",
+  "fetchedAt": "2026-05-26T19:51:25.410984+00:00",
   "items": [
     {
-      "name": "Agrimutual Seguros S.A.",
-      "edition": "2ª edição do Sandbox",
-      "status": "Autorização cancelada",
-      "cnpj": "47.125.399/0001-09",
-      "start": "30/08/2022",
-      "end": "28/10/2025"
-    },
-    {
-      "name": "Clubfix Seguradora S.A.",
-      "edition": "2ª edição do Sandbox",
-      "status": "Autorizada",
-      "cnpj": "43.095.690/0001-12",
-      "start": "21/03/2023",
-      "end": "19/05/2026"
-    },
-    {
-      "name": "Coover Seguradora S.A.",
+      "name": "88i",
       "edition": "1ª edição do Sandbox",
-      "status": "Autorização cancelada",
-      "cnpj": "39.768.897/0001-33",
-      "start": "01/03/2021",
-      "end": "28/05/2024"
+      "status": "Projeto selecionado",
+      "cnpj": "",
+      "start": "",
+      "end": ""
     },
     {
-      "name": "Emotion Seguros S.A",
+      "name": "COOVER",
       "edition": "1ª edição do Sandbox",
-      "status": "Autorização cancelada",
-      "cnpj": "40.004.414/0001-03",
-      "start": "03/02/2021",
-      "end": "28/05/2024"
+      "status": "Projeto selecionado",
+      "cnpj": "",
+      "start": "",
+      "end": ""
     },
     {
-      "name": "FBXG Seguros S.A",
+      "name": "EMOTION",
       "edition": "1ª edição do Sandbox",
-      "status": "Autorização cancelada",
-      "cnpj": "39.828.180/0001-30",
-      "start": "03/02/2021",
-      "end": "09/05/2024"
+      "status": "Projeto selecionado",
+      "cnpj": "",
+      "start": "",
+      "end": ""
     },
     {
-      "name": "Kakau Seguradora S.A.",
-      "edition": "2ª edição do Sandbox",
-      "status": "Autorizada",
-      "cnpj": "43.409.064/0001-53",
-      "start": "18/10/2022",
-      "end": "16/12/2025"
-    },
-    {
-      "name": "LTI Seguros S.A.",
-      "edition": "2ª edição do Sandbox",
-      "status": "Autorizada",
-      "cnpj": "47.006.254/0001-80",
-      "start": "20/01/2023",
-      "end": "20/03/2026"
-    },
-    {
-      "name": "Neo Seguradora S.A",
-      "edition": "2ª edição do Sandbox",
-      "status": "Autorizada",
-      "cnpj": "43.368.571/0001-96",
-      "start": "30/08/2022",
-      "end": "28/10/2025"
-    },
-    {
-      "name": "Novo Seguros S.A.",
-      "edition": "2ª edição do Sandbox",
-      "status": "Autorizada",
-      "cnpj": "50.182.327/0001-08",
-      "start": "31/10/2023",
-      "end": "30/10/2026"
-    },
-    {
-      "name": "Oon Seguradora S.A.",
-      "edition": "2ª edição do Sandbox",
-      "status": "Autorizada",
-      "cnpj": "43.249.519/0001‐10",
-      "start": "23/11/2023",
-      "end": "22/11/2026"
-    },
-    {
-      "name": "Pin Seguradora S.A.",
-      "edition": "2ª edição do Sandbox",
-      "status": "Autorizada",
-      "cnpj": "47.701.110/0001-44",
-      "start": "17/08/2022",
-      "end": "15/10/2025"
-    },
-    {
-      "name": "Split Risk Seguradora S.A.",
+      "name": "FLIX",
       "edition": "1ª edição do Sandbox",
-      "status": "Autorizada",
-      "cnpj": "43.505.273/0001-09",
-      "start": "08/04/2021",
-      "end": "11/10/2024"
+      "status": "Projeto selecionado",
+      "cnpj": "",
+      "start": "",
+      "end": ""
     },
     {
-      "name": "Thinkseg Seguradora S.A.",
+      "name": "IZA",
       "edition": "1ª edição do Sandbox",
-      "status": "Autorização cancelada",
-      "cnpj": "30.525.981/0001-51",
-      "start": "03/02/2021",
-      "end": "03/04/2024"
+      "status": "Projeto selecionado",
+      "cnpj": "",
+      "start": "",
+      "end": ""
+    },
+    {
+      "name": "KOMUS",
+      "edition": "1ª edição do Sandbox",
+      "status": "Projeto selecionado",
+      "cnpj": "",
+      "start": "",
+      "end": ""
+    },
+    {
+      "name": "MAG",
+      "edition": "1ª edição do Sandbox",
+      "status": "Projeto selecionado",
+      "cnpj": "",
+      "start": "",
+      "end": ""
+    },
+    {
+      "name": "PIER",
+      "edition": "1ª edição do Sandbox",
+      "status": "Projeto selecionado",
+      "cnpj": "",
+      "start": "",
+      "end": ""
+    },
+    {
+      "name": "SPLIT RISK",
+      "edition": "1ª edição do Sandbox",
+      "status": "Projeto selecionado",
+      "cnpj": "",
+      "start": "",
+      "end": ""
+    },
+    {
+      "name": "STONE",
+      "edition": "1ª edição do Sandbox",
+      "status": "Projeto selecionado",
+      "cnpj": "",
+      "start": "",
+      "end": ""
+    },
+    {
+      "name": "THINKSEG",
+      "edition": "1ª edição do Sandbox",
+      "status": "Projeto selecionado",
+      "cnpj": "",
+      "start": "",
+      "end": ""
+    },
+    {
+      "name": "Bicicletas",
+      "edition": "2ª edição do Sandbox",
+      "status": "Projeto selecionado",
+      "cnpj": "",
+      "start": "",
+      "end": ""
+    },
+    {
+      "name": "Caminhões",
+      "edition": "2ª edição do Sandbox",
+      "status": "Projeto selecionado",
+      "cnpj": "",
+      "start": "",
+      "end": ""
+    },
+    {
+      "name": "Celular",
+      "edition": "2ª edição do Sandbox",
+      "status": "Projeto selecionado",
+      "cnpj": "",
+      "start": "",
+      "end": ""
+    },
+    {
+      "name": "Celular | Bicicletas",
+      "edition": "2ª edição do Sandbox",
+      "status": "Projeto selecionado",
+      "cnpj": "",
+      "start": "",
+      "end": ""
+    },
+    {
+      "name": "Esportes | Fiança locatícia | Residencial",
+      "edition": "2ª edição do Sandbox",
+      "status": "Projeto selecionado",
+      "cnpj": "",
+      "start": "",
+      "end": ""
+    },
+    {
+      "name": "Fiança locatícia",
+      "edition": "2ª edição do Sandbox",
+      "status": "Projeto selecionado",
+      "cnpj": "",
+      "start": "",
+      "end": ""
+    },
+    {
+      "name": "Microsseguros de danos para pequeno empreendedor",
+      "edition": "2ª edição do Sandbox",
+      "status": "Projeto selecionado",
+      "cnpj": "",
+      "start": "",
+      "end": ""
+    },
+    {
+      "name": "Passagens aéreas e hotéis",
+      "edition": "2ª edição do Sandbox",
+      "status": "Projeto selecionado",
+      "cnpj": "",
+      "start": "",
+      "end": ""
+    },
+    {
+      "name": "Pets",
+      "edition": "2ª edição do Sandbox",
+      "status": "Projeto selecionado",
+      "cnpj": "",
+      "start": "",
+      "end": ""
     }
   ]
 }
