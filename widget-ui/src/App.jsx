@@ -247,25 +247,27 @@ export default function App() {
   );
 
   return (
-    <div 
-      className="min-h-screen bg-[#f4f5f5]"
-      // CORREÇÃO: paddingTop garante que o título comece DEPOIS do header fixo do site.
-      // Adicionamos +24px de respiro visual.
-      style={{ paddingTop: "calc(var(--sanida-header-safe, var(--sanida-sticky-top, 0px)) + 24px)" }}
-    >
+      <div 
+        className="min-h-screen bg-white"
+        style={{ paddingTop: "calc(var(--sanida-header-safe, var(--sanida-sticky-top, 0px)) + 24px)" }}
+      >
       {/* HEADER DO WIDGET */}
-      {/* Ajuste de padding-top (pt-6) e tamanho do H1 para não brigar com a logo */}
       <div className="max-w-6xl mx-auto px-4 pt-6 pb-6">
-        <div className="flex items-start gap-2">
-          <ShieldCheck className="w-8 h-8 text-[#3498db] mt-1 shrink-0" />
-          <div>
-            <h1 className="text-xl md:text-2xl font-bold text-[#1f2937] leading-tight">
-              Ranking de Seguradoras: Lista de Seguradoras SUSEP - Qual a melhor seguradora e quais são confiáveis?
-            </h1>
-            <p className="text-sm md:text-base text-gray-600 mt-2">
-              Score composto por Solvência (Superintendência de Seguros Privados SUSEP), Reputação (Consumidor.gov) e Open Insurance (OPIN).
-            </p>
+        <div className="max-w-3xl">
+          <div className="flex items-center gap-2 mb-3">
+            <ShieldCheck className="w-5 h-5 text-[#3498db] shrink-0" />
+            <span className="text-sm font-semibold text-[#3498db]">
+              Consulta de seguradoras
+            </span>
           </div>
+      
+          <h1 className="text-xl md:text-2xl font-bold text-[#1f2937] leading-tight">
+            Ranking de Seguradoras SUSEP: consulte lista, CNPJ e critérios
+          </h1>
+      
+          <p className="text-sm md:text-base text-gray-600 mt-2">
+            Pesquise por nome, CNPJ ou código SUSEP e compare sinais públicos de solvência, reputação e Open Insurance. Use a nota como ponto de partida para analisar a seguradora e o produto contratado.
+          </p>
         </div>
       </div>
 
@@ -317,7 +319,8 @@ export default function App() {
         </div>
       </div>
 
-      <main className="max-w-6xl mx-auto px-4 py-8">
+      <main className="bg-[#f4f5f5]">
+        <div className="max-w-6xl mx-auto px-4 py-8">
         {/* Contagem removida daqui para evitar duplicidade. Só aparece na barra sticky (Desktop). */}
 
         {paginatedData.length === 0 ? (
@@ -364,6 +367,7 @@ export default function App() {
             )}
           </>
         )}
+        </div>
       </main>
 
       <InsurerScoreModal
