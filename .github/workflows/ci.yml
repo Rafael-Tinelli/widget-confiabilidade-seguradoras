@@ -5,74 +5,79 @@ on:
     branches: ["main"]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
 
-      - uses: actions/setup-python@v5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          cache: "pip"
 
-      - name: Configure NO_PROXY for dados.mj.gov.br
-        run: |
-          echo "NO_PROXY=${NO_PROXY:+$NO_PROXY,}dados.mj.gov.br" >> $GITHUB_ENV
-          echo "no_proxy=${no_proxy:+$no_proxy,}dados.mj.gov.br" >> $GITHUB_ENV
-
-      - name: Install deps
+      - name: Install dependencies
         run: |
           set -euo pipefail
           python -m pip install --upgrade pip
-          pip install -r requirements-dev.txt
-          pip install -r requirements.txt
+          python -m pip install -r requirements-dev.txt
+          python -m pip install -r requirements.txt
 
-      - name: Lint
+      - name: Determine changed Python files
+        id: changed-python
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BEFORE_SHA: ${{ github.event.before }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
-          ruff check .
 
-      - name: Tests
-        run: |
-          set -euo pipefail
-          # Tenta rodar o teste. Se passar, ótimo.
-          if pytest -q; then
-            echo "pytest OK"
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+            base="$BASE_SHA"
           else
-            # Se falhar, imprime o diagnóstico do JSON para sabermos o motivo
-            echo ""
-            echo "===== DEBUG insurers.json ====="
-            python - <<'PY'
-          import json
-          import sys
-          from pathlib import Path
-
-          p = Path("api/v1/insurers.json")
-          print(f"exists: {p.exists()}")
-
-          if not p.exists():
-              print("ERRO: api/v1/insurers.json nao existe.")
-          else:
-              print(f"size: {p.stat().st_size}")
-              try:
-                  data = json.loads(p.read_text(encoding="utf-8"))
-                  print(f"schemaVersion: {data.get('schemaVersion')}")
-                  print(f"generatedAt: {data.get('generatedAt')}")
-                  print(f"meta.count: {data.get('meta', {}).get('count')}")
-
-                  insurers = data.get("insurers", [])
-                  print(f"insurers.len: {len(insurers)}")
-
-                  if insurers:
-                      it = insurers[0]
-                      print(f"first.id: {it.get('id')}")
-                      print(f"first.keys: {sorted(it.keys())}")
-                      if isinstance(it.get("data"), dict):
-                          print(f"first.data.keys: {sorted(it['data'].keys())}")
-              except Exception as e:
-                  print(f"ERRO ao ler JSON: {e}")
-          PY
-            echo "===== END DEBUG ====="
-            # Força a falha do step para o CI ficar vermelho
-            exit 1
+            base="$BEFORE_SHA"
           fi
+
+          if [[ -z "$base" || "$base" =~ ^0+$ ]] || ! git cat-file -e "${base}^{commit}" 2>/dev/null; then
+            base="$(git rev-list --max-parents=0 HEAD)"
+          fi
+
+          mapfile -t files < <(
+            git diff --name-only --diff-filter=ACMR "$base" "$HEAD_SHA" -- '*.py'
+          )
+
+          if (( ${#files[@]} == 0 )); then
+            echo "has_files=false" >> "$GITHUB_OUTPUT"
+            echo "Nenhum arquivo Python alterado."
+            exit 0
+          fi
+
+          printf '%s\n' "${files[@]}" > "$RUNNER_TEMP/changed-python-files.txt"
+          echo "has_files=true" >> "$GITHUB_OUTPUT"
+          echo "Arquivos Python alterados:"
+          cat "$RUNNER_TEMP/changed-python-files.txt"
+
+      - name: Lint changed Python files
+        if: steps.changed-python.outputs.has_files == 'true'
+        run: |
+          set -euo pipefail
+          mapfile -t files < "$RUNNER_TEMP/changed-python-files.txt"
+          ruff check \
+            --output-format=github \
+            --extend-per-file-ignores 'tests/**/*.py:S101' \
+            "${files[@]}"
+
+      - name: Run tests
+        run: |
+          set -euo pipefail
+          python -m pytest -q

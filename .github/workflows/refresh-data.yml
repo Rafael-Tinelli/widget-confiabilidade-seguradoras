@@ -1,5 +1,4 @@
-# .github/workflows/refresh-data.yml
-name: refresh data
+name: Refresh data
 
 on:
   workflow_dispatch:
@@ -15,8 +14,8 @@ concurrency:
 
 jobs:
   refresh:
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
 
     steps:
       - name: Checkout
@@ -33,50 +32,23 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
 
-      - name: Install Python deps
+      - name: Install Python dependencies
         run: |
           set -euo pipefail
           python -m pip install --upgrade pip
-          pip install certifi
-          pip install -r requirements.txt
-          if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
+          python -m pip install -r requirements.txt
+          if [[ -f requirements-dev.txt ]]; then
+            python -m pip install -r requirements-dev.txt
+          fi
 
-      - name: Pin CA bundle for requests
-        run: |
-          set -euo pipefail
-          CA="$(python - <<'PY'
-          import certifi
-          print(certifi.where())
-          PY
-          )"
-          echo "REQUESTS_CA_BUNDLE=$CA" >> "$GITHUB_ENV"
-          echo "SSL_CERT_FILE=$CA" >> "$GITHUB_ENV"
-
-      - name: Build JSON (participants)
-        run: |
-          set -euo pipefail
-          python -m api.build_json
-        env:
-          OPIN_PARTICIPANTS_URL: "https://data.directory.opinbrasil.com.br/participants"
-
-      - name: Diagnose Consumidor.gov connectivity
+      - name: Diagnose external sources
         continue-on-error: true
         run: |
-          set +e
-          echo "--- Proxy environment ---"
-          env | grep -iE '^(http|https|no)_proxy=' || true
-          echo "--- DNS ---"
+          set -u
           getent ahosts dados.mj.gov.br || true
-          python - <<'PY'
-          import socket
-          try:
-              print(socket.getaddrinfo("dados.mj.gov.br", 443))
-          except Exception as exc:
-              print(f"DNS diagnostic failed: {exc}")
-          PY
-          echo "--- HTTPS ---"
+          getent ahosts data.directory.opinbrasil.com.br || true
           curl --head --silent --show-error \
             --connect-timeout 15 \
             --max-time 30 \
@@ -84,27 +56,27 @@ jobs:
             --retry-all-errors \
             https://dados.mj.gov.br/ || true
 
-      - name: Build Consumidor.gov Data
-        timeout-minutes: 30
+      - name: Build Open Insurance participants
+        env:
+          OPIN_PARTICIPANTS_URL: "https://data.directory.opinbrasil.com.br/participants"
         run: |
           set -euo pipefail
-          python -m api.build_consumidor_gov
+          python -m api.build_json
+
+      - name: Build Consumidor.gov aggregate
+        timeout-minutes: 30
         env:
-          CG_DATASET_ID: "reclamacoes-do-consumidor-gov-br"
-          CG_CKAN_API_BASE: "https://dados.mj.gov.br/api/3/action"
-          CG_MONTHS_BACK: "12"
-          CG_MIN_MONTH_BYTES: "20000000"
           CG_HTTP_RETRIES: "5"
           CG_HTTP_BACKOFF: "1.5"
           CG_CONNECT_TIMEOUT: "20"
           CG_READ_TIMEOUT: "120"
           CG_DOWNLOAD_READ_TIMEOUT: "300"
           CG_MAX_COMPANY_DROP_PCT: "0.25"
-
-      - name: Build JSON (insurers + intelligence)
         run: |
           set -euo pipefail
-          python -m api.build_insurers
+          python -m api.build_consumidor_gov
+
+      - name: Build insurers and intelligence
         env:
           SES_CACHE_DIR: "/tmp/ses"
           SES_LISTAEMPRESAS_URL: "https://www2.susep.gov.br/menuestatistica/ses/download/LISTAEMPRESAS.csv"
@@ -112,23 +84,31 @@ jobs:
           MIN_INSURERS_COUNT: "200"
           MAX_COUNT_DROP_PCT: "0.20"
           SES_ALLOW_INSECURE_SSL: "1"
+        run: |
+          set -euo pipefail
+          python -m api.build_insurers
 
-      - name: Build Frontend Widget
-        working-directory: ./widget-ui
+      - name: Install frontend dependencies
+        working-directory: widget-ui
         run: |
           set -euo pipefail
           npm install
+
+      - name: Build frontend widget
+        working-directory: widget-ui
+        run: |
+          set -euo pipefail
           npm run build
 
-      - name: Smoke-check (outputs + frontend)
+      - name: Smoke-check outputs
         run: |
           set -euo pipefail
           python - <<'PY'
           import json
           from pathlib import Path
 
-          def fail(msg: str) -> None:
-              raise SystemExit(f"SMOKE FAIL: {msg}")
+          def fail(message: str) -> None:
+              raise SystemExit(f"SMOKE FAIL: {message}")
 
           def load_json(path: Path) -> dict:
               if not path.exists():
@@ -137,41 +117,41 @@ jobs:
                   fail(f"arquivo muito pequeno: {path} ({path.stat().st_size} bytes)")
               try:
                   return json.loads(path.read_text(encoding="utf-8"))
-              except Exception as exc:
+              except (OSError, UnicodeError, ValueError) as exc:
                   fail(f"JSON inválido em {path}: {exc}")
 
           insurers_path = Path("api/v1/insurers.json")
           insurers = load_json(insurers_path)
           count = int(insurers.get("meta", {}).get("count", 0) or 0)
           if count < 200:
-              fail(f"Insurers count abaixo do mínimo: {count}")
-          print(f"SMOKE: Insurers count = {count}")
+              fail(f"quantidade de seguradoras abaixo do mínimo: {count}")
 
           widget_js = Path("widget-ui/dist/assets/widget.js")
           if not widget_js.exists():
-              fail(f"Frontend build falhou: {widget_js} não encontrado")
+              fail(f"frontend não gerado: {widget_js}")
 
-          print("SMOKE OK: dados e frontend gerados.")
+          print(f"SMOKE OK: insurers={count}; frontend={widget_js}")
           PY
 
       - name: Run tests
         run: |
           set -euo pipefail
-          pytest -q
+          python -m pytest -q
 
       - name: Prune old snapshots
         run: |
           set -euo pipefail
           find data/snapshots -maxdepth 1 -name '*.json.gz' -printf '%T@ %p\n' \
-            | sort -nr | awk 'NR>60 {print $2}' | xargs -r rm --
+            | sort -nr \
+            | awk 'NR > 60 {print $2}' \
+            | xargs -r rm --
 
-      - name: Commit changes
+      - name: Commit generated changes
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          # Adiciona somente saídas públicas e derivadas; nunca data/raw.
           git add api/v1 data/snapshots data/derived
           git add -f widget-ui/dist
 
@@ -180,5 +160,5 @@ jobs:
             exit 0
           fi
 
-          git commit -m "chore(data): refresh data + rebuild widget ui"
+          git commit -m "chore(data): refresh data and rebuild widget"
           git push
