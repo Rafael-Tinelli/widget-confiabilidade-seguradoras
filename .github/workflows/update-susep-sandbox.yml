@@ -1,42 +1,84 @@
-# .github/workflows/update-susep-sandbox.yml
 name: Update SUSEP Sandbox list
 
 on:
   workflow_dispatch:
   schedule:
-    - cron: "15 6 * * 1"  # segunda 06:15 UTC (descola do “topo da hora”)
+    - cron: "15 6 * * 1" # segunda-feira, 06:15 UTC
 
 permissions:
   contents: write
 
 concurrency:
-  group: update-json-main
+  group: update-susep-sandbox-main
   cancel-in-progress: false
 
 jobs:
   build:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
 
-      - uses: actions/setup-python@v5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          cache: pip
 
-      - name: Install deps
-        run: pip install requests
-
-      - name: Fetch & generate JSON
-        run: python tools/fetch_susep_sandbox.py
-
-      - name: Commit if changed
+      - name: Install dependencies
         run: |
-          git config user.name "github-actions"
-          git config user.email "github-actions@github.com"
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install requests
+
+      - name: Fetch and generate JSON
+        run: |
+          set -euo pipefail
+          python tools/fetch_susep_sandbox.py
+
+      - name: Validate generated JSON
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import runpy
+          from pathlib import Path
+
+          module = runpy.run_path("tools/fetch_susep_sandbox.py")
+          validate_items = module["validate_items"]
+
+          path = Path("api/v1/susep-sandbox-participants.json")
+          payload = json.loads(path.read_text(encoding="utf-8"))
+          items = payload.get("items")
+          if not isinstance(items, list):
+              raise SystemExit("items precisa ser uma lista")
+
+          errors = validate_items(items)
+          if errors:
+              raise SystemExit("JSON rejeitado: " + " | ".join(errors))
+
+          if not payload.get("source") or not payload.get("fetchedAt"):
+              raise SystemExit("source/fetchedAt ausentes")
+
+          print(f"JSON validado: {len(items)} item(ns)")
+          PY
+
+      - name: Commit and push if changed
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
           git add api/v1/susep-sandbox-participants.json
-          git diff --cached --quiet || git commit -m "chore: update SUSEP sandbox participants"
+          if git diff --cached --quiet; then
+            echo "Nenhuma alteração no JSON do Sandbox SUSEP."
+            exit 0
+          fi
 
-          # evita falha se não houve commit
-          git pull --rebase || true
-          git push || true
+          git commit -m "chore: update SUSEP sandbox participants"
+          git pull --rebase origin main
+          git push origin HEAD:main

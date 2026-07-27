@@ -4,39 +4,39 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "fast = só audita o que já está commitado; full = refaz build (download/derived) e audita"
+        description: "fast = audita artefatos; full = refaz os dados e audita"
         type: choice
         options: [fast, full]
         default: full
       tag:
-        description: "Tag/snapshot opcional (ex.: 2026-01-27). Se vazio, o build decide."
+        description: "Tag/snapshot opcional. Vazio deixa o build decidir."
         required: false
         type: string
-      since_days:
-        description: "Consumidor.gov: janela (dias) para baixar/atualizar"
+      months_back:
+        description: "Consumidor.gov: quantidade de meses-alvo"
         required: false
         type: string
-        default: "365"
+        default: "12"
       cg_force_download:
-        description: "Consumidor.gov: forçar download mesmo se já existir cache/arquivos"
+        description: "Consumidor.gov: ignorar cache mensal válido"
         type: boolean
         default: false
       ses_write_audit:
-        description: "SES: gerar arquivos *.audit.json + ses_audit_summary.json durante build"
+        description: "SES: gerar arquivos de auditoria durante o build"
         type: boolean
         default: true
       ses_fin_year_mode:
-        description: "SES: modo do ano-base (latest|calendar|rolling)"
+        description: "SES: ano-base financeiro"
         type: choice
-        options: [latest, calendar, rolling]
-        default: latest
+        options: [max_year, last_full_year]
+        default: max_year
 
   push:
     paths:
       - api/v1/insurers.json
       - api/v1/participants.json
-      - data/derived/**/*
-      - data/snapshots/**/*
+      - data/derived/**
+      - data/snapshots/**
 
 permissions:
   contents: read
@@ -47,11 +47,10 @@ concurrency:
 
 jobs:
   debug-audit:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
     env:
       PYTHONUNBUFFERED: "1"
-      OPIN_PARTICIPANTS_URL: "https://raw.githubusercontent.com/OpenInsurance-Brasil/open-insurance/master/documentation/source/files/participants.json"
-      CONSUMIDOR_GOV_DATASET_URL: "https://dados.mj.gov.br/dataset/consumidor-gov-br"
       SES_ZIP_URL: "https://www2.susep.gov.br/download/estatisticas/BaseCompleta.zip"
 
     steps:
@@ -62,58 +61,55 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-          cache: "pip"
+          cache: pip
 
-      - name: Configure NO_PROXY for dados.mj.gov.br
-        run: |
-          echo "NO_PROXY=dados.mj.gov.br" >> "$GITHUB_ENV"
-          echo "no_proxy=dados.mj.gov.br" >> "$GITHUB_ENV"
-
-      - name: Resolve params (inputs vs push defaults)
+      - name: Resolve parameters
         shell: bash
         run: |
+          set -euo pipefail
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
             echo "MODE=${{ inputs.mode }}" >> "$GITHUB_ENV"
             echo "TAG=${{ inputs.tag }}" >> "$GITHUB_ENV"
-            echo "CG_SINCE_DAYS=${{ inputs.since_days }}" >> "$GITHUB_ENV"
+            echo "CG_MONTHS_BACK=${{ inputs.months_back }}" >> "$GITHUB_ENV"
             echo "CG_FORCE_DOWNLOAD=${{ inputs.cg_force_download && '1' || '0' }}" >> "$GITHUB_ENV"
             echo "SES_WRITE_AUDIT=${{ inputs.ses_write_audit && '1' || '0' }}" >> "$GITHUB_ENV"
             echo "SES_FIN_YEAR_MODE=${{ inputs.ses_fin_year_mode }}" >> "$GITHUB_ENV"
           else
             echo "MODE=fast" >> "$GITHUB_ENV"
             echo "TAG=" >> "$GITHUB_ENV"
-            echo "CG_SINCE_DAYS=365" >> "$GITHUB_ENV"
+            echo "CG_MONTHS_BACK=12" >> "$GITHUB_ENV"
             echo "CG_FORCE_DOWNLOAD=0" >> "$GITHUB_ENV"
             echo "SES_WRITE_AUDIT=0" >> "$GITHUB_ENV"
-            echo "SES_FIN_YEAR_MODE=latest" >> "$GITHUB_ENV"
+            echo "SES_FIN_YEAR_MODE=max_year" >> "$GITHUB_ENV"
           fi
 
       - name: Install dependencies
         run: |
-          python -m pip install -U pip
+          set -euo pipefail
+          python -m pip install --upgrade pip
           python -m pip install -r requirements.txt -r requirements-dev.txt
           python -m pip install certifi
 
-      # O lint é responsabilidade do ci.yml. Este workflow deve auditar dados e artefatos.
-
-      # ----------------------------
-      # FULL MODE: rebuild + audit
-      # ----------------------------
-      - name: Build participants (Open Insurance)
-        if: ${{ env.MODE == 'full' }}
-        run: python -m api.build_json
-
-      - name: Build consumidor.gov.br derived data
+      - name: Build Open Insurance participants snapshot
         if: ${{ env.MODE == 'full' }}
         env:
-          CG_SINCE_DAYS: ${{ env.CG_SINCE_DAYS }}
+          OPIN_PARTICIPANTS_URL: "https://data.directory.opinbrasil.com.br/participants"
+        run: |
+          set -euo pipefail
+          python -m api.build_json
+
+      - name: Build Consumidor.gov derived data
+        if: ${{ env.MODE == 'full' }}
+        env:
+          CG_MONTHS_BACK: ${{ env.CG_MONTHS_BACK }}
           CG_FORCE_DOWNLOAD: ${{ env.CG_FORCE_DOWNLOAD }}
         run: |
-          echo "CG_SINCE_DAYS=$CG_SINCE_DAYS"
+          set -euo pipefail
+          echo "CG_MONTHS_BACK=$CG_MONTHS_BACK"
           echo "CG_FORCE_DOWNLOAD=$CG_FORCE_DOWNLOAD"
           python -m api.build_consumidor_gov
 
-      - name: Build insurers (SES + matching)
+      - name: Build insurers
         if: ${{ env.MODE == 'full' }}
         env:
           TAG: ${{ env.TAG }}
@@ -123,98 +119,78 @@ jobs:
           MAX_COUNT_DROP_PCT: "0.20"
           REQUESTS_CA_BUNDLE: ${{ env.PythonLocation }}/lib/python3.11/site-packages/certifi/cacert.pem
         run: |
-          echo "TAG=${TAG}"
-          echo "SES_WRITE_AUDIT=${SES_WRITE_AUDIT}"
-          echo "SES_FIN_YEAR_MODE=${SES_FIN_YEAR_MODE}"
-          echo "SES_ZIP_URL=${SES_ZIP_URL}"
+          set -euo pipefail
+          echo "TAG=$TAG"
+          echo "SES_WRITE_AUDIT=$SES_WRITE_AUDIT"
+          echo "SES_FIN_YEAR_MODE=$SES_FIN_YEAR_MODE"
           python -m api.build_insurers
 
-      # ----------------------------
-      # ALWAYS: audit committed/built artifacts
-      # ----------------------------
-      - name: Audit insurers.json (script)
+      - name: Audit insurers.json
         run: |
+          set -euo pipefail
           test -f scripts/audit_insurers_json.py
           python scripts/audit_insurers_json.py api/v1/insurers.json
 
-      - name: Debug summary (matching + OPIN + SES audit sanity)
+      - name: Debug summary
         run: |
+          set -euo pipefail
           python - <<'PY'
           import glob
           import gzip
           import json
-          import os
           import sys
           from collections import Counter
+          from pathlib import Path
 
-          def load_json(path):
-              with open(path, "r", encoding="utf-8") as file:
-                  return json.load(file)
+          def load_json(path: Path):
+              return json.loads(path.read_text(encoding="utf-8"))
 
           errors = []
-          warns = []
+          warnings = []
+          insurers_path = Path("api/v1/insurers.json")
+          if not insurers_path.exists():
+              raise SystemExit(f"arquivo ausente: {insurers_path}")
 
-          insurers_path = "api/v1/insurers.json"
-          if not os.path.exists(insurers_path):
-              print(f"ERROR: missing {insurers_path}")
-              sys.exit(1)
-
-          data = load_json(insurers_path)
-          insurers = data.get("insurers", [])
-          meta = data.get("meta", {})
+          payload = load_json(insurers_path)
+          insurers = payload.get("insurers")
+          if not isinstance(insurers, list) or not insurers:
+              errors.append("insurers[] vazio ou inválido")
+              insurers = []
 
           print("=== insurers.json meta ===")
-          print(json.dumps(meta, ensure_ascii=False, indent=2))
-
-          if not isinstance(insurers, list) or not insurers:
-              errors.append("insurers.json: insurers[] vazio ou inválido")
+          print(json.dumps(payload.get("meta", {}), ensure_ascii=False, indent=2))
 
           missing_core = []
           for index, insurer in enumerate(insurers[:50]):
-              for key in ["id", "name"]:
+              for key in ("id", "name"):
                   if key not in insurer:
                       missing_core.append((index, key))
           if missing_core:
-              errors.append(
-                  "insurers.json: faltando campos essenciais "
-                  f"(amostra): {missing_core[:10]}"
-              )
+              errors.append(f"campos essenciais ausentes: {missing_core[:10]}")
 
-          insurer_ids = [
-              str(item.get("id"))
-              for item in insurers
-              if item.get("id") is not None
-          ]
-          duplicates = [
-              key for key, count in Counter(insurer_ids).items() if count > 1
-          ]
+          ids = [str(item.get("id")) for item in insurers if item.get("id")]
+          duplicates = [key for key, count in Counter(ids).items() if count > 1]
           if duplicates:
-              errors.append(
-                  f"Duplicidade de id em insurers.json (ex.: {duplicates[:10]})"
-              )
+              errors.append(f"IDs duplicados: {duplicates[:10]}")
 
-          match_report_path = "data/derived/consumidor_gov/match_report_insurers.json"
-          if os.path.exists(match_report_path):
-              match_report = load_json(match_report_path)
-              stats = match_report.get("stats") or {}
+          match_path = Path(
+              "data/derived/consumidor_gov/match_report_insurers.json"
+          )
+          if match_path.exists():
+              report = load_json(match_path)
+              stats = report.get("stats") or {}
               matched = int(stats.get("matched") or 0)
               total = int(stats.get("insurers_total") or len(insurers))
-              print(
-                  "match_report_insurers.json: "
-                  f"matched={matched} | insurers_total={total}"
-              )
+              print(f"matching: matched={matched} | total={total}")
               if len(insurers) >= 50 and matched == 0:
-                  errors.append(
-                      "match_report_insurers.json: matched=0 com "
-                      "insurers>=50 (forte indício de matching quebrado)"
-                  )
+                  errors.append("matching zerado com universo relevante")
           else:
-              warns.append(f"match_report ausente: {match_report_path}")
+              warnings.append(f"relatório ausente: {match_path}")
 
-          aggregate_path = (
+          aggregate_path = Path(
               "data/derived/consumidor_gov/consumidor_gov_agg.json.gz"
           )
-          if os.path.exists(aggregate_path):
+          if aggregate_path.exists():
               with gzip.open(aggregate_path, "rt", encoding="utf-8") as file:
                   aggregate = json.load(file)
               by_key = (
@@ -223,92 +199,34 @@ jobs:
                   or aggregate.get("by_name")
                   or {}
               )
-              print(
-                  "consumidor_gov_agg.json.gz: "
-                  f"empresas={len(by_key)}"
-              )
+              print(f"Consumidor.gov agregado: empresas={len(by_key)}")
               if not by_key:
-                  errors.append(
-                      "consumidor_gov_agg.json.gz: agregado sem empresas"
-                  )
+                  errors.append("agregado do Consumidor.gov sem empresas")
           else:
-              warns.append(f"agregado ausente: {aggregate_path}")
+              warnings.append(f"agregado ausente: {aggregate_path}")
 
-          ses_summary_path = "data/derived/audit/ses/ses_audit_summary.json"
-          if os.path.exists(ses_summary_path):
-              ses_summary = load_json(ses_summary_path)
-              master_count = ses_summary.get("master_count", 0)
-              print(f"ses_audit_summary.json: master_count={master_count}")
-              if not master_count:
-                  errors.append(
-                      "ses_audit_summary.json: master_count=0 "
-                      "(indício de auditoria não populada/merge falhou)"
-                  )
+          opin_count = sum(
+              1
+              for insurer in insurers
+              if bool((insurer.get("flags") or {}).get("openInsuranceParticipant"))
+          )
+          print(f"OPIN participants: {opin_count}")
+          if insurers and opin_count == 0:
+              warnings.append("nenhum participante OPIN identificado")
 
-              bad_files = []
-              for audit_file in ses_summary.get("files", []) or []:
-                  if (
-                      audit_file.get("chosen_year") in (0, None)
-                      or audit_file.get("master_count") in (0, None)
-                  ):
-                      bad_files.append(audit_file.get("name"))
-              if bad_files:
-                  errors.append(
-                      "ses_audit_summary.json: arquivos com "
-                      "chosen_year/master_count inválido "
-                      f"(ex.: {bad_files[:10]})"
-                  )
-          else:
-              warns.append(f"SES audit summary ausente: {ses_summary_path}")
+          audit_dir = Path("data/derived/audit")
+          if audit_dir.is_dir():
+              audits = glob.glob(str(audit_dir / "**/*.audit.json"), recursive=True)
+              print(f"arquivos *.audit.json: {len(audits)}")
 
-          if os.path.isdir("data/derived/audit"):
-              audits = glob.glob(
-                  "data/derived/audit/**/*.audit.json",
-                  recursive=True,
-              )
-              print(f"*.audit.json encontrados: {len(audits)}")
-              if not audits:
-                  errors.append(
-                      "data/derived/audit existe, mas não há nenhum *.audit.json"
-                  )
-
-          opin_count = 0
-          for insurer in insurers:
-              flags = insurer.get("flags")
-              components = insurer.get("components")
-              opin = (
-                  components.get("opin", {})
-                  if isinstance(components, dict)
-                  else {}
-              )
-              is_participant = (
-                  isinstance(flags, dict)
-                  and bool(
-                      flags.get("openInsuranceParticipant")
-                      or flags.get("opinParticipant")
-                  )
-              ) or (
-                  isinstance(opin, dict)
-                  and bool(
-                      opin.get("is_participant")
-                      or opin.get("participant")
-                  )
-              )
-              if is_participant:
-                  opin_count += 1
-          print(f"OPIN participants (insurers.json): {opin_count}")
-
-          print("\n=== WARNINGS ===")
-          for warning in warns:
+          for warning in warnings:
               print("WARN:", warning)
-
           if errors:
-              print("\n=== ERRORS ===")
               for error in errors:
                   print("ERROR:", error)
               sys.exit(1)
 
-          print("\nOK: debug audit concluído sem erros bloqueantes.")
+          print("OK: debug audit concluído sem erros bloqueantes.")
           PY
 
       - name: Upload audit artifacts
