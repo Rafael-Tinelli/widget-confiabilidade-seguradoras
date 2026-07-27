@@ -70,26 +70,26 @@ jobs:
 
       - name: Configure NO_PROXY for dados.mj.gov.br
         run: |
-          echo "NO_PROXY=dados.mj.gov.br" >> $GITHUB_ENV
-          echo "no_proxy=dados.mj.gov.br" >> $GITHUB_ENV
+          echo "NO_PROXY=dados.mj.gov.br" >> "$GITHUB_ENV"
+          echo "no_proxy=dados.mj.gov.br" >> "$GITHUB_ENV"
 
       - name: Resolve params (inputs vs push defaults)
         shell: bash
         run: |
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            echo "MODE=${{ inputs.mode }}" >> $GITHUB_ENV
-            echo "TAG=${{ inputs.tag }}" >> $GITHUB_ENV
-            echo "CG_SINCE_DAYS=${{ inputs.since_days }}" >> $GITHUB_ENV
-            echo "CG_FORCE_DOWNLOAD=${{ inputs.cg_force_download && '1' || '0' }}" >> $GITHUB_ENV
-            echo "SES_WRITE_AUDIT=${{ inputs.ses_write_audit && '1' || '0' }}" >> $GITHUB_ENV
-            echo "SES_FIN_YEAR_MODE=${{ inputs.ses_fin_year_mode }}" >> $GITHUB_ENV
+            echo "MODE=${{ inputs.mode }}" >> "$GITHUB_ENV"
+            echo "TAG=${{ inputs.tag }}" >> "$GITHUB_ENV"
+            echo "CG_SINCE_DAYS=${{ inputs.since_days }}" >> "$GITHUB_ENV"
+            echo "CG_FORCE_DOWNLOAD=${{ inputs.cg_force_download && '1' || '0' }}" >> "$GITHUB_ENV"
+            echo "SES_WRITE_AUDIT=${{ inputs.ses_write_audit && '1' || '0' }}" >> "$GITHUB_ENV"
+            echo "SES_FIN_YEAR_MODE=${{ inputs.ses_fin_year_mode }}" >> "$GITHUB_ENV"
           else
-            echo "MODE=fast" >> $GITHUB_ENV
-            echo "TAG=" >> $GITHUB_ENV
-            echo "CG_SINCE_DAYS=365" >> $GITHUB_ENV
-            echo "CG_FORCE_DOWNLOAD=0" >> $GITHUB_ENV
-            echo "SES_WRITE_AUDIT=0" >> $GITHUB_ENV
-            echo "SES_FIN_YEAR_MODE=latest" >> $GITHUB_ENV
+            echo "MODE=fast" >> "$GITHUB_ENV"
+            echo "TAG=" >> "$GITHUB_ENV"
+            echo "CG_SINCE_DAYS=365" >> "$GITHUB_ENV"
+            echo "CG_FORCE_DOWNLOAD=0" >> "$GITHUB_ENV"
+            echo "SES_WRITE_AUDIT=0" >> "$GITHUB_ENV"
+            echo "SES_FIN_YEAR_MODE=latest" >> "$GITHUB_ENV"
           fi
 
       - name: Install dependencies
@@ -98,8 +98,7 @@ jobs:
           python -m pip install -r requirements.txt -r requirements-dev.txt
           python -m pip install certifi
 
-      - name: Lint (ruff)
-        run: ruff check .
+      # O lint é responsabilidade do ci.yml. Este workflow deve auditar dados e artefatos.
 
       # ----------------------------
       # FULL MODE: rebuild + audit
@@ -152,8 +151,8 @@ jobs:
           from collections import Counter
 
           def load_json(path):
-              with open(path, "r", encoding="utf-8") as f:
-                  return json.load(f)
+              with open(path, "r", encoding="utf-8") as file:
+                  return json.load(file)
 
           errors = []
           warns = []
@@ -173,83 +172,102 @@ jobs:
           if not isinstance(insurers, list) or not insurers:
               errors.append("insurers.json: insurers[] vazio ou inválido")
 
-          # Campos essenciais
           missing_core = []
-          for i, ins in enumerate(insurers[:50]):
-              for k in ["coenti", "name"]:
-                  if k not in ins:
-                      missing_core.append((i, k))
+          for index, insurer in enumerate(insurers[:50]):
+              for key in ["coenti", "name"]:
+                  if key not in insurer:
+                      missing_core.append((index, key))
           if missing_core:
-              errors.append(f"insurers.json: faltando campos essenciais (amostra): {missing_core[:10]}")
+              errors.append(
+                  "insurers.json: faltando campos essenciais "
+                  f"(amostra): {missing_core[:10]}"
+              )
 
-          # Duplicidade de coenti
-          coentis = [str(x.get("coenti")) for x in insurers if x.get("coenti") is not None]
-          dup = [k for k, v in Counter(coentis).items() if v > 1]
-          if dup:
-              errors.append(f"Duplicidade de coenti em insurers.json (ex.: {dup[:10]})")
+          coentis = [
+              str(item.get("coenti"))
+              for item in insurers
+              if item.get("coenti") is not None
+          ]
+          duplicates = [key for key, count in Counter(coentis).items() if count > 1]
+          if duplicates:
+              errors.append(
+                  f"Duplicidade de coenti em insurers.json (ex.: {duplicates[:10]})"
+              )
 
-          # Consumidor.gov match report (CNPJ keys)
-          mr_path = "data/derived/consumidor_gov/match_report_insurers.json"
-          if os.path.exists(mr_path):
-              mr = load_json(mr_path)
-              by_cnpj = mr.get("by_cnpj_key") or {}
+          match_report_path = "data/derived/consumidor_gov/match_report_insurers.json"
+          if os.path.exists(match_report_path):
+              match_report = load_json(match_report_path)
+              by_cnpj = match_report.get("by_cnpj_key") or {}
               print(f"match_report_insurers.json: by_cnpj_key={len(by_cnpj)}")
-              # Heurística: se temos muita seguradora e 0 chaves por CNPJ, isso quase sempre é bug de parsing/matching
               if len(insurers) >= 50 and len(by_cnpj) == 0:
-                  errors.append("match_report_insurers.json: by_cnpj_key=0 com insurers>=50 (forte indício de matching quebrado)")
+                  errors.append(
+                      "match_report_insurers.json: by_cnpj_key=0 com "
+                      "insurers>=50 (forte indício de matching quebrado)"
+                  )
           else:
-              warns.append(f"match_report ausente: {mr_path}")
+              warns.append(f"match_report ausente: {match_report_path}")
 
-          # Consumidor.gov agregado (sanity)
-          agg_path = "data/derived/consumidor_gov/agg_insurers.json"
-          if os.path.exists(agg_path):
-              agg = load_json(agg_path)
-              by_key = agg.get("by_cnpj_key") or {}
+          aggregate_path = "data/derived/consumidor_gov/agg_insurers.json"
+          if os.path.exists(aggregate_path):
+              aggregate = load_json(aggregate_path)
+              by_key = aggregate.get("by_cnpj_key") or {}
               print(f"agg_insurers.json: by_cnpj_key={len(by_key)}")
           else:
-              warns.append(f"agregado ausente: {agg_path}")
+              warns.append(f"agregado ausente: {aggregate_path}")
 
-          # SES audit summary sanity
-          ses_sum = "data/derived/audit/ses/ses_audit_summary.json"
-          if os.path.exists(ses_sum):
-              ss = load_json(ses_sum)
-              master_count = ss.get("master_count", 0)
+          ses_summary_path = "data/derived/audit/ses/ses_audit_summary.json"
+          if os.path.exists(ses_summary_path):
+              ses_summary = load_json(ses_summary_path)
+              master_count = ses_summary.get("master_count", 0)
               print(f"ses_audit_summary.json: master_count={master_count}")
               if not master_count:
-                  errors.append("ses_audit_summary.json: master_count=0 (indício de auditoria não populada/merge falhou)")
+                  errors.append(
+                      "ses_audit_summary.json: master_count=0 "
+                      "(indício de auditoria não populada/merge falhou)"
+                  )
 
-              bad = []
-              for f in ss.get("files", []) or []:
-                  if (f.get("chosen_year") in (0, None)) or (f.get("master_count") in (0, None)):
-                      bad.append(f.get("name"))
-              if bad:
-                  errors.append(f"ses_audit_summary.json: arquivos com chosen_year/master_count inválido (ex.: {bad[:10]})")
+              bad_files = []
+              for audit_file in ses_summary.get("files", []) or []:
+                  if (
+                      audit_file.get("chosen_year") in (0, None)
+                      or audit_file.get("master_count") in (0, None)
+                  ):
+                      bad_files.append(audit_file.get("name"))
+              if bad_files:
+                  errors.append(
+                      "ses_audit_summary.json: arquivos com "
+                      "chosen_year/master_count inválido "
+                      f"(ex.: {bad_files[:10]})"
+                  )
           else:
-              warns.append(f"SES audit summary ausente: {ses_sum}")
+              warns.append(f"SES audit summary ausente: {ses_summary_path}")
 
-          # *.audit.json existence (quando pasta audit existe)
           if os.path.isdir("data/derived/audit"):
-              audits = glob.glob("data/derived/audit/**/*.audit.json", recursive=True)
+              audits = glob.glob(
+                  "data/derived/audit/**/*.audit.json",
+                  recursive=True,
+              )
               print(f"*.audit.json encontrados: {len(audits)}")
-              if len(audits) == 0:
-                  errors.append("data/derived/audit existe, mas não há nenhum *.audit.json")
+              if not audits:
+                  errors.append(
+                      "data/derived/audit existe, mas não há nenhum *.audit.json"
+                  )
 
-          # OPIN sanity
           opin_count = 0
-          for ins in insurers:
-              opin = ins.get("opin", {})
+          for insurer in insurers:
+              opin = insurer.get("opin", {})
               if isinstance(opin, dict) and opin.get("is_participant"):
                   opin_count += 1
           print(f"OPIN participants (insurers.json): {opin_count}")
 
           print("\n=== WARNINGS ===")
-          for w in warns:
-              print("WARN:", w)
+          for warning in warns:
+              print("WARN:", warning)
 
           if errors:
               print("\n=== ERRORS ===")
-              for e in errors:
-                  print("ERROR:", e)
+              for error in errors:
+                  print("ERROR:", error)
               sys.exit(1)
 
           print("\nOK: debug audit concluído sem erros bloqueantes.")
