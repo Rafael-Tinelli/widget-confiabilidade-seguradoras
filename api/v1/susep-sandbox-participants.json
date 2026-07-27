@@ -1,6 +1,6 @@
 {
   "source": "https://www.gov.br/susep/pt-br/assuntos/sandbox-regulatorio/sandbox-regulatorio-1a-edicao | https://www.gov.br/susep/pt-br/assuntos/sandbox-regulatorio/sandbox-regulatorio-2a-edicao | https://www.gov.br/susep/pt-br/assuntos/sandbox-regulatorio/sandbox-regulatorio-3a-edicao",
-  "fetchedAt": "2026-07-27T17:01:52.861864+00:00",
+  "fetchedAt": "2026-07-27T22:12:22.373313+00:00",
   "items": [
     {
       "name": "88i",
@@ -91,7 +91,7 @@
       "end": ""
     },
     {
-      "name": "Bicicletas",
+      "name": "Clubfix",
       "edition": "2ª edição do Sandbox",
       "status": "Projeto selecionado",
       "cnpj": "",
@@ -99,7 +99,7 @@
       "end": ""
     },
     {
-      "name": "Caminhões",
+      "name": "Darwin",
       "edition": "2ª edição do Sandbox",
       "status": "Projeto selecionado",
       "cnpj": "",
@@ -107,7 +107,7 @@
       "end": ""
     },
     {
-      "name": "Celular",
+      "name": "Finx",
       "edition": "2ª edição do Sandbox",
       "status": "Projeto selecionado",
       "cnpj": "",
@@ -115,7 +115,7 @@
       "end": ""
     },
     {
-      "name": "Celular | Bicicletas",
+      "name": "InnTech",
       "edition": "2ª edição do Sandbox",
       "status": "Projeto selecionado",
       "cnpj": "",
@@ -123,7 +123,7 @@
       "end": ""
     },
     {
-      "name": "Esportes | Fiança locatícia | Residencial",
+      "name": "Inteligente",
       "edition": "2ª edição do Sandbox",
       "status": "Projeto selecionado",
       "cnpj": "",
@@ -131,7 +131,7 @@
       "end": ""
     },
     {
-      "name": "Fiança locatícia",
+      "name": "Justos",
       "edition": "2ª edição do Sandbox",
       "status": "Projeto selecionado",
       "cnpj": "",
@@ -139,7 +139,7 @@
       "end": ""
     },
     {
-      "name": "Microsseguros de danos para pequeno empreendedor",
+      "name": "Kakau",
       "edition": "2ª edição do Sandbox",
       "status": "Projeto selecionado",
       "cnpj": "",
@@ -147,7 +147,7 @@
       "end": ""
     },
     {
-      "name": "Passagens aéreas e hotéis",
+      "name": "LTI",
       "edition": "2ª edição do Sandbox",
       "status": "Projeto selecionado",
       "cnpj": "",
@@ -155,7 +155,103 @@
       "end": ""
     },
     {
-      "name": "Pets",
+      "name": "Mee",
+      "edition": "2ª edição do Sandbox",
+      "status": "Projeto selecionado",
+      "cnpj": "",
+      "start": "",
+      "end": ""
+    },
+    {
+      "name": "Modelo",
+      "edition": "2ª edição do Sandbox",
+      "status": "Projeto selecionado",
+      "cnpj": "",
+      "start": "",
+      "end": ""
+    },
+    {
+      "name": "Neo",
+      "edition": "2ª edição do Sandbox",
+      "status": "Projeto selecionado",
+      "cnpj": "",
+      "start": "",
+      "end": ""
+    },
+    {
+      "name": "Novo",
+      "edition": "2ª edição do Sandbox",
+      "status": "Projeto selecionado",
+      "cnpj": "",
+      "start": "",
+      "end": ""
+    },
+    {
+      "name": "NW",
+      "edition": "2ª edição do Sandbox",
+      "status": "Projeto selecionado",
+      "cnpj": "",
+      "start": "",
+      "end": ""
+    },
+    {
+      "name": "Oon Digital",
+      "edition": "2ª edição do Sandbox",
+      "status": "Projeto selecionado",
+      "cnpj": "",
+      "start": "",
+      "end": ""
+    },
+    {
+      "name": "Pet Seguros",
+      "edition": "2ª edição do Sandbox",
+      "status": "Projeto selecionado",
+      "cnpj": "",
+      "start": "",
+      "end": ""
+    },
+    {
+      "name": "Picsel",
+      "edition": "2ª edição do Sandbox",
+      "status": "Projeto selecionado",
+      "cnpj": "",
+      "start": "",
+      "end": ""
+    },
+    {
+      "name": "Rede",
+      "edition": "2ª edição do Sandbox",
+      "status": "Projeto selecionado",
+      "cnpj": "",
+      "start": "",
+      "end": ""
+    },
+    {
+      "name": "Rodoseg",
+      "edition": "2ª edição do Sandbox",
+      "status": "Projeto selecionado",
+      "cnpj": "",
+      "start": "",
+      "end": ""
+    },
+    {
+      "name": "TITI",
+      "edition": "2ª edição do Sandbox",
+      "status": "Projeto selecionado",
+      "cnpj": "",
+      "start": "",
+      "end": ""
+    },
+    {
+      "name": "Trocafone",
+      "edition": "2ª edição do Sandbox",
+      "status": "Projeto selecionado",
+      "cnpj": "",
+      "start": "",
+      "end": ""
+    },
+    {
+      "name": "Urbantech",
       "edition": "2ª edição do Sandbox",
       "status": "Projeto selecionado",
       "cnpj": "",
