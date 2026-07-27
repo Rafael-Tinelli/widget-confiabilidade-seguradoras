@@ -6,22 +6,17 @@ import gzip
 import json
 import os
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
-try:
-    # Usa a normalização do projeto (preferível para consistência com o matcher)
-    from api.utils.name_cleaner import normalize_name_key
-except Exception:  # pragma: no cover
-    # Fallback simples para não quebrar o build caso o import falhe.
-    def normalize_name_key(s: str) -> str:
-        return re.sub(r"[^a-z0-9]+", " ", (s or "").lower()).strip()
+from api.utils.name_cleaner import normalize_name_key
 
 
 CG_DATASET_ID = os.getenv("CG_DATASET_ID", "reclamacoes-do-consumidor-gov-br")
@@ -120,7 +115,7 @@ def _safe_float(v: Any) -> float:
         if v in (None, "", "NA", "N/A", "-", "nan"):
             return 0.0
         return float(str(v).replace(",", "."))
-    except Exception:
+    except (TypeError, ValueError):
         return 0.0
 
 
@@ -178,7 +173,7 @@ def _load_valid_monthly(path: Path, expected_month: str) -> dict[str, Any] | Non
         return None
     try:
         root = _read_json_gz(path)
-    except Exception as exc:
+    except (OSError, UnicodeError, ValueError) as exc:
         print(f"CG WARN: cache mensal ilegível {path.name}: {exc}")
         return None
     if not _is_valid_monthly_root(root, expected_month):
@@ -192,7 +187,7 @@ def _load_valid_aggregate(path: Path) -> dict[str, Any] | None:
         return None
     try:
         root = _read_json_gz(path)
-    except Exception as exc:
+    except (OSError, UnicodeError, ValueError) as exc:
         print(f"CG WARN: agregado existente ilegível {path}: {exc}")
         return None
     if not _is_valid_aggregate_root(root):
@@ -209,11 +204,11 @@ def _atomic_write_json_gz(obj: dict[str, Any], out_path: Path) -> None:
         with gzip.open(tmp_path, "wb") as file:
             file.write(payload)
         tmp_path.replace(out_path)
-    except Exception:
+    except OSError:
         try:
             tmp_path.unlink(missing_ok=True)
-        except Exception:
-            pass
+        except OSError as cleanup_error:
+            print(f"CG WARN: falha ao remover temporário {tmp_path}: {cleanup_error}")
         raise
 
 
@@ -303,18 +298,18 @@ def _download(url: str, out_path: Path) -> None:
         if not tmp_path.exists() or tmp_path.stat().st_size == 0:
             raise RuntimeError(f"download vazio: {url}")
         tmp_path.replace(out_path)
-    except Exception:
+    except (OSError, RuntimeError, requests.RequestException):
         try:
             tmp_path.unlink(missing_ok=True)
-        except Exception:
-            pass
+        except OSError as cleanup_error:
+            print(f"CG WARN: falha ao remover temporário {tmp_path}: {cleanup_error}")
         raise
 
 
 def _iter_rows(csv_path: Path) -> Iterable[dict[str, str]]:
     """Itera o CSV com autodetecção simples de encoding e delimitador."""
     encodings = ["utf-8", "utf-8-sig", "latin1"]
-    last_error: Exception | None = None
+    last_error: UnicodeDecodeError | None = None
 
     for encoding in encodings:
         try:
@@ -560,7 +555,7 @@ def _preserve_existing_aggregate(
 def _remove_invalid_cache(path: Path) -> None:
     try:
         path.unlink(missing_ok=True)
-    except Exception as exc:
+    except OSError as exc:
         print(f"CG WARN: não consegui remover cache inválido {path}: {exc}")
 
 
@@ -575,8 +570,11 @@ def main() -> int:
 
     try:
         resources_by_month = _list_basecompleta_resources()
-    except Exception as exc:
-        preserved = _preserve_existing_aggregate(existing_aggregate, f"CKAN indisponível: {exc}")
+    except (requests.RequestException, RuntimeError, ValueError) as exc:
+        preserved = _preserve_existing_aggregate(
+            existing_aggregate,
+            f"CKAN indisponível: {exc}",
+        )
         if preserved is not None:
             return preserved
         print(f"CG FAIL: CKAN indisponível e nenhum agregado válido existe: {exc}")
@@ -653,7 +651,7 @@ def main() -> int:
             print(f"CG: baixando {month}: {resource.name}")
             try:
                 _download(resource.url, raw_csv)
-            except Exception as exc:
+            except (OSError, RuntimeError, requests.RequestException) as exc:
                 if cached_monthly is not None:
                     print(f"CG WARN: download falhou; usando cache mensal de {month}: {exc}")
                     monthly_roots.append(cached_monthly)
@@ -689,7 +687,7 @@ def main() -> int:
                 month=month,
                 resource_url=resource.url,
             )
-        except Exception as exc:
+        except (OSError, UnicodeError, ValueError, RuntimeError, csv.Error) as exc:
             if cached_monthly is not None:
                 print(f"CG WARN: agregação falhou; usando cache mensal de {month}: {exc}")
                 monthly_roots.append(cached_monthly)
