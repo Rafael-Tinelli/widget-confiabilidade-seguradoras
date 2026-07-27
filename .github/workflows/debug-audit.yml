@@ -90,6 +90,17 @@ jobs:
           python -m pip install -r requirements.txt -r requirements-dev.txt
           python -m pip install certifi
 
+      - name: Configure CA bundle
+        run: |
+          set -euo pipefail
+          python - <<'PY' >> "$GITHUB_ENV"
+          import certifi
+
+          ca_bundle = certifi.where()
+          print(f"REQUESTS_CA_BUNDLE={ca_bundle}")
+          print(f"SSL_CERT_FILE={ca_bundle}")
+          PY
+
       - name: Build Open Insurance participants snapshot
         if: ${{ env.MODE == 'full' }}
         env:
@@ -117,7 +128,6 @@ jobs:
           SES_FIN_YEAR_MODE: ${{ env.SES_FIN_YEAR_MODE }}
           MIN_INSURERS_COUNT: "200"
           MAX_COUNT_DROP_PCT: "0.20"
-          REQUESTS_CA_BUNDLE: ${{ env.PythonLocation }}/lib/python3.11/site-packages/certifi/cacert.pem
         run: |
           set -euo pipefail
           echo "TAG=$TAG"
