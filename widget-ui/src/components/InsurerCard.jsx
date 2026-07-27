@@ -11,6 +11,10 @@ function safeNumber(value, fallback = 0) {
   return Number.isFinite(n) ? n : fallback;
 }
 
+function firstBoolean(...values) {
+  return values.find((value) => typeof value === 'boolean') ?? null;
+}
+
 export default function InsurerCard({ insurer, onOpenScoreModal }) {
   const name = insurer?.name || '—';
   const id = insurer?.id || '';
@@ -77,15 +81,31 @@ export default function InsurerCard({ insurer, onOpenScoreModal }) {
     return hasAnyValue;
   })();
 
-  const openInsurance = Boolean(
-    data.openInsuranceParticipant === true ||
-      data.open_insurance === true ||
-      flags.openInsuranceParticipant === true ||
-      flags.open_insurance_participant === true ||
-      flags.opinParticipant === true ||
-      flags.opin === true ||
-      innovationScore >= 80
+  const availability = data.availability || {};
+  const reputationMatched =
+    typeof availability.reputationMatched === 'boolean'
+      ? availability.reputationMatched
+      : hasReputation;
+  const reputationApplied =
+    typeof availability.reputationApplied === 'boolean'
+      ? availability.reputationApplied
+      : reputationMatched;
+
+  const openInsuranceFlag = firstBoolean(
+    availability.openInsuranceParticipant,
+    flags.openInsuranceParticipant,
+    flags.open_insurance_participant,
+    flags.opinParticipant,
+    flags.opin_participant,
+    insurer?.components?.openInsurance?.participant,
+    insurer?.components?.openInsurance?.is_participant,
+    insurer?.components?.open_insurance?.participant,
+    insurer?.components?.open_insurance?.is_participant,
+    data.openInsuranceParticipant,
+    data.open_insurance
   );
+  const openInsurance =
+    openInsuranceFlag === null ? innovationScore >= 80 : openInsuranceFlag;
 
   const handleOpen = () => onOpenScoreModal?.(insurer);
   const handleKeyDown = (e) => {
@@ -151,17 +171,23 @@ export default function InsurerCard({ insurer, onOpenScoreModal }) {
           <div className="flex items-center justify-between text-xs text-slate-600">
             <span>Reputação</span>
             <span className="font-semibold text-slate-900">
-              {hasReputation ? reputationScore.toFixed(0) : '—'}
+              {reputationApplied ? reputationScore.toFixed(0) : '—'}
             </span>
           </div>
           <div className="mt-1 h-2 w-full rounded-full bg-slate-100">
             <div
               className="h-2 rounded-full bg-slate-900/50"
-              style={{ width: `${clampPct(hasReputation ? reputationScore : 0)}%` }}
+              style={{ width: `${clampPct(reputationApplied ? reputationScore : 0)}%` }}
             />
           </div>
-          {!hasReputation ? (
-            <div className="mt-1 text-[10px] text-slate-500">Sem dados do Consumidor.gov</div>
+          {!reputationMatched ? (
+            <div className="mt-1 text-[10px] text-slate-500">
+              Sem dados do Consumidor.gov
+            </div>
+          ) : !reputationApplied ? (
+            <div className="mt-1 text-[10px] text-amber-700">
+              Dados não aplicados à nota
+            </div>
           ) : null}
         </div>
 
