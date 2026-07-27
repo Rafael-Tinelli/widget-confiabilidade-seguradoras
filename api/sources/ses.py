@@ -378,7 +378,12 @@ def extract_ses_master_and_financials():
         print(f"SES CRITICAL: Falha ao baixar ZIP: {e}")
         if not companies:
             companies = fallback_companies
-        return SesMeta(master_source="LISTAEMPRESAS.csv (fallback)", master_count=len(companies)), companies, {}
+        fallback_meta = SesMeta(
+            zip_url=SES_ZIP_URL,
+            cias_file="LISTAEMPRESAS.csv",
+            seguros_file="BaseCompleta.zip",
+        )
+        return fallback_meta, companies, {}
 
     # --- 3) Processamento ZIP ---
     try:
