@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+import pytest
 import requests
 
 import api.build_consumidor_gov as build
@@ -219,12 +220,8 @@ def test_partial_download_never_replaces_existing_raw_cache(
 
     monkeypatch.setattr(build.HTTP, "get", lambda *args, **kwargs: BrokenResponse())
 
-    try:
+    with pytest.raises(requests.ConnectionError, match="connection interrupted"):
         build._download("https://example.test/base.csv", destination)
-    except requests.ConnectionError:
-        pass
-    else:
-        raise AssertionError("download interrompido deveria propagar a exceção")
 
     assert destination.read_bytes() == b"previous-valid-cache"
     assert not destination.with_suffix(destination.suffix + ".tmp").exists()
