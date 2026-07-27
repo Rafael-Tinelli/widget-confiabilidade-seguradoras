@@ -101,7 +101,7 @@ jobs:
       # ----------------------------
       - name: Build participants (Open Insurance)
         if: ${{ env.MODE == 'full' }}
-        run: python -m api.build_participants
+        run: python -m api.build_json
 
       - name: Build consumidor.gov.br derived data
         if: ${{ env.MODE == 'full' }}
