@@ -1,4 +1,3 @@
-# api/build_consumidor_gov.py
 from __future__ import annotations
 
 import csv
@@ -17,7 +16,6 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 from .utils.name_cleaner import normalize_name_key
-
 
 CG_DATASET_ID = os.getenv("CG_DATASET_ID", "reclamacoes-do-consumidor-gov-br")
 CG_API_BASE = os.getenv("CG_CKAN_API_BASE", "https://dados.mj.gov.br/api/3/action")
