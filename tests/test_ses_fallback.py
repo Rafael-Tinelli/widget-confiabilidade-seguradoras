@@ -15,19 +15,20 @@ def test_extract_ses_uses_listaempresas_when_zip_download_fails(
     ).encode("latin1")
 
     monkeypatch.setattr(ses, "CACHE_DIR", tmp_path)
-    monkeypatch.setattr(
-        ses,
-        "_download_bytes",
-        lambda _url, _timeout: listaempresas,
-    )
+
+    def fake_download_bytes(_url: str, timeout: int) -> bytes:
+        assert timeout == 120
+        return listaempresas
 
     def fail_zip_download(
         _urls: object,
         _destination: Path,
-        _timeout: int,
+        timeout: int,
     ) -> Path:
+        assert timeout == 600
         raise OSError("falha de rede simulada")
 
+    monkeypatch.setattr(ses, "_download_bytes", fake_download_bytes)
     monkeypatch.setattr(ses, "_download_to_file", fail_zip_download)
 
     meta, companies, financials = ses.extract_ses_master_and_financials()
@@ -38,6 +39,7 @@ def test_extract_ses_uses_listaempresas_when_zip_download_fails(
     assert meta.seguros_file == "BaseCompleta.zip"
 
     assert list(companies) == ["005177"]
+
     company = companies["005177"]
     assert company["name"] == "ALLIANZ SEGUROS S.A."
     assert company["cnpj"] == "61573796000166"
