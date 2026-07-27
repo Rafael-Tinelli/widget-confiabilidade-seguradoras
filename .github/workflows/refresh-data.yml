@@ -33,19 +33,13 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
-
-      - name: Configure Network Proxy Bypass
-        run: |
-          set -euo pipefail
-          echo "NO_PROXY=${NO_PROXY:+$NO_PROXY,}dados.mj.gov.br,data.directory.opinbrasil.com.br" >> "$GITHUB_ENV"
-          echo "no_proxy=${no_proxy:+$no_proxy,}dados.mj.gov.br,data.directory.opinbrasil.com.br" >> "$GITHUB_ENV"
+          node-version: "20"
 
       - name: Install Python deps
         run: |
           set -euo pipefail
           python -m pip install --upgrade pip
-          pip install certifi 
+          pip install certifi
           pip install -r requirements.txt
           if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
 
@@ -67,21 +61,51 @@ jobs:
         env:
           OPIN_PARTICIPANTS_URL: "https://data.directory.opinbrasil.com.br/participants"
 
+      - name: Diagnose Consumidor.gov connectivity
+        continue-on-error: true
+        run: |
+          set +e
+          echo "--- Proxy environment ---"
+          env | grep -iE '^(http|https|no)_proxy=' || true
+          echo "--- DNS ---"
+          getent ahosts dados.mj.gov.br || true
+          python - <<'PY'
+          import socket
+          try:
+              print(socket.getaddrinfo("dados.mj.gov.br", 443))
+          except Exception as exc:
+              print(f"DNS diagnostic failed: {exc}")
+          PY
+          echo "--- HTTPS ---"
+          curl --head --silent --show-error \
+            --connect-timeout 15 \
+            --max-time 30 \
+            --retry 2 \
+            --retry-all-errors \
+            https://dados.mj.gov.br/ || true
+
       - name: Build Consumidor.gov Data
         timeout-minutes: 30
         run: |
           set -euo pipefail
           python -m api.build_consumidor_gov
         env:
-          SES_LISTAEMPRESAS_URL: "https://www2.susep.gov.br/menuestatistica/ses/download/LISTAEMPRESAS.csv"
-          SES_CACHE_DIR: "data/raw/ses"
+          CG_DATASET_ID: "reclamacoes-do-consumidor-gov-br"
+          CG_CKAN_API_BASE: "https://dados.mj.gov.br/api/3/action"
+          CG_MONTHS_BACK: "12"
+          CG_MIN_MONTH_BYTES: "20000000"
+          CG_HTTP_RETRIES: "5"
+          CG_HTTP_BACKOFF: "1.5"
+          CG_CONNECT_TIMEOUT: "20"
+          CG_READ_TIMEOUT: "120"
+          CG_DOWNLOAD_READ_TIMEOUT: "300"
+          CG_MAX_COMPANY_DROP_PCT: "0.25"
 
       - name: Build JSON (insurers + intelligence)
         run: |
           set -euo pipefail
           python -m api.build_insurers
         env:
-          # [MODIFICADO] Aponta cache para /tmp para isolar o ZIP gigante
           SES_CACHE_DIR: "/tmp/ses"
           SES_LISTAEMPRESAS_URL: "https://www2.susep.gov.br/menuestatistica/ses/download/LISTAEMPRESAS.csv"
           SES_ZIP_URL: "https://www2.susep.gov.br/download/estatisticas/BaseCompleta.zip"
@@ -92,47 +116,43 @@ jobs:
       - name: Build Frontend Widget
         working-directory: ./widget-ui
         run: |
+          set -euo pipefail
           npm install
           npm run build
 
-      - name: Smoke-check (outputs + connectivity)
+      - name: Smoke-check (outputs + frontend)
         run: |
           set -euo pipefail
           python - <<'PY'
           import json
-          import os
           from pathlib import Path
-          
+
           def fail(msg: str) -> None:
               raise SystemExit(f"SMOKE FAIL: {msg}")
 
-          def load_json(p: Path) -> dict:
-              if not p.exists():
-                  fail(f"arquivo não existe: {p}")
-              if p.stat().st_size < 50:
-                  fail(f"arquivo muito pequeno: {p} ({p.stat().st_size} bytes)")
+          def load_json(path: Path) -> dict:
+              if not path.exists():
+                  fail(f"arquivo não existe: {path}")
+              if path.stat().st_size < 50:
+                  fail(f"arquivo muito pequeno: {path} ({path.stat().st_size} bytes)")
               try:
-                  return json.loads(p.read_text(encoding="utf-8"))
-              except Exception as e:
-                  fail(f"JSON inválido em {p}: {e}")
+                  return json.loads(path.read_text(encoding="utf-8"))
+              except Exception as exc:
+                  fail(f"JSON inválido em {path}: {exc}")
 
-          # 1) insurers.json
           insurers_path = Path("api/v1/insurers.json")
-          ins = load_json(insurers_path)
-          count = int(ins.get("meta", {}).get("count", 0) or 0)
+          insurers = load_json(insurers_path)
+          count = int(insurers.get("meta", {}).get("count", 0) or 0)
+          if count < 200:
+              fail(f"Insurers count abaixo do mínimo: {count}")
           print(f"SMOKE: Insurers count = {count}")
 
-          # 2) Frontend Assets
           widget_js = Path("widget-ui/dist/assets/widget.js")
-          
           if not widget_js.exists():
-             fail(f"Frontend Build falhou: {widget_js} não encontrado")
-          
-          print("SMOKE OK: Dados e Frontend gerados.")
+              fail(f"Frontend build falhou: {widget_js} não encontrado")
+
+          print("SMOKE OK: dados e frontend gerados.")
           PY
-        env:
-          MIN_INSURERS_COUNT: "200"
-          SES_ALLOW_INSECURE_SSL: "1"
 
       - name: Run tests
         run: |
@@ -150,16 +170,15 @@ jobs:
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          
-          # [MODIFICADO] Adiciona apenas derivados, nunca data/raw
+
+          # Adiciona somente saídas públicas e derivadas; nunca data/raw.
           git add api/v1 data/snapshots data/derived
-          
-          # Força apenas o frontend buildado
           git add -f widget-ui/dist
-          
+
           if git diff --cached --quiet; then
             echo "No changes to commit."
             exit 0
           fi
+
           git commit -m "chore(data): refresh data + rebuild widget ui"
           git push
