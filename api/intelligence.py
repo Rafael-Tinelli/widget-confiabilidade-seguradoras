@@ -1,155 +1,127 @@
-# api/intelligence.py
+"""Scoring and data-availability layer for the insurers ranking."""
+
 from __future__ import annotations
 
 import math
-from typing import Any, Dict, List
+from typing import Any
 
 
-# --------------------------------------------------------------------------------------
-# Intelligence layer for insurers.
-#
-# Goals:
-# - Resilient scoring (avoid the “everything stuck at 50” trap)
-# - Contextual reputation scoring using market benchmarks
-# - Batch-level dataset diagnostics (disable reputation if dataset is effectively empty)
-# --------------------------------------------------------------------------------------
+def _clamp(value: float, low: float = 0.0, high: float = 100.0) -> float:
+    return max(low, min(high, value))
 
 
-def _clamp(x: float, lo: float = 0.0, hi: float = 100.0) -> float:
-    return max(lo, min(hi, x))
-
-
-def _safe_div(a: float, b: float) -> float:
-    if not b:
+def _safe_div(numerator: float, denominator: float) -> float:
+    if not denominator:
         return 0.0
-    return a / b
+    return numerator / denominator
 
 
-def _extract_stats(reputation_data: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Robustly normalize reputation statistics.
-
-    Internal standard:
-      - complaintsCount
-      - resolvedCount
-      - respondedCount
-      - finalizedCount
-      - overallSatisfaction (0..10)
-
-    Supports both:
-      - nested `statistics` dict
-      - flat dict
-      - legacy keys (total_claims, resolved_claims, score_sum, satisfaction_count, etc.)
-    """
-    if not reputation_data or not isinstance(reputation_data, dict):
+def _extract_stats(reputation_data: dict[str, Any]) -> dict[str, Any]:
+    """Normalize current and legacy Consumidor.gov statistics."""
+    if not isinstance(reputation_data, dict) or not reputation_data:
         return {}
 
-    stats = reputation_data.get("statistics")
-    src_stats = stats if isinstance(stats, dict) else {}
-    src_root = reputation_data
+    nested = reputation_data.get("statistics")
+    source_stats = nested if isinstance(nested, dict) else {}
 
-    def _pick(*keys: str) -> Any:
-        for k in keys:
-            if k in src_stats and src_stats.get(k) is not None:
-                return src_stats.get(k)
-        for k in keys:
-            if k in src_root and src_root.get(k) is not None:
-                return src_root.get(k)
+    def pick(*keys: str) -> Any:
+        for key in keys:
+            if source_stats.get(key) is not None:
+                return source_stats[key]
+        for key in keys:
+            if reputation_data.get(key) is not None:
+                return reputation_data[key]
         return None
 
-    complaints = int(_pick("complaintsCount", "total_claims", "complaints_count") or 0)
-    resolved = int(_pick("resolvedCount", "resolved_claims", "resolved_count") or 0)
-    responded = int(_pick("respondedCount", "responded_claims", "responded_count") or 0)
-    finalized = int(_pick("finalizedCount", "finalized_claims", "finalized_count") or 0)
+    complaints = int(
+        pick("complaintsCount", "total_claims", "complaints_count") or 0
+    )
+    resolved = int(pick("resolvedCount", "resolved_claims", "resolved_count") or 0)
+    responded = int(
+        pick("respondedCount", "responded_claims", "responded_count") or 0
+    )
+    finalized = int(
+        pick("finalizedCount", "finalized_claims", "finalized_count") or 0
+    )
+    satisfaction_count = float(
+        pick("satisfactionCount", "satisfaction_count") or 0.0
+    )
+    score_sum = float(
+        pick("scoreSum", "score_sum", "satisfactionSum", "satisfaction_sum")
+        or 0.0
+    )
 
-    sat_count = float(_pick("satisfactionCount", "satisfaction_count") or 0.0)
-    score_sum = float(_pick("scoreSum", "score_sum", "satisfactionSum", "satisfaction_sum") or 0.0)
-
-    overall = _pick("overallSatisfaction", "averageScore", "average_score", "overall_satisfaction")
+    overall = pick(
+        "overallSatisfaction",
+        "averageScore",
+        "average_score",
+        "overall_satisfaction",
+    )
     if overall is None:
-        overall = _safe_div(score_sum, sat_count)
+        overall = _safe_div(score_sum, satisfaction_count)
     overall = float(overall or 0.0)
 
-    # Consumidor.gov costuma vir em 0..5 → normaliza para 0..10
-    if sat_count > 0 and 0.0 < overall <= 5.0:
+    # Consumidor.gov usually publishes satisfaction on a 0..5 scale.
+    if satisfaction_count > 0 and 0.0 < overall <= 5.0:
         overall *= 2.0
-    overall = _clamp(overall, 0.0, 10.0)
 
     return {
         "complaintsCount": complaints,
         "resolvedCount": resolved,
         "respondedCount": responded,
         "finalizedCount": finalized,
-        "satisfactionCount": int(sat_count),
-        "overallSatisfaction": float(overall or 0.0),
+        "satisfactionCount": int(satisfaction_count),
+        "overallSatisfaction": _clamp(overall, 0.0, 10.0),
     }
 
 
-def _get_reputation_blob(insurer_obj: Dict[str, Any]) -> Dict[str, Any]:
-    """Backward-compatible accessor for reputation payload."""
-    rep = insurer_obj.get("reputation")
-    if isinstance(rep, dict) and rep:
-        return rep
-    comp = insurer_obj.get("components")
-    if isinstance(comp, dict):
-        rep2 = comp.get("reputation")
-        if isinstance(rep2, dict) and rep2:
-            return rep2
+def _get_reputation_blob(insurer: dict[str, Any]) -> dict[str, Any]:
+    reputation = insurer.get("reputation")
+    if isinstance(reputation, dict) and reputation:
+        return reputation
+
+    components = insurer.get("components")
+    if isinstance(components, dict):
+        component_reputation = components.get("reputation")
+        if isinstance(component_reputation, dict) and component_reputation:
+            return component_reputation
     return {}
 
 
-def calculate_opin_score(stats: Dict[str, Any]) -> float:
-    """
-    Opinion score proxy derived from:
-      - satisfaction (0..10)
-      - resolution ratio (resolved/complaints)
-      - response ratio (responded/complaints)
-    """
+def calculate_opin_score(stats: dict[str, Any]) -> float:
+    """Legacy reputation blend retained for backward compatibility."""
     complaints = float(stats.get("complaintsCount") or 0.0)
     resolved = float(stats.get("resolvedCount") or 0.0)
     responded = float(stats.get("respondedCount") or 0.0)
     satisfaction = float(stats.get("overallSatisfaction") or 0.0)
 
     if complaints <= 0:
-        # Without complaint volume, satisfaction is the only meaningful signal.
-        return _clamp(50.0 + (satisfaction - 5.0) * 10.0, 0.0, 100.0)
+        return _clamp(50.0 + (satisfaction - 5.0) * 10.0)
 
-    resolved_ratio = _safe_div(resolved, complaints)
-    responded_ratio = _safe_div(responded, complaints)
-
-    sat_score = _clamp(50.0 + (satisfaction - 5.0) * 10.0, 0.0, 100.0)
-    res_score = _clamp(resolved_ratio * 100.0, 0.0, 100.0)
-    rsp_score = _clamp(responded_ratio * 100.0, 0.0, 100.0)
-
-    # Weighted blend
-    return _clamp(sat_score * 0.45 + res_score * 0.35 + rsp_score * 0.20, 0.0, 100.0)
+    satisfaction_score = _clamp(50.0 + (satisfaction - 5.0) * 10.0)
+    resolved_score = _clamp(_safe_div(resolved, complaints) * 100.0)
+    responded_score = _clamp(_safe_div(responded, complaints) * 100.0)
+    return _clamp(
+        satisfaction_score * 0.45
+        + resolved_score * 0.35
+        + responded_score * 0.20
+    )
 
 
-def calculate_reputation_score(reputation_data: Dict[str, Any]) -> float:
+def calculate_reputation_score(reputation_data: dict[str, Any]) -> float:
     stats = _extract_stats(reputation_data)
     if not stats:
         return 50.0
-
     return calculate_opin_score(stats)
 
 
-def calculate_solvency_score(data: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Solvency proxy based on:
-      - loss ratio (claims/premiums)
-      - net worth relative to scale (net_worth/max(premiums, claims))
-    """
+def calculate_solvency_score(data: dict[str, Any]) -> dict[str, Any]:
     premiums = float(data.get("premiums") or 0.0)
     claims = float(data.get("claims") or 0.0)
-    net_worth = float(
-        data.get("net_worth")
-        or data.get("netWorth")
-        or 0.0
-    )
+    net_worth = float(data.get("net_worth") or data.get("netWorth") or 0.0)
 
-    # Sanitization & Loss Ratio Logic
-    loss_ratio_raw = (claims / premiums) if premiums > 0 else None
-    loss_ratio = None
+    loss_ratio_raw = claims / premiums if premiums > 0 else None
+    loss_ratio: float | None = None
     loss_ratio_status = "ok"
 
     if premiums <= 0:
@@ -160,7 +132,6 @@ def calculate_solvency_score(data: Dict[str, Any]) -> Dict[str, Any]:
         loss_score = 50.0
     else:
         loss_ratio = claims / premiums
-        # Original scoring logic applied only to valid ratios
         if loss_ratio <= 0.6:
             loss_score = 90.0
         elif loss_ratio <= 1.0:
@@ -170,50 +141,50 @@ def calculate_solvency_score(data: Dict[str, Any]) -> Dict[str, Any]:
 
     scale = max(premiums, claims, 1.0)
     net_worth_ratio = _safe_div(net_worth, scale) if net_worth > 0 else 0.0
-
     loss_score = _clamp(loss_score, 5.0, 98.0)
 
-    # Net worth ratio score in log space.
     if net_worth_ratio <= 0:
         ratio_score = 50.0
     else:
         ratio_score = 50.0 + 20.0 * math.log10(max(net_worth_ratio, 1e-6))
-    ratio_score = _clamp(ratio_score, 0.0, 100.0)
+    ratio_score = _clamp(ratio_score)
 
-    solvency_score = _clamp(ratio_score * 0.7 + loss_score * 0.3, 0.0, 100.0)
-
-    # Anti-zebra por volume baixo: indicadores financeiros oscilam muito com prêmio pequeno.
-    # Encolhe levemente para um prior neutro (65) quando premiums é baixo.
+    solvency_score = _clamp(ratio_score * 0.7 + loss_score * 0.3)
     if premiums > 0:
-        scale_conf = 1.0 - math.exp(-premiums / 200_000_000.0)
-        solvency_score = _clamp(65.0 * (1.0 - scale_conf) + solvency_score * scale_conf, 0.0, 100.0)
- 
+        scale_confidence = 1.0 - math.exp(-premiums / 200_000_000.0)
+        solvency_score = _clamp(
+            65.0 * (1.0 - scale_confidence)
+            + solvency_score * scale_confidence
+        )
+
     return {
         "score": float(solvency_score),
-        "lossRatio": (loss_ratio if loss_ratio is None else float(loss_ratio)),
-        "lossRatioRaw": (loss_ratio_raw if loss_ratio_raw is None else float(loss_ratio_raw)),
+        "lossRatio": loss_ratio if loss_ratio is None else float(loss_ratio),
+        "lossRatioRaw": (
+            loss_ratio_raw if loss_ratio_raw is None else float(loss_ratio_raw)
+        ),
         "lossRatioStatus": loss_ratio_status,
         "netWorthRatio": float(net_worth_ratio),
     }
 
 
-def calculate_innovation_score(flags: Dict[str, Any], products: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """
-    Innovation proxy:
-      - Open Insurance participant => +20
-      - Product breadth => up to +20
-      - Base 60
-    """
-    open_ins = bool(flags.get("openInsuranceParticipant"))
-    products_count = len(products) if isinstance(products, list) else 0
+def calculate_innovation_score(
+    flags: dict[str, Any],
+    products: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Score the Open Insurance pillar from participation and product breadth."""
+    is_participant = bool(flags.get("openInsuranceParticipant"))
+    product_count = len(products) if isinstance(products, list) else 0
 
     score = 60.0
-    if open_ins:
+    if is_participant:
         score += 20.0
+    score += _clamp(product_count / 50.0, 0.0, 1.0) * 20.0
 
-    score += _clamp(products_count / 50.0, 0.0, 1.0) * 20.0
-
-    return {"score": float(_clamp(score, 0.0, 100.0)), "productsCount": int(products_count)}
+    return {
+        "score": float(_clamp(score)),
+        "productsCount": int(product_count),
+    }
 
 
 def calculate_complaint_pressure(
@@ -221,34 +192,24 @@ def calculate_complaint_pressure(
     premiums_brl: float,
     market_rate: float,
 ) -> tuple[float, float]:
-    """
-    Observed vs expected complaints (normalized by market average).
-
-    Returns:
-      observed_rate_per_brl, pressure_index
-    Where:
-      pressure_index ~= 1.0 means "market average",
-      >1 means "worse than market", <1 means "better than market".
-    """
     if premiums_brl <= 0:
         return 0.0, 1.0
 
-    observed_rate = _safe_div(float(complaints_count), float(max(premiums_brl, 1.0)))
-
-    market = max(float(market_rate or 0.0), 1e-12)
-
-    # Smoothing for tiny insurers: soften pressure.
+    observed_rate = _safe_div(
+        float(complaints_count),
+        float(max(premiums_brl, 1.0)),
+    )
+    safe_market_rate = max(float(market_rate or 0.0), 1e-12)
     scale = max(premiums_brl / 10_000_000.0, 0.2)
-    pressure = (observed_rate / market) ** (1.0 / scale)
-
+    pressure = (observed_rate / safe_market_rate) ** (1.0 / scale)
     return float(observed_rate), float(pressure)
 
 
 def calculate_reputation_contextual(
-    reputation_data: Dict[str, Any],
+    reputation_data: dict[str, Any],
     premiums_brl: float,
     market_rate: float,
-) -> Dict[str, Any] | None:
+) -> dict[str, Any] | None:
     stats = _extract_stats(reputation_data)
     if not stats or premiums_brl <= 0:
         return None
@@ -257,76 +218,78 @@ def calculate_reputation_contextual(
     resolved = int(stats.get("resolvedCount") or 0)
     responded = int(stats.get("respondedCount") or 0)
     satisfaction = float(stats.get("overallSatisfaction") or 0.0)
-    sat_count = int(stats.get("satisfactionCount") or 0)
+    satisfaction_count = int(stats.get("satisfactionCount") or 0)
 
-    # 0 reclamações = sinal insuficiente (não “perfeito”)
     if complaints <= 0:
-        observed_rate, pressure_idx = 0.0, 1.0
+        observed_rate, pressure_index = 0.0, 1.0
     else:
-        observed_rate, pressure_idx = calculate_complaint_pressure(complaints, premiums_brl, market_rate)
+        observed_rate, pressure_index = calculate_complaint_pressure(
+            complaints,
+            premiums_brl,
+            market_rate,
+        )
 
-    # Pressure -> score
-    if pressure_idx <= 1.0:
-        pressure_score = 80.0 + (1.0 - pressure_idx) * 20.0
+    if pressure_index <= 1.0:
+        pressure_score = 80.0 + (1.0 - pressure_index) * 20.0
     else:
-        pressure_score = 80.0 - (math.log(pressure_idx + 1.0) / math.log(3.5)) * 50.0
+        pressure_score = 80.0 - (
+            math.log(pressure_index + 1.0) / math.log(3.5)
+        ) * 50.0
     pressure_score = _clamp(pressure_score, 5.0, 98.0)
 
-    sat = _clamp(satisfaction, 0.0, 10.0)
-    sat_norm = (sat - 5.0) / 5.0
-    satisfaction_score = _clamp(70.0 + sat_norm * 30.0, 10.0, 100.0)
+    satisfaction_normalized = (_clamp(satisfaction, 0.0, 10.0) - 5.0) / 5.0
+    satisfaction_score = _clamp(
+        70.0 + satisfaction_normalized * 30.0,
+        10.0,
+        100.0,
+    )
 
     if complaints > 0:
-        resolved_score = _clamp(_safe_div(resolved, complaints) * 100.0, 0.0, 100.0)
-        responded_score = _clamp(_safe_div(responded, complaints) * 100.0, 0.0, 100.0)
+        resolved_score = _clamp(_safe_div(resolved, complaints) * 100.0)
+        responded_score = _clamp(_safe_div(responded, complaints) * 100.0)
     else:
         resolved_score = 0.0
         responded_score = 0.0
 
-    # Mix do pilar
     final_score = _clamp(
-        pressure_score * 0.70 +
-        satisfaction_score * 0.15 +
-        resolved_score * 0.10 +
-        responded_score * 0.05,
-        0.0, 100.0
+        pressure_score * 0.70
+        + satisfaction_score * 0.15
+        + resolved_score * 0.10
+        + responded_score * 0.05
     )
 
-    # Shrinkage por amostra: poucos casos → puxa para 80
-    conf_n = 1.0 - math.exp(-float(max(complaints, 0)) / 30.0)
-    conf_s = 1.0 - math.exp(-float(max(sat_count, 0)) / 25.0)
-    confidence = _clamp(max(conf_n, conf_s), 0.0, 1.0)
-    final_score = _clamp(80.0 * (1.0 - confidence) + final_score * confidence, 0.0, 100.0)
+    complaint_confidence = 1.0 - math.exp(-float(max(complaints, 0)) / 30.0)
+    satisfaction_confidence = 1.0 - math.exp(
+        -float(max(satisfaction_count, 0)) / 25.0
+    )
+    confidence = _clamp(
+        max(complaint_confidence, satisfaction_confidence),
+        0.0,
+        1.0,
+    )
+    final_score = _clamp(80.0 * (1.0 - confidence) + final_score * confidence)
 
     return {
         "score": float(final_score),
-        "pressure_idx": float(pressure_idx),
+        "pressure_idx": float(pressure_index),
         "observed_rate_per_brl": float(observed_rate),
         "market_rate_per_brl": float(market_rate),
-        "overallSatisfaction": float(sat),
+        "overallSatisfaction": float(_clamp(satisfaction, 0.0, 10.0)),
     }
 
 
-def compute_market_benchmarks(insurers: List[Dict[str, Any]]) -> float:
-    """
-    Market benchmark: complaints per BRL premium.
-
-    Returns a float to preserve your current pipeline contract.
-    """
+def compute_market_benchmarks(insurers: list[dict[str, Any]]) -> float:
     total_complaints = 0
     total_premiums = 0.0
 
-    for ins in insurers:
-        rep = _get_reputation_blob(ins)
-        if not rep:
+    for insurer in insurers:
+        reputation = _get_reputation_blob(insurer)
+        if not reputation:
             continue
-        stats = _extract_stats(rep)
-        complaints = int(stats.get("complaintsCount") or 0)
-        if complaints <= 0:
-            continue
-        data = ins.get("data") if isinstance(ins.get("data"), dict) else {}
+        complaints = int(_extract_stats(reputation).get("complaintsCount") or 0)
+        data = insurer.get("data") if isinstance(insurer.get("data"), dict) else {}
         premiums = float(data.get("premiums") or 0.0)
-        if premiums <= 0:
+        if complaints <= 0 or premiums <= 0:
             continue
         total_complaints += complaints
         total_premiums += premiums
@@ -336,122 +299,190 @@ def compute_market_benchmarks(insurers: List[Dict[str, Any]]) -> float:
     return float(total_complaints / max(total_premiums, 1.0))
 
 
-_CONTEXT: Dict[str, Any] = {
+_CONTEXT: dict[str, Any] = {
     "market_avg_complaints_per_premium": 0.0,
     "reputation_dataset_empty": False,
     "reputation_enabled": True,
 }
 
 
-def calculate_score(insurer_obj: Dict[str, Any]) -> Dict[str, Any]:
-    data = insurer_obj.get("data") if isinstance(insurer_obj.get("data"), dict) else {}
-    flags = insurer_obj.get("flags") if isinstance(insurer_obj.get("flags"), dict) else {}
-    products = insurer_obj.get("products") if isinstance(insurer_obj.get("products"), list) else []
+def _reputation_reason(
+    *,
+    matched: bool,
+    dataset_enabled: bool,
+    premiums: float,
+    applied: bool,
+) -> str:
+    if applied:
+        return "applied"
+    if not matched:
+        return "missing_reputation"
+    if not dataset_enabled:
+        return "dataset_disabled"
+    if premiums <= 0:
+        return "insufficient_premiums"
+    return "not_applied"
+
+
+def calculate_score(insurer: dict[str, Any]) -> dict[str, Any]:
+    data = insurer.get("data") if isinstance(insurer.get("data"), dict) else {}
+    flags = insurer.get("flags") if isinstance(insurer.get("flags"), dict) else {}
+    products = insurer.get("products") if isinstance(insurer.get("products"), list) else []
 
     solvency = calculate_solvency_score(data)
     innovation = calculate_innovation_score(flags, products)
-
     premiums = float(data.get("premiums") or 0.0)
 
-    reputation_raw = _get_reputation_blob(insurer_obj)
-    reputation_score: float | None = None
-    reputation_component: Dict[str, Any] = {"score": 50.0}
+    reputation_raw = _get_reputation_blob(insurer)
+    reputation_matched = bool(reputation_raw)
+    dataset_enabled = bool(_CONTEXT.get("reputation_enabled", True))
+    reputation_result: dict[str, Any] | None = None
 
-    if _CONTEXT.get("reputation_enabled", True) and reputation_raw:
-        market_rate = float(_CONTEXT.get("market_avg_complaints_per_premium") or 0.0)
-        rep_result = calculate_reputation_contextual(reputation_raw, premiums, float(market_rate))
-        if rep_result is not None:
-            reputation_score = float(rep_result.get("score") or 0.0)
-            reputation_component = rep_result
+    if dataset_enabled and reputation_matched:
+        market_rate = float(
+            _CONTEXT.get("market_avg_complaints_per_premium") or 0.0
+        )
+        reputation_result = calculate_reputation_contextual(
+            reputation_raw,
+            premiums,
+            market_rate,
+        )
 
-                # Keep indexes inside the reputation blob (same behavior, but safe for fallback blob)
-            if isinstance(reputation_raw, dict) and reputation_raw:
-                reputation_raw.setdefault("indexes", {})
-                reputation_raw["indexes"].update(
-                    {
-                        "pressure_idx": reputation_component.get("pressure_idx"),
-                        "observed_rate_per_brl": reputation_component.get("observed_rate_per_brl"),
-                        "market_rate_per_brl": reputation_component.get("market_rate_per_brl"),
-                    }
-                )
-
-    # Pesos fixos (sem depender de segmento S1–S4)
-    if not _CONTEXT.get("reputation_enabled", True):
-        w_sol, w_rep, w_inn = 0.6, 0.0, 0.4
-    else:
-        w_sol, w_rep, w_inn = 0.40, 0.45, 0.15
-
-    composite = (
-        float(solvency.get("score") or 0.0) * w_sol
-        + float(reputation_score or 0.0) * w_rep
-        + float(innovation.get("score") or 0.0) * w_inn
+    reputation_applied = reputation_result is not None
+    reputation_reason = _reputation_reason(
+        matched=reputation_matched,
+        dataset_enabled=dataset_enabled,
+        premiums=premiums,
+        applied=reputation_applied,
     )
-    composite = _clamp(composite, 0.0, 100.0)
+
+    reputation_component: dict[str, Any] = {
+        "score": 50.0,
+        "matched": reputation_matched,
+        "applied": reputation_applied,
+        "reason": reputation_reason,
+    }
+    if reputation_result is not None:
+        reputation_component.update(reputation_result)
+        indexes = reputation_raw.get("indexes")
+        if not isinstance(indexes, dict):
+            indexes = {}
+            reputation_raw["indexes"] = indexes
+        indexes.update(
+            {
+                "pressure_idx": reputation_result.get("pressure_idx"),
+                "observed_rate_per_brl": reputation_result.get(
+                    "observed_rate_per_brl"
+                ),
+                "market_rate_per_brl": reputation_result.get(
+                    "market_rate_per_brl"
+                ),
+            }
+        )
+
+    if dataset_enabled:
+        solvency_weight, reputation_weight, innovation_weight = 0.40, 0.45, 0.15
+    else:
+        solvency_weight, reputation_weight, innovation_weight = 0.60, 0.0, 0.40
 
     solvency_score = float(solvency.get("score") or 0.0)
-    reputation_score = float(reputation_component.get("score") or 0.0)
+    displayed_reputation_score = float(reputation_component.get("score") or 0.0)
+    applied_reputation_score = (
+        displayed_reputation_score if reputation_applied else 0.0
+    )
     innovation_score = float(innovation.get("score") or 0.0)
-    
-    insurer_obj.setdefault("data", {})
-    insurer_obj["data"]["score"] = float(composite)
-    insurer_obj["data"]["lossRatio"] = float(solvency.get("lossRatio") or 0.0)
-    
-    # Backward-compat: UI expects numeric component bars.
-    insurer_obj["data"]["components"] = {
+
+    contributions = {
+        "solvency": solvency_score * solvency_weight,
+        "reputation": applied_reputation_score * reputation_weight,
+        "innovation": innovation_score * innovation_weight,
+    }
+    composite = _clamp(sum(contributions.values()))
+    contributions["total"] = composite
+
+    output_data = insurer.get("data")
+    if not isinstance(output_data, dict):
+        output_data = {}
+        insurer["data"] = output_data
+    output_data["score"] = float(composite)
+    output_data["lossRatio"] = float(solvency.get("lossRatio") or 0.0)
+    output_data["components"] = {
         "solvency": solvency_score,
-        "reputation": reputation_score,
+        "reputation": displayed_reputation_score,
         "innovation": innovation_score,
         "financial": solvency_score,
     }
-    insurer_obj["data"]["componentsDetail"] = {
+    output_data["componentsDetail"] = {
         "solvency": solvency,
         "reputation": reputation_component,
         "innovation": innovation,
     }
-    insurer_obj["data"]["solvencyScore"] = solvency_score
-    insurer_obj["data"]["reputationScore"] = reputation_score
-    insurer_obj["data"]["innovationScore"] = innovation_score
-    insurer_obj["data"]["financialScore"] = solvency_score
-
-    # Also publish the solvency score inside components.financials for UI compatibility.
-    comps = insurer_obj.setdefault("components", {})
-    fin = comps.get("financials")
-    if isinstance(fin, dict):
-        fin.setdefault("score", solvency_score)
-        fin.setdefault("lossRatio", insurer_obj["data"]["lossRatio"])
-        comps["financials"] = fin
-
-    insurer_obj["data"]["weights"] = {"solvency": w_sol, "reputation": w_rep, "innovation": w_inn}
-    insurer_obj["data"]["context"] = {
-        "reputationEnabled": bool(_CONTEXT.get("reputation_enabled", True)),
-        "reputationDatasetEmpty": bool(_CONTEXT.get("reputation_dataset_empty", False)),
+    output_data["solvencyScore"] = solvency_score
+    output_data["reputationScore"] = displayed_reputation_score
+    output_data["innovationScore"] = innovation_score
+    output_data["financialScore"] = solvency_score
+    output_data["weights"] = {
+        "solvency": solvency_weight,
+        "reputation": reputation_weight,
+        "innovation": innovation_weight,
+    }
+    output_data["contributions"] = contributions
+    output_data["availability"] = {
+        "reputationMatched": reputation_matched,
+        "reputationApplied": reputation_applied,
+        "reputationReason": reputation_reason,
+        "reputationDatasetEnabled": dataset_enabled,
+        "openInsuranceParticipant": bool(
+            flags.get("openInsuranceParticipant")
+        ),
+    }
+    output_data["context"] = {
+        "reputationEnabled": dataset_enabled,
+        "reputationDatasetEmpty": bool(
+            _CONTEXT.get("reputation_dataset_empty", False)
+        ),
+        "reputationMatched": reputation_matched,
+        "reputationApplied": reputation_applied,
     }
 
-    return insurer_obj
+    components = insurer.get("components")
+    if not isinstance(components, dict):
+        components = {}
+        insurer["components"] = components
+    financials = components.get("financials")
+    if isinstance(financials, dict):
+        financials.setdefault("score", solvency_score)
+        financials.setdefault("lossRatio", output_data["lossRatio"])
+
+    return insurer
 
 
-def apply_intelligence_batch(insurers: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    market_rate = compute_market_benchmarks(insurers)
-    _CONTEXT["market_avg_complaints_per_premium"] = float(market_rate)
+def apply_intelligence_batch(
+    insurers: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    _CONTEXT["market_avg_complaints_per_premium"] = compute_market_benchmarks(
+        insurers
+    )
 
     matched = 0
-    complaints_sum = 0
+    complaint_sum = 0
+    for insurer in insurers:
+        reputation = _get_reputation_blob(insurer)
+        if not reputation:
+            continue
+        matched += 1
+        complaint_sum += int(
+            _extract_stats(reputation).get("complaintsCount") or 0
+        )
 
-    for ins in insurers:
-        rep = _get_reputation_blob(ins)
-        if isinstance(rep, dict) and rep:
-            matched += 1
-            stats = _extract_stats(rep)
-            complaints_sum += int(stats.get("complaintsCount") or 0)
+    dataset_empty = bool(matched and complaint_sum == 0)
+    _CONTEXT["reputation_dataset_empty"] = dataset_empty
+    _CONTEXT["reputation_enabled"] = not dataset_empty
 
-    reputation_dataset_empty = bool(matched and complaints_sum == 0)
-    _CONTEXT["reputation_dataset_empty"] = reputation_dataset_empty
-    _CONTEXT["reputation_enabled"] = not reputation_dataset_empty
-
-    if reputation_dataset_empty:
+    if dataset_empty:
         print(
             "DEBUG: reputation_dataset_empty=True "
             f"(matched={matched}, complaints=0). Disabling reputation in scoring."
         )
 
-    return [calculate_score(ins) for ins in insurers]
+    return [calculate_score(insurer) for insurer in insurers]
