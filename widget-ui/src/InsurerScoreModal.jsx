@@ -24,8 +24,38 @@ function flagBinary(v) {
 }
 
 function safeNumber(value, fallback = null) {
+  if (value === null || value === undefined || value === '') return fallback;
   const n = Number(value);
   return Number.isFinite(n) ? n : fallback;
+}
+
+function sourceTimestamp(source) {
+  if (!source || typeof source !== 'object') return null;
+  return (
+    source.generatedAt ??
+    source.generated_at ??
+    source.fetchedAt ??
+    source.fetched_at ??
+    null
+  );
+}
+
+function formatSourceTimestamp(source, fallback = null) {
+  const value = sourceTimestamp(source) ?? fallback;
+  if (!value) return '—';
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString('pt-BR');
+}
+
+function reputationReasonLabel(reason) {
+  const labels = {
+    applied: 'aplicado',
+    missing_reputation: 'sem registro associado',
+    insufficient_premiums: 'prêmios insuficientes para normalização',
+    dataset_disabled: 'dataset de reputação desativado no build',
+    not_applied: 'não aplicado pelo backend',
+  };
+  return labels[reason] || reason || 'motivo não informado';
 }
 
 function round2(n) {
@@ -83,35 +113,6 @@ function isPlainObject(v) {
   return v !== null && typeof v === 'object' && !Array.isArray(v);
 }
 
-function flagTrue(v) {
-  if (v === true) return true;
-  if (v === false || v === null || v === undefined) return false;
-  // Para flags numéricas, só 1 é true (0 é false). Evita score 60/80 virar "true".
-  if (typeof v === 'number') return v === 1;
-  if (typeof v === 'string') {
-    const s = v.trim().toLowerCase();
-    return s === 'true' || s === '1' || s === 'yes' || s === 'sim' || s === 'opin' || s === 'participante' || s === 'participant';
-  }
-  return false;
-}
-
-// Flags BINÁRIOS (true/false, 0/1, strings equivalentes).
-// Evita falso positivo quando algum campo vem como score (ex.: 60) ou outro número.
-function flagBinaryTrue(v) {
-  if (v === true) return true;
-  if (v === false || v === null || v === undefined) return false;
-  if (typeof v === 'number') return v === 1;
-  if (typeof v === 'string') {
-    const s = v.trim().toLowerCase();
-    if (s === 'true' || s === '1' || s === 'yes' || s === 'sim') return true;
-    if (s === 'false' || s === '0' || s === 'no' || s === 'nao' || s === 'não') return false;
-    // alguns pipelines gravam o selo como texto
-    if (s === 'opin' || s === 'participante opin') return true;
-    return false;
-  }
-  return false;
-}
-
 export default function InsurerScoreModal({ insurer, sources, onClose }) {
   const isOpen = Boolean(insurer);
 
@@ -142,6 +143,8 @@ export default function InsurerScoreModal({ insurer, sources, onClose }) {
     const solvencyScore = safeNumber(d.solvencyScore ?? d.financialScore ?? d.financial_score, 0) || 0;
     const reputationScore = safeNumber(d.reputationScore ?? d.reputation_score, 0) || 0;
     const innovationScore = safeNumber(d.innovationScore, 0) || 0;
+    const availability = d.availability || {};
+    const backendContributions = d.contributions || {};
 
     // Reputação:
     // - `d.components.reputation` hoje é **numérico** (score) e NÃO contém as estatísticas do Consumidor.gov.
@@ -165,7 +168,22 @@ export default function InsurerScoreModal({ insurer, sources, onClose }) {
       ...(isPlainObject(repDetail) ? repDetail : {}),
     };
 
-    const hasReputation = hasReputationData(repRaw);
+    const detectedReputation = hasReputationData(repRaw);
+    const reputationMatched =
+      typeof availability.reputationMatched === 'boolean'
+        ? availability.reputationMatched
+        : detectedReputation;
+    const reputationApplied =
+      typeof availability.reputationApplied === 'boolean'
+        ? availability.reputationApplied
+        : reputationMatched;
+    const reputationReason =
+      availability.reputationReason ||
+      (reputationApplied
+        ? 'applied'
+        : reputationMatched
+          ? 'not_applied'
+          : 'missing_reputation');
     // Transparência: qual registro do Consumidor.gov foi associado.
     const repEntityName =
       insurer?.reputation?.display_name ??
@@ -176,7 +194,8 @@ export default function InsurerScoreModal({ insurer, sources, onClose }) {
 
     const complaintsCount = pick(repRaw, 'complaintsCount', 'total_claims', 'complaints_count');
     const complaintsCountNum = Number(complaintsCount || 0) || 0;
-    const isSmallSample = hasReputation && complaintsCountNum > 0 && complaintsCountNum < 15;
+    const isSmallSample =
+      reputationMatched && complaintsCountNum > 0 && complaintsCountNum < 15;
     const respondedCount = pick(repRaw, 'respondedCount', 'responded_claims', 'responded_count');
     const resolvedCount = pick(repRaw, 'resolvedCount', 'resolved_claims', 'resolved_count');
     const finalizedCount = pick(repRaw, 'finalizedCount', 'finalized_claims', 'finalized_count');
@@ -219,14 +238,24 @@ export default function InsurerScoreModal({ insurer, sources, onClose }) {
       averageScore,
     };
 
-    // Nota final = soma ponderada.
-    // Se não existe reputação (sem match no Consumidor.gov), a contribuição do pilar vira 0 (peso não é redistribuído).
-    const contribSolvency = (weights.solvency || 0) * solvencyScore;
-    const contribReputation = hasReputation ? (weights.reputation || 0) * reputationScore : 0;
-    const contribInnovation = (weights.innovation || 0) * innovationScore;
+    // O backend é a autoridade da nota e das contribuições.
+    // O fallback abaixo existe apenas para snapshots antigos.
+    const contribSolvency =
+      safeNumber(backendContributions.solvency, null) ??
+      (weights.solvency || 0) * solvencyScore;
+    const contribReputation =
+      safeNumber(backendContributions.reputation, null) ??
+      (reputationApplied ? (weights.reputation || 0) * reputationScore : 0);
+    const contribInnovation =
+      safeNumber(backendContributions.innovation, null) ??
+      (weights.innovation || 0) * innovationScore;
 
-    const computed = round2(contribSolvency + contribReputation + contribInnovation);
+    const computed = round2(
+      safeNumber(backendContributions.total, null) ??
+        contribSolvency + contribReputation + contribInnovation
+    );
     const score = safeNumber(d.score, computed) ?? computed;
+    const contributionDelta = Math.abs(round2(score) - computed);
 
     const solv = d.componentsDetail?.solvency || {};
     const rep = repView || {};
@@ -235,6 +264,7 @@ export default function InsurerScoreModal({ insurer, sources, onClose }) {
     const srcSes = sources?.ses || null;
     const srcCg = sources?.consumidorGov || null;
     const srcOi = sources?.openInsurance || null;
+    const rankingGeneratedAt = sources?.rankingGeneratedAt || null;
 
     return {
       name,
@@ -242,7 +272,10 @@ export default function InsurerScoreModal({ insurer, sources, onClose }) {
       cnpj,
       score: round2(score),
       weights,
-      hasReputation,
+      hasReputation: reputationMatched,
+      reputationMatched,
+      reputationApplied,
+      reputationReason,
       repEntityName,
       isSmallSample,
       complaintsCountNum,
@@ -253,12 +286,14 @@ export default function InsurerScoreModal({ insurer, sources, onClose }) {
       contribReputation: round2(contribReputation),
       contribInnovation: round2(contribInnovation),
       computed,
+      contributionDelta,
       solv,
       rep,
       inn,
       srcSes,
       srcCg,
       srcOi,
+      rankingGeneratedAt,
       raw: insurer,
     };
   }, [insurer, sources]);
@@ -271,6 +306,8 @@ export default function InsurerScoreModal({ insurer, sources, onClose }) {
 const OPIN_SCORE_THRESHOLD = 80;
 
 const oiParticipantRaw =
+  // 0) contrato canônico publicado pelo backend
+  pick(view?.raw?.data?.availability, 'openInsuranceParticipant') ??
   // 1) flags (mais comum/estável)
   pick(
     view?.raw?.flags,
@@ -374,14 +411,19 @@ const oiStatus = oiIsParticipant ? (oiStatusRaw || '—') : '—';
 
             <p className="mt-2 text-sm text-slate-700">
               A nota final é a soma dos 3 pilares ponderados por peso.
-              Quando <strong>não existe dado de reputação</strong> (sem match no Consumidor.gov), a contribuição desse pilar vira <strong>0</strong> — o peso não é redistribuído.
+              A nota publicada pelo backend é a referência. Quando a reputação não pode ser aplicada, a contribuição desse pilar fica em <strong>0</strong> e o peso não é redistribuído.
             </p>
 
             <div className="mt-3 grid gap-3 sm:grid-cols-4">
               <div className="rounded-xl bg-white p-3 ring-1 ring-slate-200">
                 <div className="text-xs text-slate-500">Nota final</div>
                 <div className="mt-1 text-2xl font-semibold text-slate-900">{view?.score?.toFixed(0)}</div>
-                <div className="mt-1 text-[11px] text-slate-500">Calculado: {view?.computed}</div>
+                <div className="mt-1 text-[11px] text-slate-500">Soma das contribuições: {view?.computed}</div>
+                {view?.contributionDelta > 0.01 ? (
+                  <div className="mt-1 text-[11px] text-amber-700">
+                    Snapshot legado: a nota publicada prevalece sobre a soma reconstruída.
+                  </div>
+                ) : null}
               </div>
 
               <div className="rounded-xl bg-white p-3 ring-1 ring-slate-200">
@@ -395,13 +437,19 @@ const oiStatus = oiIsParticipant ? (oiStatusRaw || '—') : '—';
               <div className="rounded-xl bg-white p-3 ring-1 ring-slate-200">
                 <div className="text-xs text-slate-500">Reputação</div>
                 <div className="mt-1 text-sm font-semibold text-slate-900">
-                  {view?.hasReputation ? view?.reputationScore : '—'} × {fmtPct((view?.weights?.reputation || 0) * 100)}
+                  {view?.reputationApplied ? view?.reputationScore : '—'} × {fmtPct((view?.weights?.reputation || 0) * 100)}
                 </div>
                 <div className="mt-1 text-xs text-slate-600">
-                  Contribuição: {view?.hasReputation ? view?.contribReputation : 0}
+                  Contribuição: {view?.reputationApplied ? view?.contribReputation : 0}
                 </div>
-                {!view?.hasReputation ? (
-                  <div className="mt-1 text-[11px] text-amber-700">Sem dados Consumidor.gov: contribuição zerada.</div>
+                {!view?.reputationMatched ? (
+                  <div className="mt-1 text-[11px] text-amber-700">
+                    Sem dados Consumidor.gov: contribuição zerada.
+                  </div>
+                ) : !view?.reputationApplied ? (
+                  <div className="mt-1 text-[11px] text-amber-700">
+                    Dados encontrados, mas não aplicados à nota.
+                  </div>
                 ) : null}
               </div>
 
@@ -426,7 +474,10 @@ const oiStatus = oiIsParticipant ? (oiStatusRaw || '—') : '—';
                 Fonte: BaseCompleta.zip (prêmios, sinistros, indicadores contábeis)
               </p>
               <p className="mt-2 text-xs text-slate-500">
-                Atualização do snapshot: {view?.srcSes?.generatedAt ? new Date(view.srcSes.generatedAt).toLocaleString('pt-BR') : '—'}
+                Atualização do snapshot: {formatSourceTimestamp(
+                  view?.srcSes,
+                  view?.rankingGeneratedAt
+                )}
               </p>
             </div>
 
@@ -439,7 +490,7 @@ const oiStatus = oiIsParticipant ? (oiStatusRaw || '—') : '—';
                 Fonte: Dados Abertos (reclamações e indicadores de atendimento)
               </p>
               <p className="mt-2 text-xs text-slate-500">
-                Atualização do snapshot: {view?.srcCg?.generatedAt ? new Date(view.srcCg.generatedAt).toLocaleString('pt-BR') : '—'}
+                Atualização do snapshot: {formatSourceTimestamp(view?.srcCg)}
               </p>
             </div>
 
@@ -452,7 +503,7 @@ const oiStatus = oiIsParticipant ? (oiStatusRaw || '—') : '—';
                 Fonte: participantes / dados públicos do ecossistema
               </p>
               <p className="mt-2 text-xs text-slate-500">
-                Atualização do snapshot: {view?.srcOi?.generatedAt ? new Date(view.srcOi.generatedAt).toLocaleString('pt-BR') : '—'}
+                Atualização do snapshot: {formatSourceTimestamp(view?.srcOi)}
               </p>
             </div>
           </div>
@@ -517,17 +568,24 @@ const oiStatus = oiIsParticipant ? (oiStatusRaw || '—') : '—';
                 </div>
               ) : null}
 
-              {view?.hasReputation && view?.isSmallSample ? (
+              {view?.reputationMatched && view?.isSmallSample ? (
                 <div className="mt-3 rounded-xl bg-amber-50 p-3 text-sm text-amber-900 ring-1 ring-amber-200">
                   Amostra pequena ({view.complaintsCountNum} reclamações). O score deste pilar é suavizado para evitar distorções.
                 </div>
               ) : null}
 
-              {!view?.hasReputation ? (
+              {!view?.reputationMatched ? (
                 <div className="mt-3 rounded-xl bg-amber-50 p-3 text-sm text-amber-900 ring-1 ring-amber-200">
-                  Sem dados associados a esta empresa no Consumidor.gov (matching por nome/CNPJ não encontrado). Por isso, a contribuição deste pilar na nota final é <strong>0</strong>.
+                  Sem dados associados a esta empresa no Consumidor.gov. Por isso, a contribuição deste pilar na nota final é <strong>0</strong>.
                 </div>
               ) : (
+                <>
+                  {!view?.reputationApplied ? (
+                    <div className="mt-3 rounded-xl bg-amber-50 p-3 text-sm text-amber-900 ring-1 ring-amber-200">
+                      Há um registro associado, mas o backend não aplicou este pilar à nota
+                      ({reputationReasonLabel(view?.reputationReason)}).
+                    </div>
+                  ) : null}
                 <div className="mt-3 grid gap-3 sm:grid-cols-4">
                   <div className="rounded-xl bg-slate-50 p-3 ring-1 ring-slate-200">
                     <div className="text-xs text-slate-500">{view?.rep?._hasComplaintsPerPremium ? 'Índice' : 'Reclamações'}</div>
@@ -549,6 +607,7 @@ const oiStatus = oiIsParticipant ? (oiStatusRaw || '—') : '—';
                     <div className="mt-1 text-sm font-semibold text-slate-900">{fmtNum(view?.rep?.responseTimeDays)}</div>
                   </div>
                 </div>
+                </>
               )}
 
               <div className="mt-3 text-xs text-slate-500">

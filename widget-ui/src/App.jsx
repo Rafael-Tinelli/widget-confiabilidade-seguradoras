@@ -1,9 +1,18 @@
 import React, { useLayoutEffect, useMemo, useState, useEffect } from "react";
 import InsurerCard from "./components/InsurerCard";
 import InsurerScoreModal from "./InsurerScoreModal";
-import { Search, SlidersHorizontal, ShieldCheck, ChevronLeft, ChevronRight, Award } from "lucide-react";
+import { Search, SlidersHorizontal, ShieldCheck, ChevronLeft, ChevronRight } from "lucide-react";
 
-const API_URL = '/api/v1/insurers.json'; 
+const API_URL = '/api/v1/insurers.json';
+
+function safeNumber(value, fallback = 0) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function digitsOnly(value) {
+  return String(value || '').replace(/\D/g, '');
+}
 
 export default function App() {
   const [insurersData, setInsurers] = useState([]);
@@ -20,13 +29,21 @@ export default function App() {
   useEffect(() => {
     setLoading(true);
     fetch(API_URL)
-      .then(res => res.json())
-      .then(data => {
+      .then((response) => {
+        if (!response.ok) {
+          throw new Error(`Falha ao carregar ${API_URL} (${response.status})`);
+        }
+        return response.json();
+      })
+      .then((data) => {
         const rawList = data.insurers || [];
         // 1. CORREÇÃO DE DUPLICATAS (Usa ID em vez de CNPJ)
         const uniqueList = Array.from(new Map(rawList.map(item => [item.id, item])).values());
         setInsurers(uniqueList);
-        setSources(data.sources || null);
+        setSources({
+          ...(data.sources || {}),
+          rankingGeneratedAt: data.generatedAt || data.meta?.generatedAt || null,
+        });
         setLoading(false);
       })
       .catch(err => {
@@ -186,13 +203,21 @@ export default function App() {
   const insurers = insurersData;
 
   const filtered = useMemo(() => {
-    if (!query) return insurers;
-    const lower = query.toLowerCase();
-    return insurers.filter((i) => {
+    const textQuery = query.trim().toLocaleLowerCase('pt-BR');
+    if (!textQuery) return insurers;
+
+    const digitQuery = digitsOnly(query);
+    return insurers.filter((insurer) => {
+      const name = String(insurer.name || '').toLocaleLowerCase('pt-BR');
+      const id = String(insurer.id || '').toLocaleLowerCase('pt-BR');
+      const formattedCnpj = String(insurer.cnpj || '').toLocaleLowerCase('pt-BR');
+      const cnpjDigits = digitsOnly(insurer.cnpjKey || insurer.cnpj);
+
       return (
-        i.name?.toLowerCase().includes(lower) ||
-        i.cnpj?.includes(lower) ||
-        i.id?.toLowerCase().includes(lower)
+        name.includes(textQuery) ||
+        id.includes(textQuery) ||
+        formattedCnpj.includes(textQuery) ||
+        (digitQuery.length > 0 && cnpjDigits.includes(digitQuery))
       );
     });
   }, [insurers, query]);
@@ -203,12 +228,18 @@ export default function App() {
       const dataA = a.data || {};
       const dataB = b.data || {};
 
-      // Compatibilidade: Lê financial_score (novo) ou score (antigo)
-      const scoreA = Number(dataA.financial_score) || Number(dataA.score) || 0;
-      const scoreB = Number(dataB.financial_score) || Number(dataB.score) || 0;
-      
-      const premA  = Number(dataA.premiums) || 0;
-      const premB  = Number(dataB.premiums) || 0;
+      // A nota publicada em data.score é a fonte canônica.
+      const scoreA = safeNumber(
+        dataA.score ?? dataA.final_score ?? dataA.financial_score,
+        0
+      );
+      const scoreB = safeNumber(
+        dataB.score ?? dataB.final_score ?? dataB.financial_score,
+        0
+      );
+
+      const premA = safeNumber(dataA.premiums, 0);
+      const premB = safeNumber(dataB.premiums, 0);
 
       switch (sortBy) {
         case "score_desc":
