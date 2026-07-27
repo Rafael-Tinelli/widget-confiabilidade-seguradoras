@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-07-27T19:04:50Z",
+  "generatedAt": "2026-07-27T20:51:51Z",
   "scope": "final_insurers",
   "stats": {
     "insurers_total": 385,
@@ -11,10 +11,11 @@
     "computed_skipped_b2b": 108,
     "method_breakdown": {
       "no_match": 143,
-      "smart_dice": 112,
+      "smart_dice": 111,
       "b2b_skip": 108,
       "seq": 12,
       "ambiguous_rejected": 6,
+      "smart_dice_trade": 1,
       "semantic_rejected": 4
     },
     "reputation_index_companies": 185
@@ -59,7 +60,7 @@
     {
       "insurer_id": "005045",
       "insurer_name": "COMPANHIA DE SEGUROS ALIANÇA DA BAHIA",
-      "tradeName": "bahia alianca aliancabahia",
+      "tradeName": "bahia aliancabahia alianca",
       "cnpjKey": "15144017000190",
       "method": "smart_dice",
       "score": 1.0,
@@ -71,7 +72,7 @@
     {
       "insurer_id": "005070",
       "insurer_name": "ZURICH SANTANDER BRASIL SEGUROS E PREVIDÊNCIA S.A.",
-      "tradeName": "santander zurich zurichsantander santanderbrasil",
+      "tradeName": "zurich zurichsantander santanderbrasil santander",
       "cnpjKey": "87376109000106",
       "method": "seq",
       "score": 1.0,
@@ -83,7 +84,7 @@
     {
       "insurer_id": "005096",
       "insurer_name": "ITAÚ VIDA E PREVIDÊNCIA S/A",
-      "tradeName": "itau itauvida",
+      "tradeName": "itauvida itau",
       "cnpjKey": "92661388000190",
       "method": "smart_dice",
       "score": 1.0,
@@ -143,7 +144,7 @@
     {
       "insurer_id": "005312",
       "insurer_name": "BRADESCO AUTO/RE COMPANHIA DE SEGUROS",
-      "tradeName": "bradesco re bradescoauto autore auto",
+      "tradeName": "bradescoauto re autore auto bradesco",
       "cnpjKey": "92682038000100",
       "method": "smart_dice",
       "score": 1.0,
@@ -167,7 +168,7 @@
     {
       "insurer_id": "005495",
       "insurer_name": "ZURICH MINAS BRASIL SEGUROS S.A.",
-      "tradeName": "zurich minas zurichminas minasbrasil",
+      "tradeName": "zurichminas zurich minasbrasil minas",
       "cnpjKey": "17197385000121",
       "method": "seq",
       "score": 1.0,
@@ -227,7 +228,7 @@
     {
       "insurer_id": "005908",
       "insurer_name": "GENERALI  BRASIL  SEGUROS S.A.",
-      "tradeName": "generalibrasil generali",
+      "tradeName": "generali generalibrasil",
       "cnpjKey": "33072307000157",
       "method": "smart_dice",
       "score": 0.8791,
@@ -239,7 +240,7 @@
     {
       "insurer_id": "005941",
       "insurer_name": "ZURICH BRASIL COMPANHIA DE SEGUROS",
-      "tradeName": "zurich zurichbrasil",
+      "tradeName": "zurichbrasil zurich",
       "cnpjKey": "96348677000194",
       "method": "seq",
       "score": 1.0,
@@ -263,7 +264,7 @@
     {
       "insurer_id": "047082",
       "insurer_name": "HDI GLOBAL NETWORK AG",
-      "tradeName": "hdiglobal global network hdi globalnetwork",
+      "tradeName": "hdiglobal globalnetwork hdi global network",
       "cnpjKey": "05547043000105",
       "method": "seq",
       "score": 1.0,
@@ -275,7 +276,7 @@
     {
       "insurer_id": "047724",
       "insurer_name": "MITSUI SUMITOMO INSURANCE COMPANY, LIMITED",
-      "tradeName": "sumitomo mitsui mitsuisumitomo",
+      "tradeName": "mitsuisumitomo mitsui sumitomo",
       "cnpjKey": "05598097000108",
       "method": "smart_dice",
       "score": 1.0,
@@ -311,7 +312,7 @@
     {
       "insurer_id": "050601",
       "insurer_name": "AMERICAN LIFE INSURANCE COMPANY",
-      "tradeName": "american americanlife life",
+      "tradeName": "life american americanlife",
       "cnpjKey": null,
       "method": "smart_dice",
       "score": 1.0,
@@ -323,11 +324,11 @@
     {
       "insurer_id": "052957",
       "insurer_name": "MITSUI SUMITOMO INSURANCE COMPANY OF AMERICA",
-      "tradeName": "america sumitomo mitsui sumitomoamerica mitsuisumitomo",
+      "tradeName": "sumitomoamerica mitsui sumitomo mitsuisumitomo america",
       "cnpjKey": null,
-      "method": "smart_dice",
-      "score": 0.7805,
-      "query": "MITSUI SUMITOMO INSURANCE COMPANY OF AMERICA",
+      "method": "smart_dice_trade",
+      "score": 0.7887,
+      "query": "sumitomoamerica mitsui sumitomo mitsuisumitomo america",
       "matchedName": "Mitsui Sumitomo Seguros",
       "matchedCnpj": null,
       "isB2B": false
@@ -419,7 +420,7 @@
     {
       "insurer_id": "001571",
       "insurer_name": "HDI GLOBAL SEGUROS S.A",
-      "tradeName": "global hdi hdiglobal",
+      "tradeName": "hdi global hdiglobal",
       "cnpjKey": "18096627000153",
       "method": "seq",
       "score": 1.0,
@@ -431,7 +432,7 @@
     {
       "insurer_id": "001589",
       "insurer_name": "SANTANDER AUTO S.A.",
-      "tradeName": "auto santanderauto santander",
+      "tradeName": "santanderauto auto santander",
       "cnpjKey": "30617319000121",
       "method": "smart_dice",
       "score": 1.0,
@@ -443,7 +444,7 @@
     {
       "insurer_id": "001619",
       "insurer_name": "DAYPREV VIDA E PREVIDÊNCIA S.A.",
-      "tradeName": "dayprev dayprevvida",
+      "tradeName": "dayprevvida dayprev",
       "cnpjKey": "08872199000150",
       "method": "smart_dice",
       "score": 1.0,
@@ -515,7 +516,7 @@
     {
       "insurer_id": "001937",
       "insurer_name": "COMPREV VIDA E PREVIDÊNCIA S.A.",
-      "tradeName": "comprevvida comprev",
+      "tradeName": "comprev comprevvida",
       "cnpjKey": "33634999000180",
       "method": "smart_dice",
       "score": 1.0,
@@ -527,7 +528,7 @@
     {
       "insurer_id": "001970",
       "insurer_name": "UNIMED SEGUROS PATRIMONIAIS S.A.",
-      "tradeName": "unimedpatrimoniais patrimoniais unimed",
+      "tradeName": "unimed patrimoniais unimedpatrimoniais",
       "cnpjKey": "12973906000171",
       "method": "smart_dice",
       "score": 1.0,
@@ -563,7 +564,7 @@
     {
       "insurer_id": "002101",
       "insurer_name": "MONGERAL AEGON SEGUROS E PREVIDÊNCIA S. A.",
-      "tradeName": "mongeralaegon aegon mongeral",
+      "tradeName": "mongeral mongeralaegon aegon",
       "cnpjKey": "33608308000173",
       "method": "smart_dice",
       "score": 1.0,
@@ -671,7 +672,7 @@
     {
       "insurer_id": "002682",
       "insurer_name": "BTG PACTUAL VIDA E PREVIDÊNCIA S.A.",
-      "tradeName": "btg btgpactual pactualvida pactual",
+      "tradeName": "btgpactual btg pactual pactualvida",
       "cnpjKey": "19449767000120",
       "method": "smart_dice",
       "score": 1.0,
@@ -719,7 +720,7 @@
     {
       "insurer_id": "002950",
       "insurer_name": "SANCOR SEGUROS DO BRASIL S.A.",
-      "tradeName": "sancorbrasil sancor",
+      "tradeName": "sancor sancorbrasil",
       "cnpjKey": "17643407000130",
       "method": "smart_dice",
       "score": 0.8642,
@@ -755,7 +756,7 @@
     {
       "insurer_id": "003093",
       "insurer_name": "CONSÓRCIO DO SEGURO DPVAT",
-      "tradeName": "consorciodpvat dpvat consorcio",
+      "tradeName": "consorcio consorciodpvat dpvat",
       "cnpjKey": null,
       "method": "smart_dice",
       "score": 0.7583,
@@ -779,7 +780,7 @@
     {
       "insurer_id": "003140",
       "insurer_name": "PREVIMIL VIDA E PREVIDÊNCIA S.A.",
-      "tradeName": "previmil previmilvida",
+      "tradeName": "previmilvida previmil",
       "cnpjKey": "95619003000114",
       "method": "smart_dice",
       "score": 1.0,
@@ -791,7 +792,7 @@
     {
       "insurer_id": "003182",
       "insurer_name": "ITAU SEGUROS DE AUTO E RESIDÊNCIA S.A.",
-      "tradeName": "residencia autoresidencia itau itauauto auto",
+      "tradeName": "autoresidencia itau residencia auto itauauto",
       "cnpjKey": "08816067000100",
       "method": "smart_dice",
       "score": 1.0,
@@ -815,7 +816,7 @@
     {
       "insurer_id": "003271",
       "insurer_name": "SEGURADORA LÍDER DO CONSÓRCIO DO SEGURO DPVAT S.A.",
-      "tradeName": "consorciodpvat liderconsorcio dpvat lider consorcio",
+      "tradeName": "lider consorciodpvat dpvat liderconsorcio consorcio",
       "cnpjKey": "09248608000104",
       "method": "smart_dice",
       "score": 0.8,
@@ -899,7 +900,7 @@
     {
       "insurer_id": "004031",
       "insurer_name": "XP VIDA E PREVIDÊNCIA S.A.",
-      "tradeName": "xpvida xp",
+      "tradeName": "xp xpvida",
       "cnpjKey": "29408732000105",
       "method": "smart_dice",
       "score": 1.0,
@@ -923,7 +924,7 @@
     {
       "insurer_id": "004120",
       "insurer_name": "88I SEGURADORA DIGITAL S.A.",
-      "tradeName": "88i 88idigital digital",
+      "tradeName": "88i digital 88idigital",
       "cnpjKey": null,
       "method": "smart_dice",
       "score": 1.0,
@@ -935,7 +936,7 @@
     {
       "insurer_id": "004367",
       "insurer_name": "PRUDENTIAL DO BRASIL SEGUROS S.A.",
-      "tradeName": "prudentialbrasil prudential",
+      "tradeName": "prudential prudentialbrasil",
       "cnpjKey": "21986074000119",
       "method": "smart_dice",
       "score": 1.0,
@@ -995,7 +996,7 @@
     {
       "insurer_id": "054488",
       "insurer_name": "CHUBB EUROPEAN GROUP SE",
-      "tradeName": "european europeangroup chubbeuropean chubb",
+      "tradeName": "europeangroup chubb chubbeuropean european",
       "cnpjKey": null,
       "method": "smart_dice",
       "score": 1.0,
@@ -1007,7 +1008,7 @@
     {
       "insurer_id": "055573",
       "insurer_name": "HDI GLOBAL SE (ATUAL DENOMINAÇÃO DE HDI-GERLING INDUSTRIE VERSICHERUNG AG)",
-      "tradeName": "hdiglobal denominacao industrie global denominacaohdi gerling versicherung globalatual industrieversicherung atual hdigerling gerlingindustrie hdi atualdenominacao",
+      "tradeName": "hdiglobal atualdenominacao industrieversicherung gerlingindustrie gerling hdigerling denominacaohdi hdi globalatual global atual versicherung denominacao industrie",
       "cnpjKey": null,
       "method": "seq",
       "score": 1.0,
@@ -1067,7 +1068,7 @@
     {
       "insurer_id": "006190",
       "insurer_name": "TOKIO MARINE SEGURADORA S.A.",
-      "tradeName": "marine tokio tokiomarine",
+      "tradeName": "tokiomarine tokio marine",
       "cnpjKey": "33164021000100",
       "method": "smart_dice",
       "score": 1.0,
@@ -1103,7 +1104,7 @@
     {
       "insurer_id": "006513",
       "insurer_name": "CHUBB SEGUROS BRASIL S.A.",
-      "tradeName": "chubbbrasil chubb",
+      "tradeName": "chubb chubbbrasil",
       "cnpjKey": "03502099000118",
       "method": "smart_dice",
       "score": 1.0,
@@ -1115,7 +1116,7 @@
     {
       "insurer_id": "006564",
       "insurer_name": "ZURICH SANTANDER BRASIL SEGUROS S.A.",
-      "tradeName": "santander zurich zurichsantander santanderbrasil",
+      "tradeName": "zurich zurichsantander santanderbrasil santander",
       "cnpjKey": "06136920000118",
       "method": "seq",
       "score": 1.0,
@@ -1139,7 +1140,7 @@
     {
       "insurer_id": "006602",
       "insurer_name": "MITSUI SUMITOMO SEGUROS S.A.",
-      "tradeName": "sumitomo mitsui mitsuisumitomo",
+      "tradeName": "mitsuisumitomo mitsui sumitomo",
       "cnpjKey": "33016221000107",
       "method": "smart_dice",
       "score": 1.0,
@@ -1163,7 +1164,7 @@
     {
       "insurer_id": "006696",
       "insurer_name": "AXA XL SEGUROS S.A.",
-      "tradeName": "xl axa axaxl",
+      "tradeName": "axa xl axaxl",
       "cnpjKey": "33822131000103",
       "method": "smart_dice",
       "score": 0.8537,
@@ -1223,7 +1224,7 @@
     {
       "insurer_id": "006866",
       "insurer_name": "BRADESCO VIDA E PREVIDÊNCIA S.A.",
-      "tradeName": "bradesco bradescovida",
+      "tradeName": "bradescovida bradesco",
       "cnpjKey": "51990695000137",
       "method": "smart_dice",
       "score": 1.0,
@@ -1235,7 +1236,7 @@
     {
       "insurer_id": "008141",
       "insurer_name": "CAIXA VIDA E PREVIDÊNCIA S.A.",
-      "tradeName": "caixa caixavida",
+      "tradeName": "caixavida caixa",
       "cnpjKey": "03730204000176",
       "method": "smart_dice",
       "score": 1.0,
@@ -1247,7 +1248,7 @@
     {
       "insurer_id": "008737",
       "insurer_name": "AIG SEGUROS BRASIL S.A.",
-      "tradeName": "aigbrasil aig",
+      "tradeName": "aig aigbrasil",
       "cnpjKey": "33040981000150",
       "method": "smart_dice",
       "score": 0.8361,
@@ -1259,7 +1260,7 @@
     {
       "insurer_id": "009938",
       "insurer_name": "SAFRA VIDA E PREVIDÊNCIA S.A.",
-      "tradeName": "safra safravida",
+      "tradeName": "safravida safra",
       "cnpjKey": "30902142000105",
       "method": "smart_dice",
       "score": 1.0,
@@ -1283,7 +1284,7 @@
     {
       "insurer_id": "010707",
       "insurer_name": "MBM PREVIDÊNCIA COMPLEMENTAR",
-      "tradeName": "mbmcomplementar mbm complementar",
+      "tradeName": "complementar mbm mbmcomplementar",
       "cnpjKey": "92892256000179",
       "method": "smart_dice",
       "score": 1.0,
@@ -1319,7 +1320,7 @@
     {
       "insurer_id": "010987",
       "insurer_name": "SOCIEDADE CAXIENSE DE MÚTUO SOCORRO - PREVIDÊNCIA PRIVADA",
-      "tradeName": "caxiense socorroprivada privada caxiensemutuo mutuosocorro mutuo sociedadecaxiense socorro",
+      "tradeName": "privada mutuosocorro caxiensemutuo socorroprivada mutuo sociedadecaxiense socorro caxiense",
       "cnpjKey": "88663828000170",
       "method": "smart_dice",
       "score": 0.8661,
@@ -1331,7 +1332,7 @@
     {
       "insurer_id": "059986",
       "insurer_name": "ZURICH INSURANCE PUBLIC LIMITED COMPANY",
-      "tradeName": "zurich public zurichpublic",
+      "tradeName": "zurichpublic public zurich",
       "cnpjKey": null,
       "method": "seq",
       "score": 1.0,
@@ -1343,7 +1344,7 @@
     {
       "insurer_id": "011088",
       "insurer_name": "FUTURO - PREVIDÊNCIA PRIVADA",
-      "tradeName": "futuro privada futuroprivada",
+      "tradeName": "futuroprivada privada futuro",
       "cnpjKey": "92812098000108",
       "method": "smart_dice",
       "score": 1.0,
@@ -1355,7 +1356,7 @@
     {
       "insurer_id": "011096",
       "insurer_name": "UPOFA - UNIÃO PREVIDENCIAL",
-      "tradeName": "previdencial uniao uniaoprevidencial upofa upofauniao",
+      "tradeName": "uniaoprevidencial upofauniao previdencial upofa uniao",
       "cnpjKey": "76678101000188",
       "method": "smart_dice",
       "score": 1.0,
@@ -1367,7 +1368,7 @@
     {
       "insurer_id": "011126",
       "insurer_name": "HOJE PREVIDÊNCIA PRIVADA",
-      "tradeName": "privada hojeprivada hoje",
+      "tradeName": "hoje privada hojeprivada",
       "cnpjKey": "29961505000102",
       "method": "smart_dice",
       "score": 1.0,
@@ -1415,7 +1416,7 @@
     {
       "insurer_id": "020826",
       "insurer_name": "MONGERAL AEGON CAPITALIZAÇÃO S.A",
-      "tradeName": "mongeralaegon aegon mongeral",
+      "tradeName": "mongeral mongeralaegon aegon",
       "cnpjKey": null,
       "method": "smart_dice",
       "score": 1.0,
@@ -1427,7 +1428,7 @@
     {
       "insurer_id": "022683",
       "insurer_name": "ZURICH BRASIL CAPITALIZAÇÃO S.A.",
-      "tradeName": "zurich zurichbrasil",
+      "tradeName": "zurichbrasil zurich",
       "cnpjKey": "17266009000141",
       "method": "seq",
       "score": 1.0,
@@ -1513,7 +1514,7 @@
     {
       "insurer_id": "004707",
       "insurer_name": "BRASILPREV SEGUROS E PREVIDÊNCIA S/A(dados a partir de Junho/2002)",
-      "tradeName": "dados brasilprev dadospartir junho brasilprevdados partirjunho partir",
+      "tradeName": "dadospartir dados junho partir brasilprevdados brasilprev partirjunho",
       "cnpjKey": "27665207000131",
       "method": "no_match",
       "score": null,
@@ -1549,7 +1550,7 @@
     {
       "insurer_id": "005193",
       "insurer_name": "COMPANHIA DE SEGUROS PREVIDÊNCIA DO SUL - PREVISUL",
-      "tradeName": "previsul sulprevisul sul",
+      "tradeName": "previsul sul sulprevisul",
       "cnpjKey": "92751213000173",
       "method": "no_match",
       "score": null,
@@ -1561,7 +1562,7 @@
     {
       "insurer_id": "005282",
       "insurer_name": "PRUDENTIAL DO BRASIL SEGUROS DE VIDA S.A",
-      "tradeName": "prudentialbrasil prudential brasilvida",
+      "tradeName": "brasilvida prudentialbrasil prudential",
       "cnpjKey": "33061813000140",
       "method": "no_match",
       "score": null,
@@ -1621,7 +1622,7 @@
     {
       "insurer_id": "005657",
       "insurer_name": "VANGUARDA COMPANHIA DE SEGUROS GERAIS",
-      "tradeName": "vanguardagerais vanguarda",
+      "tradeName": "vanguarda vanguardagerais",
       "cnpjKey": "42582049000140",
       "method": "no_match",
       "score": null,
@@ -1669,7 +1670,7 @@
     {
       "insurer_id": "044938",
       "insurer_name": "FINANCIAL ASSURANCE COMPANY LIMITED",
-      "tradeName": "financial assurance financialassurance",
+      "tradeName": "financialassurance financial assurance",
       "cnpjKey": "17944714000150",
       "method": "no_match",
       "score": null,
@@ -1693,7 +1694,7 @@
     {
       "insurer_id": "047708",
       "insurer_name": "XL CATLIN INSURANCE COMPANY UK LIMITED (ANTIGA CATLIN INSURANCE COMPANY (UK) LTD)",
-      "tradeName": "antigacatlin uk xl ukantiga antiga xlcatlin catlinuk catlin",
+      "tradeName": "xl xlcatlin ukantiga antigacatlin catlinuk catlin uk antiga",
       "cnpjKey": "13380383000112",
       "method": "no_match",
       "score": null,
@@ -1705,7 +1706,7 @@
     {
       "insurer_id": "049000",
       "insurer_name": "GENERAL INSURANCE CORPORATION OF INDIA",
-      "tradeName": "india general generalindia",
+      "tradeName": "generalindia general india",
       "cnpjKey": null,
       "method": "no_match",
       "score": null,
@@ -1717,7 +1718,7 @@
     {
       "insurer_id": "049760",
       "insurer_name": "AMERICAN HOME ASSURANCE COMPANY",
-      "tradeName": "americanhome assurance american homeassurance home",
+      "tradeName": "american americanhome assurance home homeassurance",
       "cnpjKey": "05489278000198",
       "method": "no_match",
       "score": null,
@@ -1753,7 +1754,7 @@
     {
       "insurer_id": "050202",
       "insurer_name": "SAMSUNG FIRE & MARINE INSURANCE CO., LTD.",
-      "tradeName": "samsungfire marine fire samsung firemarine",
+      "tradeName": "samsungfire samsung firemarine marine fire",
       "cnpjKey": null,
       "method": "no_match",
       "score": null,
@@ -1765,7 +1766,7 @@
     {
       "insurer_id": "050211",
       "insurer_name": "LIBERTY MUTUAL INSURANCE EUROPE SE (ANTIGA LIBERTY MUTUAL INSURANCE EUROPE LIMITED)",
-      "tradeName": "mutual antigaliberty antiga europeantiga libertymutual mutualeurope europe liberty",
+      "tradeName": "libertymutual europeantiga liberty antigaliberty europe antiga mutual mutualeurope",
       "cnpjKey": null,
       "method": "no_match",
       "score": null,
@@ -1777,7 +1778,7 @@
     {
       "insurer_id": "050326",
       "insurer_name": "AGEAS SA/NV",
-      "tradeName": "nv ageasnv ageas",
+      "tradeName": "ageasnv ageas nv",
       "cnpjKey": null,
       "method": "no_match",
       "score": null,
@@ -1789,7 +1790,7 @@
     {
       "insurer_id": "050679",
       "insurer_name": "JOHN HANCOCK LIFE INSURANCE COMPANY (U.S.A)",
-      "tradeName": "hancocklife john life johnhancock hancock",
+      "tradeName": "hancocklife johnhancock john life hancock",
       "cnpjKey": null,
       "method": "no_match",
       "score": null,
@@ -1837,7 +1838,7 @@
     {
       "insurer_id": "051438",
       "insurer_name": "HCC INTERNATIONAL INSURANCE COMPANY PLC",
-      "tradeName": "hcc international hccinternational",
+      "tradeName": "hcc hccinternational international",
       "cnpjKey": null,
       "method": "no_match",
       "score": null,
@@ -1849,7 +1850,7 @@
     {
       "insurer_id": "051616",
       "insurer_name": "EURASIA INSURANCE COMPANY JSC",
-      "tradeName": "eurasiajsc jsc eurasia",
+      "tradeName": "jsc eurasiajsc eurasia",
       "cnpjKey": null,
       "method": "no_match",
       "score": null,
@@ -1873,7 +1874,7 @@
     {
       "insurer_id": "051772",
       "insurer_name": "CAISSE CENTRALE DE REASSURANCE",
-      "tradeName": "caisse centralereassurance reassurance caissecentrale centrale",
+      "tradeName": "reassurance caisse centralereassurance centrale caissecentrale",
       "cnpjKey": null,
       "method": "no_match",
       "score": null,
@@ -1885,7 +1886,7 @@
     {
       "insurer_id": "051845",
       "insurer_name": "FIDELIS UNDERWRITING LIMITED",
-      "tradeName": "fidelisunderwriting fidelis underwriting",
+      "tradeName": "underwriting fidelisunderwriting fidelis",
       "cnpjKey": null,
       "method": "no_match",
       "score": null,
@@ -1897,7 +1898,7 @@
     {
       "insurer_id": "051934",
       "insurer_name": "ENDURANCE WORLDWIDE INSURANCE LIMITED",
-      "tradeName": "enduranceworldwide worldwide endurance",
+      "tradeName": "enduranceworldwide endurance worldwide",
       "cnpjKey": null,
       "method": "no_match",
       "score": null,
@@ -1921,7 +1922,7 @@
     {
       "insurer_id": "052469",
       "insurer_name": "XL INSURANCE COMPANY SE (ANTIGA XL INSURANCE COMPANY PLC)",
-      "tradeName": "xl xlantiga antiga antigaxl",
+      "tradeName": "xl antigaxl xlantiga antiga",
       "cnpjKey": null,
       "method": "ambiguous_rejected",
       "score": 0.7748,
@@ -1957,7 +1958,7 @@
     {
       "insurer_id": "052922",
       "insurer_name": "AXA VERSICHERUNGEN AG",
-      "tradeName": "versicherungen axa axaversicherungen",
+      "tradeName": "axa versicherungen axaversicherungen",
       "cnpjKey": null,
       "method": "no_match",
       "score": null,
@@ -1981,7 +1982,7 @@
     {
       "insurer_id": "053147",
       "insurer_name": "GOTHAER ALLGEMEINE VERSICHERUNG AG",
-      "tradeName": "gothaerallgemeine gothaer allgemeineversicherung allgemeine versicherung",
+      "tradeName": "allgemeine gothaer versicherung gothaerallgemeine allgemeineversicherung",
       "cnpjKey": null,
       "method": "no_match",
       "score": null,
@@ -1993,7 +1994,7 @@
     {
       "insurer_id": "053384",
       "insurer_name": "ECCLESIASTICAL INSURANCE OFFICE PLC",
-      "tradeName": "office ecclesiasticaloffice ecclesiastical",
+      "tradeName": "ecclesiastical ecclesiasticaloffice office",
       "cnpjKey": null,
       "method": "no_match",
       "score": null,
@@ -2005,7 +2006,7 @@
     {
       "insurer_id": "053414",
       "insurer_name": "EXPORT DEVELOPMENT CANADA",
-      "tradeName": "developmentcanada canada exportdevelopment development export",
+      "tradeName": "export developmentcanada exportdevelopment canada development",
       "cnpjKey": null,
       "method": "no_match",
       "score": null,
@@ -2017,7 +2018,7 @@
     {
       "insurer_id": "053473",
       "insurer_name": "RENAISSANCERE EUROPE AG.",
-      "tradeName": "renaissancereeurope renaissancere europe",
+      "tradeName": "europe renaissancere renaissancereeurope",
       "cnpjKey": null,
       "method": "no_match",
       "score": null,
@@ -2041,7 +2042,7 @@
     {
       "insurer_id": "001155",
       "insurer_name": "SPLIT RISK SEGURADORA S.A.",
-      "tradeName": "risk split splitrisk",
+      "tradeName": "splitrisk risk split",
       "cnpjKey": null,
       "method": "no_match",
       "score": null,
@@ -2053,7 +2054,7 @@
     {
       "insurer_id": "001414",
       "insurer_name": "BERKLEY INTERNATIONAL DO BRASIL SEGUROS S/A",
-      "tradeName": "international berkleyinternational internationalbrasil berkley",
+      "tradeName": "berkleyinternational internationalbrasil international berkley",
       "cnpjKey": "07021544000189",
       "method": "no_match",
       "score": null,
@@ -2101,7 +2102,7 @@
     {
       "insurer_id": "001601",
       "insurer_name": "ATENAS SEGURADORA DE DANOS E PESSOAS S.A.",
-      "tradeName": "atenasdanos pessoas danospessoas danos atenas",
+      "tradeName": "danospessoas atenas danos atenasdanos pessoas",
       "cnpjKey": null,
       "method": "no_match",
       "score": null,
@@ -2137,7 +2138,7 @@
     {
       "insurer_id": "002305",
       "insurer_name": "BTG PACTUAL SEGUROS S.A.",
-      "tradeName": "btg btgpactual pactual",
+      "tradeName": "btg pactual btgpactual",
       "cnpjKey": "32724962000180",
       "method": "semantic_rejected",
       "score": 1.0,
@@ -2173,7 +2174,7 @@
     {
       "insurer_id": "002534",
       "insurer_name": "EFEITO SEGURADORA VIDA E PREVIDENCIA S.A.",
-      "tradeName": "efeito efeitovida",
+      "tradeName": "efeitovida efeito",
       "cnpjKey": null,
       "method": "semantic_rejected",
       "score": 0.8642,
@@ -2209,7 +2210,7 @@
     {
       "insurer_id": "002747",
       "insurer_name": "GALÁPAGOS CAPITAL SOCIEDADE SEGURADORA DE PROPÓSITO ESPECÍFICO S.A.",
-      "tradeName": "galapagossociedade propositoespecifico galapagos sociedadeproposito especifico proposito",
+      "tradeName": "especifico galapagos propositoespecifico sociedadeproposito proposito galapagossociedade",
       "cnpjKey": null,
       "method": "no_match",
       "score": null,
@@ -2221,7 +2222,7 @@
     {
       "insurer_id": "002771",
       "insurer_name": "SUDASEG SEGURADORA DE DANOS E PESSOAS S.A.",
-      "tradeName": "sudaseg pessoas danospessoas danos sudasegdanos",
+      "tradeName": "danospessoas danos sudasegdanos sudaseg pessoas",
       "cnpjKey": "32191644000109",
       "method": "no_match",
       "score": null,
@@ -2281,7 +2282,7 @@
     {
       "insurer_id": "003221",
       "insurer_name": "ANDRINA SOCIEDADE SEGURADORA DE PROPOSITO ESPECIFICO S.A",
-      "tradeName": "propositoespecifico andrina andrinasociedade sociedadeproposito especifico proposito",
+      "tradeName": "andrinasociedade especifico propositoespecifico sociedadeproposito proposito andrina",
       "cnpjKey": null,
       "method": "no_match",
       "score": null,
@@ -2317,7 +2318,7 @@
     {
       "insurer_id": "003328",
       "insurer_name": "COFACE DO BRASIL SEGUROS DE CRÉDITO S/A",
-      "tradeName": "cofacebrasil coface credito brasilcredito",
+      "tradeName": "credito cofacebrasil brasilcredito coface",
       "cnpjKey": "07644868000173",
       "method": "no_match",
       "score": null,
@@ -2353,7 +2354,7 @@
     {
       "insurer_id": "003638",
       "insurer_name": "SKY SEGURADORA S.A. - MICROSSEGURADORA",
-      "tradeName": "sky skymicrosseguradora microsseguradora",
+      "tradeName": "sky microsseguradora skymicrosseguradora",
       "cnpjKey": null,
       "method": "no_match",
       "score": null,
@@ -2365,7 +2366,7 @@
     {
       "insurer_id": "003654",
       "insurer_name": "SICOOB SEGURADORA DE VIDA E PREVIDÊNCIA S.A.",
-      "tradeName": "sicoob sicoobvida",
+      "tradeName": "sicoobvida sicoob",
       "cnpjKey": "26314512000116",
       "method": "semantic_rejected",
       "score": 0.8642,
@@ -2401,7 +2402,7 @@
     {
       "insurer_id": "003956",
       "insurer_name": "FAM SEGURADORA DE CRÉDITO E GARANTIA S.A.",
-      "tradeName": "garantia fam famcredito credito creditogarantia",
+      "tradeName": "credito fam creditogarantia famcredito garantia",
       "cnpjKey": null,
       "method": "no_match",
       "score": null,
@@ -2473,7 +2474,7 @@
     {
       "insurer_id": "053635",
       "insurer_name": "MMA IARD S.A.",
-      "tradeName": "mmaiard iard mma",
+      "tradeName": "iard mmaiard mma",
       "cnpjKey": null,
       "method": "no_match",
       "score": null,
@@ -2485,7 +2486,7 @@
     {
       "insurer_id": "053651",
       "insurer_name": "HELVETIA SCHWEIZERISCHE VERSICHERUNGSGESELLSCHAFT AG",
-      "tradeName": "schweizerische schweizerischeversicherungsgesellschaft versicherungsgesellschaft helvetiaschweizerische helvetia",
+      "tradeName": "schweizerische helvetia versicherungsgesellschaft schweizerischeversicherungsgesellschaft helvetiaschweizerische",
       "cnpjKey": null,
       "method": "no_match",
       "score": null,
@@ -2497,7 +2498,7 @@
     {
       "insurer_id": "054381",
       "insurer_name": "LIBERTY MUTUAL INSURANCE COMPANY",
-      "tradeName": "mutual liberty libertymutual",
+      "tradeName": "liberty mutual libertymutual",
       "cnpjKey": null,
       "method": "no_match",
       "score": null,
@@ -2509,7 +2510,7 @@
     {
       "insurer_id": "054569",
       "insurer_name": "NOVA CASIOPEA RE S.A.",
-      "tradeName": "casiopea novacasiopea casiopeare re nova",
+      "tradeName": "nova re casiopea casiopeare novacasiopea",
       "cnpjKey": null,
       "method": "no_match",
       "score": null,
@@ -2521,7 +2522,7 @@
     {
       "insurer_id": "054666",
       "insurer_name": "ACE PROPERTY AND CASUALTY INSURANCE COMPANY",
-      "tradeName": "casualty ace propertycasualty property aceproperty",
+      "tradeName": "propertycasualty ace property aceproperty casualty",
       "cnpjKey": null,
       "method": "no_match",
       "score": null,
@@ -2533,7 +2534,7 @@
     {
       "insurer_id": "054933",
       "insurer_name": "THE NEW INDIA ASSURANCE COMPANY LTD.",
-      "tradeName": "india assurance new indiaassurance newindia",
+      "tradeName": "indiaassurance india assurance newindia new",
       "cnpjKey": null,
       "method": "no_match",
       "score": null,
@@ -2545,7 +2546,7 @@
     {
       "insurer_id": "054950",
       "insurer_name": "ASSICURAZIONI GENERALI S.P.A.",
-      "tradeName": "generali assicurazionigenerali assicurazioni",
+      "tradeName": "assicurazionigenerali assicurazioni generali",
       "cnpjKey": null,
       "method": "no_match",
       "score": null,
@@ -2557,7 +2558,7 @@
     {
       "insurer_id": "055000",
       "insurer_name": "HOUSTON CASUALTY COMPANY",
-      "tradeName": "casualty houston houstoncasualty",
+      "tradeName": "houstoncasualty casualty houston",
       "cnpjKey": null,
       "method": "no_match",
       "score": null,
@@ -2569,7 +2570,7 @@
     {
       "insurer_id": "055093",
       "insurer_name": "MAPFRE GLOBAL RISKS, COMPAÑIA INTERNACIONAL DE SEGUROS Y REASEGUROS S.A",
-      "tradeName": "compania internacionalreaseguros mapfre riskscompania global globalrisks reaseguros internacional risks mapfreglobal companiainternacional",
+      "tradeName": "risks globalrisks riskscompania internacionalreaseguros reaseguros compania mapfre global internacional mapfreglobal companiainternacional",
       "cnpjKey": null,
       "method": "no_match",
       "score": null,
@@ -2581,7 +2582,7 @@
     {
       "insurer_id": "055425",
       "insurer_name": "MS AMLIN AG",
-      "tradeName": "amlin ms msamlin",
+      "tradeName": "msamlin ms amlin",
       "cnpjKey": null,
       "method": "no_match",
       "score": null,
@@ -2593,7 +2594,7 @@
     {
       "insurer_id": "055514",
       "insurer_name": "NORWEGIAN HULL CLUB",
-      "tradeName": "norwegianhull norwegian hull club hullclub",
+      "tradeName": "hullclub norwegianhull hull club norwegian",
       "cnpjKey": null,
       "method": "no_match",
       "score": null,
@@ -2605,7 +2606,7 @@
     {
       "insurer_id": "055875",
       "insurer_name": "COMPAÑIA ESPAÑOLA DE SEGUROS DE CRÉDITO A LA EXPORTACIÓN, SA.",
-      "tradeName": "creditola compania laexportacion espanola espanolacredito la credito exportacion companiaespanola",
+      "tradeName": "credito la companiaespanola espanolacredito laexportacion espanola compania exportacion creditola",
       "cnpjKey": null,
       "method": "no_match",
       "score": null,
@@ -2617,7 +2618,7 @@
     {
       "insurer_id": "055891",
       "insurer_name": "DELCREDERE/DUCROIRE",
-      "tradeName": "delcredereducroire ducroire delcredere",
+      "tradeName": "delcredere ducroire delcredereducroire",
       "cnpjKey": null,
       "method": "no_match",
       "score": null,
@@ -2629,7 +2630,7 @@
     {
       "insurer_id": "055921",
       "insurer_name": "SOMPO JAPAN INSURANCE INC.(ATUAL DENOMINAÇÃO DE SOMPO JAPAN NIPPONKOA INSURANCE INC)",
-      "tradeName": "nipponkoa denominacao incatual nipponkoainc sompo sompojapan denominacaosompo atual japan japannipponkoa japaninc atualdenominacao",
+      "tradeName": "japaninc atualdenominacao japan sompojapan incatual nipponkoa denominacaosompo sompo japannipponkoa nipponkoainc atual denominacao",
       "cnpjKey": null,
       "method": "no_match",
       "score": null,
@@ -2653,7 +2654,7 @@
     {
       "insurer_id": "056120",
       "insurer_name": "BERKSHIRE HATHAWAY INTERNATIONAL INSURANCE LIMITED",
-      "tradeName": "hathaway hathawayinternational international berkshirehathaway berkshire",
+      "tradeName": "hathaway berkshirehathaway international berkshire hathawayinternational",
       "cnpjKey": null,
       "method": "no_match",
       "score": null,
@@ -2665,7 +2666,7 @@
     {
       "insurer_id": "056448",
       "insurer_name": "REASEGURADORA PATRIA S.A.",
-      "tradeName": "patria reaseguradorapatria reaseguradora",
+      "tradeName": "reaseguradorapatria patria reaseguradora",
       "cnpjKey": null,
       "method": "no_match",
       "score": null,
@@ -2677,7 +2678,7 @@
     {
       "insurer_id": "056561",
       "insurer_name": "AWP P&C S.A.(ANTIGA AGA INTERNATIONAL S.A).",
-      "tradeName": "awpantiga international antiga againternational aga antigaaga awp",
+      "tradeName": "awpantiga international againternational antigaaga awp antiga aga",
       "cnpjKey": null,
       "method": "no_match",
       "score": null,
@@ -2689,7 +2690,7 @@
     {
       "insurer_id": "056723",
       "insurer_name": "GENERALI ITALIA S.P.A.",
-      "tradeName": "italia generali generaliitalia",
+      "tradeName": "italia generaliitalia generali",
       "cnpjKey": null,
       "method": "no_match",
       "score": null,
@@ -2713,7 +2714,7 @@
     {
       "insurer_id": "056812",
       "insurer_name": "AXA FRANCE VIE",
-      "tradeName": "france axa vie francevie axafrance",
+      "tradeName": "francevie vie france axa axafrance",
       "cnpjKey": null,
       "method": "no_match",
       "score": null,
@@ -2725,7 +2726,7 @@
     {
       "insurer_id": "056928",
       "insurer_name": "AXA GLOBAL RE (ANTIGA AXA GLOBAL P&C)",
-      "tradeName": "reantiga axa global antiga axaglobal re antigaaxa globalre",
+      "tradeName": "re antigaaxa globalre axaglobal reantiga axa antiga global",
       "cnpjKey": null,
       "method": "no_match",
       "score": null,
@@ -2749,7 +2750,7 @@
     {
       "insurer_id": "057002",
       "insurer_name": "MSIG EUROPE SE (NOVA DENOMINAÇÃO DE MS AMLIN INSURANCE SE)",
-      "tradeName": "denominacao msigeurope msig msamlin amlin ms europenova nova europe denominacaoms novadenominacao",
+      "tradeName": "msig msigeurope ms nova amlin msamlin denominacaoms europe europenova novadenominacao denominacao",
       "cnpjKey": null,
       "method": "no_match",
       "score": null,
@@ -2761,7 +2762,7 @@
     {
       "insurer_id": "057461",
       "insurer_name": "SCHWEIZERISCHE NATIONAL - VERSICHERUNGS - GESELLSCHAFT AG ( INATIVA )",
-      "tradeName": "versicherungs schweizerische national gesellschaftinativa gesellschaft nationalversicherungs versicherungsgesellschaft inativa schweizerischenational",
+      "tradeName": "gesellschaft schweizerische versicherungs inativa gesellschaftinativa national versicherungsgesellschaft schweizerischenational nationalversicherungs",
       "cnpjKey": null,
       "method": "no_match",
       "score": null,
@@ -2773,7 +2774,7 @@
     {
       "insurer_id": "057703",
       "insurer_name": "GENERAL INSURANCE CORPORATION OF INDIA",
-      "tradeName": "india general generalindia",
+      "tradeName": "generalindia general india",
       "cnpjKey": null,
       "method": "no_match",
       "score": null,
@@ -2785,7 +2786,7 @@
     {
       "insurer_id": "057754",
       "insurer_name": "COFACE RE S.A.",
-      "tradeName": "cofacere re coface",
+      "tradeName": "cofacere coface re",
       "cnpjKey": null,
       "method": "no_match",
       "score": null,
@@ -2797,7 +2798,7 @@
     {
       "insurer_id": "058254",
       "insurer_name": "AMERICAN HOME ASSURANCE COMPANY",
-      "tradeName": "americanhome assurance american homeassurance home",
+      "tradeName": "american americanhome assurance home homeassurance",
       "cnpjKey": null,
       "method": "no_match",
       "score": null,
@@ -2809,7 +2810,7 @@
     {
       "insurer_id": "058378",
       "insurer_name": "ALLIED WORLD ASSURANCE COMPANY (EUROPE) LIMITED (ANTIGA ALLIED WORLD ASSURANCE COMPANY (EUROPE) PUBLIC LIMITED COMPANY)",
-      "tradeName": "public assurance world antiga europeantiga europepublic europe alliedworld worldassurance antigaallied assuranceeurope allied",
+      "tradeName": "allied worldassurance assuranceeurope europeantiga europepublic public assurance alliedworld europe antiga antigaallied world",
       "cnpjKey": null,
       "method": "no_match",
       "score": null,
@@ -2833,7 +2834,7 @@
     {
       "insurer_id": "058661",
       "insurer_name": "GENERALI ESPAÑA, S.A. DE SEGUROS Y REASEGUROS",
-      "tradeName": "generaliespana reaseguros espanareaseguros generali espana",
+      "tradeName": "generaliespana espana reaseguros espanareaseguros generali",
       "cnpjKey": null,
       "method": "no_match",
       "score": null,
@@ -2869,7 +2870,7 @@
     {
       "insurer_id": "006220",
       "insurer_name": "SUL AMÉRICA SEGUROS DE PESSOAS E PREVIDÊNCIA S.A.",
-      "tradeName": "america sul americapessoas pessoas sulamerica",
+      "tradeName": "americapessoas sulamerica pessoas sul america",
       "cnpjKey": "01704513000146",
       "method": "no_match",
       "score": null,
@@ -2905,7 +2906,7 @@
     {
       "insurer_id": "006360",
       "insurer_name": "KYOEI DO BRASIL COMPANHIA DE SEGUROS",
-      "tradeName": "kyoei kyoeibrasil",
+      "tradeName": "kyoeibrasil kyoei",
       "cnpjKey": "61383576000170",
       "method": "no_match",
       "score": null,
@@ -2917,7 +2918,7 @@
     {
       "insurer_id": "006432",
       "insurer_name": "NATIONALE NEDERLANDEN LEVENSVERZEKERING",
-      "tradeName": "levensverzekering nederlanden nationalenederlanden nederlandenlevensverzekering nationale",
+      "tradeName": "levensverzekering nederlandenlevensverzekering nationalenederlanden nationale nederlanden",
       "cnpjKey": null,
       "method": "no_match",
       "score": null,
@@ -2941,7 +2942,7 @@
     {
       "insurer_id": "006548",
       "insurer_name": "CARDIF DO BRASIL VIDA E PREVIDÊNCIA S/A",
-      "tradeName": "cardifbrasil cardif brasilvida",
+      "tradeName": "cardif brasilvida cardifbrasil",
       "cnpjKey": "03546261000108",
       "method": "no_match",
       "score": null,
@@ -2953,7 +2954,7 @@
     {
       "insurer_id": "006688",
       "insurer_name": "COMPANHIA DE SEGUROS DO ESTADO DE SÃO PAULO - COSESP",
-      "tradeName": "estado cosesp paulocosesp paulo estadosao saopaulo sao",
+      "tradeName": "paulocosesp estado sao paulo saopaulo estadosao cosesp",
       "cnpjKey": "62088042000183",
       "method": "no_match",
       "score": null,
@@ -2989,7 +2990,7 @@
     {
       "insurer_id": "006998",
       "insurer_name": "CESCEBRASIL SEGUROS DE GARANTIAS E CRÉDITO S.A.",
-      "tradeName": "cescebrasilcredito credito cescebrasil",
+      "tradeName": "credito cescebrasilcredito cescebrasil",
       "cnpjKey": "29959459000107",
       "method": "no_match",
       "score": null,
@@ -3001,7 +3002,7 @@
     {
       "insurer_id": "010120",
       "insurer_name": "EQUATORIAL PREVIDÊNCIA COMPLEMENTAR",
-      "tradeName": "equatorialcomplementar complementar equatorial",
+      "tradeName": "complementar equatorial equatorialcomplementar",
       "cnpjKey": "42150987000170",
       "method": "no_match",
       "score": null,
@@ -3013,7 +3014,7 @@
     {
       "insurer_id": "010413",
       "insurer_name": "FAMILIA BANDEIRANTE PREVIDÊNCIA PRIVADA",
-      "tradeName": "familia familiabandeirante privada bandeirante bandeiranteprivada",
+      "tradeName": "privada familia bandeiranteprivada familiabandeirante bandeirante",
       "cnpjKey": "62874219000177",
       "method": "no_match",
       "score": null,
@@ -3037,7 +3038,7 @@
     {
       "insurer_id": "058963",
       "insurer_name": "GENERALI ESPAÑA DE SEGUROS Y REASEGUROS, S.A.",
-      "tradeName": "generaliespana reaseguros espanareaseguros generali espana",
+      "tradeName": "generaliespana espana reaseguros espanareaseguros generali",
       "cnpjKey": null,
       "method": "no_match",
       "score": null,
@@ -3061,7 +3062,7 @@
     {
       "insurer_id": "059226",
       "insurer_name": "AXA XL  INSURANCE COMPANY UK LIMITED",
-      "tradeName": "xluk axa axaxl xl uk",
+      "tradeName": "xl axaxl uk xluk axa",
       "cnpjKey": null,
       "method": "no_match",
       "score": null,
@@ -3085,7 +3086,7 @@
     {
       "insurer_id": "059536",
       "insurer_name": "COMPAGNIE FRANÇAISE D'ASSURANCE POUR LE COMMERCE EXTÉRIEUR - COFACE",
-      "tradeName": "exterieur compagniefrancaise assurancepour pourle assurance commerceexterieur pour exterieurcoface le compagnie francaise commerce coface francaiseassurance lecommerce",
+      "tradeName": "assurancepour lecommerce pour compagnie francaiseassurance francaise commerce pourle exterieurcoface assurance commerceexterieur le compagniefrancaise exterieur coface",
       "cnpjKey": null,
       "method": "no_match",
       "score": null,
@@ -3097,7 +3098,7 @@
     {
       "insurer_id": "059641",
       "insurer_name": "CONVEX INSURANCE UK LIMITED",
-      "tradeName": "convexuk convex uk",
+      "tradeName": "convex uk convexuk",
       "cnpjKey": null,
       "method": "no_match",
       "score": null,
@@ -3217,7 +3218,7 @@
     {
       "insurer_id": "040126",
       "insurer_name": "XL RE EUROPE SE",
-      "tradeName": "reeurope xl re xlre europe",
+      "tradeName": "xl re europe reeurope xlre",
       "cnpjKey": null,
       "method": "no_match",
       "score": null,
@@ -3229,7 +3230,7 @@
     {
       "insurer_id": "040215",
       "insurer_name": "MAPFRE RE COMPAÑÍA DE REASEGUROS S.A.",
-      "tradeName": "compania mapfre reaseguros companiareaseguros re mapfrere recompania",
+      "tradeName": "re companiareaseguros mapfrere reaseguros recompania compania mapfre",
       "cnpjKey": "05723617000159",
       "method": "no_match",
       "score": null,
@@ -3253,7 +3254,7 @@
     {
       "insurer_id": "042871",
       "insurer_name": "LIBERTY MUTUAL INSURANCE COMPANY",
-      "tradeName": "mutual liberty libertymutual",
+      "tradeName": "liberty mutual libertymutual",
       "cnpjKey": "08712487000147",
       "method": "no_match",
       "score": null,
@@ -3265,7 +3266,7 @@
     {
       "insurer_id": "042951",
       "insurer_name": "TRANSAMERICA INTERNATIONAL RE (BERMUDA) LTD.",
-      "tradeName": "transamerica rebermuda transamericainternational international internationalre re bermuda",
+      "tradeName": "bermuda re international internationalre rebermuda transamerica transamericainternational",
       "cnpjKey": "09539939000101",
       "method": "no_match",
       "score": null,
@@ -3277,7 +3278,7 @@
     {
       "insurer_id": "043290",
       "insurer_name": "XL RE LATIN AMERICA LTD. (CANCELADA)",
-      "tradeName": "america latinamerica xl cancelada latin relatin americacancelada re xlre",
+      "tradeName": "xl latin re relatin latinamerica xlre cancelada americacancelada america",
       "cnpjKey": null,
       "method": "no_match",
       "score": null,
@@ -3289,7 +3290,7 @@
     {
       "insurer_id": "010448",
       "insurer_name": "GBOEX - GREMIO BENEFICENTE",
-      "tradeName": "gremio beneficente gboexgremio gboex gremiobeneficente",
+      "tradeName": "gboexgremio gremio beneficente gremiobeneficente gboex",
       "cnpjKey": "92872100000126",
       "method": "no_match",
       "score": null,
@@ -3351,7 +3352,7 @@
     {
       "insurer_id": "004928",
       "insurer_name": "STARR INTERNATIONAL BRASIL SEGURADORA S.A.",
-      "tradeName": "starr international starrinternational internationalbrasil",
+      "tradeName": "starrinternational starr internationalbrasil international",
       "cnpjKey": "17341270000169",
       "method": "b2b_skip",
       "score": 0.0,
@@ -3363,7 +3364,7 @@
     {
       "insurer_id": "005991",
       "insurer_name": "SWISS RE CORPORATE SOLUTIONS BRASIL SEGUROS S.A.",
-      "tradeName": "corporate recorporate solutionsbrasil swiss swissre solutions re corporatesolutions",
+      "tradeName": "swiss corporate recorporate re corporatesolutions swissre solutionsbrasil solutions",
       "cnpjKey": "72145931000199",
       "method": "b2b_skip",
       "score": 0.0,
@@ -3375,7 +3376,7 @@
     {
       "insurer_id": "044717",
       "insurer_name": "AFRICAN REINSURANCE CORPORATION",
-      "tradeName": "reinsurance african africanreinsurance",
+      "tradeName": "african africanreinsurance reinsurance",
       "cnpjKey": null,
       "method": "b2b_skip",
       "score": 0.0,
@@ -3387,7 +3388,7 @@
     {
       "insurer_id": "044814",
       "insurer_name": "PARTNER REINSURANCE EUROPE SE (ANTIGA PARTNER REINSURANCE EUROPE PUBLIC LIMITED COMPANY)",
-      "tradeName": "antigapartner partnerreinsurance reinsuranceeurope public reinsurance partner antiga europeantiga europepublic europe",
+      "tradeName": "partner europeantiga europepublic public reinsuranceeurope antigapartner europe antiga partnerreinsurance reinsurance",
       "cnpjKey": "09345630000172",
       "method": "b2b_skip",
       "score": 0.0,
@@ -3399,7 +3400,7 @@
     {
       "insurer_id": "044920",
       "insurer_name": "EVEREST REINSURANCE COMPANY",
-      "tradeName": "reinsurance everest everestreinsurance",
+      "tradeName": "everestreinsurance everest reinsurance",
       "cnpjKey": "10223555000156",
       "method": "b2b_skip",
       "score": 0.0,
@@ -3411,7 +3412,7 @@
     {
       "insurer_id": "045004",
       "insurer_name": "INTACT INSURANCE UK LIMITED (EX-ROYAL & SUN ALLIANCE INSURANCE PLC)",
-      "tradeName": "royal alliance exroyal intact uk ex royalsun ukex sun sunalliance intactuk",
+      "tradeName": "ex sun exroyal intact royal sunalliance uk ukex alliance intactuk royalsun",
       "cnpjKey": "10274217000143",
       "method": "b2b_skip",
       "score": 0.0,
@@ -3423,7 +3424,7 @@
     {
       "insurer_id": "045420",
       "insurer_name": "CATLIN RE SWITZERLAND LTD",
-      "tradeName": "re reswitzerland catlinre switzerland catlin",
+      "tradeName": "re reswitzerland catlinre catlin switzerland",
       "cnpjKey": "03492427000142",
       "method": "b2b_skip",
       "score": 0.0,
@@ -3435,7 +3436,7 @@
     {
       "insurer_id": "045896",
       "insurer_name": "GARD MARINE & ENERGY LIMITED",
-      "tradeName": "marine energy marineenergy gardmarine gard",
+      "tradeName": "energy marineenergy gard marine gardmarine",
       "cnpjKey": "16365597000108",
       "method": "b2b_skip",
       "score": 0.0,
@@ -3447,7 +3448,7 @@
     {
       "insurer_id": "045926",
       "insurer_name": "ARDEN REINSURANCE COMPANY LTD. ( ANTIGA ARIEL REINSURANCE COMPANY LTD.)",
-      "tradeName": "arden reinsurance arielreinsurance antiga antigaariel reinsuranceantiga ardenreinsurance ariel",
+      "tradeName": "arielreinsurance reinsuranceantiga ardenreinsurance antigaariel antiga arden ariel reinsurance",
       "cnpjKey": "11459147000160",
       "method": "b2b_skip",
       "score": 0.0,
@@ -3459,7 +3460,7 @@
     {
       "insurer_id": "045951",
       "insurer_name": "ATRADIUS REINSURANCE DESIGNATED ACTIVITY COMPANY",
-      "tradeName": "atradius reinsurancedesignated reinsurance designated designatedactivity activity atradiusreinsurance",
+      "tradeName": "reinsurancedesignated designatedactivity designated atradius atradiusreinsurance reinsurance activity",
       "cnpjKey": "29166269000124",
       "method": "b2b_skip",
       "score": 0.0,
@@ -3471,7 +3472,7 @@
     {
       "insurer_id": "046507",
       "insurer_name": "AXIS RE SE",
-      "tradeName": "axis re axisre",
+      "tradeName": "axis axisre re",
       "cnpjKey": "11499800000115",
       "method": "b2b_skip",
       "score": 0.0,
@@ -3507,7 +3508,7 @@
     {
       "insurer_id": "047741",
       "insurer_name": "TOKIO MARINE & NICHIDO FIRE INSURANCE CO., LTD.",
-      "tradeName": "tokiomarine tokio nichidofire marine fire nichido marinenichido",
+      "tradeName": "nichidofire tokiomarine nichido marine fire marinenichido tokio",
       "cnpjKey": "05711001000168",
       "method": "b2b_skip",
       "score": 0.0,
@@ -3519,7 +3520,7 @@
     {
       "insurer_id": "048178",
       "insurer_name": "RGA GLOBAL REINSURANCE COMPANY, LTD.",
-      "tradeName": "globalreinsurance rgaglobal global reinsurance rga",
+      "tradeName": "globalreinsurance rgaglobal global rga reinsurance",
       "cnpjKey": "18120916000140",
       "method": "b2b_skip",
       "score": 0.0,
@@ -3531,7 +3532,7 @@
     {
       "insurer_id": "048186",
       "insurer_name": "MÜNCHENER RÜCKVERSICHERUNGS-GESELLSCHAFT AKTIENGESELLSCHAFT IN MÜNCHEN",
-      "tradeName": "munchen munchenerruckversicherungs aktiengesellschaftin munchener aktiengesellschaft gesellschaftaktiengesellschaft in ruckversicherungs gesellschaft inmunchen ruckversicherungsgesellschaft",
+      "tradeName": "gesellschaft ruckversicherungsgesellschaft ruckversicherungs aktiengesellschaft munchenerruckversicherungs inmunchen munchener munchen aktiengesellschaftin gesellschaftaktiengesellschaft in",
       "cnpjKey": null,
       "method": "b2b_skip",
       "score": 0.0,
@@ -3543,7 +3544,7 @@
     {
       "insurer_id": "048259",
       "insurer_name": "TRANSATLANTIC REINSURANCE COMPANY",
-      "tradeName": "reinsurance transatlantic transatlanticreinsurance",
+      "tradeName": "transatlanticreinsurance transatlantic reinsurance",
       "cnpjKey": "05708742000190",
       "method": "b2b_skip",
       "score": 0.0,
@@ -3555,7 +3556,7 @@
     {
       "insurer_id": "048747",
       "insurer_name": "SWISS REINSURANCE AMERICA CORPORATION",
-      "tradeName": "america reinsurance swiss reinsuranceamerica swissreinsurance",
+      "tradeName": "swiss reinsuranceamerica swissreinsurance reinsurance america",
       "cnpjKey": "09482728000171",
       "method": "b2b_skip",
       "score": 0.0,
@@ -3567,7 +3568,7 @@
     {
       "insurer_id": "048879",
       "insurer_name": "GENERAL REINSURANCE AG",
-      "tradeName": "reinsurance general generalreinsurance",
+      "tradeName": "general reinsurance generalreinsurance",
       "cnpjKey": "02030942000148",
       "method": "b2b_skip",
       "score": 0.0,
@@ -3579,7 +3580,7 @@
     {
       "insurer_id": "049131",
       "insurer_name": "ARCH REINSURANCE LTD.",
-      "tradeName": "reinsurance arch archreinsurance",
+      "tradeName": "archreinsurance arch reinsurance",
       "cnpjKey": "16809990000143",
       "method": "b2b_skip",
       "score": 0.0,
@@ -3591,7 +3592,7 @@
     {
       "insurer_id": "050121",
       "insurer_name": "TRANSATLANTIC REINSURANCE COMPANY",
-      "tradeName": "reinsurance transatlantic transatlanticreinsurance",
+      "tradeName": "transatlanticreinsurance transatlantic reinsurance",
       "cnpjKey": null,
       "method": "b2b_skip",
       "score": 0.0,
@@ -3603,7 +3604,7 @@
     {
       "insurer_id": "050806",
       "insurer_name": "AFRICAN REINSURANCE CORPORATION",
-      "tradeName": "reinsurance african africanreinsurance",
+      "tradeName": "african africanreinsurance reinsurance",
       "cnpjKey": null,
       "method": "b2b_skip",
       "score": 0.0,
@@ -3615,7 +3616,7 @@
     {
       "insurer_id": "050822",
       "insurer_name": "ALLIANZ GLOBAL CORPORATE & SPECIALTY SE",
-      "tradeName": "corporate allianzglobal allianz global corporatespecialty specialty globalcorporate",
+      "tradeName": "corporate corporatespecialty globalcorporate specialty allianzglobal global allianz",
       "cnpjKey": null,
       "method": "b2b_skip",
       "score": 0.0,
@@ -3627,7 +3628,7 @@
     {
       "insurer_id": "051276",
       "insurer_name": "ODYSSEY REINSURANCE COMPANY",
-      "tradeName": "reinsurance odyssey odysseyreinsurance",
+      "tradeName": "odyssey odysseyreinsurance reinsurance",
       "cnpjKey": null,
       "method": "b2b_skip",
       "score": 0.0,
@@ -3639,7 +3640,7 @@
     {
       "insurer_id": "051411",
       "insurer_name": "NEW REINSURANCE COMPANY (NOUVELLE COMPAGNIE DE RÉASSURANCES)",
-      "tradeName": "reinsurance new nouvellecompagnie newreinsurance compagnie reinsurancenouvelle nouvelle compagniereassurances reassurances",
+      "tradeName": "reinsurancenouvelle nouvellecompagnie compagnie newreinsurance nouvelle compagniereassurances new reinsurance reassurances",
       "cnpjKey": null,
       "method": "b2b_skip",
       "score": 0.0,
@@ -3651,7 +3652,7 @@
     {
       "insurer_id": "051497",
       "insurer_name": "EVEREST REINSURANCE COMPANY",
-      "tradeName": "reinsurance everest everestreinsurance",
+      "tradeName": "everestreinsurance everest reinsurance",
       "cnpjKey": null,
       "method": "b2b_skip",
       "score": 0.0,
@@ -3663,7 +3664,7 @@
     {
       "insurer_id": "051551",
       "insurer_name": "ENDURANCE ASSURANCE CORPORATION (ATUAL DENOMINAÇÃO DE ENDURANCE REINSURANCE CORPORATION OF AMERICA)",
-      "tradeName": "america denominacao denominacaoendurance reinsurance assurance assuranceatual atual enduranceassurance endurancereinsurance reinsuranceamerica atualdenominacao endurance",
+      "tradeName": "enduranceassurance atualdenominacao denominacaoendurance endurance endurancereinsurance reinsuranceamerica assurance denominacao atual assuranceatual reinsurance america",
       "cnpjKey": null,
       "method": "b2b_skip",
       "score": 0.0,
@@ -3675,7 +3676,7 @@
     {
       "insurer_id": "051578",
       "insurer_name": "HYUNDAI MARINE & FIRE INSURANCE COMPANY LIMITED",
-      "tradeName": "hyundai marine fire marinefire hyundaimarine",
+      "tradeName": "hyundai hyundaimarine marine marinefire fire",
       "cnpjKey": null,
       "method": "b2b_skip",
       "score": 0.0,
@@ -3687,7 +3688,7 @@
     {
       "insurer_id": "051977",
       "insurer_name": "NATIONAL LIABILITY & FIRE INSURANCE COMPANY",
-      "tradeName": "fire liabilityfire national liability nationalliability",
+      "tradeName": "liability nationalliability national fire liabilityfire",
       "cnpjKey": null,
       "method": "b2b_skip",
       "score": 0.0,
@@ -3699,7 +3700,7 @@
     {
       "insurer_id": "052060",
       "insurer_name": "KOREAN REINSURANCE COMPANY",
-      "tradeName": "reinsurance korean koreanreinsurance",
+      "tradeName": "koreanreinsurance korean reinsurance",
       "cnpjKey": null,
       "method": "b2b_skip",
       "score": 0.0,
@@ -3711,7 +3712,7 @@
     {
       "insurer_id": "052078",
       "insurer_name": "STARSTONE SPECIALTY INSURANCE COMPANY (ATUAL DENOMINAÇÃO DE TORUS SPECIALTY INSURANCE COMPANY)",
-      "tradeName": "denominacao torusspecialty specialtyatual starstonespecialty atualdenominacao atual denominacaotorus torus specialty starstone",
+      "tradeName": "denominacaotorus torus atualdenominacao starstone starstonespecialty torusspecialty specialty atual denominacao specialtyatual",
       "cnpjKey": null,
       "method": "b2b_skip",
       "score": 0.0,
@@ -3723,7 +3724,7 @@
     {
       "insurer_id": "052248",
       "insurer_name": "HOUSTON SPECIALTY INSURANCE COMPANY",
-      "tradeName": "houstonspecialty specialty houston",
+      "tradeName": "houstonspecialty houston specialty",
       "cnpjKey": null,
       "method": "b2b_skip",
       "score": 0.0,
@@ -3735,7 +3736,7 @@
     {
       "insurer_id": "052264",
       "insurer_name": "RGA REINSURANCE COMPANY",
-      "tradeName": "reinsurance rga rgareinsurance",
+      "tradeName": "rgareinsurance rga reinsurance",
       "cnpjKey": null,
       "method": "b2b_skip",
       "score": 0.0,
@@ -3747,7 +3748,7 @@
     {
       "insurer_id": "052329",
       "insurer_name": "ECHO REINSURANCE LIMITED",
-      "tradeName": "reinsurance echoreinsurance echo",
+      "tradeName": "echo echoreinsurance reinsurance",
       "cnpjKey": null,
       "method": "b2b_skip",
       "score": 0.0,
@@ -3759,7 +3760,7 @@
     {
       "insurer_id": "052540",
       "insurer_name": "VALIDUS REINSURANCE (SWITZERLAND), LTD.",
-      "tradeName": "validus reinsurance validusreinsurance switzerland reinsuranceswitzerland",
+      "tradeName": "reinsuranceswitzerland validusreinsurance validus switzerland reinsurance",
       "cnpjKey": null,
       "method": "b2b_skip",
       "score": 0.0,
@@ -3771,7 +3772,7 @@
     {
       "insurer_id": "052876",
       "insurer_name": "ATRADIUS REINSURANCE LIMITED",
-      "tradeName": "reinsurance atradiusreinsurance atradius",
+      "tradeName": "atradiusreinsurance reinsurance atradius",
       "cnpjKey": null,
       "method": "b2b_skip",
       "score": 0.0,
@@ -3795,7 +3796,7 @@
     {
       "insurer_id": "002020",
       "insurer_name": "ATRADIUS CRÉDITO Y CAUCIÓN SEGURADORA S.A.",
-      "tradeName": "caucion credito atradius creditocaucion atradiuscredito",
+      "tradeName": "creditocaucion credito atradius atradiuscredito caucion",
       "cnpjKey": "08587950000176",
       "method": "b2b_skip",
       "score": 0.0,
@@ -3807,7 +3808,7 @@
     {
       "insurer_id": "002739",
       "insurer_name": "AGÊNCIA BRASILEIRA GESTORA DE FUNDOS GARANTIDORES E GARANTIAS S.A.  ABGF",
-      "tradeName": "abgf brasileiragestora agencia agenciabrasileira gestoraabgf gestora",
+      "tradeName": "brasileiragestora agenciabrasileira agencia gestoraabgf gestora abgf",
       "cnpjKey": "17909518000145",
       "method": "b2b_skip",
       "score": 0.0,
@@ -3819,7 +3820,7 @@
     {
       "insurer_id": "003964",
       "insurer_name": "LIBERTY MUTUAL SURETY BRASIL SEGUROS S.A.",
-      "tradeName": "mutualsurety mutual libertymutual surety suretybrasil liberty",
+      "tradeName": "surety libertymutual liberty suretybrasil mutualsurety mutual",
       "cnpjKey": null,
       "method": "b2b_skip",
       "score": 0.0,
@@ -3831,7 +3832,7 @@
     {
       "insurer_id": "004359",
       "insurer_name": "EULER HERMES SEGUROS S.A.",
-      "tradeName": "euler eulerhermes hermes",
+      "tradeName": "eulerhermes euler hermes",
       "cnpjKey": "04573811000132",
       "method": "b2b_skip",
       "score": 0.0,
@@ -3855,7 +3856,7 @@
     {
       "insurer_id": "054038",
       "insurer_name": "DEUTSCHE RUCKVERSICHERUNG AG",
-      "tradeName": "ruckversicherung deutsche deutscheruckversicherung",
+      "tradeName": "deutsche deutscheruckversicherung ruckversicherung",
       "cnpjKey": null,
       "method": "b2b_skip",
       "score": 0.0,
@@ -3867,7 +3868,7 @@
     {
       "insurer_id": "054186",
       "insurer_name": "SWISS REINSURANCE AMERICA CORPORATION",
-      "tradeName": "america reinsurance swiss reinsuranceamerica swissreinsurance",
+      "tradeName": "swiss reinsuranceamerica swissreinsurance reinsurance america",
       "cnpjKey": null,
       "method": "b2b_skip",
       "score": 0.0,
@@ -3879,7 +3880,7 @@
     {
       "insurer_id": "054810",
       "insurer_name": "MUNCHENER RUCKVERSICHERUNGS-GESSELLSCHAFT AKT. IN MUNCHEN",
-      "tradeName": "munchen munchenerruckversicherungs aktin munchener gessellschaftakt in ruckversicherungs ruckversicherungsgessellschaft inmunchen gessellschaft akt",
+      "tradeName": "ruckversicherungsgessellschaft ruckversicherungs aktin munchenerruckversicherungs gessellschaftakt inmunchen gessellschaft munchener munchen akt in",
       "cnpjKey": null,
       "method": "b2b_skip",
       "score": 0.0,
@@ -3891,7 +3892,7 @@
     {
       "insurer_id": "054925",
       "insurer_name": "TOKIO MARINE & NICHIDO FIRE INSURANCE CO.,LTD.",
-      "tradeName": "tokiomarine tokio nichidofire marine fire nichido marinenichido",
+      "tradeName": "nichidofire tokiomarine nichido marine fire marinenichido tokio",
       "cnpjKey": null,
       "method": "b2b_skip",
       "score": 0.0,
@@ -3915,7 +3916,7 @@
     {
       "insurer_id": "055042",
       "insurer_name": "SWISS RE CORPORATE SOLUTIONS AMERICA INSURANCE CORPORATION",
-      "tradeName": "corporate america recorporate swiss swissre solutions re corporatesolutions solutionsamerica",
+      "tradeName": "swiss corporate solutionsamerica recorporate re corporatesolutions swissre solutions america",
       "cnpjKey": null,
       "method": "b2b_skip",
       "score": 0.0,
@@ -3927,7 +3928,7 @@
     {
       "insurer_id": "055662",
       "insurer_name": "ACHMEA REINSURANCE COMPANY N.V.",
-      "tradeName": "reinsurance achmea achmeareinsurance",
+      "tradeName": "achmeareinsurance achmea reinsurance",
       "cnpjKey": null,
       "method": "b2b_skip",
       "score": 0.0,
@@ -3939,7 +3940,7 @@
     {
       "insurer_id": "055760",
       "insurer_name": "DELTA LLOYD SCHADEVERZEKERING N.V.",
-      "tradeName": "delta lloydschadeverzekering schadeverzekering deltalloyd lloyd",
+      "tradeName": "lloyd delta schadeverzekering deltalloyd lloydschadeverzekering",
       "cnpjKey": null,
       "method": "b2b_skip",
       "score": 0.0,
@@ -3951,7 +3952,7 @@
     {
       "insurer_id": "056235",
       "insurer_name": "STARR INTERNATIONAL (EUROPE) LIMITED",
-      "tradeName": "starr internationaleurope international starrinternational europe",
+      "tradeName": "internationaleurope starrinternational starr international europe",
       "cnpjKey": null,
       "method": "b2b_skip",
       "score": 0.0,
@@ -3963,7 +3964,7 @@
     {
       "insurer_id": "056286",
       "insurer_name": "ALLIED WORLD ASSURANCE COMPANY (REINSURANCE) PLC (ANTIGA ALLIED WORLD ASSURANCE COMPANY (REINSURANCE) LIMITED)",
-      "tradeName": "reinsurance assurance world antiga reinsuranceantiga assurancereinsurance alliedworld worldassurance antigaallied allied",
+      "tradeName": "allied worldassurance reinsuranceantiga antigaallied assurancereinsurance assurance world antiga alliedworld reinsurance",
       "cnpjKey": null,
       "method": "b2b_skip",
       "score": 0.0,
@@ -3975,7 +3976,7 @@
     {
       "insurer_id": "056502",
       "insurer_name": "EULER HERMES NORTH AMERICA INSURANCE COMPANY",
-      "tradeName": "america hermesnorth hermes northamerica euler north eulerhermes",
+      "tradeName": "north hermesnorth hermes eulerhermes euler northamerica america",
       "cnpjKey": null,
       "method": "b2b_skip",
       "score": 0.0,
@@ -3987,7 +3988,7 @@
     {
       "insurer_id": "056553",
       "insurer_name": "GENERAL REINSURANCE AG.",
-      "tradeName": "reinsurance general generalreinsurance",
+      "tradeName": "general reinsurance generalreinsurance",
       "cnpjKey": null,
       "method": "b2b_skip",
       "score": 0.0,
@@ -3999,7 +4000,7 @@
     {
       "insurer_id": "056898",
       "insurer_name": "AXIS REINSURANCE COMPANY",
-      "tradeName": "axis reinsurance axisreinsurance",
+      "tradeName": "axis axisreinsurance reinsurance",
       "cnpjKey": null,
       "method": "b2b_skip",
       "score": 0.0,
@@ -4023,7 +4024,7 @@
     {
       "insurer_id": "057029",
       "insurer_name": "ENEL REINSURANCE - COMPAGNIA DI RIASSICURAZIONE S.P.A",
-      "tradeName": "diriassicurazione compagniadi reinsurance reinsurancecompagnia di enelreinsurance compagnia enel riassicurazione",
+      "tradeName": "diriassicurazione di enel compagniadi compagnia riassicurazione enelreinsurance reinsurancecompagnia reinsurance",
       "cnpjKey": null,
       "method": "b2b_skip",
       "score": 0.0,
@@ -4035,7 +4036,7 @@
     {
       "insurer_id": "057053",
       "insurer_name": "SIRIUS AMERICA INSURANCE COMPANY (ATUAL DENOMINAÇÃO DA WHITE MOUNTAINS REINSURANCE COMPANY OF AMERICA)",
-      "tradeName": "america denominacao mountains siriusamerica reinsurance whitemountains denominacaowhite sirius atual mountainsreinsurance reinsuranceamerica atualdenominacao americaatual white",
+      "tradeName": "mountains white atualdenominacao siriusamerica denominacaowhite sirius americaatual reinsurance reinsuranceamerica mountainsreinsurance whitemountains atual denominacao america",
       "cnpjKey": null,
       "method": "b2b_skip",
       "score": 0.0,
@@ -4047,7 +4048,7 @@
     {
       "insurer_id": "057088",
       "insurer_name": "SWISS RE FRANKONA RÜCKVERSICHERUNGS-AKTIENGESELLSCHAFT",
-      "tradeName": "ruckversicherungsaktiengesellschaft swiss swissre frankonaruckversicherungs aktiengesellschaft ruckversicherungs re frankona refrankona",
+      "tradeName": "swiss re aktiengesellschaft ruckversicherungs swissre refrankona frankonaruckversicherungs ruckversicherungsaktiengesellschaft frankona",
       "cnpjKey": null,
       "method": "b2b_skip",
       "score": 0.0,
@@ -4059,7 +4060,7 @@
     {
       "insurer_id": "057134",
       "insurer_name": "ATRADIUS CRÉDITO Y CAUCIÓN S.A. DE SEGUROS Y REASEGUROS",
-      "tradeName": "caucionreaseguros reaseguros caucion credito atradius creditocaucion atradiuscredito",
+      "tradeName": "creditocaucion credito atradius atradiuscredito reaseguros caucionreaseguros caucion",
       "cnpjKey": null,
       "method": "b2b_skip",
       "score": 0.0,
@@ -4083,7 +4084,7 @@
     {
       "insurer_id": "057495",
       "insurer_name": "SWISS RE EUROPE S.A.",
-      "tradeName": "reeurope swiss swissre re europe",
+      "tradeName": "swiss re swissre europe reeurope",
       "cnpjKey": null,
       "method": "b2b_skip",
       "score": 0.0,
@@ -4095,7 +4096,7 @@
     {
       "insurer_id": "057720",
       "insurer_name": "HANNOVER RÜCKVERSICHERUNG AG",
-      "tradeName": "hannover ruckversicherung hannoverruckversicherung",
+      "tradeName": "hannover hannoverruckversicherung ruckversicherung",
       "cnpjKey": null,
       "method": "b2b_skip",
       "score": 0.0,
@@ -4107,7 +4108,7 @@
     {
       "insurer_id": "057746",
       "insurer_name": "AXA CORPORATE SOLUTIONS ASSURANCE",
-      "tradeName": "corporate axa axacorporate assurance solutions corporatesolutions solutionsassurance",
+      "tradeName": "corporate axacorporate corporatesolutions solutionsassurance assurance solutions axa",
       "cnpjKey": null,
       "method": "b2b_skip",
       "score": 0.0,
@@ -4119,7 +4120,7 @@
     {
       "insurer_id": "057843",
       "insurer_name": "TRAVELERS CASUALTY AND SURETY COMPANY OF AMERICA",
-      "tradeName": "america casualtysurety casualty travelers travelerscasualty suretyamerica surety",
+      "tradeName": "surety suretyamerica travelers casualty travelerscasualty casualtysurety america",
       "cnpjKey": null,
       "method": "b2b_skip",
       "score": 0.0,
@@ -4131,7 +4132,7 @@
     {
       "insurer_id": "057959",
       "insurer_name": "SWISS RE CORPORATE SOLUTIONS LTD.",
-      "tradeName": "corporate recorporate swiss swissre solutions re corporatesolutions",
+      "tradeName": "swiss corporate recorporate re corporatesolutions swissre solutions",
       "cnpjKey": null,
       "method": "b2b_skip",
       "score": 0.0,
@@ -4143,7 +4144,7 @@
     {
       "insurer_id": "058076",
       "insurer_name": "THE TOA REINSURANCE COMPANY OF AMERICA",
-      "tradeName": "america reinsurance toa toareinsurance reinsuranceamerica",
+      "tradeName": "toa toareinsurance reinsuranceamerica reinsurance america",
       "cnpjKey": null,
       "method": "b2b_skip",
       "score": 0.0,
@@ -4155,7 +4156,7 @@
     {
       "insurer_id": "058173",
       "insurer_name": "IRONSHORE SPECIALTY INSURANCE COMPANY",
-      "tradeName": "specialty ironshorespecialty ironshore",
+      "tradeName": "ironshore specialty ironshorespecialty",
       "cnpjKey": null,
       "method": "b2b_skip",
       "score": 0.0,
@@ -4167,7 +4168,7 @@
     {
       "insurer_id": "058181",
       "insurer_name": "ARCH REINSURANCE COMPANY",
-      "tradeName": "reinsurance arch archreinsurance",
+      "tradeName": "archreinsurance arch reinsurance",
       "cnpjKey": null,
       "method": "b2b_skip",
       "score": 0.0,
@@ -4179,7 +4180,7 @@
     {
       "insurer_id": "058360",
       "insurer_name": "OMNIUM REINSURANCE COMPANY S.A.",
-      "tradeName": "reinsurance omniumreinsurance omnium",
+      "tradeName": "omniumreinsurance omnium reinsurance",
       "cnpjKey": null,
       "method": "b2b_skip",
       "score": 0.0,
@@ -4191,7 +4192,7 @@
     {
       "insurer_id": "058815",
       "insurer_name": "AXIS RE LIMITED",
-      "tradeName": "axis re axisre",
+      "tradeName": "axis axisre re",
       "cnpjKey": null,
       "method": "b2b_skip",
       "score": 0.0,
@@ -4203,7 +4204,7 @@
     {
       "insurer_id": "058921",
       "insurer_name": "UNITED STATES FIRE INSURANCE COMPANY",
-      "tradeName": "united states statesfire fire unitedstates",
+      "tradeName": "states unitedstates fire statesfire united",
       "cnpjKey": null,
       "method": "b2b_skip",
       "score": 0.0,
@@ -4215,7 +4216,7 @@
     {
       "insurer_id": "006335",
       "insurer_name": "SEGURADORA BRASILEIRA DE CRÉDITO À EXPORTAÇÃO S.A.",
-      "tradeName": "exportacao brasileiracredito credito creditoexportacao",
+      "tradeName": "creditoexportacao credito exportacao brasileiracredito",
       "cnpjKey": "02166824000161",
       "method": "b2b_skip",
       "score": 0.0,
@@ -4227,7 +4228,7 @@
     {
       "insurer_id": "006530",
       "insurer_name": "VIRGINIA SURETY COMPANHIA DE SEGUROS DO BRASIL",
-      "tradeName": "virginiasurety virginia surety suretybrasil",
+      "tradeName": "surety virginia suretybrasil virginiasurety",
       "cnpjKey": "03505295000146",
       "method": "b2b_skip",
       "score": 0.0,
@@ -4239,7 +4240,7 @@
     {
       "insurer_id": "059048",
       "insurer_name": "SAVA REINSURANCE COMPANY D.D.",
-      "tradeName": "reinsurance savareinsurance sava",
+      "tradeName": "sava savareinsurance reinsurance",
       "cnpjKey": null,
       "method": "b2b_skip",
       "score": 0.0,
@@ -4263,7 +4264,7 @@
     {
       "insurer_id": "030074",
       "insurer_name": "ALLIANZ GLOBAL CORPORATE & SPECIALTY RESSEGUROS BRASIL S.A.",
-      "tradeName": "corporate allianzglobal allianz global corporatespecialty specialtyresseguros ressegurosbrasil specialty globalcorporate",
+      "tradeName": "corporate corporatespecialty globalcorporate specialty specialtyresseguros allianzglobal global allianz ressegurosbrasil",
       "cnpjKey": "15517074000177",
       "method": "b2b_skip",
       "score": 0.0,
@@ -4275,7 +4276,7 @@
     {
       "insurer_id": "030201",
       "insurer_name": "TERRA BRASIS RESSEGUROS S.A.",
-      "tradeName": "terrabrasis brasis terra brasisresseguros",
+      "tradeName": "brasisresseguros terrabrasis terra brasis",
       "cnpjKey": "12909684000128",
       "method": "b2b_skip",
       "score": 0.0,
@@ -4287,7 +4288,7 @@
     {
       "insurer_id": "031551",
       "insurer_name": "SCOR BRASIL RESSEGUROS S.A.",
-      "tradeName": "scor brasilresseguros scorbrasil",
+      "tradeName": "brasilresseguros scor scorbrasil",
       "cnpjKey": "19851775000107",
       "method": "b2b_skip",
       "score": 0.0,
@@ -4299,7 +4300,7 @@
     {
       "insurer_id": "031623",
       "insurer_name": "IRB BRASIL RESSEGUROS S/A",
-      "tradeName": "irb brasilresseguros irbbrasil",
+      "tradeName": "irbbrasil brasilresseguros irb",
       "cnpjKey": "33376989000191",
       "method": "b2b_skip",
       "score": 0.0,
@@ -4311,7 +4312,7 @@
     {
       "insurer_id": "032875",
       "insurer_name": "ZURICH RESSEGURADORA BRASIL S.A.",
-      "tradeName": "zurich resseguradorabrasil zurichresseguradora",
+      "tradeName": "zurich zurichresseguradora resseguradorabrasil",
       "cnpjKey": "14387387000195",
       "method": "b2b_skip",
       "score": 0.0,
@@ -4323,7 +4324,7 @@
     {
       "insurer_id": "033294",
       "insurer_name": "MAPFRE RE DO BRASIL COMPANHIA DE RESSEGUROS",
-      "tradeName": "mapfre rebrasil re mapfrere brasilresseguros",
+      "tradeName": "brasilresseguros rebrasil re mapfrere mapfre",
       "cnpjKey": "01396770000168",
       "method": "b2b_skip",
       "score": 0.0,
@@ -4335,7 +4336,7 @@
     {
       "insurer_id": "034665",
       "insurer_name": "XL RESSEGUROS BRASIL S.A.",
-      "tradeName": "xlresseguros xl ressegurosbrasil",
+      "tradeName": "xl xlresseguros ressegurosbrasil",
       "cnpjKey": "10356741000163",
       "method": "b2b_skip",
       "score": 0.0,
@@ -4347,7 +4348,7 @@
     {
       "insurer_id": "034819",
       "insurer_name": "AUSTRAL RESSEGURADORA S.A.",
-      "tradeName": "australresseguradora austral",
+      "tradeName": "austral australresseguradora",
       "cnpjKey": "11536561000126",
       "method": "b2b_skip",
       "score": 0.0,
@@ -4359,7 +4360,7 @@
     {
       "insurer_id": "036099",
       "insurer_name": "AXA XL RESSEGUROS S.A.",
-      "tradeName": "axa xlresseguros axaxl xl",
+      "tradeName": "xl axaxl xlresseguros axa",
       "cnpjKey": "19323175000168",
       "method": "b2b_skip",
       "score": 0.0,
@@ -4371,7 +4372,7 @@
     {
       "insurer_id": "037052",
       "insurer_name": "BTG PACTUAL RESSEGURADORA S.A.",
-      "tradeName": "btg btgpactual pactualresseguradora pactual",
+      "tradeName": "btgpactual btg pactual pactualresseguradora",
       "cnpjKey": "15421859000141",
       "method": "b2b_skip",
       "score": 0.0,
@@ -4383,7 +4384,7 @@
     {
       "insurer_id": "037729",
       "insurer_name": "MUNICH RE DO BRASIL RESSEGURADORA S.A.",
-      "tradeName": "munich rebrasil re munichre brasilresseguradora",
+      "tradeName": "rebrasil re munich brasilresseguradora munichre",
       "cnpjKey": "01857539000124",
       "method": "b2b_skip",
       "score": 0.0,
@@ -4407,7 +4408,7 @@
     {
       "insurer_id": "037893",
       "insurer_name": "FM RESSEGUROS S.A.",
-      "tradeName": "fm fmresseguros",
+      "tradeName": "fmresseguros fm",
       "cnpjKey": null,
       "method": "b2b_skip",
       "score": 0.0,
@@ -4419,7 +4420,7 @@
     {
       "insurer_id": "038253",
       "insurer_name": "CHUBB RESSEGURADORA BRASIL S.A.",
-      "tradeName": "resseguradorabrasil chubbresseguradora chubb",
+      "tradeName": "chubb chubbresseguradora resseguradorabrasil",
       "cnpjKey": "10808462000193",
       "method": "b2b_skip",
       "score": 0.0,
@@ -4431,7 +4432,7 @@
     {
       "insurer_id": "038270",
       "insurer_name": "SWISS RE BRASIL RESSEGUROS S/A",
-      "tradeName": "swiss swissre rebrasil re brasilresseguros",
+      "tradeName": "swiss brasilresseguros rebrasil re swissre",
       "cnpjKey": "15047380000197",
       "method": "b2b_skip",
       "score": 0.0,
@@ -4467,7 +4468,7 @@
     {
       "insurer_id": "039764",
       "insurer_name": "AUSTRAL RESSEGUROS ESPECIAIS S.A.",
-      "tradeName": "austral ressegurosespeciais especiais australresseguros",
+      "tradeName": "especiais ressegurosespeciais austral australresseguros",
       "cnpjKey": "13641418000120",
       "method": "b2b_skip",
       "score": 0.0,
@@ -4479,7 +4480,7 @@
     {
       "insurer_id": "040096",
       "insurer_name": "TORUS SPECIALTY INSURANCE COMPANY",
-      "tradeName": "specialty torusspecialty torus",
+      "tradeName": "torusspecialty specialty torus",
       "cnpjKey": "11987926000139",
       "method": "b2b_skip",
       "score": 0.0,
@@ -4491,7 +4492,7 @@
     {
       "insurer_id": "040207",
       "insurer_name": "ALLIANZ GLOBAL CORPORATE & SPECIALTY SE",
-      "tradeName": "corporate allianzglobal allianz global corporatespecialty specialty globalcorporate",
+      "tradeName": "corporate corporatespecialty globalcorporate specialty allianzglobal global allianz",
       "cnpjKey": "10853223000155",
       "method": "b2b_skip",
       "score": 0.0,
@@ -4503,7 +4504,7 @@
     {
       "insurer_id": "040851",
       "insurer_name": "CHUBB TEMPEST REINSURANCE LTD.",
-      "tradeName": "reinsurance tempestreinsurance tempest chubb chubbtempest",
+      "tradeName": "tempestreinsurance chubb tempest chubbtempest reinsurance",
       "cnpjKey": "09438454000113",
       "method": "b2b_skip",
       "score": 0.0,
@@ -4539,7 +4540,7 @@
     {
       "insurer_id": "041432",
       "insurer_name": "ODYSSEY REINSURANCE COMPANY",
-      "tradeName": "reinsurance odyssey odysseyreinsurance",
+      "tradeName": "odyssey odysseyreinsurance reinsurance",
       "cnpjKey": "11337192000142",
       "method": "b2b_skip",
       "score": 0.0,
@@ -4563,7 +4564,7 @@
     {
       "insurer_id": "041629",
       "insurer_name": "SCOR REINSURANCE COMPANY",
-      "tradeName": "reinsurance scor scorreinsurance",
+      "tradeName": "scorreinsurance scor reinsurance",
       "cnpjKey": "09486271000173",
       "method": "b2b_skip",
       "score": 0.0,
@@ -4575,7 +4576,7 @@
     {
       "insurer_id": "042056",
       "insurer_name": "ATRADIUS CRÉDITO Y CAUCIÓN S.A. DE SEGUROS Y REASEGUROS",
-      "tradeName": "caucionreaseguros reaseguros caucion credito atradius creditocaucion atradiuscredito",
+      "tradeName": "creditocaucion credito atradius atradiuscredito reaseguros caucionreaseguros caucion",
       "cnpjKey": null,
       "method": "b2b_skip",
       "score": 0.0,
@@ -4599,7 +4600,7 @@
     {
       "insurer_id": "042684",
       "insurer_name": "ARGO RE LTD.",
-      "tradeName": "argore re argo",
+      "tradeName": "argore argo re",
       "cnpjKey": "12575275000132",
       "method": "b2b_skip",
       "score": 0.0,
@@ -4611,7 +4612,7 @@
     {
       "insurer_id": "042790",
       "insurer_name": "SWISS REINSURANCE COMPANY",
-      "tradeName": "reinsurance swiss swissreinsurance",
+      "tradeName": "swiss swissreinsurance reinsurance",
       "cnpjKey": "05723273000188",
       "method": "b2b_skip",
       "score": 0.0,
@@ -4623,7 +4624,7 @@
     {
       "insurer_id": "043419",
       "insurer_name": "STARR INSURANCE & REINSURANCE LIMITED",
-      "tradeName": "starr starrreinsurance reinsurance",
+      "tradeName": "starrreinsurance reinsurance starr",
       "cnpjKey": "20869397000160",
       "method": "b2b_skip",
       "score": 0.0,
@@ -4635,7 +4636,7 @@
     {
       "insurer_id": "044661",
       "insurer_name": "SCOR GLOBAL LIFE AMERICAS REINSURANCE COMPANY",
-      "tradeName": "life global reinsurance lifeamericas americasreinsurance scor americas scorglobal globallife",
+      "tradeName": "americas lifeamericas scor americasreinsurance scorglobal global globallife life reinsurance",
       "cnpjKey": "09577213000155",
       "method": "b2b_skip",
       "score": 0.0,
