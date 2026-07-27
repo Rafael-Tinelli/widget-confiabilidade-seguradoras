@@ -37,10 +37,6 @@ on:
       - api/v1/participants.json
       - data/derived/**/*
       - data/snapshots/**/*
-      - scripts/**/*
-      - api/**/*
-      - requirements*.txt
-      - .github/workflows/debug-audit.yml
 
 permissions:
   contents: read
@@ -145,6 +141,7 @@ jobs:
         run: |
           python - <<'PY'
           import glob
+          import gzip
           import json
           import os
           import sys
@@ -174,7 +171,7 @@ jobs:
 
           missing_core = []
           for index, insurer in enumerate(insurers[:50]):
-              for key in ["coenti", "name"]:
+              for key in ["id", "name"]:
                   if key not in insurer:
                       missing_core.append((index, key))
           if missing_core:
@@ -183,35 +180,57 @@ jobs:
                   f"(amostra): {missing_core[:10]}"
               )
 
-          coentis = [
-              str(item.get("coenti"))
+          insurer_ids = [
+              str(item.get("id"))
               for item in insurers
-              if item.get("coenti") is not None
+              if item.get("id") is not None
           ]
-          duplicates = [key for key, count in Counter(coentis).items() if count > 1]
+          duplicates = [
+              key for key, count in Counter(insurer_ids).items() if count > 1
+          ]
           if duplicates:
               errors.append(
-                  f"Duplicidade de coenti em insurers.json (ex.: {duplicates[:10]})"
+                  f"Duplicidade de id em insurers.json (ex.: {duplicates[:10]})"
               )
 
           match_report_path = "data/derived/consumidor_gov/match_report_insurers.json"
           if os.path.exists(match_report_path):
               match_report = load_json(match_report_path)
-              by_cnpj = match_report.get("by_cnpj_key") or {}
-              print(f"match_report_insurers.json: by_cnpj_key={len(by_cnpj)}")
-              if len(insurers) >= 50 and len(by_cnpj) == 0:
+              stats = match_report.get("stats") or {}
+              matched = int(stats.get("matched") or 0)
+              total = int(stats.get("insurers_total") or len(insurers))
+              print(
+                  "match_report_insurers.json: "
+                  f"matched={matched} | insurers_total={total}"
+              )
+              if len(insurers) >= 50 and matched == 0:
                   errors.append(
-                      "match_report_insurers.json: by_cnpj_key=0 com "
+                      "match_report_insurers.json: matched=0 com "
                       "insurers>=50 (forte indício de matching quebrado)"
                   )
           else:
               warns.append(f"match_report ausente: {match_report_path}")
 
-          aggregate_path = "data/derived/consumidor_gov/agg_insurers.json"
+          aggregate_path = (
+              "data/derived/consumidor_gov/consumidor_gov_agg.json.gz"
+          )
           if os.path.exists(aggregate_path):
-              aggregate = load_json(aggregate_path)
-              by_key = aggregate.get("by_cnpj_key") or {}
-              print(f"agg_insurers.json: by_cnpj_key={len(by_key)}")
+              with gzip.open(aggregate_path, "rt", encoding="utf-8") as file:
+                  aggregate = json.load(file)
+              by_key = (
+                  aggregate.get("by_name_key_raw")
+                  or aggregate.get("by_name_key")
+                  or aggregate.get("by_name")
+                  or {}
+              )
+              print(
+                  "consumidor_gov_agg.json.gz: "
+                  f"empresas={len(by_key)}"
+              )
+              if not by_key:
+                  errors.append(
+                      "consumidor_gov_agg.json.gz: agregado sem empresas"
+                  )
           else:
               warns.append(f"agregado ausente: {aggregate_path}")
 
@@ -255,8 +274,27 @@ jobs:
 
           opin_count = 0
           for insurer in insurers:
-              opin = insurer.get("opin", {})
-              if isinstance(opin, dict) and opin.get("is_participant"):
+              flags = insurer.get("flags")
+              components = insurer.get("components")
+              opin = (
+                  components.get("opin", {})
+                  if isinstance(components, dict)
+                  else {}
+              )
+              is_participant = (
+                  isinstance(flags, dict)
+                  and bool(
+                      flags.get("openInsuranceParticipant")
+                      or flags.get("opinParticipant")
+                  )
+              ) or (
+                  isinstance(opin, dict)
+                  and bool(
+                      opin.get("is_participant")
+                      or opin.get("participant")
+                  )
+              )
+              if is_participant:
                   opin_count += 1
           print(f"OPIN participants (insurers.json): {opin_count}")
 
@@ -283,6 +321,6 @@ jobs:
             api/v1/insurers.json
             api/v1/participants.json
             data/derived/consumidor_gov/match_report_insurers.json
-            data/derived/consumidor_gov/agg_insurers.json
+            data/derived/consumidor_gov/consumidor_gov_agg.json.gz
             data/derived/audit/**
             data/snapshots/**
