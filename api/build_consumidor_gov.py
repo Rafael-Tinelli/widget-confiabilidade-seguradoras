@@ -123,7 +123,7 @@ def _read_json_gz(path: Path) -> dict[str, Any]:
     with gzip.open(path, "rb") as file:
         root = json.loads(file.read().decode("utf-8"))
     if not isinstance(root, dict):
-        raise ValueError(f"{path} não contém um objeto JSON")
+        raise TypeError(f"{path} não contém um objeto JSON")
     return root
 
 
@@ -225,7 +225,7 @@ def _ckan_get(action: str, params: dict[str, Any]) -> dict[str, Any]:
         raise RuntimeError(f"CKAN action failed: {action} {data}")
     result = data.get("result")
     if not isinstance(result, dict):
-        raise RuntimeError(f"CKAN retornou result inválido em {action}")
+        raise TypeError(f"CKAN retornou result inválido em {action}")
     return result
 
 
