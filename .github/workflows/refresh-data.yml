@@ -182,6 +182,11 @@ jobs:
 
           git commit -m "chore(data): refresh data and rebuild widget"
 
+          # Tudo que deveria ser publicado já está no commit.
+          # Remove alterações residuais produzidas por caches, npm ou coletores.
+          git reset --hard HEAD
+          git clean -fd
+
           for attempt in 1 2 3; do
             git fetch origin main
             git rebase origin/main
