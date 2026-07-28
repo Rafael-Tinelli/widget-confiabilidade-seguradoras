@@ -1,4 +1,5 @@
 # api/sources/ses.py
+# ruff: noqa: BLE001, I001, PIE810, PLR1730, RUF046, S110, S112, SIM113, UP006, UP035, UP045
 from __future__ import annotations
 
 from typing import Dict
@@ -165,6 +166,17 @@ def _download_bytes(url: str, timeout: int) -> bytes:
     return resp.content
 
 
+def _write_bytes_atomic(content: bytes, path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    part = path.with_suffix(path.suffix + ".part")
+    try:
+        part.write_bytes(content)
+        part.replace(path)
+    finally:
+        if part.exists():
+            part.unlink()
+
+
 def _is_zip_file(path: Path) -> bool:
     """Verifica assinatura mágica e estrutura básica de ZIP."""
     if not path.exists() or path.stat().st_size < 4:
@@ -313,12 +325,29 @@ def extract_ses_master_and_financials():
     # --- 1) LISTAEMPRESAS como mapa de CNPJ (não é universo completo) ---
     # Fonte de verdade do universo SUSEP: Ses_cias.csv (dentro do BaseCompleta.zip).
     # LISTAEMPRESAS é usada apenas para mapear CNPJ via Coenti == CodigoFIP.
+    lista_path = CACHE_DIR / "LISTAEMPRESAS.csv"
     print(f"SES: Baixando CNPJ map (LISTAEMPRESAS): {SES_LISTAEMPRESAS_URL}")
     try:
-        df_lista = _read_csv_bytes(_download_bytes(SES_LISTAEMPRESAS_URL, timeout=120))
+        lista_content = _download_bytes(SES_LISTAEMPRESAS_URL, timeout=120)
+        df_lista = _read_csv_bytes(lista_content)
+        if df_lista.empty:
+            raise ValueError("LISTAEMPRESAS baixada está vazia ou inválida")
+        _write_bytes_atomic(lista_content, lista_path)
     except Exception as e:
         print(f"SES WARN: Falha ao baixar LISTAEMPRESAS: {e}")
-        df_lista = pd.DataFrame()
+        if lista_path.exists():
+            try:
+                df_lista = _read_csv_bytes(lista_path.read_bytes())
+            except OSError as cache_error:
+                print(f"SES WARN: Falha ao ler cache LISTAEMPRESAS: {cache_error}")
+                df_lista = pd.DataFrame()
+            else:
+                if df_lista.empty:
+                    print("SES WARN: Cache LISTAEMPRESAS vazio ou inválido.")
+                else:
+                    print(f"SES WARN: Usando cache LISTAEMPRESAS válido: {lista_path}")
+        else:
+            df_lista = pd.DataFrame()
 
     cnpj_by_sid: Dict[str, str] = {}
     fallback_companies: Dict[str, dict] = {}
@@ -370,20 +399,27 @@ def extract_ses_master_and_financials():
 
     # --- 2) ZIP (download para disco) ---
     zip_path = CACHE_DIR / "BaseCompleta.zip"
+    cached_zip_available = _is_zip_file(zip_path)
     period: dict = {}
     print(f"SES: Baixando ZIP: {SES_ZIP_URL}")
     try:
         _download_to_file([SES_ZIP_URL, SES_ZIP_URL_FALLBACK], zip_path, timeout=600)
     except Exception as e:
-        print(f"SES CRITICAL: Falha ao baixar ZIP: {e}")
-        if not companies:
-            companies = fallback_companies
-        fallback_meta = SesMeta(
-            zip_url=SES_ZIP_URL,
-            cias_file="LISTAEMPRESAS.csv",
-            seguros_file="BaseCompleta.zip",
-        )
-        return fallback_meta, companies, {}
+        if cached_zip_available and _is_zip_file(zip_path):
+            print(
+                "SES WARN: Download do ZIP falhou; "
+                f"usando cache ZIP válido existente: {zip_path}. Motivo: {e}"
+            )
+        else:
+            print(f"SES CRITICAL: Falha ao baixar ZIP e não há cache válido: {e}")
+            if not companies:
+                companies = fallback_companies
+            fallback_meta = SesMeta(
+                zip_url=SES_ZIP_URL,
+                cias_file="LISTAEMPRESAS.csv",
+                seguros_file="BaseCompleta.zip",
+            )
+            return fallback_meta, companies, {}
 
     # --- 3) Processamento ZIP ---
     try:
