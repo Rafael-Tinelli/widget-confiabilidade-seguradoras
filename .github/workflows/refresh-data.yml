@@ -43,6 +43,15 @@ jobs:
             python -m pip install -r requirements-dev.txt
           fi
 
+      - name: Restore SES source cache
+        id: restore-ses-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: data/raw/ses
+          key: ses-source-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: |
+            ses-source-${{ runner.os }}-
+
       - name: Diagnose external sources
         continue-on-error: true
         run: |
@@ -78,7 +87,8 @@ jobs:
 
       - name: Build insurers and intelligence
         env:
-          SES_CACHE_DIR: "/tmp/ses"
+          SES_CACHE_DIR: "data/raw/ses"
+          SES_KEEP_ZIP: "1"
           SES_LISTAEMPRESAS_URL: "https://www2.susep.gov.br/menuestatistica/ses/download/LISTAEMPRESAS.csv"
           SES_ZIP_URL: "https://www2.susep.gov.br/download/estatisticas/BaseCompleta.zip"
           MIN_INSURERS_COUNT: "200"
@@ -87,6 +97,12 @@ jobs:
         run: |
           set -euo pipefail
           python -m api.build_insurers
+
+      - name: Save SES source cache
+        uses: actions/cache/save@v4
+        with:
+          path: data/raw/ses
+          key: ses-source-${{ runner.os }}-${{ github.run_id }}
 
       - name: Install frontend dependencies
         working-directory: widget-ui
