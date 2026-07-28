@@ -168,6 +168,10 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
+          # O cache SES já foi salvo. Restaura somente arquivos rastreados
+          # da pasta raw para deixar o worktree limpo antes do rebase.
+          git restore --worktree -- data/raw/ses
+
           git add api/v1 data/snapshots data/derived
           git add -f widget-ui/dist
 
