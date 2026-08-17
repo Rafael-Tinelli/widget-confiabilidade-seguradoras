@@ -1,0 +1,75 @@
+from __future__ import annotations
+
+import json
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+from api.sources.ses import extract_ses_master_and_financials
+from api.sources.susep_licensed import fetch_licensed_entities
+from api.v2.classification import apply_licensed_classification, classification_summary
+from api.v2.identity import build_canonical_entities
+
+DEFAULT_OUTPUT = Path("data/derived/v2/entity_classification_inventory.json")
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def build_classification_inventory(
+    ses_companies: Any,
+    licensed_records: list[dict[str, Any]],
+) -> dict[str, Any]:
+    base_entities = build_canonical_entities(ses_companies)
+    classified = apply_licensed_classification(base_entities, licensed_records)
+    summary = classification_summary(classified, licensed_records)
+
+    return {
+        "artifact": "v2_classification_inventory",
+        "generated_at": _utc_now(),
+        "status": "draft",
+        "meta": {
+            **summary,
+            "classification_scope": "official current licensed-entities source only",
+            "classification_note": (
+                "Records absent from the ordinary licensed service remain unknown until "
+                "special-regime and Sandbox sources are applied. Activity evidence from "
+                "SES is not used to infer legal entity type."
+            ),
+        },
+        "entities": classified,
+    }
+
+
+def write_classification_inventory(
+    payload: dict[str, Any],
+    output: Path = DEFAULT_OUTPUT,
+) -> Path:
+    output.parent.mkdir(parents=True, exist_ok=True)
+    temp = output.with_suffix(output.suffix + ".tmp")
+    temp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    temp.replace(output)
+    return output
+
+
+def main() -> None:
+    ses_out = extract_ses_master_and_financials()
+    if not isinstance(ses_out, tuple) or len(ses_out) < 2:
+        raise RuntimeError(f"Unexpected SES return: {type(ses_out)}")
+
+    licensed = fetch_licensed_entities()
+    payload = build_classification_inventory(ses_out[1], licensed)
+    path = write_classification_inventory(payload)
+    meta = payload["meta"]
+    print(
+        "V2 classification inventory: "
+        f"{meta['inventory_count']} entities; "
+        f"{meta['classified_active_licensed']} active licensed; "
+        f"{meta['cnpj_filled_from_licensed_source']} CNPJs filled; "
+        f"written to {path}"
+    )
+
+
+if __name__ == "__main__":
+    main()
