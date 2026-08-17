@@ -3,8 +3,9 @@ from __future__ import annotations
 import os
 import zipfile
 from collections import defaultdict
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 import pandas as pd
 
@@ -158,7 +159,7 @@ def _read_capital_history(
     member: str,
     fips: set[str],
 ) -> tuple[dict[str, dict[int, dict[str, Any]]], set[int], dict[str, int]]:
-    header, mapping = _header_map(z, member)
+    _, mapping = _header_map(z, member)
     columns = _require_columns(
         mapping,
         [
