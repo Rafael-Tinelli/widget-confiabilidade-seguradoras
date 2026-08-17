@@ -18,31 +18,59 @@ jobs:
           python-version: '3.11'
       - name: Install probe dependency
         run: python -m pip install requests
-      - name: Probe official Portal de Dados Abertos catalog API
+      - name: Probe official Receita Nextcloud public share
         run: |
           python - <<'PY'
-          import json
+          import re
           import requests
+          import xml.etree.ElementTree as ET
 
-          endpoints = [
-              'https://dados.gov.br/api/publico/conjuntos-dados/cadastro-nacional-da-pessoa-juridica---cnpj',
-              'https://dados.gov.br/dados/api/publico/conjuntos-dados/cadastro-nacional-da-pessoa-juridica---cnpj',
-          ]
+          token = 'YggdBLfdninEJX9'
+          host = 'https://arquivos.receitafederal.gov.br'
+          share = f'{host}/index.php/s/{token}'
+          dav = f'{host}/public.php/dav/files/{token}/'
           session = requests.Session()
-          session.headers['User-Agent'] = 'Sanida-CNPJ-Source-Probe/2.0'
+          session.headers['User-Agent'] = 'Sanida-CNPJ-Source-Probe/3.0'
 
-          for url in endpoints:
-              print('\nCATALOG', url)
+          print('SHARE', share)
+          r = session.get(share, timeout=30, allow_redirects=True)
+          print('share status=', r.status_code, 'final=', r.url, 'type=', r.headers.get('content-type'), 'len=', len(r.content))
+          print('title/CNPJ=', 'CNPJ' in r.text)
+          for pattern in ['downloadURL', 'fileList', 'public.php/dav', 'YggdBLfdninEJX9']:
+              print(pattern, pattern in r.text)
+
+          print('\nDAV', dav)
+          headers = {'Depth': '1'}
+          body = '''<?xml version="1.0"?>
+          <d:propfind xmlns:d="DAV:">
+            <d:prop><d:displayname/><d:getcontentlength/><d:getlastmodified/><d:resourcetype/></d:prop>
+          </d:propfind>'''
+          for auth in [(token, ''), None]:
               try:
-                  r = session.get(url, timeout=30, allow_redirects=True)
-                  print('status=', r.status_code, 'final=', r.url, 'type=', r.headers.get('content-type'), 'len=', len(r.content))
-                  print('text head=', r.text[:1000])
-                  if r.status_code == 200 and 'json' in (r.headers.get('content-type') or '').lower():
-                      data = r.json()
-                      print('top type=', type(data).__name__)
-                      if isinstance(data, dict):
-                          print('top keys=', sorted(data.keys()))
-                          print(json.dumps(data, ensure_ascii=False, indent=2)[:50000])
+                  resp = session.request('PROPFIND', dav, headers=headers, data=body, auth=auth, timeout=60)
+                  print('auth=', bool(auth), 'status=', resp.status_code, 'type=', resp.headers.get('content-type'), 'len=', len(resp.content))
+                  print(resp.text[:2000])
+                  if resp.status_code == 207:
+                      root = ET.fromstring(resp.content)
+                      ns = {'d': 'DAV:'}
+                      rows = []
+                      for response in root.findall('d:response', ns):
+                          href = response.findtext('d:href', default='', namespaces=ns)
+                          display = response.findtext('.//d:displayname', default='', namespaces=ns)
+                          size = response.findtext('.//d:getcontentlength', default='', namespaces=ns)
+                          modified = response.findtext('.//d:getlastmodified', default='', namespaces=ns)
+                          rows.append((href, display, size, modified))
+                      print('ROWS', rows[:100])
+                      break
               except Exception as exc:
-                  print('ERROR', repr(exc))
+                  print('DAV ERROR', repr(exc))
+
+          for filename in ['Motivos.zip', 'Estabelecimentos0.zip']:
+              u = f'{share}/download?path=/&files={filename}'
+              try:
+                  rr = session.get(u, timeout=30, stream=True, allow_redirects=True)
+                  print('DOWNLOAD TEST', filename, 'status=', rr.status_code, 'final=', rr.url, 'type=', rr.headers.get('content-type'), 'length=', rr.headers.get('content-length'))
+                  rr.close()
+              except Exception as exc:
+                  print('DOWNLOAD ERROR', filename, repr(exc))
           PY
