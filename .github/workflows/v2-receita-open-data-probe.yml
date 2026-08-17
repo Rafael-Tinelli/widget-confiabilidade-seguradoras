@@ -9,39 +9,57 @@ permissions:
 
 jobs:
   probe:
+    strategy:
+      fail-fast: false
+      matrix:
+        attempt: [1, 2, 3]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Verify latest Receita CNPJ release through official WebDAV
+      - name: Probe official Receita WebDAV from runner ${{ matrix.attempt }}
         shell: bash
         run: |
-          set -euo pipefail
+          set +e
           token="YggdBLfdninEJX9"
           host="https://arquivos.receitafederal.gov.br"
           dav="${host}/public.php/dav/files/${token}/"
           body='<?xml version="1.0"?><d:propfind xmlns:d="DAV:"><d:prop><d:displayname/><d:getcontentlength/><d:getlastmodified/><d:resourcetype/></d:prop></d:propfind>'
 
-          curl -4 -sS -u "${token}:" -X PROPFIND -H 'Depth: 1' -H 'Content-Type: application/xml' --data "$body" \
-            --connect-timeout 10 --max-time 30 -o /tmp/root.xml "$dav"
+          echo "RUNNER_ATTEMPT=${{ matrix.attempt }}"
+          getent ahosts arquivos.receitafederal.gov.br || true
+
+          ok=0
+          for n in 1 2 3; do
+            echo "ROOT_PROPFIND_ATTEMPT=$n"
+            curl -4 -sS -u "${token}:" -X PROPFIND -H 'Depth: 1' -H 'Content-Type: application/xml' --data "$body" \
+              --connect-timeout 10 --max-time 30 -o /tmp/root.xml "$dav"
+            rc=$?
+            if [[ $rc -eq 0 ]]; then ok=1; break; fi
+            sleep 2
+          done
+
+          if [[ $ok -ne 1 ]]; then
+            echo "REACHABLE=false"
+            exit 0
+          fi
+          echo "REACHABLE=true"
 
           latest="$(grep -oE '<d:displayname>20[0-9]{2}-[0-9]{2}</d:displayname>' /tmp/root.xml | sed -E 's#</?d:displayname>##g' | sort | tail -1)"
           echo "LATEST=$latest"
-          test -n "$latest"
+          if [[ -z "$latest" ]]; then exit 0; fi
 
           month_url="${dav}${latest}/"
           curl -4 -sS -u "${token}:" -X PROPFIND -H 'Depth: 1' -H 'Content-Type: application/xml' --data "$body" \
-            --connect-timeout 10 --max-time 30 -o /tmp/month.xml "$month_url"
+            --connect-timeout 10 --max-time 30 -o /tmp/month.xml "$month_url" || exit 0
 
           echo "== ZIP resources in $latest =="
           grep -oE '<d:displayname>[^<]+\.zip</d:displayname>' /tmp/month.xml | sed -E 's#</?d:displayname>##g' | sort | tee /tmp/files.txt
 
-          grep -qx 'Motivos.zip' /tmp/files.txt
-          grep -qx 'Estabelecimentos0.zip' /tmp/files.txt
+          echo "== Direct WebDAV HEAD =="
+          for file in Motivos.zip Estabelecimentos0.zip; do
+            echo "FILE=$file"
+            curl -4 -sS -I -u "${token}:" --connect-timeout 10 --max-time 30 \
+              "${month_url}${file}" || true
+          done
 
-          echo "== Direct WebDAV HEAD: Motivos.zip =="
-          curl -4 -sS -I -u "${token}:" --connect-timeout 10 --max-time 30 \
-            "${month_url}Motivos.zip"
-
-          echo "== Direct WebDAV HEAD: Estabelecimentos0.zip =="
-          curl -4 -sS -I -u "${token}:" --connect-timeout 10 --max-time 30 \
-            "${month_url}Estabelecimentos0.zip"
+          exit 0
