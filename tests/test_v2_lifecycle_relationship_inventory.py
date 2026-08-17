@@ -69,7 +69,9 @@ def test_historical_incorporated_entity_points_to_current_successor():
             "fip_code": "004367",
             "group_code": "77",
             "group_name": "GRUPO PRUDENTIAL",
-            "source": "SUSEP SES / Ses_cias.csv",
+            "observed_period": "202606",
+            "is_specific_group": True,
+            "source": "SUSEP SES / Ses_grupos_economicos.csv",
         }
     ]
 
