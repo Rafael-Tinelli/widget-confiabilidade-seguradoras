@@ -16,7 +16,7 @@ jobs:
     timeout-minutes: 20
     env:
       SES_ALLOW_INSECURE_SSL: "1"
-      SES_KEEP_ZIP: "0"
+      SES_KEEP_ZIP: "1"
       SES_WRITE_AUDIT: "0"
       SES_CACHE_DIR: "data/raw/ses"
       SUSEP_SANDBOX_VERIFY_SSL: "1"
@@ -119,7 +119,6 @@ jobs:
                   "legal_name": item.get("legal_name"),
                   "cnpj": item.get("cnpj"),
                   "activities": item.get("activities"),
-                  "evidence": item.get("evidence"),
               }, ensure_ascii=False))
 
           print("=== RAW SES_CIAS SCHEMA ===")
@@ -152,10 +151,18 @@ jobs:
               ]
               print("STATUSISH_HEADERS", json.dumps(statusish, ensure_ascii=False))
 
-              unknown_fips = {item.get("fip_code") for item in unknowns}
+              unknown_fips = {item.get("fip_code") for item in unknowns if item.get("fip_code")}
               raw_unknown = []
               for row in reader:
-                  digits = "".join(ch for ch in str(row.get("CODIGO") or row.get("CD_EMPRESA") or row.get("COD_EMPRESA") or row.get("FIP") or "") if ch.isdigit())
+                  candidate = (
+                      row.get("CODIGO")
+                      or row.get("CD_EMPRESA")
+                      or row.get("COD_EMPRESA")
+                      or row.get("FIP")
+                      or row.get("COD_CIA")
+                      or ""
+                  )
+                  digits = "".join(ch for ch in str(candidate) if ch.isdigit())
                   fip = digits.zfill(6) if digits else ""
                   if fip in unknown_fips:
                       raw_unknown.append({field: row.get(field) for field in (reader.fieldnames or [])})
@@ -170,6 +177,9 @@ jobs:
           out.write_text(json.dumps({
               "sandbox": sandbox_report,
               "unknown_count": len(unknowns),
+              "ses_cias_headers": reader.fieldnames,
+              "statusish_headers": statusish,
+              "raw_unknown_sample": raw_unknown,
           }, ensure_ascii=False, indent=2), encoding="utf-8")
           PY
 
