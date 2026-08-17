@@ -42,6 +42,14 @@ jobs:
           python -m pip install -r requirements-dev.txt
           python -m pip install -r requirements.txt
 
+      - name: Show Ruff autofix diff
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          mkdir -p data/derived/v2
+          ruff check --fix --diff api/v2/identity.py api/v2/build_identity_inventory.py 2>&1 \
+            | tee data/derived/v2/ruff-fix.diff || true
+
       - name: Run v2 identity tests
         run: |
           set -euo pipefail
@@ -172,4 +180,5 @@ jobs:
             data/derived/v2/entity_identity_inventory.json
             data/derived/v2/identity-validation-report.json
             data/derived/v2/identity-build.log
+            data/derived/v2/ruff-fix.diff
             data/derived/audit/ses/**
