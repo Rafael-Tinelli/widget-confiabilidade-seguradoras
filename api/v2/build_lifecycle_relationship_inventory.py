@@ -15,6 +15,7 @@ from api.sources.susep_special_regimes import fetch_special_regime_records
 from api.v2.build_classification_inventory import build_classification_inventory
 from api.v2.lifecycle import apply_legal_lifecycle, lifecycle_summary
 from api.v2.relationships import (
+    RelationshipConflictError,
     apply_corporate_relationships,
     apply_economic_groups,
     load_verified_relationship_registry,
@@ -29,28 +30,61 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+def _successor_map(entities: list[dict[str, Any]]) -> dict[str, str]:
+    mapping: dict[str, str] = {}
+    for entity in entities:
+        successors = [
+            relation.get("target_entity_id")
+            for relation in (entity.get("relationships") or [])
+            if relation.get("relationship_type") == "incorporated_into"
+            and relation.get("target_entity_id")
+        ]
+        if len(successors) > 1:
+            raise RelationshipConflictError(
+                f"Entity {entity['entity_id']} has multiple incorporated_into successors"
+            )
+        if successors:
+            mapping[entity["entity_id"]] = successors[0]
+    return mapping
+
+
+def _resolve_successor_chain(
+    entity_id: str,
+    mapping: dict[str, str],
+) -> list[str]:
+    chain: list[str] = []
+    seen = {entity_id}
+    current = entity_id
+    while current in mapping:
+        target = mapping[current]
+        if target in seen:
+            raise RelationshipConflictError(
+                f"Corporate succession cycle detected at {entity_id}: {target}"
+            )
+        chain.append(target)
+        seen.add(target)
+        current = target
+    return chain
+
+
 def _derive_query_context(entities: list[dict[str, Any]]) -> list[dict[str, Any]]:
     output = [deepcopy(item) for item in entities]
+    successor_mapping = _successor_map(output)
+
     for entity in output:
         lifecycle = entity.get("legal_lifecycle") or {}
-        relations = entity.get("relationships") or []
-        successor = next(
-            (
-                relation
-                for relation in relations
-                if relation.get("relationship_type") == "incorporated_into"
-            ),
-            None,
-        )
+        successor_chain = _resolve_successor_chain(entity["entity_id"], successor_mapping)
 
         # A source-backed incorporation relationship is sufficient to identify
         # the record as historical for query routing. Receita lifecycle remains
         # a separate legal/cadastral dimension and is not a prerequisite for
         # recognizing a documented SUSEP/corporate succession event.
-        if successor:
+        if successor_chain:
             entity["query_context"] = {
                 "entity_state": "historical_incorporated_entity",
-                "successor_entity_id": successor.get("target_entity_id"),
+                "immediate_successor_entity_id": successor_chain[0],
+                "successor_entity_id": successor_chain[-1],
+                "successor_chain": successor_chain,
                 "guidance_code": "show_successor_current_entity",
                 "score_behavior": "do_not_score_historical_entity",
                 "lifecycle_evidence": (
@@ -62,7 +96,9 @@ def _derive_query_context(entities: list[dict[str, Any]]) -> list[dict[str, Any]
         elif lifecycle.get("cadastral_status") == "closed":
             entity["query_context"] = {
                 "entity_state": "historical_closed_entity",
+                "immediate_successor_entity_id": None,
                 "successor_entity_id": None,
+                "successor_chain": [],
                 "guidance_code": "explain_closed_legal_entity",
                 "score_behavior": "do_not_score_historical_entity",
                 "lifecycle_evidence": "receita_cnpj",
@@ -135,8 +171,8 @@ def build_lifecycle_relationship_inventory(
                 "Receita cadastral lifecycle is kept separate from SUSEP regulatory status. "
                 "Corporate succession is only materialized from explicit source-backed "
                 "relationships; common names or economic groups never imply succession. "
-                "A documented incorporation can route a historical query to its successor "
-                "even when Receita lifecycle data has not yet been ingested for that CNPJ. "
+                "Documented successor chains are resolved in the backend so historical "
+                "queries can reach the terminal known successor without frontend logic. "
                 "Brands are resolver objects and never inherit an entity score."
             ),
             "receita_ingestion_status": "verified_snapshot_bridge",
