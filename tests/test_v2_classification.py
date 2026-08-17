@@ -104,7 +104,8 @@ def test_official_licensed_record_missing_from_ses_is_added():
 
 
 def test_unmatched_ses_entity_remains_unknown():
-    result = apply_licensed_classification([_entity(fip="009999")], [_licensed()])[0]
+    results = apply_licensed_classification([_entity(fip="009999")], [_licensed()])
+    result = next(item for item in results if item["entity_id"] == "fip:009999")
 
     assert result["entity_type"] == "unknown"
     assert result["regulatory_regime"] == "unknown"
