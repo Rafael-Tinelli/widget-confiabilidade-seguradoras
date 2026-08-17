@@ -7,9 +7,11 @@ from typing import Any
 
 from api.sources.ses import extract_ses_master_and_financials
 from api.sources.susep_licensed import fetch_licensed_entities
+from api.sources.susep_sandbox import fetch_sandbox_participants
 from api.sources.susep_special_regimes import fetch_special_regime_records
 from api.v2.classification import (
     apply_licensed_classification,
+    apply_sandbox_classification,
     apply_special_regime_classification,
     classification_summary,
 )
@@ -26,11 +28,22 @@ def build_classification_inventory(
     ses_companies: Any,
     licensed_records: list[dict[str, Any]],
     special_records: list[dict[str, Any]] | None = None,
+    sandbox_records: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     base_entities = build_canonical_entities(ses_companies)
     classified = apply_licensed_classification(base_entities, licensed_records)
     classified = apply_special_regime_classification(classified, special_records or [])
-    summary = classification_summary(classified, licensed_records, special_records or [])
+    classified, unresolved_sandbox = apply_sandbox_classification(
+        classified,
+        sandbox_records or [],
+    )
+    summary = classification_summary(
+        classified,
+        licensed_records,
+        special_records or [],
+        sandbox_records or [],
+        unresolved_sandbox,
+    )
 
     return {
         "artifact": "v2_classification_inventory",
@@ -39,14 +52,15 @@ def build_classification_inventory(
         "meta": {
             **summary,
             "classification_scope": (
-                "official current licensed-entities and special-regime sources"
+                "official current licensed-entities, special-regime and Sandbox sources"
             ),
             "classification_note": (
                 "SUSEP regulatory sources define scope, type and status. SES contributes "
-                "financial/activity evidence when present. Sandbox is not yet applied in "
-                "this artifact."
+                "financial/activity evidence when present. Sandbox records are joined by "
+                "exact CNPJ only because the consolidated Sandbox page does not publish FIP."
             ),
         },
+        "unresolved": {"sandbox": unresolved_sandbox},
         "entities": classified,
     }
 
@@ -69,7 +83,8 @@ def main() -> None:
 
     licensed = fetch_licensed_entities()
     special = fetch_special_regime_records()
-    payload = build_classification_inventory(ses_out[1], licensed, special)
+    sandbox = fetch_sandbox_participants()
+    payload = build_classification_inventory(ses_out[1], licensed, special, sandbox)
     path = write_classification_inventory(payload)
     meta = payload["meta"]
     print(
@@ -77,7 +92,8 @@ def main() -> None:
         f"{meta['inventory_count']} entities; "
         f"{meta['by_regulatory_status'].get('active_licensed', 0)} active licensed; "
         f"{meta['special_regime_source_count']} special-regime records; "
-        f"{meta['cnpj_filled_from_licensed_source']} CNPJs filled; "
+        f"{meta['sandbox_applied_by_exact_cnpj']}/{meta['sandbox_source_count']} Sandbox records applied; "
+        f"{meta['sandbox_unresolved_count']} Sandbox unresolved; "
         f"written to {path}"
     )
 
