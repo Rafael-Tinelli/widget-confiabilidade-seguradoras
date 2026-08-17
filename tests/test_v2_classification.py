@@ -1,6 +1,9 @@
 import pytest
 
-from api.v2.classification import ClassificationConflictError, apply_licensed_classification
+from api.v2.classification import (
+    ClassificationConflictError,
+    apply_licensed_classification,
+)
 
 
 def _entity(*, fip="004120", cnpj=None, entity_id=None):
