@@ -6,13 +6,16 @@ on:
     paths:
       - "api/sources/susep_licensed.py"
       - "api/sources/susep_special_regimes.py"
+      - "api/sources/susep_sandbox.py"
       - "api/v2/identity.py"
       - "api/v2/classification.py"
       - "api/v2/build_classification_inventory.py"
       - "tests/test_v2_identity.py"
       - "tests/test_v2_susep_licensed.py"
       - "tests/test_v2_susep_special_regimes.py"
+      - "tests/test_v2_susep_sandbox.py"
       - "tests/test_v2_classification.py"
+      - "tests/test_v2_sandbox_classification.py"
       - ".github/workflows/v2-classification-validation.yml"
   workflow_dispatch:
 
@@ -30,6 +33,7 @@ jobs:
       SES_CACHE_DIR: "data/raw/ses"
       SUSEP_LICENSED_VERIFY_SSL: "0"
       SUSEP_SPECIAL_VERIFY_SSL: "0"
+      SUSEP_SANDBOX_VERIFY_SSL: "1"
 
     steps:
       - name: Checkout
@@ -81,7 +85,9 @@ jobs:
           python -m pytest -q \
             tests/test_v2_susep_licensed.py \
             tests/test_v2_susep_special_regimes.py \
+            tests/test_v2_susep_sandbox.py \
             tests/test_v2_classification.py \
+            tests/test_v2_sandbox_classification.py \
             tests/test_v2_identity.py
 
       - name: Build classification inventory from official sources
@@ -105,6 +111,7 @@ jobs:
           payload = json.loads(src.read_text(encoding="utf-8"))
           entities = payload.get("entities") or []
           meta = payload.get("meta") or {}
+          unresolved = payload.get("unresolved") or {}
           by_status = meta.get("by_regulatory_status") or {}
 
           errors = []
@@ -115,13 +122,17 @@ jobs:
           if int(by_status.get("active_licensed") or 0) < 100:
               errors.append("too few active licensed entities classified")
           if int((meta.get("by_entity_type") or {}).get("insurer") or 0) < 100:
-              errors.append("too few current insurers classified")
+              errors.append("too few insurers classified")
           if int(meta.get("cnpj_filled_from_licensed_source") or 0) < 1:
               errors.append("licensed source did not fill any missing SES CNPJ")
           if int(meta.get("entities_added_from_licensed_source") or 0) < 1:
               errors.append("official licensed source added no SES-missing entities")
           if int(meta.get("special_regime_source_count") or 0) < 1:
               errors.append("special-regime source returned no records")
+          if int(meta.get("sandbox_source_count") or 0) < 5:
+              errors.append("Sandbox source returned too few participant records")
+          if meta.get("sandbox_unresolved_count") != len(unresolved.get("sandbox") or []):
+              errors.append("Sandbox unresolved count mismatch")
 
           for field in ("entity_id", "fip_code"):
               values = [item.get(field) for item in entities if item.get(field)]
@@ -151,21 +162,33 @@ jobs:
           if invalid_ordinary:
               errors.append(f"invalid active classifications: {invalid_ordinary[:5]}")
 
+          special_statuses = {
+              "fiscal_direction",
+              "intervention",
+              "extrajudicial_liquidation",
+              "ordinary_liquidation",
+              "bankruptcy",
+          }
           invalid_special = [
               item.get("entity_id")
               for item in entities
-              if item.get("regulatory_status")
-              in {
-                  "fiscal_direction",
-                  "intervention",
-                  "extrajudicial_liquidation",
-                  "ordinary_liquidation",
-                  "bankruptcy",
-              }
+              if item.get("regulatory_status") in special_statuses
               and item.get("regulatory_regime") != "special"
           ]
           if invalid_special:
               errors.append(f"invalid special-regime classifications: {invalid_special[:5]}")
+
+          invalid_sandbox = [
+              item.get("entity_id")
+              for item in entities
+              if item.get("regulatory_status") == "temporary_authorized"
+              and (
+                  item.get("regulatory_regime") != "sandbox"
+                  or item.get("entity_type") != "insurer"
+              )
+          ]
+          if invalid_sandbox:
+              errors.append(f"invalid Sandbox classifications: {invalid_sandbox[:5]}")
 
           report = {
               "status": "failed" if errors else "ok",
