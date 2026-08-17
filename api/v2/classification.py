@@ -4,7 +4,7 @@ from collections import Counter, defaultdict
 from copy import deepcopy
 from typing import Any
 
-from api.utils.identifiers import normalize_cnpj
+from api.utils.identifiers import normalize_cnpj_v2
 from api.v2.identity import canonical_fip_code
 
 
@@ -29,7 +29,7 @@ def _licensed_index(records: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
             raise ClassificationConflictError("Licensed record without valid FIP code")
         item = dict(raw)
         item["fip_code"] = fip
-        item["cnpj"] = normalize_cnpj(item.get("cnpj"))
+        item["cnpj"] = normalize_cnpj_v2(item.get("cnpj"))
         previous = by_fip.get(fip)
         if previous and (
             previous.get("entity_type") != item.get("entity_type")
@@ -73,13 +73,13 @@ def _licensed_evidence(licensed: dict[str, Any]) -> dict[str, Any]:
         "source_type_code": licensed.get("source_type_code"),
         "entity_type": licensed.get("entity_type"),
         "legal_name": licensed.get("legal_name"),
-        "cnpj": normalize_cnpj(licensed.get("cnpj")),
+        "cnpj": normalize_cnpj_v2(licensed.get("cnpj")),
     }
 
 
 def _entity_from_licensed(licensed: dict[str, Any]) -> dict[str, Any]:
     fip = canonical_fip_code(licensed.get("fip_code"))
-    cnpj = normalize_cnpj(licensed.get("cnpj"))
+    cnpj = normalize_cnpj_v2(licensed.get("cnpj"))
     legal_name = str(licensed.get("legal_name") or "").strip()
     return {
         "entity_id": f"fip:{fip}",
@@ -118,8 +118,8 @@ def apply_licensed_classification(
             output.append(entity)
             continue
 
-        ses_cnpj = normalize_cnpj(entity.get("cnpj"))
-        licensed_cnpj = normalize_cnpj(licensed.get("cnpj"))
+        ses_cnpj = normalize_cnpj_v2(entity.get("cnpj"))
+        licensed_cnpj = normalize_cnpj_v2(licensed.get("cnpj"))
         ses_name = str(entity.get("legal_name") or "").strip()
         licensed_name = str(licensed.get("legal_name") or "").strip()
         effective_cnpj = licensed_cnpj or ses_cnpj
@@ -237,7 +237,7 @@ def _sandbox_evidence(record: dict[str, Any]) -> dict[str, Any]:
     return {
         "source": record.get("source"),
         "legal_name": record.get("legal_name"),
-        "cnpj": normalize_cnpj(record.get("cnpj")),
+        "cnpj": normalize_cnpj_v2(record.get("cnpj")),
         "edition": record.get("edition"),
         "regulatory_status": record.get("regulatory_status"),
         "raw_status": record.get("raw_status"),
@@ -262,14 +262,14 @@ def apply_sandbox_classification(
     output = [deepcopy(item) for item in entities]
     indexes: dict[str, list[int]] = defaultdict(list)
     for index, entity in enumerate(output):
-        cnpj = normalize_cnpj(entity.get("cnpj"))
+        cnpj = normalize_cnpj_v2(entity.get("cnpj"))
         if cnpj:
             indexes[cnpj].append(index)
 
     unresolved: list[dict[str, Any]] = []
     for raw in sandbox_records:
         record = dict(raw)
-        cnpj = normalize_cnpj(record.get("cnpj"))
+        cnpj = normalize_cnpj_v2(record.get("cnpj"))
         matches = indexes.get(cnpj or "", [])
         if len(matches) != 1:
             unresolved.append(
@@ -308,11 +308,11 @@ def apply_sandbox_classification(
             entity["regulatory_regime"] = "sandbox"
             entity["regulatory_status"] = "temporary_authorized"
         elif status == "sandbox_authorization_cancelled":
-            # A historical Sandbox cancellation must never downgrade a later
-            # ordinary authorization or special-regime state.
             if entity.get("regulatory_status") in {None, "", "unknown"}:
                 entity["entity_type"] = (
-                    "insurer" if entity.get("entity_type") in {None, "", "unknown"} else entity["entity_type"]
+                    "insurer"
+                    if entity.get("entity_type") in {None, "", "unknown"}
+                    else entity["entity_type"]
                 )
                 entity["regulatory_regime"] = "sandbox"
                 entity["regulatory_status"] = "sandbox_authorization_cancelled"
