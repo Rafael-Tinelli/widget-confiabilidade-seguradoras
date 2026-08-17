@@ -22,6 +22,19 @@ _BLOCK_END_RE = re.compile(
     r"</(?:p|div|li|h[1-6]|tr|td|th|section|article|dd|dt)>",
     flags=re.IGNORECASE,
 )
+_FIELD_LABELS = (
+    "STATUS",
+    "CNPJ",
+    "PORTARIA",
+    "DATA DE INICIO DA AUTORIZAÇÃO TEMPORÁRIA",
+    "DATA FINAL DA AUTORIZAÇÃO TEMPORÁRIA",
+    "MODALIDADES",
+    "DIRETOR DO SANDBOX",
+    "ENDEREÇO",
+    "SITE",
+    "TELEFONE",
+    "E-MAIL",
+)
 
 
 class SandboxSourceError(RuntimeError):
@@ -58,6 +71,15 @@ def _normalize_label(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", text).strip()
 
 
+def _decode_content(content: bytes) -> str:
+    for encoding in ("utf-8", "cp1252", "latin-1"):
+        try:
+            return content.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    return content.decode("utf-8", errors="replace")
+
+
 def _html_lines(document: str) -> list[str]:
     text = re.sub(r"<script\b.*?</script>", "", document, flags=re.IGNORECASE | re.DOTALL)
     text = re.sub(r"<style\b.*?</style>", "", text, flags=re.IGNORECASE | re.DOTALL)
@@ -73,23 +95,58 @@ def _html_lines(document: str) -> list[str]:
     return output
 
 
-def _field_value(line: str, label: str) -> str | None:
+def _is_label(line: str, label: str) -> bool:
     normalized = _normalize_label(line)
     normalized_label = _normalize_label(label)
-    if not normalized.startswith(normalized_label):
+    return normalized == normalized_label or normalized.startswith(f"{normalized_label} ")
+
+
+def _is_any_field_label(line: str) -> bool:
+    return any(_is_label(line, label) for label in _FIELD_LABELS)
+
+
+def _inline_field_value(line: str, label: str) -> str | None:
+    if not _is_label(line, label):
         return None
+    normalized = _normalize_label(line)
+    normalized_label = _normalize_label(label)
+    if normalized == normalized_label:
+        return ""
     if "|" in line:
         return line.split("|", 1)[1].strip()
-    pattern = re.compile(rf"^\s*{re.escape(label)}\s*[:\-]?\s*", flags=re.IGNORECASE)
-    value = pattern.sub("", line, count=1).strip()
-    return value or None
+    if ":" in line:
+        return line.split(":", 1)[1].strip()
+
+    # Same-line fallback for renderers that omit the visual separator. The
+    # normalized value is sufficient for status interpretation, but identifiers
+    # and dates are normally rendered with a separator or a separate value cell.
+    return normalized[len(normalized_label) :].strip()
+
+
+def _field_value_at(lines: list[str], index: int, label: str) -> str | None:
+    inline = _inline_field_value(lines[index], label)
+    if inline is None:
+        return None
+    if inline:
+        return inline
+
+    # Gov.br currently renders some tables as label and value in separate cells.
+    # Skip standalone visual separators and return the next meaningful value.
+    for candidate in lines[index + 1 : index + 4]:
+        clean = candidate.strip().lstrip("|:–—-").strip()
+        if not clean:
+            continue
+        if _is_any_field_label(clean):
+            return None
+        return clean
+    return None
 
 
 def _status_code(raw_status: str) -> str:
     normalized = _normalize_label(raw_status)
     if "autorizacao temporaria cancelada" in normalized:
         return "sandbox_authorization_cancelled"
-    if normalized.startswith("autorizada"):
+    if "autorizada" in normalized:
         return "temporary_authorized"
     return "unknown"
 
@@ -111,6 +168,17 @@ def _edition_marker(line: str) -> str | None:
     return f"{match.group(1)}ª edição do Sandbox"
 
 
+def _participant_name_before_status(lines: list[str], status_index: int) -> str | None:
+    for candidate in reversed(lines[max(0, status_index - 4) : status_index]):
+        clean = candidate.strip().strip("|:–—-").strip()
+        if not clean or _is_any_field_label(clean) or _edition_marker(clean):
+            continue
+        # Values from a preceding participant should not occur here because
+        # STATUS is the first field of every official participant block.
+        return clean
+    return None
+
+
 def parse_sandbox_participants_html(document: str) -> list[dict[str, Any]]:
     """Parse the current consolidated SUSEP Sandbox participant page."""
     lines = _html_lines(document)
@@ -121,15 +189,13 @@ def parse_sandbox_participants_html(document: str) -> list[dict[str, Any]]:
         edition = _edition_marker(line)
         if edition:
             current_edition = edition
-        if _field_value(line, "STATUS") is not None:
+        if _is_label(line, "STATUS"):
             status_positions.append((index, current_edition))
 
     records: list[dict[str, Any]] = []
     for position_index, (status_index, edition) in enumerate(status_positions):
-        if status_index == 0:
-            continue
-        name = lines[status_index - 1].strip()
-        if not name or _edition_marker(name):
+        name = _participant_name_before_status(lines, status_index)
+        if not name:
             continue
         end_index = (
             status_positions[position_index + 1][0]
@@ -137,9 +203,9 @@ def parse_sandbox_participants_html(document: str) -> list[dict[str, Any]]:
             else len(lines)
         )
         block = lines[status_index:end_index]
-        raw_status = _field_value(block[0], "STATUS") or ""
+        raw_status = _field_value_at(block, 0, "STATUS") or ""
         fields: dict[str, str] = {}
-        for line in block[1:]:
+        for index, line in enumerate(block[1:], start=1):
             for label, key in (
                 ("CNPJ", "cnpj"),
                 ("DATA DE INICIO DA AUTORIZAÇÃO TEMPORÁRIA", "start_raw"),
@@ -147,7 +213,7 @@ def parse_sandbox_participants_html(document: str) -> list[dict[str, Any]]:
                 ("MODALIDADES", "modalities"),
                 ("PORTARIA", "authorization_act"),
             ):
-                value = _field_value(line, label)
+                value = _field_value_at(block, index, label)
                 if value is not None and key not in fields:
                     fields[key] = value
 
@@ -198,8 +264,7 @@ def fetch_sandbox_participants(
         raise SandboxSourceError(
             f"SUSEP Sandbox participants returned HTTP {response.status_code}"
         )
-    document = response.content.decode(response.encoding or "utf-8", errors="replace")
-    records = parse_sandbox_participants_html(document)
+    records = parse_sandbox_participants_html(_decode_content(response.content))
     if len(records) < 5:
         raise SandboxSourceError(
             f"SUSEP Sandbox participant page returned too few records: {len(records)}"
