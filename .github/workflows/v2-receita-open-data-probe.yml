@@ -10,67 +10,26 @@ permissions:
 jobs:
   probe:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-      - name: Install probe dependency
-        run: python -m pip install requests
-      - name: Probe official Receita Nextcloud public share
+      - name: Diagnose connectivity to official Receita file host
+        shell: bash
         run: |
-          python - <<'PY'
-          import re
-          import requests
-          import xml.etree.ElementTree as ET
+          set +e
+          host="arquivos.receitafederal.gov.br"
+          share="https://${host}/index.php/s/YggdBLfdninEJX9"
 
-          token = 'YggdBLfdninEJX9'
-          host = 'https://arquivos.receitafederal.gov.br'
-          share = f'{host}/index.php/s/{token}'
-          dav = f'{host}/public.php/dav/files/{token}/'
-          session = requests.Session()
-          session.headers['User-Agent'] = 'Sanida-CNPJ-Source-Probe/3.0'
+          echo "== DNS =="
+          getent ahosts "$host" || true
 
-          print('SHARE', share)
-          r = session.get(share, timeout=30, allow_redirects=True)
-          print('share status=', r.status_code, 'final=', r.url, 'type=', r.headers.get('content-type'), 'len=', len(r.content))
-          print('title/CNPJ=', 'CNPJ' in r.text)
-          for pattern in ['downloadURL', 'fileList', 'public.php/dav', 'YggdBLfdninEJX9']:
-              print(pattern, pattern in r.text)
+          echo "== IPv4 HTTPS =="
+          curl -4 -sS -I -L --connect-timeout 10 --max-time 20 "$share" || true
 
-          print('\nDAV', dav)
-          headers = {'Depth': '1'}
-          body = '''<?xml version="1.0"?>
-          <d:propfind xmlns:d="DAV:">
-            <d:prop><d:displayname/><d:getcontentlength/><d:getlastmodified/><d:resourcetype/></d:prop>
-          </d:propfind>'''
-          for auth in [(token, ''), None]:
-              try:
-                  resp = session.request('PROPFIND', dav, headers=headers, data=body, auth=auth, timeout=60)
-                  print('auth=', bool(auth), 'status=', resp.status_code, 'type=', resp.headers.get('content-type'), 'len=', len(resp.content))
-                  print(resp.text[:2000])
-                  if resp.status_code == 207:
-                      root = ET.fromstring(resp.content)
-                      ns = {'d': 'DAV:'}
-                      rows = []
-                      for response in root.findall('d:response', ns):
-                          href = response.findtext('d:href', default='', namespaces=ns)
-                          display = response.findtext('.//d:displayname', default='', namespaces=ns)
-                          size = response.findtext('.//d:getcontentlength', default='', namespaces=ns)
-                          modified = response.findtext('.//d:getlastmodified', default='', namespaces=ns)
-                          rows.append((href, display, size, modified))
-                      print('ROWS', rows[:100])
-                      break
-              except Exception as exc:
-                  print('DAV ERROR', repr(exc))
+          echo "== IPv6 HTTPS =="
+          curl -6 -sS -I -L --connect-timeout 10 --max-time 20 "$share" || true
 
-          for filename in ['Motivos.zip', 'Estabelecimentos0.zip']:
-              u = f'{share}/download?path=/&files={filename}'
-              try:
-                  rr = session.get(u, timeout=30, stream=True, allow_redirects=True)
-                  print('DOWNLOAD TEST', filename, 'status=', rr.status_code, 'final=', rr.url, 'type=', rr.headers.get('content-type'), 'length=', rr.headers.get('content-length'))
-                  rr.close()
-              except Exception as exc:
-                  print('DOWNLOAD ERROR', filename, repr(exc))
-          PY
+          echo "== TLS IPv4 =="
+          timeout 15 openssl s_client -4 -connect "${host}:443" -servername "$host" </dev/null 2>&1 | head -40 || true
+
+          echo "Diagnostic only: external reachability does not fail the PR."
+          exit 0
