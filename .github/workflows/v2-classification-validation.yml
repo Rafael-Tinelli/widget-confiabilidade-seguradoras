@@ -10,6 +10,7 @@ on:
       - "api/v2/identity.py"
       - "api/v2/classification.py"
       - "api/v2/sandbox_identity.py"
+      - "api/v2/sandbox_semantics.py"
       - "api/v2/build_classification_inventory.py"
       - "tests/test_v2_identity.py"
       - "tests/test_v2_susep_licensed.py"
@@ -18,6 +19,7 @@ on:
       - "tests/test_v2_classification.py"
       - "tests/test_v2_sandbox_classification.py"
       - "tests/test_v2_sandbox_identity.py"
+      - "tests/test_v2_sandbox_semantics.py"
       - ".github/workflows/v2-classification-validation.yml"
   workflow_dispatch:
 
@@ -91,6 +93,7 @@ jobs:
             tests/test_v2_classification.py \
             tests/test_v2_sandbox_classification.py \
             tests/test_v2_sandbox_identity.py \
+            tests/test_v2_sandbox_semantics.py \
             tests/test_v2_identity.py
 
       - name: Build classification inventory from official sources
@@ -210,7 +213,7 @@ jobs:
               if item.get("regulatory_status") in sandbox_statuses
               and (
                   item.get("regulatory_regime") != "sandbox"
-                  or item.get("entity_type") != "insurer"
+                  or item.get("entity_type") != "sandbox_participant"
                   or not item.get("cnpj")
               )
           ]
