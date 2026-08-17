@@ -65,7 +65,7 @@ def parse_licensed_entities_html(document: str, type_code: str) -> list[dict[str
     """Parse one official SUSEP licensed-entity result page.
 
     Each result is rendered as its own table and exposes both CNPJ and Código
-    FIP.  FIP is the primary join key for v2; CNPJ is retained as a cross-check
+    FIP. FIP is the primary join key for v2; CNPJ is retained as a cross-check
     and can fill SES identities where LISTAEMPRESAS has no CNPJ.
     """
     entity_type = LICENSED_ENTITY_TYPES.get(str(type_code))
@@ -73,10 +73,22 @@ def parse_licensed_entities_html(document: str, type_code: str) -> list[dict[str
         raise ValueError(f"Unsupported SUSEP licensed entity type: {type_code}")
 
     records: list[dict[str, Any]] = []
-    for table in re.findall(r"<table\b.*?</table>", document, flags=re.I | re.S):
+    for table in re.findall(
+        r"<table\b.*?</table>",
+        document,
+        flags=re.IGNORECASE | re.DOTALL,
+    ):
         row_texts: list[str] = []
-        for row in re.findall(r"<tr\b.*?</tr>", table, flags=re.I | re.S):
-            cells = re.findall(r"<t[dh]\b.*?</t[dh]>", row, flags=re.I | re.S)
+        for row in re.findall(
+            r"<tr\b.*?</tr>",
+            table,
+            flags=re.IGNORECASE | re.DOTALL,
+        ):
+            cells = re.findall(
+                r"<t[dh]\b.*?</t[dh]>",
+                row,
+                flags=re.IGNORECASE | re.DOTALL,
+            )
             clean = " ".join(part for part in (_text(cell) for cell in cells) if part)
             if clean:
                 row_texts.append(clean)
@@ -84,7 +96,14 @@ def parse_licensed_entities_html(document: str, type_code: str) -> list[dict[str
         if not row_texts:
             continue
 
-        fip_match = next((re.search(r"FIP\s*:\s*([0-9.]+)", row, flags=re.I) for row in row_texts if "FIP" in row.upper()), None)
+        fip_match = next(
+            (
+                re.search(r"FIP\s*:\s*([0-9.]+)", row, flags=re.IGNORECASE)
+                for row in row_texts
+                if "FIP" in row.upper()
+            ),
+            None,
+        )
         if not fip_match:
             continue
 
@@ -94,7 +113,7 @@ def parse_licensed_entities_html(document: str, type_code: str) -> list[dict[str
 
         cnpj_raw = ""
         for row in row_texts:
-            match = re.search(r"CNPJ\s*:\s*(.+)$", row, flags=re.I)
+            match = re.search(r"CNPJ\s*:\s*(.+)$", row, flags=re.IGNORECASE)
             if match:
                 cnpj_raw = match.group(1).strip()
                 break
