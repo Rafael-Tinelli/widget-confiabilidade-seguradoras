@@ -83,7 +83,83 @@ def test_historical_incorporated_entity_points_to_current_successor():
     old = by_id["fip:005282"]
     current = by_id["fip:004367"]
     assert old["query_context"]["entity_state"] == "historical_incorporated_entity"
+    assert old["query_context"]["immediate_successor_entity_id"] == "fip:004367"
     assert old["query_context"]["successor_entity_id"] == "fip:004367"
+    assert old["query_context"]["successor_chain"] == ["fip:004367"]
     assert old["query_context"]["score_behavior"] == "do_not_score_historical_entity"
     assert current["query_context"]["entity_state"] == "current_ordinary_insurer"
     assert current["economic_group"]["group_name"] == "GRUPO PRUDENTIAL"
+
+
+def test_successor_chain_routes_through_intermediate_historical_entity():
+    classification = {
+        "meta": {"inventory_count": 3},
+        "unresolved": {"sandbox": []},
+        "entities": [
+            {
+                "entity_id": "fip:000001",
+                "fip_code": "000001",
+                "cnpj": "11111111000111",
+                "legal_entity_id": "cnpj:11111111000111",
+                "legal_name": "OLD A",
+                "entity_type": "unknown",
+                "regulatory_regime": "unknown",
+                "regulatory_status": "unknown",
+                "activities": {},
+                "evidence": {},
+            },
+            {
+                "entity_id": "fip:000002",
+                "fip_code": "000002",
+                "cnpj": "22222222000122",
+                "legal_entity_id": "cnpj:22222222000122",
+                "legal_name": "INTERMEDIATE B",
+                "entity_type": "unknown",
+                "regulatory_regime": "unknown",
+                "regulatory_status": "unknown",
+                "activities": {},
+                "evidence": {},
+            },
+            {
+                "entity_id": "fip:000003",
+                "fip_code": "000003",
+                "cnpj": "33333333000133",
+                "legal_entity_id": "cnpj:33333333000133",
+                "legal_name": "CURRENT C",
+                "entity_type": "insurer",
+                "regulatory_regime": "ordinary",
+                "regulatory_status": "active_licensed",
+                "activities": {},
+                "evidence": {},
+            },
+        ],
+    }
+    registry = {
+        "corporate_relationships": [
+            {
+                "relationship_type": "incorporated_into",
+                "source_cnpj": "11111111000111",
+                "target_cnpj": "22222222000122",
+                "effective_date": "2020-01-01",
+                "evidence": {"authority": "TEST"},
+            },
+            {
+                "relationship_type": "incorporated_into",
+                "source_cnpj": "22222222000122",
+                "target_cnpj": "33333333000133",
+                "effective_date": "2022-01-01",
+                "evidence": {"authority": "TEST"},
+            },
+        ],
+        "brands": [],
+    }
+
+    payload = build_lifecycle_relationship_inventory(classification, [], registry, [])
+    by_id = {item["entity_id"]: item for item in payload["entities"]}
+    context = by_id["fip:000001"]["query_context"]
+
+    assert context["entity_state"] == "historical_incorporated_entity"
+    assert context["immediate_successor_entity_id"] == "fip:000002"
+    assert context["successor_entity_id"] == "fip:000003"
+    assert context["successor_chain"] == ["fip:000002", "fip:000003"]
+    assert context["lifecycle_evidence"] == "corporate_relationship"
