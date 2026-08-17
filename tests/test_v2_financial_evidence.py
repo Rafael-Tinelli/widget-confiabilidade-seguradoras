@@ -72,20 +72,29 @@ def test_short_history_remains_limited_not_bad() -> None:
 
     assert profile["state"] == "limited_core_history"
     assert profile["core_financial_evidence_ready"] is False
-    assert "capital_history_under_12m" in profile["reason_codes"]
+    assert "capital_adequacy_history_under_12m" in profile["reason_codes"]
     assert "balance_history_under_12m" in profile["reason_codes"]
 
 
-def test_non_positive_cmr_requires_investigation_without_becoming_missing() -> None:
+def test_zero_cmr_is_unavailable_evidence_not_adverse_signal() -> None:
     entities = apply_financial_evidence([_eligible_entity()], _source(cmr=0.0))
+    validate_financial_evidence(entities)
     profile = entities[0]["financial_evidence"]
 
-    assert profile["state"] == "requires_investigation"
+    assert profile["state"] == "capital_metric_unavailable"
+    assert profile["capital"]["state"] == "metric_unavailable"
+    assert profile["capital"]["current_metric_state"] == "cmr_zero_unusable"
     assert profile["capital"]["pla_cmr_ratio"] is None
-    assert (
-        profile["capital"]["pla_cmr_ratio_state"]
-        == "non_positive_cmr_requires_investigation"
-    )
+    assert profile["capital"]["pla_cmr_ratio_state"] == "unavailable"
+
+
+def test_negative_cmr_is_source_investigation_case() -> None:
+    entities = apply_financial_evidence([_eligible_entity()], _source(cmr=-1.0))
+    profile = entities[0]["financial_evidence"]
+
+    assert profile["state"] == "requires_source_investigation"
+    assert profile["capital"]["current_metric_state"] == "cmr_negative_invalid"
+    assert profile["capital"]["pla_cmr_ratio"] is None
 
 
 def test_noneligible_entity_is_not_applicable() -> None:
