@@ -25,6 +25,28 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+def _mark_unclassified_source_evidence(
+    entities: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Record why an entity remains unknown without inventing an inactive status."""
+    for item in entities:
+        if item.get("regulatory_status") != "unknown":
+            continue
+        evidence = dict(item.get("evidence") or {})
+        evidence["classification"] = {
+            "result": "not_classified_by_current_regulatory_sources",
+            "matched_current_licensed_source": False,
+            "matched_special_regime_source": False,
+            "matched_sandbox_source": False,
+            "interpretation": (
+                "Absence from the current regulatory sources checked does not establish "
+                "that the entity is inactive, closed or incorporated."
+            ),
+        }
+        item["evidence"] = evidence
+    return entities
+
+
 def build_classification_inventory(
     ses_companies: Any,
     licensed_records: list[dict[str, Any]],
@@ -42,6 +64,7 @@ def build_classification_inventory(
         classified,
         unresolved_sandbox,
     )
+    classified = _mark_unclassified_source_evidence(classified)
 
     summary = classification_summary(
         classified,
@@ -72,11 +95,14 @@ def build_classification_inventory(
             "classification_scope": (
                 "official current licensed-entities, special-regime and Sandbox sources"
             ),
+            "ses_master_status_fields_available": False,
             "classification_note": (
                 "SUSEP regulatory sources define scope, type and status. SES contributes "
                 "financial/activity evidence when present. FIP is the preferred regulatory "
                 "identity; Sandbox participants without a published FIP are retained by "
-                "their official CNPJ. No fuzzy name matching is used."
+                "their official CNPJ. Ses_cias.csv exposes entity/group identifiers and "
+                "names, but no status or closure field; unmatched records therefore remain "
+                "unknown rather than being labeled inactive. No fuzzy name matching is used."
             ),
         },
         "unresolved": {"sandbox": unresolved_sandbox},
