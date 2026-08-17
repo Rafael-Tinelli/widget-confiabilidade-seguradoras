@@ -1,0 +1,183 @@
+name: V2 Classification Diagnostic
+
+on:
+  pull_request:
+    branches: ["main"]
+    paths:
+      - ".github/workflows/v2-classification-diagnostic.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      SES_ALLOW_INSECURE_SSL: "1"
+      SES_KEEP_ZIP: "0"
+      SES_WRITE_AUDIT: "0"
+      SES_CACHE_DIR: "data/raw/ses"
+      SUSEP_SANDBOX_VERIFY_SSL: "1"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Restore validated SES source cache
+        uses: actions/cache/restore@v4
+        with:
+          path: data/raw/ses
+          key: v2-diagnostic-ses-source-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: |
+            ses-source-${{ runner.os }}-
+
+      - name: Diagnose Sandbox and raw SES master
+        env:
+          SES_ZIP_URL: "http://127.0.0.1:9/BaseCompleta.zip"
+          SES_ZIP_URL_FALLBACK: "http://127.0.0.1:9/BaseCompleta.zip"
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import csv
+          import io
+          import json
+          import re
+          import unicodedata
+          import zipfile
+          from collections import defaultdict
+          from pathlib import Path
+
+          from api.sources.ses import extract_ses_master_and_financials
+          from api.sources.susep_licensed import fetch_licensed_entities
+          from api.sources.susep_sandbox import fetch_sandbox_participants
+          from api.sources.susep_special_regimes import fetch_special_regime_records
+          from api.v2.build_classification_inventory import build_classification_inventory
+
+          def strict_name(value):
+              text = unicodedata.normalize("NFKD", str(value or ""))
+              text = "".join(ch for ch in text if not unicodedata.combining(ch))
+              text = text.upper().replace("&", " E ")
+              return re.sub(r"[^A-Z0-9]+", " ", text).strip()
+
+          ses_out = extract_ses_master_and_financials()
+          ses_companies = ses_out[1]
+          sandbox = fetch_sandbox_participants()
+          licensed = fetch_licensed_entities()
+          special = fetch_special_regime_records()
+          inventory = build_classification_inventory(ses_companies, licensed, special, sandbox)
+
+          by_name = defaultdict(list)
+          for key, row in ses_companies.items():
+              name = row.get("legal_name") or row.get("name") or ""
+              by_name[strict_name(name)].append({
+                  "source_key": str(key),
+                  "id": row.get("id"),
+                  "name": name,
+                  "cnpj": row.get("cnpj"),
+                  "sources_found": row.get("sources_found"),
+              })
+
+          print("=== SANDBOX STRICT LEGAL-NAME MATCHES IN SES ===")
+          sandbox_report = []
+          for record in sandbox:
+              matches = by_name.get(strict_name(record.get("legal_name")), [])
+              item = {
+                  "sandbox_name": record.get("legal_name"),
+                  "sandbox_cnpj": record.get("cnpj"),
+                  "sandbox_status": record.get("regulatory_status"),
+                  "strict_name": strict_name(record.get("legal_name")),
+                  "ses_exact_name_matches": matches,
+              }
+              sandbox_report.append(item)
+              print(json.dumps(item, ensure_ascii=False))
+
+          print("=== UNKNOWN CLASSIFICATION RECORDS ===")
+          unknowns = [
+              item for item in inventory["entities"]
+              if item.get("regulatory_status") == "unknown"
+          ]
+          for item in unknowns:
+              print(json.dumps({
+                  "entity_id": item.get("entity_id"),
+                  "fip_code": item.get("fip_code"),
+                  "legal_name": item.get("legal_name"),
+                  "cnpj": item.get("cnpj"),
+                  "activities": item.get("activities"),
+                  "evidence": item.get("evidence"),
+              }, ensure_ascii=False))
+
+          print("=== RAW SES_CIAS SCHEMA ===")
+          zip_path = Path("data/raw/ses/BaseCompleta.zip")
+          with zipfile.ZipFile(zip_path) as zf:
+              names = zf.namelist()
+              target = next((name for name in names if name.lower().endswith("ses_cias.csv")), None)
+              if not target:
+                  raise SystemExit("Ses_cias.csv not found in BaseCompleta.zip")
+              raw = zf.read(target)
+              text = None
+              for encoding in ("utf-8-sig", "cp1252", "latin-1"):
+                  try:
+                      text = raw.decode(encoding)
+                      break
+                  except UnicodeDecodeError:
+                      pass
+              if text is None:
+                  raise SystemExit("Could not decode Ses_cias.csv")
+              sample = text[:200000]
+              delimiter = ";" if sample.count(";") > sample.count(",") else ","
+              reader = csv.DictReader(io.StringIO(text), delimiter=delimiter)
+              print("HEADERS", json.dumps(reader.fieldnames, ensure_ascii=False))
+              statusish = [
+                  field for field in (reader.fieldnames or [])
+                  if any(token in strict_name(field) for token in (
+                      "SITUAC", "STATUS", "ATIV", "INICIO", "FIM", "ENCERR", "CANCEL",
+                      "TIPO", "NATUREZA", "SEGMENT", "DATA"
+                  ))
+              ]
+              print("STATUSISH_HEADERS", json.dumps(statusish, ensure_ascii=False))
+
+              unknown_fips = {item.get("fip_code") for item in unknowns}
+              raw_unknown = []
+              for row in reader:
+                  digits = "".join(ch for ch in str(row.get("CODIGO") or row.get("CD_EMPRESA") or row.get("COD_EMPRESA") or row.get("FIP") or "") if ch.isdigit())
+                  fip = digits.zfill(6) if digits else ""
+                  if fip in unknown_fips:
+                      raw_unknown.append({field: row.get(field) for field in (reader.fieldnames or [])})
+                      if len(raw_unknown) >= 20:
+                          break
+              print("RAW_UNKNOWN_SAMPLE")
+              for row in raw_unknown:
+                  print(json.dumps(row, ensure_ascii=False))
+
+          out = Path("data/derived/v2/classification-diagnostic.json")
+          out.parent.mkdir(parents=True, exist_ok=True)
+          out.write_text(json.dumps({
+              "sandbox": sandbox_report,
+              "unknown_count": len(unknowns),
+          }, ensure_ascii=False, indent=2), encoding="utf-8")
+          PY
+
+      - name: Upload diagnostic artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: v2-classification-diagnostic-${{ github.run_id }}
+          retention-days: 7
+          if-no-files-found: warn
+          path: data/derived/v2/classification-diagnostic.json
