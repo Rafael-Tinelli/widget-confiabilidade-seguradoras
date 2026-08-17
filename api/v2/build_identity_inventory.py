@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from api.sources.ses import extract_ses_master_and_financials
 from api.v2.identity import build_canonical_entities
-
 
 DEFAULT_OUTPUT = Path("data/derived/v2/entity_identity_inventory.json")
 
