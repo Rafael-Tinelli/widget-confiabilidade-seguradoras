@@ -1,0 +1,131 @@
+name: V2 Liquidity Experiment
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: v2-liquidity-experiment-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  liquidity-experiment:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+
+    env:
+      SES_ALLOW_INSECURE_SSL: "1"
+      SES_KEEP_ZIP: "1"
+      SES_WRITE_AUDIT: "1"
+      SES_CACHE_DIR: "data/raw/ses"
+      SUSEP_LICENSED_VERIFY_SSL: "0"
+      SUSEP_SPECIAL_VERIFY_SSL: "0"
+      SUSEP_SANDBOX_VERIFY_SSL: "1"
+      SES_ZIP_URL: "http://127.0.0.1:9/BaseCompleta.zip"
+      SES_ZIP_URL_FALLBACK: "http://127.0.0.1:9/BaseCompleta.zip"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install -r requirements-dev.txt
+
+      - name: Restore validated SES source cache
+        uses: actions/cache/restore@v4
+        with:
+          path: data/raw/ses
+          key: v2-liquidity-ses-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: |
+            ses-source-${{ runner.os }}-
+
+      - name: Verify cached BaseCompleta
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import zipfile
+          from pathlib import Path
+          path = Path("data/raw/ses/BaseCompleta.zip")
+          if not path.exists() or path.stat().st_size < 100_000_000:
+              raise SystemExit("valid cached BaseCompleta.zip is required")
+          if not zipfile.is_zipfile(path):
+              raise SystemExit("cached BaseCompleta.zip is not a valid ZIP")
+          print(f"SES cache OK: {path.stat().st_size} bytes")
+          PY
+
+      - name: Run liquidity experiment unit tests
+        run: python -m pytest -q tests/test_v2_liquidity_experiment.py
+
+      - name: Build liquidity experiment
+        run: python -m api.v2.build_liquidity_experiment
+
+      - name: Print quantitative diagnostics
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          path = Path("data/derived/v2/liquidity_experiment.json")
+          payload = json.loads(path.read_text(encoding="utf-8"))
+          summary = payload["summary"]
+          if summary["entity_count"] < 100:
+              raise SystemExit("unexpectedly small liquidity experiment universe")
+          if payload.get("status") != "experimental":
+              raise SystemExit("liquidity artifact must remain experimental")
+
+          compact = {
+              "reference_period": summary.get("reference_period"),
+              "entity_count": summary.get("entity_count"),
+              "quality_excluded_count": summary.get("quality_excluded_count"),
+              "quality_excluded_entities": summary.get("quality_excluded_entities"),
+              "current_ilc_ilt_correlation": summary.get("current_ilc_ilt_correlation"),
+              "ILC": {
+                  "states": summary["metrics"]["ILC"]["current_state_counts_all_entities"],
+                  "flags": summary["metrics"]["ILC"]["current_flag_counts_all_entities"],
+                  "distribution": summary["metrics"]["ILC"]["current_distribution_excluding_quality_issues"],
+                  "complete_history": summary["metrics"]["ILC"]["complete_derivable_history_counts"],
+                  "rank_stability": summary["metrics"]["ILC"]["cross_section_rank_stability_vs_current"],
+                  "bottom_10": summary["metrics"]["ILC"]["current_bottom_10"],
+                  "top_10": summary["metrics"]["ILC"]["current_top_10"],
+                  "outliers": summary["metrics"]["ILC"]["current_tukey_outliers"],
+              },
+              "ILT": {
+                  "states": summary["metrics"]["ILT"]["current_state_counts_all_entities"],
+                  "flags": summary["metrics"]["ILT"]["current_flag_counts_all_entities"],
+                  "distribution": summary["metrics"]["ILT"]["current_distribution_excluding_quality_issues"],
+                  "complete_history": summary["metrics"]["ILT"]["complete_derivable_history_counts"],
+                  "rank_stability": summary["metrics"]["ILT"]["cross_section_rank_stability_vs_current"],
+                  "bottom_10": summary["metrics"]["ILT"]["current_bottom_10"],
+                  "top_10": summary["metrics"]["ILT"]["current_top_10"],
+                  "outliers": summary["metrics"]["ILT"]["current_tukey_outliers"],
+              },
+          }
+          print(json.dumps(compact, ensure_ascii=False, indent=2))
+          PY
+
+      - name: Upload liquidity experiment artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: v2-liquidity-experiment-${{ github.run_id }}
+          retention-days: 14
+          if-no-files-found: warn
+          path: |
+            data/derived/v2/liquidity_experiment.json
+            data/derived/audit/ses/**
