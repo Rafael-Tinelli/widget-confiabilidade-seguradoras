@@ -1,0 +1,191 @@
+from __future__ import annotations
+
+import json
+from copy import deepcopy
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+from api.sources.receita_cnpj import load_verified_lifecycle_snapshot
+from api.sources.ses import extract_ses_master_and_financials
+from api.sources.susep_groups import load_susep_economic_groups
+from api.sources.susep_licensed import fetch_licensed_entities
+from api.sources.susep_sandbox import fetch_sandbox_participants
+from api.sources.susep_special_regimes import fetch_special_regime_records
+from api.v2.build_classification_inventory import build_classification_inventory
+from api.v2.lifecycle import apply_legal_lifecycle, lifecycle_summary
+from api.v2.relationships import (
+    apply_corporate_relationships,
+    apply_economic_groups,
+    load_verified_relationship_registry,
+    materialize_brands,
+    relationship_summary,
+)
+
+DEFAULT_OUTPUT = Path("data/derived/v2/entity_lifecycle_relationship_inventory.json")
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _derive_query_context(entities: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    output = [deepcopy(item) for item in entities]
+    for entity in output:
+        lifecycle = entity.get("legal_lifecycle") or {}
+        relations = entity.get("relationships") or []
+        successor = next(
+            (
+                relation
+                for relation in relations
+                if relation.get("relationship_type") == "incorporated_into"
+            ),
+            None,
+        )
+
+        if lifecycle.get("cadastral_status") == "closed":
+            if successor:
+                entity["query_context"] = {
+                    "entity_state": "historical_incorporated_entity",
+                    "successor_entity_id": successor.get("target_entity_id"),
+                    "guidance_code": "show_successor_current_entity",
+                    "score_behavior": "do_not_score_historical_entity",
+                }
+            else:
+                entity["query_context"] = {
+                    "entity_state": "historical_closed_entity",
+                    "successor_entity_id": None,
+                    "guidance_code": "explain_closed_legal_entity",
+                    "score_behavior": "do_not_score_historical_entity",
+                }
+        elif entity.get("entity_type") == "sandbox_participant":
+            entity["query_context"] = {
+                "entity_state": "sandbox_experimental_participant",
+                "guidance_code": "explain_sandbox_scope_and_limits",
+                "score_behavior": "never_compare_with_ordinary_insurers",
+            }
+        elif (
+            entity.get("entity_type") == "insurer"
+            and entity.get("regulatory_status") == "active_licensed"
+            and entity.get("regulatory_regime") == "ordinary"
+        ):
+            entity["query_context"] = {
+                "entity_state": "current_ordinary_insurer",
+                "guidance_code": "eligible_for_future_assessment_gate",
+                "score_behavior": "assessment_not_yet_implemented",
+            }
+        elif entity.get("regulatory_regime") == "special":
+            entity["query_context"] = {
+                "entity_state": "special_regime_entity",
+                "guidance_code": "show_special_regime_alert_and_guidance",
+                "score_behavior": "do_not_rank",
+            }
+
+    return sorted(output, key=lambda item: item["entity_id"])
+
+
+def build_lifecycle_relationship_inventory(
+    classification_payload: dict[str, Any],
+    lifecycle_records: list[dict[str, Any]],
+    relationship_registry: dict[str, Any],
+    group_records: list[dict[str, Any]],
+) -> dict[str, Any]:
+    entities = list(classification_payload.get("entities") or [])
+    entities, unresolved_lifecycle = apply_legal_lifecycle(entities, lifecycle_records)
+    lifecycle_meta = lifecycle_summary(entities, lifecycle_records, unresolved_lifecycle)
+
+    entities, corporate_resolved = apply_corporate_relationships(
+        entities,
+        relationship_registry,
+    )
+    entities, groups = apply_economic_groups(entities, group_records)
+    brands = materialize_brands(entities, relationship_registry)
+    entities = _derive_query_context(entities)
+    relationship_meta = relationship_summary(
+        entities,
+        corporate_resolved,
+        groups,
+        brands,
+    )
+
+    classification_meta = dict(classification_payload.get("meta") or {})
+    unresolved = {
+        "classification": deepcopy(classification_payload.get("unresolved") or {}),
+        "receita_lifecycle": unresolved_lifecycle,
+    }
+
+    return {
+        "artifact": "v2_lifecycle_relationship_inventory",
+        "generated_at": _utc_now(),
+        "status": "draft",
+        "meta": {
+            **classification_meta,
+            **lifecycle_meta,
+            **relationship_meta,
+            "relationship_model_note": (
+                "Receita cadastral lifecycle is kept separate from SUSEP regulatory status. "
+                "Corporate succession is only materialized from explicit source-backed "
+                "relationships; common names or economic groups never imply succession. "
+                "Brands are resolver objects and never inherit an entity score."
+            ),
+            "receita_ingestion_status": "verified_snapshot_bridge",
+            "receita_ingestion_note": (
+                "The source contract supports official Receita lifecycle fields, but the "
+                "current build uses a small verified snapshot. Full filtered ingestion of "
+                "Receita CNPJ open-data bulk files remains a technical follow-up because the "
+                "official dataset is bulk-oriented rather than a lightweight per-CNPJ API."
+            ),
+        },
+        "unresolved": unresolved,
+        "groups": groups,
+        "brands": brands,
+        "corporate_relationships": corporate_resolved,
+        "entities": entities,
+    }
+
+
+def write_lifecycle_relationship_inventory(
+    payload: dict[str, Any],
+    output: Path = DEFAULT_OUTPUT,
+) -> Path:
+    output.parent.mkdir(parents=True, exist_ok=True)
+    temp = output.with_suffix(output.suffix + ".tmp")
+    temp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    temp.replace(output)
+    return output
+
+
+def main() -> None:
+    # Read group membership before the legacy SES extractor removes BaseCompleta.zip.
+    group_records = load_susep_economic_groups()
+
+    ses_out = extract_ses_master_and_financials()
+    if not isinstance(ses_out, tuple) or len(ses_out) < 2:
+        raise RuntimeError(f"Unexpected SES return: {type(ses_out)}")
+
+    classification = build_classification_inventory(
+        ses_out[1],
+        fetch_licensed_entities(),
+        fetch_special_regime_records(),
+        fetch_sandbox_participants(),
+    )
+    payload = build_lifecycle_relationship_inventory(
+        classification,
+        load_verified_lifecycle_snapshot(),
+        load_verified_relationship_registry(),
+        group_records,
+    )
+    path = write_lifecycle_relationship_inventory(payload)
+    meta = payload["meta"]
+    print(
+        "V2 lifecycle + relationships: "
+        f"{len(payload['entities'])} entities; "
+        f"{meta['receita_lifecycle_attached_count']} Receita lifecycle records attached; "
+        f"{meta['corporate_relationships_resolved']} corporate relationships; "
+        f"{meta['economic_groups_count']} economic groups; "
+        f"{meta['brands_count']} brands; written to {path}"
+    )
+
+
+if __name__ == "__main__":
+    main()
