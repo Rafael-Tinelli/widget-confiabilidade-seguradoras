@@ -8,7 +8,7 @@ from typing import Any
 
 import requests
 
-from api.utils.identifiers import normalize_cnpj
+from api.utils.identifiers import normalize_cnpj_v2
 
 LICENSED_ENTITIES_URL = "https://www2.susep.gov.br/menuatendimento/procura_2011.asp"
 
@@ -62,12 +62,7 @@ def decode_susep_html(content: bytes) -> str:
 
 
 def parse_licensed_entities_html(document: str, type_code: str) -> list[dict[str, Any]]:
-    """Parse one official SUSEP licensed-entity result page.
-
-    Each result is rendered as its own table and exposes both CNPJ and Código
-    FIP. FIP is the primary join key for v2; CNPJ is retained as a cross-check
-    and can fill SES identities where LISTAEMPRESAS has no CNPJ.
-    """
+    """Parse one official SUSEP licensed-entity result page."""
     entity_type = LICENSED_ENTITY_TYPES.get(str(type_code))
     if not entity_type:
         raise ValueError(f"Unsupported SUSEP licensed entity type: {type_code}")
@@ -117,7 +112,7 @@ def parse_licensed_entities_html(document: str, type_code: str) -> list[dict[str
             if match:
                 cnpj_raw = match.group(1).strip()
                 break
-        cnpj = normalize_cnpj(cnpj_raw)
+        cnpj = normalize_cnpj_v2(cnpj_raw)
 
         legal_name = row_texts[0].strip()
         if not legal_name:
