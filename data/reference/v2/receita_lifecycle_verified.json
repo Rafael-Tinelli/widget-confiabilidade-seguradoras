@@ -1,0 +1,63 @@
+{
+  "schema_version": "1.0",
+  "authority": "Receita Federal do Brasil",
+  "observed_at": "2026-08-17",
+  "note": "Verified lifecycle seed derived from official Receita Federal CNPJ registration-status documents. It is a bridge until filtered ingestion of the official CNPJ open-data bulk files is automated; it is not a substitute for the full Receita dataset.",
+  "records": [
+    {
+      "cnpj": "01356570000181",
+      "legal_name": "BRASILVEICULOS COMPANHIA DE SEGUROS",
+      "cadastral_status": "BAIXADA",
+      "status_date": "2019-10-31",
+      "status_reason": "Incorporação",
+      "source_authority": "Receita Federal",
+      "source_document": "Comprovante de Inscrição e de Situação Cadastral",
+      "observed_at": "2026-08-17",
+      "source_mode": "verified_snapshot"
+    },
+    {
+      "cnpj": "08816067000100",
+      "legal_name": "ITAU SEGUROS DE AUTO E RESIDENCIA S.A.",
+      "cadastral_status": "BAIXADA",
+      "status_date": "2026-02-28",
+      "status_reason": "Incorporação",
+      "source_authority": "Receita Federal",
+      "source_document": "Comprovante de Inscrição e de Situação Cadastral",
+      "observed_at": "2026-08-17",
+      "source_mode": "verified_snapshot"
+    },
+    {
+      "cnpj": "33061813000140",
+      "legal_name": "PRUDENTIAL DO BRASIL SEGUROS DE VIDA S.A.",
+      "cadastral_status": "BAIXADA",
+      "status_date": "2024-11-01",
+      "status_reason": "Incorporação",
+      "source_authority": "Receita Federal",
+      "source_document": "Comprovante de Inscrição e de Situação Cadastral",
+      "observed_at": "2026-08-17",
+      "source_mode": "verified_snapshot"
+    },
+    {
+      "cnpj": "29741030000130",
+      "legal_name": "ITAUSEG SEGURADORA S.A.",
+      "cadastral_status": "BAIXADA",
+      "status_date": "2021-11-30",
+      "status_reason": "Incorporação",
+      "source_authority": "Receita Federal",
+      "source_document": "Comprovante de Inscrição e de Situação Cadastral",
+      "observed_at": "2026-08-17",
+      "source_mode": "verified_snapshot"
+    },
+    {
+      "cnpj": "33822131000103",
+      "legal_name": "AXA XL SEGUROS S.A.",
+      "cadastral_status": "BAIXADA",
+      "status_date": "2022-11-01",
+      "status_reason": "Incorporação",
+      "source_authority": "Receita Federal",
+      "source_document": "Comprovante de Inscrição e de Situação Cadastral",
+      "observed_at": "2026-08-17",
+      "source_mode": "verified_snapshot"
+    }
+  ]
+}
