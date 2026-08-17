@@ -18,7 +18,7 @@ def test_canonical_fip_code_normalizes_common_ses_forms() -> None:
     assert canonical_fip_code("5177.0") == "005177"
 
 
-def test_identity_prefers_cnpj_as_stable_entity_id() -> None:
+def test_identity_uses_fip_as_stable_regulatory_entity_id() -> None:
     identity = build_canonical_identity(
         {
             "id": "005177",
@@ -28,9 +28,10 @@ def test_identity_prefers_cnpj_as_stable_entity_id() -> None:
         }
     )
 
-    assert identity.entity_id == "cnpj:61573796000166"
+    assert identity.entity_id == "fip:005177"
     assert identity.fip_code == "005177"
     assert identity.cnpj == "61573796000166"
+    assert identity.legal_entity_id == "cnpj:61573796000166"
     assert identity.legal_name == "ALLIANZ SEGUROS S.A."
     assert identity.activities == {
         "insurance": True,
@@ -57,7 +58,7 @@ def test_activity_evidence_does_not_infer_legal_classification() -> None:
     assert identity.activities["insurance"] is False
 
 
-def test_identity_without_cnpj_uses_fip_namespace() -> None:
+def test_identity_without_cnpj_still_uses_fip_namespace() -> None:
     identity = build_canonical_identity(
         {
             "id": "123",
@@ -69,24 +70,45 @@ def test_identity_without_cnpj_uses_fip_namespace() -> None:
     assert identity.entity_id == "fip:000123"
     assert identity.fip_code == "000123"
     assert identity.cnpj is None
+    assert identity.legal_entity_id is None
 
 
-def test_builder_rejects_same_cnpj_for_conflicting_fip_records() -> None:
+def test_same_cnpj_may_belong_to_distinct_regulatory_records() -> None:
     companies = {
         "000111": {
             "id": "000111",
-            "name": "EMPRESA A",
+            "name": "REGISTRO A",
             "cnpj": "12.345.678/0001-90",
         },
         "000222": {
             "id": "000222",
-            "name": "EMPRESA B",
+            "name": "REGISTRO B",
             "cnpj": "12.345.678/0001-90",
         },
     }
 
+    entities = build_canonical_entities(companies)
+
+    assert [item["entity_id"] for item in entities] == ["fip:000111", "fip:000222"]
+    assert all(item["cnpj"] == "12345678000190" for item in entities)
+
+
+def test_builder_rejects_conflicting_records_for_same_fip() -> None:
+    records = [
+        {
+            "id": "000111",
+            "name": "EMPRESA A",
+            "cnpj": "12.345.678/0001-90",
+        },
+        {
+            "id": "000111",
+            "name": "EMPRESA A ALTERADA",
+            "cnpj": "98.765.432/0001-10",
+        },
+    ]
+
     with pytest.raises(IdentityConflictError):
-        build_canonical_entities(companies)
+        build_canonical_entities(records)
 
 
 def test_builder_rejects_invalid_record_instead_of_silently_dropping_it() -> None:

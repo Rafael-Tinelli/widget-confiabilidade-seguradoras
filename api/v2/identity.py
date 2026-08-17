@@ -15,7 +15,7 @@ _ACTIVITY_SOURCE_MAP = {
 
 
 class IdentityConflictError(ValueError):
-    """Raised when two source records would collapse into one canonical identity."""
+    """Raised when source records conflict for the same regulatory identity."""
 
 
 @dataclass(frozen=True)
@@ -23,6 +23,7 @@ class CanonicalIdentity:
     entity_id: str
     fip_code: str
     cnpj: str | None
+    legal_entity_id: str | None
     legal_name: str
     entity_type: str
     regulatory_regime: str
@@ -35,6 +36,7 @@ class CanonicalIdentity:
             "entity_id": self.entity_id,
             "fip_code": self.fip_code,
             "cnpj": self.cnpj,
+            "legal_entity_id": self.legal_entity_id,
             "legal_name": self.legal_name,
             "entity_type": self.entity_type,
             "regulatory_regime": self.regulatory_regime,
@@ -91,16 +93,21 @@ def _activities_from_sources(labels: Iterable[str]) -> dict[str, bool]:
     return activities
 
 
-def build_canonical_identity(record: Mapping[str, Any], *, source_key: Any | None = None) -> CanonicalIdentity:
-    """Build a conservative v2 identity from one SES-normalized record.
+def build_canonical_identity(
+    record: Mapping[str, Any],
+    *,
+    source_key: Any | None = None,
+) -> CanonicalIdentity:
+    """Build a conservative v2 regulatory identity from one SES record.
 
-    This function deliberately does **not** infer legal entity type, licensing
-    status or regulatory regime from company names or from the presence of
-    financial files. Those attributes remain ``unknown`` until a dedicated
-    authoritative source is integrated.
+    FIP is the stable identifier for a SUSEP regulatory record. CNPJ is an
+    attribute of the legal entity behind that record and may differ across
+    official sources, notably for foreign reinsurers and Brazilian
+    representative offices. Therefore CNPJ must never change ``entity_id``.
 
-    Activity flags are evidence that the entity appears in a corresponding SES
-    data flow; they are not a legal classification.
+    This function deliberately does not infer legal entity type, licensing
+    status or regulatory regime from company names or financial-file presence.
+    Activity flags are evidence of SES data-flow presence, not legal class.
     """
     raw_fip = (
         record.get("fip_code")
@@ -118,13 +125,13 @@ def build_canonical_identity(record: Mapping[str, Any], *, source_key: Any | Non
     if not legal_name:
         raise ValueError(f"Canonical identity {fip_code} requires a legal name")
 
-    entity_id = f"cnpj:{cnpj}" if cnpj else f"fip:{fip_code}"
     labels = _source_labels(record)
 
     return CanonicalIdentity(
-        entity_id=entity_id,
+        entity_id=f"fip:{fip_code}",
         fip_code=fip_code,
         cnpj=cnpj,
+        legal_entity_id=f"cnpj:{cnpj}" if cnpj else None,
         legal_name=legal_name,
         entity_type="unknown",
         regulatory_regime="unknown",
@@ -134,58 +141,50 @@ def build_canonical_identity(record: Mapping[str, Any], *, source_key: Any | Non
             "ses_present": True,
             "listaempresas_cnpj_present": cnpj is not None,
             "activity_sources": labels,
+            "ses_identity": {
+                "legal_name": legal_name,
+                "cnpj": cnpj,
+            },
         },
     )
 
 
 def build_canonical_entities(ses_companies: Any) -> list[dict[str, Any]]:
-    """Build unique canonical identities without changing the v1 universe.
+    """Build unique FIP-stable regulatory identities without changing v1.
 
-    ``ses_companies`` may be the dict returned by ``extract_ses_master_and_financials``
-    or a list of records. Duplicate canonical IDs are rejected instead of
-    being silently deduplicated in a frontend.
+    ``ses_companies`` may be the dict returned by
+    ``extract_ses_master_and_financials`` or a list of records. Duplicate FIP
+    identities with conflicting source records are rejected instead of being
+    silently deduplicated in a frontend. Repeated CNPJs are not rejected here:
+    CNPJ is a legal-entity attribute, not the regulatory-record primary key.
     """
     if isinstance(ses_companies, Mapping):
-        iterator = ((key, value) for key, value in ses_companies.items() if isinstance(value, Mapping))
+        iterator = (
+            (key, value)
+            for key, value in ses_companies.items()
+            if isinstance(value, Mapping)
+        )
     elif isinstance(ses_companies, list):
-        iterator = ((None, value) for value in ses_companies if isinstance(value, Mapping))
+        iterator = (
+            (None, value)
+            for value in ses_companies
+            if isinstance(value, Mapping)
+        )
     else:
         raise TypeError("ses_companies must be a mapping or list of mappings")
 
-    by_entity_id: dict[str, CanonicalIdentity] = {}
-    by_fip: dict[str, str] = {}
-    by_cnpj: dict[str, str] = {}
+    by_fip: dict[str, CanonicalIdentity] = {}
 
     for source_key, record in iterator:
         identity = build_canonical_identity(record, source_key=source_key)
-
-        previous_fip_entity = by_fip.get(identity.fip_code)
-        if previous_fip_entity and previous_fip_entity != identity.entity_id:
-            raise IdentityConflictError(
-                f"FIP {identity.fip_code} maps to multiple canonical entities: "
-                f"{previous_fip_entity} and {identity.entity_id}"
-            )
-
-        if identity.cnpj:
-            previous_cnpj_entity = by_cnpj.get(identity.cnpj)
-            if previous_cnpj_entity and previous_cnpj_entity != identity.entity_id:
-                raise IdentityConflictError(
-                    f"CNPJ {identity.cnpj} maps to multiple canonical entities: "
-                    f"{previous_cnpj_entity} and {identity.entity_id}"
-                )
-
-        previous = by_entity_id.get(identity.entity_id)
+        previous = by_fip.get(identity.fip_code)
         if previous and (
-            previous.fip_code != identity.fip_code
+            previous.cnpj != identity.cnpj
             or previous.legal_name != identity.legal_name
         ):
             raise IdentityConflictError(
-                f"Canonical entity {identity.entity_id} has conflicting source records"
+                f"FIP {identity.fip_code} has conflicting source records"
             )
+        by_fip[identity.fip_code] = identity
 
-        by_entity_id[identity.entity_id] = identity
-        by_fip[identity.fip_code] = identity.entity_id
-        if identity.cnpj:
-            by_cnpj[identity.cnpj] = identity.entity_id
-
-    return [by_entity_id[key].to_dict() for key in sorted(by_entity_id)]
+    return [by_fip[key].to_dict() for key in sorted(by_fip)]

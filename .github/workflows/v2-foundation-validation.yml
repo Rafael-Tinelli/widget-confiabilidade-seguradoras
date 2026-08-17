@@ -44,7 +44,6 @@ jobs:
           python -m pip install -r requirements.txt
 
       - name: Restore validated SES source cache
-        id: restore-ses-cache
         uses: actions/cache/restore@v4
         with:
           path: data/raw/ses
@@ -56,8 +55,8 @@ jobs:
         run: |
           set -euo pipefail
           python - <<'PY'
-          from pathlib import Path
           import zipfile
+          from pathlib import Path
 
           path = Path("data/raw/ses/BaseCompleta.zip")
           if not path.exists():
@@ -76,9 +75,6 @@ jobs:
 
       - name: Build identity inventory from validated SES cache
         env:
-          # PR validation tests v2 logic against the latest source cache already
-          # validated by Refresh data. Live source availability belongs to the
-          # refresh workflow and must not make code validation nondeterministic.
           SES_ZIP_URL: "http://127.0.0.1:9/BaseCompleta.zip"
           SES_ZIP_URL_FALLBACK: "http://127.0.0.1:9/BaseCompleta.zip"
         run: |
@@ -108,30 +104,29 @@ jobs:
           if meta.get("count") != len(entities):
               raise SystemExit("meta.count does not match entity list length")
 
-          entity_ids = [e.get("entity_id") for e in entities]
-          fips = [e.get("fip_code") for e in entities]
-          cnpjs = [e.get("cnpj") for e in entities if e.get("cnpj")]
-
           def duplicates(values):
-              c = Counter(values)
-              return sorted(k for k, v in c.items() if k and v > 1)
+              counts = Counter(values)
+              return sorted(key for key, value in counts.items() if key and value > 1)
+
+          entity_ids = [item.get("entity_id") for item in entities]
+          fips = [item.get("fip_code") for item in entities]
+          cnpjs = [item.get("cnpj") for item in entities if item.get("cnpj")]
 
           errors = []
           if duplicates(entity_ids):
               errors.append("duplicate entity_id")
           if duplicates(fips):
               errors.append("duplicate fip_code")
-          if duplicates(cnpjs):
-              errors.append("duplicate cnpj")
 
           required_activity_keys = {"insurance", "pension", "capitalization", "reinsurance"}
           malformed = []
-          for e in entities:
-              entity_id = e.get("entity_id") or ""
-              fip = e.get("fip_code") or ""
-              cnpj = e.get("cnpj")
-              name = (e.get("legal_name") or "").strip()
-              activities = e.get("activities") or {}
+          for item in entities:
+              entity_id = item.get("entity_id") or ""
+              fip = item.get("fip_code") or ""
+              cnpj = item.get("cnpj")
+              legal_entity_id = item.get("legal_entity_id")
+              name = (item.get("legal_name") or "").strip()
+              activities = item.get("activities") or {}
 
               if len(fip) != 6 or not fip.isdigit():
                   malformed.append([entity_id, "invalid_fip"])
@@ -139,41 +134,50 @@ jobs:
                   malformed.append([entity_id, "missing_legal_name"])
               if cnpj is not None and (len(cnpj) != 14 or not cnpj.isdigit()):
                   malformed.append([entity_id, "invalid_cnpj"])
-              expected_id = f"cnpj:{cnpj}" if cnpj else f"fip:{fip}"
-              if entity_id != expected_id:
+              if entity_id != f"fip:{fip}":
                   malformed.append([entity_id, "entity_id_mismatch"])
+              expected_legal_id = f"cnpj:{cnpj}" if cnpj else None
+              if legal_entity_id != expected_legal_id:
+                  malformed.append([entity_id, "legal_entity_id_mismatch"])
               if set(activities) != required_activity_keys:
                   malformed.append([entity_id, "activity_contract_mismatch"])
-              if e.get("entity_type") != "unknown":
+              if item.get("entity_type") != "unknown":
                   malformed.append([entity_id, "premature_entity_type_classification"])
-              if e.get("regulatory_regime") != "unknown":
+              if item.get("regulatory_regime") != "unknown":
                   malformed.append([entity_id, "premature_regime_classification"])
-              if e.get("regulatory_status") != "unknown":
+              if item.get("regulatory_status") != "unknown":
                   malformed.append([entity_id, "premature_status_classification"])
 
           if malformed:
               errors.append(f"malformed entities: {len(malformed)}")
 
           by_activity = {
-              key: sum(bool((e.get("activities") or {}).get(key)) for e in entities)
+              key: sum(bool((item.get("activities") or {}).get(key)) for item in entities)
               for key in sorted(required_activity_keys)
           }
           if sum(by_activity.values()) == 0:
               errors.append("BaseCompleta not evidenced: all SES activity counts are zero")
 
           no_cnpj = [
-              {"entity_id": e.get("entity_id"), "fip_code": e.get("fip_code"), "legal_name": e.get("legal_name")}
-              for e in entities if not e.get("cnpj")
+              {
+                  "entity_id": item.get("entity_id"),
+                  "fip_code": item.get("fip_code"),
+                  "legal_name": item.get("legal_name"),
+              }
+              for item in entities
+              if not item.get("cnpj")
           ]
           multi_activity = [
               {
-                  "entity_id": e.get("entity_id"),
-                  "fip_code": e.get("fip_code"),
-                  "legal_name": e.get("legal_name"),
-                  "activities": [k for k, v in (e.get("activities") or {}).items() if v],
+                  "entity_id": item.get("entity_id"),
+                  "fip_code": item.get("fip_code"),
+                  "legal_name": item.get("legal_name"),
+                  "activities": [
+                      key for key, value in (item.get("activities") or {}).items() if value
+                  ],
               }
-              for e in entities
-              if sum(bool(v) for v in (e.get("activities") or {}).values()) > 1
+              for item in entities
+              if sum(bool(value) for value in (item.get("activities") or {}).values()) > 1
           ]
 
           report = {
@@ -181,6 +185,7 @@ jobs:
               "count": len(entities),
               "with_cnpj": len(cnpjs),
               "without_cnpj": len(no_cnpj),
+              "duplicate_cnpj_values": len(duplicates(cnpjs)),
               "by_activity_evidence": by_activity,
               "multi_activity_count": len(multi_activity),
               "errors": errors,

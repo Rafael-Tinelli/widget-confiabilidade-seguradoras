@@ -9,7 +9,7 @@ from api.v2.identity import canonical_fip_code
 
 
 class ClassificationConflictError(ValueError):
-    """Raised when official classification conflicts with canonical identity."""
+    """Raised when authoritative classification records conflict by FIP."""
 
 
 def _licensed_index(records: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
@@ -27,6 +27,7 @@ def _licensed_index(records: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
         if previous and (
             previous.get("entity_type") != item.get("entity_type")
             or previous.get("cnpj") != item.get("cnpj")
+            or previous.get("legal_name") != item.get("legal_name")
         ):
             raise ClassificationConflictError(f"Conflicting licensed records for FIP {fip}")
         by_fip[fip] = item
@@ -34,7 +35,7 @@ def _licensed_index(records: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
 
 
 def _assert_unique_classified_entities(entities: list[dict[str, Any]]) -> None:
-    for field in ("entity_id", "fip_code", "cnpj"):
+    for field in ("entity_id", "fip_code"):
         values = [item.get(field) for item in entities if item.get(field)]
         duplicates = sorted(value for value, count in Counter(values).items() if count > 1)
         if duplicates:
@@ -47,18 +48,17 @@ def apply_licensed_classification(
     entities: list[dict[str, Any]],
     licensed_records: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    """Enrich canonical SES identities with official current licensing data.
+    """Enrich FIP-stable identities with the current SUSEP licensed universe.
 
-    Rules:
-    - FIP is the join key.
-    - A CNPJ already present in SES must agree with the official licensed source.
-    - When SES has no CNPJ and SUSEP licensing does, the official CNPJ becomes
-      part of the canonical identity and entity_id is promoted to ``cnpj:...``.
-    - Presence in the licensed-entities service means the record is in the
-      current licensed universe.  The service itself excludes special regimes,
-      Sandbox authorization and entities that ended operations/incorporated.
-    - Unmatched SES records remain ``unknown`` until another official source
-      classifies them.
+    FIP is the authoritative join key. The licensed service supplies current
+    regulatory type and current regulated-entity identity. If its CNPJ differs
+    from SES/LISTAEMPRESAS, the licensed value becomes the primary current CNPJ
+    while the SES value is retained as evidence. This accommodates legitimate
+    structures such as foreign reinsurers and Brazilian representative offices
+    without silently discarding the source disagreement.
+
+    Unmatched SES records remain unknown until special-regime, Sandbox or other
+    authoritative sources classify them.
     """
     by_fip = _licensed_index(licensed_records)
     output: list[dict[str, Any]] = []
@@ -71,16 +71,17 @@ def apply_licensed_classification(
             output.append(entity)
             continue
 
-        current_cnpj = normalize_cnpj(entity.get("cnpj"))
+        ses_cnpj = normalize_cnpj(entity.get("cnpj"))
         licensed_cnpj = normalize_cnpj(licensed.get("cnpj"))
-        if current_cnpj and licensed_cnpj and current_cnpj != licensed_cnpj:
-            raise ClassificationConflictError(
-                f"CNPJ conflict for FIP {fip}: SES={current_cnpj} licensed={licensed_cnpj}"
-            )
+        ses_name = str(entity.get("legal_name") or "").strip()
+        licensed_name = str(licensed.get("legal_name") or "").strip()
 
-        effective_cnpj = current_cnpj or licensed_cnpj
+        effective_cnpj = licensed_cnpj or ses_cnpj
+        entity["entity_id"] = f"fip:{fip}"
         entity["cnpj"] = effective_cnpj
-        entity["entity_id"] = f"cnpj:{effective_cnpj}" if effective_cnpj else f"fip:{fip}"
+        entity["legal_entity_id"] = f"cnpj:{effective_cnpj}" if effective_cnpj else None
+        if licensed_name:
+            entity["legal_name"] = licensed_name
         entity["entity_type"] = licensed["entity_type"]
         entity["regulatory_regime"] = "ordinary"
         entity["regulatory_status"] = "active_licensed"
@@ -91,9 +92,25 @@ def apply_licensed_classification(
             "source": licensed.get("source"),
             "source_type_code": licensed.get("source_type_code"),
             "entity_type": licensed.get("entity_type"),
-            "cnpj_present": licensed_cnpj is not None,
+            "legal_name": licensed_name,
+            "cnpj": licensed_cnpj,
         }
-        if not current_cnpj and licensed_cnpj:
+
+        variances: dict[str, Any] = {}
+        if ses_cnpj and licensed_cnpj and ses_cnpj != licensed_cnpj:
+            variances["cnpj"] = {
+                "ses": ses_cnpj,
+                "licensed": licensed_cnpj,
+            }
+        if ses_name and licensed_name and ses_name != licensed_name:
+            variances["legal_name"] = {
+                "ses": ses_name,
+                "licensed": licensed_name,
+            }
+        if variances:
+            evidence["identity_variances"] = variances
+
+        if licensed_cnpj:
             evidence["identity_cnpj_source"] = "susep_licensed_entities"
         entity["evidence"] = evidence
         output.append(entity)
@@ -109,19 +126,37 @@ def classification_summary(
     licensed_fips = {canonical_fip_code(item.get("fip_code")) for item in licensed_records}
     inventory_fips = {canonical_fip_code(item.get("fip_code")) for item in entities}
 
-    classified = [item for item in entities if item.get("regulatory_status") == "active_licensed"]
+    classified = [
+        item
+        for item in entities
+        if item.get("regulatory_status") == "active_licensed"
+    ]
     by_type = Counter(item.get("entity_type") or "unknown" for item in classified)
-    cnpj_from_licensed = sum(
-        (item.get("evidence") or {}).get("identity_cnpj_source") == "susep_licensed_entities"
-        for item in classified
+
+    cnpj_filled = 0
+    cnpj_variances = 0
+    for item in classified:
+        evidence = item.get("evidence") or {}
+        ses_identity = evidence.get("ses_identity") or {}
+        licensed = evidence.get("licensed_entities") or {}
+        if not ses_identity.get("cnpj") and licensed.get("cnpj"):
+            cnpj_filled += 1
+        if (evidence.get("identity_variances") or {}).get("cnpj"):
+            cnpj_variances += 1
+
+    cnpj_counts = Counter(
+        item.get("cnpj") for item in entities if item.get("cnpj")
     )
+    duplicate_current_cnpjs = sum(1 for count in cnpj_counts.values() if count > 1)
 
     return {
         "inventory_count": len(entities),
         "classified_active_licensed": len(classified),
         "unclassified": len(entities) - len(classified),
         "by_entity_type": dict(sorted(by_type.items())),
-        "cnpj_filled_from_licensed_source": cnpj_from_licensed,
+        "cnpj_filled_from_licensed_source": cnpj_filled,
+        "cnpj_variances_between_ses_and_licensed": cnpj_variances,
+        "duplicate_current_cnpj_values": duplicate_current_cnpjs,
         "licensed_source_count": len(licensed_records),
         "licensed_records_not_in_ses_inventory": len(licensed_fips - inventory_fips),
     }

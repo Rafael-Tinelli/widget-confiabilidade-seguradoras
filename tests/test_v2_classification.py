@@ -6,11 +6,12 @@ from api.v2.classification import (
 )
 
 
-def _entity(*, fip="004120", cnpj=None, entity_id=None):
+def _entity(*, fip="004120", cnpj=None):
     return {
-        "entity_id": entity_id or (f"cnpj:{cnpj}" if cnpj else f"fip:{fip}"),
+        "entity_id": f"fip:{fip}",
         "fip_code": fip,
         "cnpj": cnpj,
+        "legal_entity_id": f"cnpj:{cnpj}" if cnpj else None,
         "legal_name": "88I SEGURADORA DIGITAL S.A.",
         "entity_type": "unknown",
         "regulatory_regime": "unknown",
@@ -21,7 +22,13 @@ def _entity(*, fip="004120", cnpj=None, entity_id=None):
             "capitalization": False,
             "reinsurance": False,
         },
-        "evidence": {"ses_present": True},
+        "evidence": {
+            "ses_present": True,
+            "ses_identity": {
+                "legal_name": "88I SEGURADORA DIGITAL S.A.",
+                "cnpj": cnpj,
+            },
+        },
     }
 
 
@@ -36,33 +43,53 @@ def _licensed(*, fip="004120", cnpj="29846286000102", entity_type="insurer"):
     }
 
 
-def test_official_license_classifies_and_promotes_missing_cnpj():
+def test_official_license_classifies_and_fills_missing_cnpj():
     result = apply_licensed_classification([_entity()], [_licensed()])[0]
 
-    assert result["entity_id"] == "cnpj:29846286000102"
+    assert result["entity_id"] == "fip:004120"
     assert result["cnpj"] == "29846286000102"
+    assert result["legal_entity_id"] == "cnpj:29846286000102"
     assert result["entity_type"] == "insurer"
     assert result["regulatory_regime"] == "ordinary"
     assert result["regulatory_status"] == "active_licensed"
     assert result["evidence"]["identity_cnpj_source"] == "susep_licensed_entities"
 
 
-def test_existing_matching_cnpj_is_preserved():
+def test_existing_matching_cnpj_is_preserved_as_current_identity():
     result = apply_licensed_classification(
         [_entity(cnpj="29846286000102")],
         [_licensed()],
     )[0]
 
-    assert result["entity_id"] == "cnpj:29846286000102"
-    assert result["evidence"].get("identity_cnpj_source") is None
+    assert result["entity_id"] == "fip:004120"
+    assert result["cnpj"] == "29846286000102"
+    assert "identity_variances" not in result["evidence"]
 
 
-def test_cnpj_conflict_fails_closed():
-    with pytest.raises(ClassificationConflictError, match="CNPJ conflict"):
-        apply_licensed_classification(
-            [_entity(cnpj="11111111000111")],
-            [_licensed()],
-        )
+def test_official_cnpj_variance_is_recorded_not_silently_discarded():
+    entity = _entity(fip="040851", cnpj="09438454000113")
+    entity["legal_name"] = "CHUBB TEMPEST REINSURANCE LTD. ESCRITORIO DE REPRESENTACAO"
+    entity["evidence"]["ses_identity"]["legal_name"] = entity["legal_name"]
+    licensed = {
+        **_licensed(
+            fip="040851",
+            cnpj="10335860000130",
+            entity_type="admitted_reinsurer",
+        ),
+        "legal_name": "CHUBB TEMPEST REINSURANCE LTD.",
+        "source_type_code": "4",
+    }
+
+    result = apply_licensed_classification([entity], [licensed])[0]
+
+    assert result["entity_id"] == "fip:040851"
+    assert result["cnpj"] == "10335860000130"
+    assert result["legal_entity_id"] == "cnpj:10335860000130"
+    assert result["entity_type"] == "admitted_reinsurer"
+    assert result["evidence"]["identity_variances"]["cnpj"] == {
+        "ses": "09438454000113",
+        "licensed": "10335860000130",
+    }
 
 
 def test_unmatched_ses_entity_remains_unknown():
