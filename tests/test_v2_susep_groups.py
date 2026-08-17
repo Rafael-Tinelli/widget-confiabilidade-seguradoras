@@ -4,19 +4,25 @@ from pathlib import Path
 from api.sources.susep_groups import load_susep_economic_groups
 
 
-def test_reads_group_membership_from_ses_cias(tmp_path: Path):
+def test_reads_latest_group_membership_from_history(tmp_path: Path):
     zip_path = tmp_path / "BaseCompleta.zip"
     content = (
-        "Coenti;Noenti;Cogrupo;Nogrupo\n"
-        "4367;PRUDENTIAL DO BRASIL SEGUROS S.A.;77;GRUPO PRUDENTIAL\n"
-        "5886;PORTO SEGURO COMPANHIA DE SEGUROS GERAIS;88;GRUPO PORTO\n"
+        "damesano;coenti;noenti;cogrupo;nogrupo\n"
+        "202401;03182;ITAU AUTO;00035;ITAÚ\n"
+        "202606;03182;ITAU AUTO;00051;PORTO SEGURO\n"
+        "202606;05886;PORTO SEGURO;00051;PORTO SEGURO\n"
+        "202606;04367;PRUDENTIAL;01225;INDEPENDENTE\n"
     )
     with zipfile.ZipFile(zip_path, "w") as z:
-        z.writestr("Ses_cias.csv", content.encode("latin1"))
+        z.writestr("Ses_grupos_economicos.csv", content.encode("latin1"))
 
     records = load_susep_economic_groups(zip_path)
+    by_fip = {item["fip_code"]: item for item in records}
 
-    assert records[0]["fip_code"] == "004367"
-    assert records[0]["group_code"] == "77"
-    assert records[0]["group_name"] == "GRUPO PRUDENTIAL"
-    assert records[1]["fip_code"] == "005886"
+    assert by_fip["003182"]["group_code"] == "00051"
+    assert by_fip["003182"]["group_name"] == "PORTO SEGURO"
+    assert by_fip["003182"]["observed_period"] == "202606"
+    assert by_fip["003182"]["is_specific_group"] is True
+    assert by_fip["005886"]["is_specific_group"] is True
+    assert by_fip["004367"]["group_name"] == "INDEPENDENTE"
+    assert by_fip["004367"]["is_specific_group"] is False
