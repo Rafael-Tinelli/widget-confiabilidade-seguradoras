@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from api.sources.receita_cnpj import load_verified_lifecycle_snapshot
+from api.sources.receita_cnpj import load_lifecycle_records
 from api.sources.ses import extract_ses_master_and_financials
 from api.sources.susep_groups import load_susep_economic_groups
 from api.sources.susep_licensed import fetch_licensed_entities
@@ -83,10 +83,6 @@ def _derive_query_context(entities: list[dict[str, Any]]) -> list[dict[str, Any]
         entity_type = entity.get("entity_type") or "unknown"
         successor_chain = _resolve_successor_chain(entity["entity_id"], successor_mapping)
 
-        # A source-backed incorporation relationship is sufficient to identify
-        # the record as historical for query routing. Receita lifecycle remains
-        # a separate legal/cadastral dimension and is not a prerequisite for
-        # recognizing a documented SUSEP/corporate succession event.
         if successor_chain:
             entity["query_context"] = {
                 "entity_state": "historical_incorporated_entity",
@@ -199,6 +195,13 @@ def build_lifecycle_relationship_inventory(
         "classification": deepcopy(classification_payload.get("unresolved") or {}),
         "receita_lifecycle": unresolved_lifecycle,
     }
+    receita_source_modes = sorted(
+        {
+            str(record.get("source_mode") or "unknown")
+            for record in lifecycle_records
+        }
+    )
+    bulk_active = "official_open_data_bulk" in receita_source_modes
 
     return {
         "artifact": "v2_lifecycle_relationship_inventory",
@@ -218,12 +221,18 @@ def build_lifecycle_relationship_inventory(
                 "special-regime and other entities without creating additional rankings. "
                 "Brands are resolver objects and never inherit an entity score."
             ),
-            "receita_ingestion_status": "verified_snapshot_bridge",
+            "receita_ingestion_status": (
+                "official_open_data_bulk_filtered"
+                if bulk_active
+                else "verified_snapshot_bridge"
+            ),
+            "receita_source_modes": receita_source_modes,
             "receita_ingestion_note": (
-                "The source contract supports official Receita lifecycle fields, but the "
-                "current build uses a small verified snapshot. Full filtered ingestion of "
-                "Receita CNPJ open-data bulk files remains a technical follow-up because the "
-                "official dataset is bulk-oriented rather than a lightweight per-CNPJ API."
+                "The lifecycle builder prefers a filtered snapshot generated from the "
+                "official Receita CNPJ open-data bulk files. When that snapshot is absent, "
+                "the small verified official bridge remains an explicit fallback. When the "
+                "bulk snapshot is present, the verified cases become regression checks and "
+                "must agree on cadastral status, date and reason."
             ),
         },
         "unresolved": unresolved,
@@ -246,7 +255,6 @@ def write_lifecycle_relationship_inventory(
 
 
 def main() -> None:
-    # Read group membership before the legacy SES extractor removes BaseCompleta.zip.
     group_records = load_susep_economic_groups()
 
     ses_out = extract_ses_master_and_financials()
@@ -261,7 +269,7 @@ def main() -> None:
     )
     payload = build_lifecycle_relationship_inventory(
         classification,
-        load_verified_lifecycle_snapshot(),
+        load_lifecycle_records(),
         load_verified_relationship_registry(),
         group_records,
     )
