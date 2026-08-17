@@ -145,7 +145,13 @@ def apply_economic_groups(
     entities: list[dict[str, Any]],
     group_records: list[dict[str, Any]],
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """Attach official SES economic-group membership by exact FIP."""
+    """Attach the latest official SES economic-group observation by exact FIP.
+
+    SES also uses catch-all categories such as INDEPENDENTE and OUTROS GRUPOS.
+    Those observations are preserved for audit but never materialized as a
+    shared group relationship, because doing so would falsely imply corporate
+    affiliation between unrelated entities.
+    """
     output = [deepcopy(item) for item in entities]
     positions = _entity_positions(output)
     by_fip = {
@@ -162,8 +168,25 @@ def apply_economic_groups(
             continue
         group_code = str(record.get("group_code") or "").strip() or None
         group_name = str(record.get("group_name") or "").strip() or None
+        observed_period = str(record.get("observed_period") or "").strip() or None
         if not group_code and not group_name:
             continue
+
+        entity = output[positions[entity_id]]
+        evidence = deepcopy(entity.get("evidence") or {})
+        evidence["ses_economic_group"] = {
+            "group_code": group_code,
+            "group_name": group_name,
+            "observed_period": observed_period,
+            "is_specific_group": bool(record.get("is_specific_group")),
+            "source": record.get("source"),
+        }
+        entity["evidence"] = evidence
+
+        if not record.get("is_specific_group"):
+            output[positions[entity_id]] = entity
+            continue
+
         group_id = _group_id(group_code, group_name)
         group = groups.setdefault(
             group_id,
@@ -171,6 +194,7 @@ def apply_economic_groups(
                 "group_id": group_id,
                 "group_code": group_code,
                 "group_name": group_name,
+                "observed_period": observed_period,
                 "source": record.get("source"),
                 "member_entity_ids": [],
             },
@@ -183,11 +207,11 @@ def apply_economic_groups(
         if entity_id not in group["member_entity_ids"]:
             group["member_entity_ids"].append(entity_id)
 
-        entity = output[positions[entity_id]]
         entity["economic_group"] = {
             "group_id": group_id,
             "group_code": group_code,
             "group_name": group_name,
+            "observed_period": observed_period,
             "source": record.get("source"),
         }
         _append_relation(
@@ -195,9 +219,13 @@ def apply_economic_groups(
             {
                 "relationship_type": "member_of_group",
                 "target_group_id": group_id,
-                "evidence": {"source": record.get("source")},
+                "evidence": {
+                    "source": record.get("source"),
+                    "observed_period": observed_period,
+                },
             },
         )
+        output[positions[entity_id]] = entity
 
     normalized_groups = []
     for group_id in sorted(groups):
@@ -264,6 +292,10 @@ def relationship_summary(
     brands: list[dict[str, Any]],
 ) -> dict[str, Any]:
     group_members = sum(bool(item.get("economic_group")) for item in entities)
+    group_observations = sum(
+        bool((item.get("evidence") or {}).get("ses_economic_group"))
+        for item in entities
+    )
     brand_relations = sum(len(item.get("relationships") or []) for item in brands)
     risk_carriers = sum(
         relation.get("relationship_type") == "risk_carrier"
@@ -274,6 +306,7 @@ def relationship_summary(
         "corporate_relationships_resolved": len(corporate_resolved),
         "economic_groups_count": len(groups),
         "entities_with_economic_group": group_members,
+        "entities_with_ses_group_observation": group_observations,
         "brands_count": len(brands),
         "brand_relationships_count": brand_relations,
         "brand_risk_carrier_relationships_count": risk_carriers,
