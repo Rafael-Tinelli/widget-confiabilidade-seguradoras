@@ -2,14 +2,14 @@ from __future__ import annotations
 
 import csv
 import io
-import os
 import re
 import tempfile
 import zipfile
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 from urllib.parse import urljoin
 
 import requests
@@ -17,8 +17,9 @@ import requests
 from api.sources.receita_cnpj import normalize_receita_lifecycle_record
 from api.utils.identifiers import normalize_cnpj_v2
 
-# Official Receita Federal CNPJ open-data publication endpoints. The collector
-# discovers the newest available release rather than pinning a month in code.
+# Legacy publication paths are kept only as optional discovery candidates.
+# They are NOT considered a guaranteed contract: the production refresh must
+# validate the resolved resource before downloading any bulk payload.
 OFFICIAL_CNPJ_BASE_URLS = (
     "https://arquivos.receitafederal.gov.br/dados/cnpj/dados_abertos_cnpj/",
     "https://dadosabertos.rfb.gov.br/CNPJ/dados_abertos_cnpj/",
@@ -33,7 +34,10 @@ STATUS_CODE_TO_LABEL = {
     "08": "BAIXADA",
 }
 
-ESTABLISHMENT_FILE_RE = re.compile(r"Estabelecimentos\d+\.zip$", re.I)
+ESTABLISHMENT_FILE_RE = re.compile(
+    r"Estabelecimentos\d+\.zip$",
+    re.IGNORECASE,
+)
 DEFAULT_TIMEOUT = (15, 60)
 
 
@@ -54,8 +58,12 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+def _today_utc() -> date:
+    return datetime.now(timezone.utc).date()
+
+
 def _month_candidates(today: date | None = None, lookback: int = 8) -> list[str]:
-    current = today or date.today()
+    current = today or _today_utc()
     year = current.year
     month = current.month
     out: list[str] = []
@@ -80,7 +88,12 @@ def _request_exists(session: requests.Session, url: str) -> bool:
         pass
 
     try:
-        response = session.get(url, timeout=DEFAULT_TIMEOUT, stream=True, allow_redirects=True)
+        response = session.get(
+            url,
+            timeout=DEFAULT_TIMEOUT,
+            stream=True,
+            allow_redirects=True,
+        )
         ok = response.status_code == 200
         response.close()
         return ok
@@ -97,12 +110,19 @@ def _directory_zip_files(session: requests.Session, url: str) -> list[str]:
     except requests.RequestException:
         return []
 
-    hrefs = re.findall(r'href=["\']([^"\']+\.zip)["\']', text, flags=re.I)
+    hrefs = re.findall(
+        r'href=["\']([^"\']+\.zip)["\']',
+        text,
+        flags=re.IGNORECASE,
+    )
     names = [Path(href.split("?")[0]).name for href in hrefs]
     return sorted(set(names))
 
 
-def _probe_establishment_files(session: requests.Session, release_url: str) -> list[str]:
+def _probe_establishment_files(
+    session: requests.Session,
+    release_url: str,
+) -> list[str]:
     listed = [
         name
         for name in _directory_zip_files(session, release_url)
@@ -140,20 +160,28 @@ def discover_latest_release(
     today: date | None = None,
     lookback: int = 8,
 ) -> ReceitaOpenDataRelease:
-    """Discover the newest usable official Receita CNPJ open-data release."""
+    """Discover a usable official Receita CNPJ open-data release.
+
+    Discovery is fail-closed. A legacy path is accepted only when both the
+    establishment partitions and the official motive dictionary are actually
+    reachable and structurally present. This avoids treating an old URL
+    convention as an enduring source contract.
+    """
     own_session = session is None
     sess = session or requests.Session()
     sess.headers.setdefault("User-Agent", "Sanida-CNPJ-Lifecycle/2.0")
     try:
         for base_url in OFFICIAL_CNPJ_BASE_URLS:
-            # Prefer dated releases because they make provenance/freshness explicit.
             for period in _month_candidates(today=today, lookback=lookback):
                 release_url = urljoin(base_url, period + "/")
                 sentinel = urljoin(release_url, "Estabelecimentos0.zip")
                 if not _request_exists(sess, sentinel):
                     continue
                 files = _probe_establishment_files(sess, release_url)
-                if files and _request_exists(sess, urljoin(release_url, "Motivos.zip")):
+                if files and _request_exists(
+                    sess,
+                    urljoin(release_url, "Motivos.zip"),
+                ):
                     return ReceitaOpenDataRelease(
                         base_url=base_url,
                         release_url=release_url,
@@ -161,7 +189,6 @@ def discover_latest_release(
                         establishment_files=tuple(files),
                     )
 
-            # Some publication layouts expose only the current release at root.
             files = _probe_establishment_files(sess, base_url)
             if files and _request_exists(sess, urljoin(base_url, "Motivos.zip")):
                 return ReceitaOpenDataRelease(
@@ -177,14 +204,23 @@ def discover_latest_release(
     raise ReceitaOpenDataError("No usable official Receita CNPJ open-data release found")
 
 
-def _download_zip(session: requests.Session, url: str, destination: Path) -> Path:
+def _download_zip(
+    session: requests.Session,
+    url: str,
+    destination: Path,
+) -> Path:
     destination.parent.mkdir(parents=True, exist_ok=True)
     temp = destination.with_suffix(destination.suffix + ".part")
     last_error: Exception | None = None
 
     for attempt in range(3):
         try:
-            with session.get(url, timeout=DEFAULT_TIMEOUT, stream=True, allow_redirects=True) as response:
+            with session.get(
+                url,
+                timeout=DEFAULT_TIMEOUT,
+                stream=True,
+                allow_redirects=True,
+            ) as response:
                 response.raise_for_status()
                 with temp.open("wb") as handle:
                     for chunk in response.iter_content(chunk_size=8 * 1024 * 1024):
@@ -200,14 +236,20 @@ def _download_zip(session: requests.Session, url: str, destination: Path) -> Pat
             if attempt == 2:
                 break
 
-    raise ReceitaOpenDataError(f"Failed to download official Receita ZIP {url}: {last_error}")
+    raise ReceitaOpenDataError(
+        f"Failed to download official Receita ZIP {url}: {last_error}"
+    )
 
 
 def _first_csv_member(archive: zipfile.ZipFile) -> str:
     members = [name for name in archive.namelist() if not name.endswith("/")]
     if not members:
         raise ReceitaOpenDataError("Receita ZIP archive is empty")
-    csv_like = [name for name in members if name.lower().endswith((".csv", ".estabele"))]
+    csv_like = [
+        name
+        for name in members
+        if name.lower().endswith((".csv", ".estabele"))
+    ]
     return csv_like[0] if csv_like else members[0]
 
 
@@ -229,7 +271,9 @@ def load_reason_map(zip_path: Path) -> dict[str, str]:
                 if code and description:
                     out[code] = description
             if not out:
-                raise ReceitaOpenDataError("Receita Motivos.zip produced an empty dictionary")
+                raise ReceitaOpenDataError(
+                    "Receita Motivos.zip produced an empty dictionary"
+                )
             return out
 
 
@@ -243,7 +287,10 @@ def extract_target_lifecycle_from_zip(
     observed_at: str | None = None,
 ) -> list[dict[str, Any]]:
     """Stream one Estabelecimentos ZIP and retain exact target CNPJs only."""
-    targets = {normalize_cnpj_v2(cnpj): name for cnpj, name in target_legal_names.items()}
+    targets = {
+        normalize_cnpj_v2(cnpj): name
+        for cnpj, name in target_legal_names.items()
+    }
     targets = {cnpj: name for cnpj, name in targets.items() if cnpj}
     if not targets:
         return []
@@ -259,7 +306,9 @@ def extract_target_lifecycle_from_zip(
             for row in reader:
                 if len(row) < 8:
                     continue
-                cnpj = normalize_cnpj_v2("".join(str(part).strip() for part in row[:3]))
+                cnpj = normalize_cnpj_v2(
+                    "".join(str(part).strip() for part in row[:3])
+                )
                 if not cnpj or cnpj not in targets:
                     continue
 
@@ -267,7 +316,8 @@ def extract_target_lifecycle_from_zip(
                 status_label = STATUS_CODE_TO_LABEL.get(status_code)
                 if not status_label:
                     raise ReceitaOpenDataError(
-                        f"Unsupported Receita cadastral-status code {status_code} for {cnpj}"
+                        "Unsupported Receita cadastral-status code "
+                        f"{status_code} for {cnpj}"
                     )
                 reason_code = str(row[7]).strip().zfill(2)
                 reason_label = reason_map.get(reason_code)
@@ -280,9 +330,11 @@ def extract_target_lifecycle_from_zip(
                         "status_date": str(row[6]).strip() or None,
                         "status_reason": reason_label,
                         "source_authority": "Receita Federal do Brasil",
-                        "source_document": "Dados Abertos do CNPJ / Estabelecimentos",
+                        "source_document": (
+                            "Dados Abertos do CNPJ / Estabelecimentos"
+                        ),
                         "source_mode": "official_open_data_bulk",
-                        "observed_at": observed_at or date.today().isoformat(),
+                        "observed_at": observed_at or _today_utc().isoformat(),
                     }
                 )
                 record.update(
@@ -323,19 +375,28 @@ def refresh_filtered_lifecycle(
     sess = session or requests.Session()
     sess.headers.setdefault("User-Agent", "Sanida-CNPJ-Lifecycle/2.0")
     resolved_release = release or discover_latest_release(sess)
-    observed_at = date.today().isoformat()
+    observed_at = _today_utc().isoformat()
 
     temporary_context = None
     if work_dir is None:
-        temporary_context = tempfile.TemporaryDirectory(prefix="receita-cnpj-v2-")
+        temporary_context = tempfile.TemporaryDirectory(
+            prefix="receita-cnpj-v2-"
+        )
         root = Path(temporary_context.name)
     else:
         root = Path(work_dir)
         root.mkdir(parents=True, exist_ok=True)
 
     try:
-        reasons_url = urljoin(resolved_release.release_url, resolved_release.reasons_file)
-        reasons_zip = _download_zip(sess, reasons_url, root / resolved_release.reasons_file)
+        reasons_url = urljoin(
+            resolved_release.release_url,
+            resolved_release.reasons_file,
+        )
+        reasons_zip = _download_zip(
+            sess,
+            reasons_url,
+            root / resolved_release.reasons_file,
+        )
         reason_map = load_reason_map(reasons_zip)
         reasons_zip.unlink(missing_ok=True)
 
@@ -358,7 +419,8 @@ def refresh_filtered_lifecycle(
                     previous = records_by_cnpj.get(cnpj)
                     if previous and previous != row:
                         raise ReceitaOpenDataError(
-                            f"Conflicting Receita lifecycle observations for target CNPJ {cnpj}"
+                            "Conflicting Receita lifecycle observations for "
+                            f"target CNPJ {cnpj}"
                         )
                     records_by_cnpj[cnpj] = row
                 files_scanned.append(name)
@@ -374,7 +436,9 @@ def refresh_filtered_lifecycle(
             "status": "ok" if not unresolved else "partial",
             "source": {
                 "authority": "Receita Federal do Brasil",
-                "dataset": "Cadastro Nacional da Pessoa Jurídica (CNPJ) - Dados Abertos",
+                "dataset": (
+                    "Cadastro Nacional da Pessoa Jurídica (CNPJ) - Dados Abertos"
+                ),
                 "base_url": resolved_release.base_url,
                 "release_url": resolved_release.release_url,
                 "reference_period": resolved_release.period,
@@ -386,7 +450,9 @@ def refresh_filtered_lifecycle(
                 "resolved_count": len(records_by_cnpj),
                 "unresolved_count": len(unresolved),
                 "files_scanned": files_scanned,
-                "available_establishment_files": list(resolved_release.establishment_files),
+                "available_establishment_files": list(
+                    resolved_release.establishment_files
+                ),
             },
             "unresolved_cnpjs": unresolved,
             "records": [records_by_cnpj[key] for key in sorted(records_by_cnpj)],
