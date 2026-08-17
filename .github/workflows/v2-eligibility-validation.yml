@@ -1,0 +1,173 @@
+name: V2 Eligibility Validation
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: v2-eligibility-validation-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  validate-v2-eligibility:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+
+    env:
+      SES_ALLOW_INSECURE_SSL: "1"
+      SES_KEEP_ZIP: "1"
+      SES_WRITE_AUDIT: "1"
+      SES_CACHE_DIR: "data/raw/ses"
+      SUSEP_LICENSED_VERIFY_SSL: "0"
+      SUSEP_SPECIAL_VERIFY_SSL: "0"
+      SUSEP_SANDBOX_VERIFY_SSL: "1"
+      SES_ZIP_URL: "http://127.0.0.1:9/BaseCompleta.zip"
+      SES_ZIP_URL_FALLBACK: "http://127.0.0.1:9/BaseCompleta.zip"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install -r requirements-dev.txt
+
+      - name: Restore validated SES source cache
+        uses: actions/cache/restore@v4
+        with:
+          path: data/raw/ses
+          key: v2-eligibility-ses-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: |
+            ses-source-${{ runner.os }}-
+
+      - name: Verify cached BaseCompleta
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import zipfile
+          from pathlib import Path
+
+          path = Path("data/raw/ses/BaseCompleta.zip")
+          if not path.exists() or path.stat().st_size < 100_000_000:
+              raise SystemExit("valid cached BaseCompleta.zip is required")
+          if not zipfile.is_zipfile(path):
+              raise SystemExit("cached BaseCompleta.zip is not a valid ZIP")
+          print(f"SES cache OK: {path.stat().st_size} bytes")
+          PY
+
+      - name: Run eligibility unit tests
+        run: |
+          set -euo pipefail
+          python -m pytest -q \
+            tests/test_v2_eligibility.py \
+            tests/test_v2_eligibility_inventory.py
+
+      - name: Build formal eligibility inventory
+        run: |
+          set -euo pipefail
+          python -m api.v2.build_eligibility_inventory
+
+      - name: Validate live regulatory universe contract
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          path = Path("data/derived/v2/entity_eligibility_inventory.json")
+          payload = json.loads(path.read_text(encoding="utf-8"))
+          entities = payload["entities"]
+          meta = payload["meta"]
+
+          current_ordinary_insurers = [
+              entity for entity in entities
+              if entity.get("entity_type") == "insurer"
+              and entity.get("regulatory_regime") == "ordinary"
+              and entity.get("regulatory_status") == "active_licensed"
+              and (entity.get("query_context") or {}).get("filter_bucket") != "historical"
+          ]
+          eligible = [
+              entity for entity in entities
+              if (entity.get("eligibility") or {}).get("regulatory_universe_eligible")
+          ]
+
+          if len(current_ordinary_insurers) < 100:
+              raise SystemExit(
+                  f"unexpectedly small current insurer universe: {len(current_ordinary_insurers)}"
+              )
+          if len(eligible) != len(current_ordinary_insurers):
+              raise SystemExit(
+                  "regulatory gate mismatch: "
+                  f"eligible={len(eligible)} current_ordinary={len(current_ordinary_insurers)}"
+              )
+          if meta.get("regulatory_universe_eligible_count") != len(eligible):
+              raise SystemExit("eligibility meta count mismatch")
+          if meta.get("assessment_eligible_count") != 0:
+              raise SystemExit("assessment eligibility must remain zero before evidence gates")
+          if meta.get("ranking_eligible_count") != 0:
+              raise SystemExit("ranking eligibility must remain zero before assessment")
+
+          invalid = []
+          for entity in eligible:
+              lifecycle = entity.get("legal_lifecycle") or {}
+              if not entity.get("cnpj"):
+                  invalid.append((entity["entity_id"], "missing_cnpj"))
+              if lifecycle.get("cadastral_status") in {"closed", "suspended", "unfit", "null"}:
+                  invalid.append((entity["entity_id"], "non_active_receita"))
+              if entity.get("entity_type") == "sandbox_participant":
+                  invalid.append((entity["entity_id"], "sandbox"))
+              if entity.get("regulatory_regime") == "special":
+                  invalid.append((entity["entity_id"], "special_regime"))
+          if invalid:
+              raise SystemExit(f"invalid entities in regulatory universe: {invalid[:10]}")
+
+          sandbox_eligible = [
+              entity["entity_id"] for entity in entities
+              if entity.get("entity_type") == "sandbox_participant"
+              and (entity.get("eligibility") or {}).get("regulatory_universe_eligible")
+          ]
+          special_eligible = [
+              entity["entity_id"] for entity in entities
+              if entity.get("regulatory_regime") == "special"
+              and (entity.get("eligibility") or {}).get("regulatory_universe_eligible")
+          ]
+          if sandbox_eligible or special_eligible:
+              raise SystemExit(
+                  f"forbidden eligibility: sandbox={sandbox_eligible} special={special_eligible}"
+              )
+
+          print(json.dumps({
+              "entities_total": len(entities),
+              "current_ordinary_insurers": len(current_ordinary_insurers),
+              "regulatory_universe_eligible": len(eligible),
+              "assessment_eligible": meta["assessment_eligible_count"],
+              "ranking_eligible": meta["ranking_eligible_count"],
+              "legal_crosscheck": meta.get("eligible_legal_crosscheck_counts"),
+              "exclusion_reasons": meta.get("exclusion_reason_counts"),
+          }, ensure_ascii=False, indent=2))
+          PY
+
+      - name: Upload eligibility artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: v2-eligibility-${{ github.run_id }}
+          retention-days: 14
+          if-no-files-found: warn
+          path: |
+            data/derived/v2/entity_eligibility_inventory.json
+            data/derived/audit/ses/**
