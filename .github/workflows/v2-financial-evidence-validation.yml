@@ -126,24 +126,30 @@ jobs:
               raise SystemExit("balance latest-period coverage below 90% source sanity floor")
 
           limited = []
+          unavailable = []
           investigation = []
           insufficient = []
           formula_latest = Counter()
           for e in eligible:
               profile = e.get("financial_evidence") or {}
+              capital = profile.get("capital") or {}
               row = {
                   "entity_id": e["entity_id"],
                   "name": e.get("legal_name"),
                   "fip": e.get("fip_code"),
                   "state": profile.get("state"),
-                  "capital_12m": (((profile.get("capital") or {}).get("history_windows") or {}).get("12") or {}).get("observed_months"),
-                  "balance_12m": (((profile.get("balance") or {}).get("history_windows") or {}).get("12") or {}).get("observed_months"),
+                  "capital_current_metric_state": capital.get("current_metric_state"),
+                  "capital_12m_observed": (((capital.get("history_windows") or {}).get("12") or {}).get("observed_months")),
+                  "capital_12m_adequacy_derivable": (((capital.get("capital_adequacy_windows") or {}).get("12") or {}).get("derivable_months")),
+                  "balance_12m": ((((profile.get("balance") or {}).get("history_windows") or {}).get("12") or {}).get("observed_months")),
                   "operations_state": (profile.get("operations") or {}).get("state"),
-                  "pla_cmr_ratio_state": (profile.get("capital") or {}).get("pla_cmr_ratio_state"),
+                  "pla_cmr_ratio_state": capital.get("pla_cmr_ratio_state"),
               }
               if profile.get("state") == "limited_core_history":
                   limited.append(row)
-              elif profile.get("state") == "requires_investigation":
+              elif profile.get("state") == "capital_metric_unavailable":
+                  unavailable.append(row)
+              elif profile.get("state") == "requires_source_investigation":
                   investigation.append(row)
               elif profile.get("state") == "insufficient_core_evidence":
                   insufficient.append(row)
@@ -158,6 +164,7 @@ jobs:
               "reference_periods": meta.get("financial_reference_periods"),
               "states": meta.get("financial_evidence_state_counts"),
               "capital_states": meta.get("capital_state_counts"),
+              "capital_current_metric_states": meta.get("capital_current_metric_state_counts"),
               "balance_states": meta.get("balance_state_counts"),
               "operations_states": meta.get("operations_state_counts"),
               "core_ready": meta.get("core_financial_evidence_ready_count"),
@@ -165,7 +172,8 @@ jobs:
               "latest_balance": latest_balance,
               "liquidity_strict_components_complete_latest": dict(formula_latest),
               "limited_core_history": limited,
-              "requires_investigation": investigation,
+              "capital_metric_unavailable": unavailable,
+              "requires_source_investigation": investigation,
               "insufficient_core_evidence": insufficient,
           }
           print(json.dumps(diagnostics, ensure_ascii=False, indent=2))
