@@ -68,22 +68,46 @@ def test_verified_relationship_fails_if_target_is_missing():
         apply_corporate_relationships(entities, registry)
 
 
-def test_group_membership_is_attached_by_fip():
-    entities = [_entity("fip:004367", "004367", "21986074000119", "PRUDENTIAL")]
+def test_specific_group_membership_is_attached_by_fip():
+    entities = [_entity("fip:005886", "005886", "61198164000160", "PORTO")]
     groups = [
         {
-            "fip_code": "004367",
-            "group_code": "123",
-            "group_name": "GRUPO PRUDENTIAL",
-            "source": "SUSEP SES / Ses_cias.csv",
+            "fip_code": "005886",
+            "group_code": "00051",
+            "group_name": "PORTO SEGURO",
+            "observed_period": "202606",
+            "is_specific_group": True,
+            "source": "SUSEP SES / Ses_grupos_economicos.csv",
         }
     ]
 
     enriched, catalog = apply_economic_groups(entities, groups)
 
-    assert enriched[0]["economic_group"]["group_id"] == "susep-group:123"
+    assert enriched[0]["economic_group"]["group_id"] == "susep-group:00051"
+    assert enriched[0]["economic_group"]["observed_period"] == "202606"
     assert enriched[0]["relationships"][0]["relationship_type"] == "member_of_group"
-    assert catalog[0]["member_entity_ids"] == ["fip:004367"]
+    assert catalog[0]["member_entity_ids"] == ["fip:005886"]
+
+
+def test_generic_group_bucket_is_evidence_not_corporate_relationship():
+    entities = [_entity("fip:004367", "004367", "21986074000119", "PRUDENTIAL")]
+    groups = [
+        {
+            "fip_code": "004367",
+            "group_code": "01225",
+            "group_name": "INDEPENDENTE",
+            "observed_period": "202606",
+            "is_specific_group": False,
+            "source": "SUSEP SES / Ses_grupos_economicos.csv",
+        }
+    ]
+
+    enriched, catalog = apply_economic_groups(entities, groups)
+
+    assert catalog == []
+    assert "economic_group" not in enriched[0]
+    assert enriched[0]["evidence"]["ses_economic_group"]["group_name"] == "INDEPENDENTE"
+    assert enriched[0]["evidence"]["ses_economic_group"]["is_specific_group"] is False
 
 
 def test_brand_resolves_target_without_inheriting_score():
