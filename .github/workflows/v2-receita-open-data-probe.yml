@@ -16,6 +16,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+      - name: Install probe dependency
+        run: python -m pip install requests
       - name: Probe official Receita CNPJ open-data endpoints
         run: |
           python - <<'PY'
@@ -46,7 +48,6 @@ jobs:
               except Exception as exc:
                   print('ERROR', repr(exc))
 
-          # Probe plausible current monthly directories without downloading payloads.
           candidates = []
           y, m = date.today().year, date.today().month
           for delta in range(0, 5):
