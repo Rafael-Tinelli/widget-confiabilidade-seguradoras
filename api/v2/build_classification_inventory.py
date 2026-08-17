@@ -7,7 +7,12 @@ from typing import Any
 
 from api.sources.ses import extract_ses_master_and_financials
 from api.sources.susep_licensed import fetch_licensed_entities
-from api.v2.classification import apply_licensed_classification, classification_summary
+from api.sources.susep_special_regimes import fetch_special_regime_records
+from api.v2.classification import (
+    apply_licensed_classification,
+    apply_special_regime_classification,
+    classification_summary,
+)
 from api.v2.identity import build_canonical_entities
 
 DEFAULT_OUTPUT = Path("data/derived/v2/entity_classification_inventory.json")
@@ -20,10 +25,12 @@ def _utc_now() -> str:
 def build_classification_inventory(
     ses_companies: Any,
     licensed_records: list[dict[str, Any]],
+    special_records: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     base_entities = build_canonical_entities(ses_companies)
     classified = apply_licensed_classification(base_entities, licensed_records)
-    summary = classification_summary(classified, licensed_records)
+    classified = apply_special_regime_classification(classified, special_records or [])
+    summary = classification_summary(classified, licensed_records, special_records or [])
 
     return {
         "artifact": "v2_classification_inventory",
@@ -31,11 +38,13 @@ def build_classification_inventory(
         "status": "draft",
         "meta": {
             **summary,
-            "classification_scope": "official current licensed-entities source only",
+            "classification_scope": (
+                "official current licensed-entities and special-regime sources"
+            ),
             "classification_note": (
-                "Records absent from the ordinary licensed service remain unknown until "
-                "special-regime and Sandbox sources are applied. Activity evidence from "
-                "SES is not used to infer legal entity type."
+                "SUSEP regulatory sources define scope, type and status. SES contributes "
+                "financial/activity evidence when present. Sandbox is not yet applied in "
+                "this artifact."
             ),
         },
         "entities": classified,
@@ -59,13 +68,15 @@ def main() -> None:
         raise RuntimeError(f"Unexpected SES return: {type(ses_out)}")
 
     licensed = fetch_licensed_entities()
-    payload = build_classification_inventory(ses_out[1], licensed)
+    special = fetch_special_regime_records()
+    payload = build_classification_inventory(ses_out[1], licensed, special)
     path = write_classification_inventory(payload)
     meta = payload["meta"]
     print(
         "V2 classification inventory: "
         f"{meta['inventory_count']} entities; "
-        f"{meta['classified_active_licensed']} active licensed; "
+        f"{meta['by_regulatory_status'].get('active_licensed', 0)} active licensed; "
+        f"{meta['special_regime_source_count']} special-regime records; "
         f"{meta['cnpj_filled_from_licensed_source']} CNPJs filled; "
         f"written to {path}"
     )

@@ -5,11 +5,13 @@ on:
     branches: ["main"]
     paths:
       - "api/sources/susep_licensed.py"
+      - "api/sources/susep_special_regimes.py"
       - "api/v2/identity.py"
       - "api/v2/classification.py"
       - "api/v2/build_classification_inventory.py"
       - "tests/test_v2_identity.py"
       - "tests/test_v2_susep_licensed.py"
+      - "tests/test_v2_susep_special_regimes.py"
       - "tests/test_v2_classification.py"
       - ".github/workflows/v2-classification-validation.yml"
   workflow_dispatch:
@@ -27,6 +29,7 @@ jobs:
       SES_WRITE_AUDIT: "1"
       SES_CACHE_DIR: "data/raw/ses"
       SUSEP_LICENSED_VERIFY_SSL: "0"
+      SUSEP_SPECIAL_VERIFY_SSL: "0"
 
     steps:
       - name: Checkout
@@ -75,7 +78,11 @@ jobs:
       - name: Run classification unit tests
         run: |
           set -euo pipefail
-          python -m pytest -q tests/test_v2_susep_licensed.py tests/test_v2_classification.py tests/test_v2_identity.py
+          python -m pytest -q \
+            tests/test_v2_susep_licensed.py \
+            tests/test_v2_susep_special_regimes.py \
+            tests/test_v2_classification.py \
+            tests/test_v2_identity.py
 
       - name: Build classification inventory from official sources
         env:
@@ -98,18 +105,23 @@ jobs:
           payload = json.loads(src.read_text(encoding="utf-8"))
           entities = payload.get("entities") or []
           meta = payload.get("meta") or {}
+          by_status = meta.get("by_regulatory_status") or {}
 
           errors = []
           if len(entities) < 100:
               errors.append(f"unexpectedly small inventory: {len(entities)}")
           if meta.get("inventory_count") != len(entities):
               errors.append("inventory_count mismatch")
-          if int(meta.get("classified_active_licensed") or 0) < 100:
+          if int(by_status.get("active_licensed") or 0) < 100:
               errors.append("too few active licensed entities classified")
           if int((meta.get("by_entity_type") or {}).get("insurer") or 0) < 100:
               errors.append("too few current insurers classified")
           if int(meta.get("cnpj_filled_from_licensed_source") or 0) < 1:
               errors.append("licensed source did not fill any missing SES CNPJ")
+          if int(meta.get("entities_added_from_licensed_source") or 0) < 1:
+              errors.append("official licensed source added no SES-missing entities")
+          if int(meta.get("special_regime_source_count") or 0) < 1:
+              errors.append("special-regime source returned no records")
 
           for field in ("entity_id", "fip_code"):
               values = [item.get(field) for item in entities if item.get(field)]
@@ -127,7 +139,7 @@ jobs:
           if malformed_identity:
               errors.append(f"malformed regulatory identities: {malformed_identity[:5]}")
 
-          invalid_classified = [
+          invalid_ordinary = [
               item.get("entity_id")
               for item in entities
               if item.get("regulatory_status") == "active_licensed"
@@ -136,8 +148,24 @@ jobs:
                   or item.get("regulatory_regime") != "ordinary"
               )
           ]
-          if invalid_classified:
-              errors.append(f"invalid active classifications: {invalid_classified[:5]}")
+          if invalid_ordinary:
+              errors.append(f"invalid active classifications: {invalid_ordinary[:5]}")
+
+          invalid_special = [
+              item.get("entity_id")
+              for item in entities
+              if item.get("regulatory_status")
+              in {
+                  "fiscal_direction",
+                  "intervention",
+                  "extrajudicial_liquidation",
+                  "ordinary_liquidation",
+                  "bankruptcy",
+              }
+              and item.get("regulatory_regime") != "special"
+          ]
+          if invalid_special:
+              errors.append(f"invalid special-regime classifications: {invalid_special[:5]}")
 
           report = {
               "status": "failed" if errors else "ok",
