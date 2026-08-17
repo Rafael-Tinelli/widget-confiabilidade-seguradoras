@@ -12,24 +12,30 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Diagnose connectivity to official Receita file host
+      - name: Verify official Receita Nextcloud WebDAV contract over IPv4
         shell: bash
         run: |
           set +e
-          host="arquivos.receitafederal.gov.br"
-          share="https://${host}/index.php/s/YggdBLfdninEJX9"
+          token="YggdBLfdninEJX9"
+          host="https://arquivos.receitafederal.gov.br"
+          dav="${host}/public.php/dav/files/${token}/"
+          share="${host}/index.php/s/${token}"
+          body='<?xml version="1.0"?><d:propfind xmlns:d="DAV:"><d:prop><d:displayname/><d:getcontentlength/><d:getlastmodified/><d:resourcetype/></d:prop></d:propfind>'
 
-          echo "== DNS =="
-          getent ahosts "$host" || true
+          echo "== PROPFIND public WebDAV =="
+          curl -4 -sS -u "${token}:" -X PROPFIND -H 'Depth: 1' -H 'Content-Type: application/xml' --data "$body" \
+            --connect-timeout 10 --max-time 30 -D /tmp/dav.headers -o /tmp/dav.xml "$dav" || true
+          cat /tmp/dav.headers 2>/dev/null || true
+          echo "--- DAV body head ---"
+          head -c 12000 /tmp/dav.xml 2>/dev/null || true
+          echo
 
-          echo "== IPv4 HTTPS =="
-          curl -4 -sS -I -L --connect-timeout 10 --max-time 20 "$share" || true
-
-          echo "== IPv6 HTTPS =="
-          curl -6 -sS -I -L --connect-timeout 10 --max-time 20 "$share" || true
-
-          echo "== TLS IPv4 =="
-          timeout 15 openssl s_client -4 -connect "${host}:443" -servername "$host" </dev/null 2>&1 | head -40 || true
+          echo "== Download URL headers =="
+          for file in Motivos.zip Estabelecimentos0.zip; do
+            echo "FILE=$file"
+            curl -4 -sS -I -L --connect-timeout 10 --max-time 30 \
+              "${share}/download?path=/&files=${file}" || true
+          done
 
           echo "Diagnostic only: external reachability does not fail the PR."
           exit 0
