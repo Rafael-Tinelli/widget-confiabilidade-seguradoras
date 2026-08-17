@@ -43,21 +43,30 @@ def _derive_query_context(entities: list[dict[str, Any]]) -> list[dict[str, Any]
             None,
         )
 
-        if lifecycle.get("cadastral_status") == "closed":
-            if successor:
-                entity["query_context"] = {
-                    "entity_state": "historical_incorporated_entity",
-                    "successor_entity_id": successor.get("target_entity_id"),
-                    "guidance_code": "show_successor_current_entity",
-                    "score_behavior": "do_not_score_historical_entity",
-                }
-            else:
-                entity["query_context"] = {
-                    "entity_state": "historical_closed_entity",
-                    "successor_entity_id": None,
-                    "guidance_code": "explain_closed_legal_entity",
-                    "score_behavior": "do_not_score_historical_entity",
-                }
+        # A source-backed incorporation relationship is sufficient to identify
+        # the record as historical for query routing. Receita lifecycle remains
+        # a separate legal/cadastral dimension and is not a prerequisite for
+        # recognizing a documented SUSEP/corporate succession event.
+        if successor:
+            entity["query_context"] = {
+                "entity_state": "historical_incorporated_entity",
+                "successor_entity_id": successor.get("target_entity_id"),
+                "guidance_code": "show_successor_current_entity",
+                "score_behavior": "do_not_score_historical_entity",
+                "lifecycle_evidence": (
+                    "receita_and_corporate_relationship"
+                    if lifecycle.get("cadastral_status") == "closed"
+                    else "corporate_relationship"
+                ),
+            }
+        elif lifecycle.get("cadastral_status") == "closed":
+            entity["query_context"] = {
+                "entity_state": "historical_closed_entity",
+                "successor_entity_id": None,
+                "guidance_code": "explain_closed_legal_entity",
+                "score_behavior": "do_not_score_historical_entity",
+                "lifecycle_evidence": "receita_cnpj",
+            }
         elif entity.get("entity_type") == "sandbox_participant":
             entity["query_context"] = {
                 "entity_state": "sandbox_experimental_participant",
@@ -126,6 +135,8 @@ def build_lifecycle_relationship_inventory(
                 "Receita cadastral lifecycle is kept separate from SUSEP regulatory status. "
                 "Corporate succession is only materialized from explicit source-backed "
                 "relationships; common names or economic groups never imply succession. "
+                "A documented incorporation can route a historical query to its successor "
+                "even when Receita lifecycle data has not yet been ingested for that CNPJ. "
                 "Brands are resolver objects and never inherit an entity score."
             ),
             "receita_ingestion_status": "verified_snapshot_bridge",
