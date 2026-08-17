@@ -17,6 +17,7 @@ from api.v2.classification import (
 )
 from api.v2.identity import build_canonical_entities
 from api.v2.sandbox_identity import materialize_unmatched_sandbox_identities
+from api.v2.sandbox_semantics import normalize_sandbox_entity_semantics
 
 DEFAULT_OUTPUT = Path("data/derived/v2/entity_classification_inventory.json")
 
@@ -64,6 +65,7 @@ def build_classification_inventory(
         classified,
         unresolved_sandbox,
     )
+    classified = normalize_sandbox_entity_semantics(classified)
     classified = _mark_unclassified_source_evidence(classified)
 
     summary = classification_summary(
@@ -100,9 +102,10 @@ def build_classification_inventory(
                 "SUSEP regulatory sources define scope, type and status. SES contributes "
                 "financial/activity evidence when present. FIP is the preferred regulatory "
                 "identity; Sandbox participants without a published FIP are retained by "
-                "their official CNPJ. Ses_cias.csv exposes entity/group identifiers and "
-                "names, but no status or closure field; unmatched records therefore remain "
-                "unknown rather than being labeled inactive. No fuzzy name matching is used."
+                "their official CNPJ and typed separately as sandbox_participant, never as "
+                "ordinary insurers. Ses_cias.csv exposes entity/group identifiers and names, "
+                "but no status or closure field; unmatched records therefore remain unknown "
+                "rather than being labeled inactive. No fuzzy name matching is used."
             ),
         },
         "unresolved": {"sandbox": unresolved_sandbox},
