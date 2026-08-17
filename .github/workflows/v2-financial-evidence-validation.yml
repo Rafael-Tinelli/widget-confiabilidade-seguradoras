@@ -1,0 +1,183 @@
+name: V2 Financial Evidence Validation
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: v2-financial-evidence-validation-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  validate-v2-financial-evidence:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+
+    env:
+      SES_ALLOW_INSECURE_SSL: "1"
+      SES_KEEP_ZIP: "1"
+      SES_WRITE_AUDIT: "1"
+      SES_CACHE_DIR: "data/raw/ses"
+      SUSEP_LICENSED_VERIFY_SSL: "0"
+      SUSEP_SPECIAL_VERIFY_SSL: "0"
+      SUSEP_SANDBOX_VERIFY_SSL: "1"
+      SES_ZIP_URL: "http://127.0.0.1:9/BaseCompleta.zip"
+      SES_ZIP_URL_FALLBACK: "http://127.0.0.1:9/BaseCompleta.zip"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install -r requirements-dev.txt
+
+      - name: Restore validated SES source cache
+        uses: actions/cache/restore@v4
+        with:
+          path: data/raw/ses
+          key: v2-financial-evidence-ses-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: |
+            ses-source-${{ runner.os }}-
+
+      - name: Verify cached BaseCompleta
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import zipfile
+          from pathlib import Path
+          path = Path("data/raw/ses/BaseCompleta.zip")
+          if not path.exists() or path.stat().st_size < 100_000_000:
+              raise SystemExit("valid cached BaseCompleta.zip is required")
+          if not zipfile.is_zipfile(path):
+              raise SystemExit("cached BaseCompleta.zip is not a valid ZIP")
+          print(f"SES cache OK: {path.stat().st_size} bytes")
+          PY
+
+      - name: Run financial evidence unit tests
+        run: |
+          set -euo pipefail
+          python -m pytest -q \
+            tests/test_v2_susep_financial_evidence.py \
+            tests/test_v2_financial_evidence.py \
+            tests/test_v2_financial_evidence_inventory.py
+
+      - name: Build financial evidence inventory
+        run: python -m api.v2.build_financial_evidence_inventory
+
+      - name: Validate financial evidence contract and print diagnostics
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from collections import Counter
+          from pathlib import Path
+
+          path = Path("data/derived/v2/entity_financial_evidence_inventory.json")
+          payload = json.loads(path.read_text(encoding="utf-8"))
+          entities = payload["entities"]
+          meta = payload["meta"]
+          eligible = [
+              e for e in entities
+              if (e.get("eligibility") or {}).get("regulatory_universe_eligible")
+          ]
+          if len(eligible) < 100:
+              raise SystemExit(f"unexpectedly small insurer universe: {len(eligible)}")
+          if meta.get("regulatory_eligible_count") != len(eligible):
+              raise SystemExit("financial evidence universe count mismatch")
+          if meta.get("assessment_eligible_count") != 0:
+              raise SystemExit("financial evidence must not enable assessment")
+          if meta.get("ranking_eligible_count") != 0:
+              raise SystemExit("financial evidence must not enable ranking")
+
+          missing_profile = [
+              e["entity_id"] for e in eligible
+              if (e.get("financial_evidence") or {}).get("state") in {None, "not_applicable"}
+          ]
+          if missing_profile:
+              raise SystemExit(f"eligible insurers without financial profile: {missing_profile[:10]}")
+
+          latest_capital = sum(
+              bool((((e.get("financial_evidence") or {}).get("capital") or {}).get("latest")))
+              for e in eligible
+          )
+          latest_balance = sum(
+              (((e.get("financial_evidence") or {}).get("balance") or {}).get("last_period")
+               == (meta.get("financial_reference_periods") or {}).get("balance"))
+              for e in eligible
+          )
+          if latest_capital / len(eligible) < 0.90:
+              raise SystemExit("capital latest-period coverage below 90% source sanity floor")
+          if latest_balance / len(eligible) < 0.90:
+              raise SystemExit("balance latest-period coverage below 90% source sanity floor")
+
+          limited = []
+          investigation = []
+          insufficient = []
+          formula_latest = Counter()
+          for e in eligible:
+              profile = e.get("financial_evidence") or {}
+              row = {
+                  "entity_id": e["entity_id"],
+                  "name": e.get("legal_name"),
+                  "fip": e.get("fip_code"),
+                  "state": profile.get("state"),
+                  "capital_12m": (((profile.get("capital") or {}).get("history_windows") or {}).get("12") or {}).get("observed_months"),
+                  "balance_12m": (((profile.get("balance") or {}).get("history_windows") or {}).get("12") or {}).get("observed_months"),
+                  "operations_state": (profile.get("operations") or {}).get("state"),
+                  "pla_cmr_ratio_state": (profile.get("capital") or {}).get("pla_cmr_ratio_state"),
+              }
+              if profile.get("state") == "limited_core_history":
+                  limited.append(row)
+              elif profile.get("state") == "requires_investigation":
+                  investigation.append(row)
+              elif profile.get("state") == "insufficient_core_evidence":
+                  insufficient.append(row)
+
+              liquidity = ((profile.get("balance") or {}).get("liquidity_formula_component_presence") or {})
+              for formula, info in liquidity.items():
+                  if info.get("strict_components_complete_latest"):
+                      formula_latest[formula] += 1
+
+          diagnostics = {
+              "eligible": len(eligible),
+              "reference_periods": meta.get("financial_reference_periods"),
+              "states": meta.get("financial_evidence_state_counts"),
+              "capital_states": meta.get("capital_state_counts"),
+              "balance_states": meta.get("balance_state_counts"),
+              "operations_states": meta.get("operations_state_counts"),
+              "core_ready": meta.get("core_financial_evidence_ready_count"),
+              "latest_capital": latest_capital,
+              "latest_balance": latest_balance,
+              "liquidity_strict_components_complete_latest": dict(formula_latest),
+              "limited_core_history": limited,
+              "requires_investigation": investigation,
+              "insufficient_core_evidence": insufficient,
+          }
+          print(json.dumps(diagnostics, ensure_ascii=False, indent=2))
+          PY
+
+      - name: Upload financial evidence artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: v2-financial-evidence-${{ github.run_id }}
+          retention-days: 14
+          if-no-files-found: warn
+          path: |
+            data/derived/v2/entity_financial_evidence_inventory.json
+            data/derived/audit/ses/**
