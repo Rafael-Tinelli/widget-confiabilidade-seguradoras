@@ -25,6 +25,13 @@ from api.v2.relationships import (
 
 DEFAULT_OUTPUT = Path("data/derived/v2/entity_lifecycle_relationship_inventory.json")
 
+REINSURANCE_ENTITY_TYPES = {
+    "local_reinsurer",
+    "admitted_reinsurer",
+    "occasional_reinsurer",
+    "reinsurance_broker",
+}
+
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
@@ -73,6 +80,7 @@ def _derive_query_context(entities: list[dict[str, Any]]) -> list[dict[str, Any]
 
     for entity in output:
         lifecycle = entity.get("legal_lifecycle") or {}
+        entity_type = entity.get("entity_type") or "unknown"
         successor_chain = _resolve_successor_chain(entity["entity_id"], successor_mapping)
 
         # A source-backed incorporation relationship is sufficient to identify
@@ -82,6 +90,7 @@ def _derive_query_context(entities: list[dict[str, Any]]) -> list[dict[str, Any]
         if successor_chain:
             entity["query_context"] = {
                 "entity_state": "historical_incorporated_entity",
+                "filter_bucket": "historical",
                 "immediate_successor_entity_id": successor_chain[0],
                 "successor_entity_id": successor_chain[-1],
                 "successor_chain": successor_chain,
@@ -96,6 +105,7 @@ def _derive_query_context(entities: list[dict[str, Any]]) -> list[dict[str, Any]
         elif lifecycle.get("cadastral_status") == "closed":
             entity["query_context"] = {
                 "entity_state": "historical_closed_entity",
+                "filter_bucket": "historical",
                 "immediate_successor_entity_id": None,
                 "successor_entity_id": None,
                 "successor_chain": [],
@@ -103,27 +113,58 @@ def _derive_query_context(entities: list[dict[str, Any]]) -> list[dict[str, Any]
                 "score_behavior": "do_not_score_historical_entity",
                 "lifecycle_evidence": "receita_cnpj",
             }
-        elif entity.get("entity_type") == "sandbox_participant":
+        elif entity_type == "sandbox_participant":
             entity["query_context"] = {
                 "entity_state": "sandbox_experimental_participant",
+                "filter_bucket": "sandbox",
                 "guidance_code": "explain_sandbox_scope_and_limits",
                 "score_behavior": "never_compare_with_ordinary_insurers",
             }
         elif (
-            entity.get("entity_type") == "insurer"
+            entity_type == "insurer"
             and entity.get("regulatory_status") == "active_licensed"
             and entity.get("regulatory_regime") == "ordinary"
         ):
             entity["query_context"] = {
                 "entity_state": "current_ordinary_insurer",
+                "filter_bucket": "insurers",
                 "guidance_code": "eligible_for_future_assessment_gate",
                 "score_behavior": "assessment_not_yet_implemented",
             }
         elif entity.get("regulatory_regime") == "special":
             entity["query_context"] = {
                 "entity_state": "special_regime_entity",
+                "filter_bucket": "special_regime",
                 "guidance_code": "show_special_regime_alert_and_guidance",
                 "score_behavior": "do_not_rank",
+            }
+        elif entity_type == "open_pension_entity":
+            entity["query_context"] = {
+                "entity_state": "open_pension_entity",
+                "filter_bucket": "pension",
+                "guidance_code": "explain_open_pension_entity",
+                "score_behavior": "do_not_compare_with_insurer_ranking",
+            }
+        elif entity_type == "capitalization_company":
+            entity["query_context"] = {
+                "entity_state": "capitalization_company",
+                "filter_bucket": "capitalization",
+                "guidance_code": "explain_capitalization_company",
+                "score_behavior": "do_not_compare_with_insurer_ranking",
+            }
+        elif entity_type in REINSURANCE_ENTITY_TYPES:
+            entity["query_context"] = {
+                "entity_state": "reinsurance_market_entity",
+                "filter_bucket": "other",
+                "guidance_code": "briefly_explain_reinsurance_market_role",
+                "score_behavior": "outside_consumer_insurer_ranking",
+            }
+        elif entity_type == "self_regulator":
+            entity["query_context"] = {
+                "entity_state": "self_regulatory_entity",
+                "filter_bucket": "other",
+                "guidance_code": "explain_non_insurer_entity",
+                "score_behavior": "outside_consumer_insurer_ranking",
             }
 
     return sorted(output, key=lambda item: item["entity_id"])
@@ -173,6 +214,8 @@ def build_lifecycle_relationship_inventory(
                 "relationships; common names or economic groups never imply succession. "
                 "Documented successor chains are resolved in the backend so historical "
                 "queries can reach the terminal known successor without frontend logic. "
+                "Query filter buckets separate insurers, Sandbox, pension, capitalization, "
+                "special-regime and other entities without creating additional rankings. "
                 "Brands are resolver objects and never inherit an entity score."
             ),
             "receita_ingestion_status": "verified_snapshot_bridge",
