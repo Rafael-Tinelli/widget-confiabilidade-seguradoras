@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from typing import Any, Iterable, Mapping
+from typing import Any
 
 from api.utils.identifiers import normalize_cnpj
 
@@ -53,9 +54,7 @@ def canonical_fip_code(raw: Any) -> str:
     if not text:
         return ""
 
-    text = text.replace("ses:", "").replace("susep:", "")
-    if text.endswith(".0"):
-        text = text[:-2]
+    text = text.replace("ses:", "").replace("susep:", "").removesuffix(".0")
 
     digits = "".join(ch for ch in text if ch.isdigit())
     if not digits:
@@ -98,7 +97,7 @@ def build_canonical_identity(record: Mapping[str, Any], *, source_key: Any | Non
 
     This function deliberately does **not** infer legal entity type, licensing
     status or regulatory regime from company names or from the presence of
-    financial files.  Those attributes remain ``unknown`` until a dedicated
+    financial files. Those attributes remain ``unknown`` until a dedicated
     authoritative source is integrated.
 
     Activity flags are evidence that the entity appears in a corresponding SES
@@ -144,7 +143,7 @@ def build_canonical_entities(ses_companies: Any) -> list[dict[str, Any]]:
     """Build unique canonical identities without changing the v1 universe.
 
     ``ses_companies`` may be the dict returned by ``extract_ses_master_and_financials``
-    or a list of records.  Duplicate canonical IDs are rejected instead of
+    or a list of records. Duplicate canonical IDs are rejected instead of
     being silently deduplicated in a frontend.
     """
     if isinstance(ses_companies, Mapping):
