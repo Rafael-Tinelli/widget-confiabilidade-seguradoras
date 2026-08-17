@@ -43,7 +43,7 @@ jobs:
           python -m pip install -r requirements-dev.txt
           python -m pip install -r requirements.txt
 
-      - name: Restore SES source cache
+      - name: Restore validated SES source cache
         id: restore-ses-cache
         uses: actions/cache/restore@v4
         with:
@@ -52,20 +52,35 @@ jobs:
           restore-keys: |
             ses-source-${{ runner.os }}-
 
-      - name: Show Ruff autofix diff
-        continue-on-error: true
+      - name: Verify cached BaseCompleta
         run: |
           set -euo pipefail
-          mkdir -p data/derived/v2
-          ruff check --fix --diff api/v2/identity.py api/v2/build_identity_inventory.py 2>&1 \
-            | tee data/derived/v2/ruff-fix.diff || true
+          python - <<'PY'
+          from pathlib import Path
+          import zipfile
+
+          path = Path("data/raw/ses/BaseCompleta.zip")
+          if not path.exists():
+              raise SystemExit("validated SES cache is unavailable: BaseCompleta.zip not found")
+          if path.stat().st_size < 100_000_000:
+              raise SystemExit(f"cached BaseCompleta.zip is unexpectedly small: {path.stat().st_size} bytes")
+          if not zipfile.is_zipfile(path):
+              raise SystemExit("cached BaseCompleta.zip is not a valid ZIP")
+          print(f"SES cache OK: BaseCompleta.zip={path.stat().st_size} bytes")
+          PY
 
       - name: Run v2 identity tests
         run: |
           set -euo pipefail
           python -m pytest -q tests/test_v2_identity.py tests/test_v2_identity_inventory.py
 
-      - name: Build identity inventory from SUSEP sources
+      - name: Build identity inventory from validated SES cache
+        env:
+          # PR validation tests v2 logic against the latest source cache already
+          # validated by Refresh data. Live source availability belongs to the
+          # refresh workflow and must not make code validation nondeterministic.
+          SES_ZIP_URL: "http://127.0.0.1:9/BaseCompleta.zip"
+          SES_ZIP_URL_FALLBACK: "http://127.0.0.1:9/BaseCompleta.zip"
         run: |
           set -euo pipefail
           mkdir -p data/derived/v2
@@ -143,8 +158,6 @@ jobs:
               key: sum(bool((e.get("activities") or {}).get(key)) for e in entities)
               for key in sorted(required_activity_keys)
           }
-          # A run that only fell back to LISTAEMPRESAS has no activity evidence,
-          # so it must never be accepted as a complete BaseCompleta validation.
           if sum(by_activity.values()) == 0:
               errors.append("BaseCompleta not evidenced: all SES activity counts are zero")
 
@@ -195,5 +208,4 @@ jobs:
             data/derived/v2/entity_identity_inventory.json
             data/derived/v2/identity-validation-report.json
             data/derived/v2/identity-build.log
-            data/derived/v2/ruff-fix.diff
             data/derived/audit/ses/**
