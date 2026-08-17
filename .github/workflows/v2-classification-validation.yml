@@ -9,6 +9,7 @@ on:
       - "api/sources/susep_sandbox.py"
       - "api/v2/identity.py"
       - "api/v2/classification.py"
+      - "api/v2/sandbox_identity.py"
       - "api/v2/build_classification_inventory.py"
       - "tests/test_v2_identity.py"
       - "tests/test_v2_susep_licensed.py"
@@ -16,6 +17,7 @@ on:
       - "tests/test_v2_susep_sandbox.py"
       - "tests/test_v2_classification.py"
       - "tests/test_v2_sandbox_classification.py"
+      - "tests/test_v2_sandbox_identity.py"
       - ".github/workflows/v2-classification-validation.yml"
   workflow_dispatch:
 
@@ -88,6 +90,7 @@ jobs:
             tests/test_v2_susep_sandbox.py \
             tests/test_v2_classification.py \
             tests/test_v2_sandbox_classification.py \
+            tests/test_v2_sandbox_identity.py \
             tests/test_v2_identity.py
 
       - name: Build classification inventory from official sources
@@ -131,8 +134,18 @@ jobs:
               errors.append("special-regime source returned no records")
           if int(meta.get("sandbox_source_count") or 0) < 5:
               errors.append("Sandbox source returned too few participant records")
-          if meta.get("sandbox_unresolved_count") != len(unresolved.get("sandbox") or []):
+
+          sandbox_source_count = int(meta.get("sandbox_source_count") or 0)
+          sandbox_resolved = int(meta.get("sandbox_records_resolved") or 0)
+          sandbox_unresolved = int(meta.get("sandbox_unresolved_count") or 0)
+          if sandbox_resolved + sandbox_unresolved != sandbox_source_count:
+              errors.append("Sandbox source coverage does not reconcile")
+          if sandbox_unresolved != len(unresolved.get("sandbox") or []):
               errors.append("Sandbox unresolved count mismatch")
+          if sandbox_unresolved:
+              errors.append(f"Sandbox has unresolved official records: {sandbox_unresolved}")
+          if int(meta.get("entities_added_from_sandbox_source") or 0) < 1:
+              errors.append("Sandbox-only identities were not materialized")
 
           for field in ("entity_id", "fip_code"):
               values = [item.get(field) for item in entities if item.get(field)]
@@ -140,13 +153,25 @@ jobs:
               if dupes:
                   errors.append(f"duplicate {field}: {dupes[:5]}")
 
-          malformed_identity = [
-              item.get("entity_id")
-              for item in entities
-              if item.get("entity_id") != f"fip:{item.get('fip_code')}"
-              or item.get("legal_entity_id")
-              != (f"cnpj:{item.get('cnpj')}" if item.get("cnpj") else None)
-          ]
+          malformed_identity = []
+          for item in entities:
+              entity_id = item.get("entity_id")
+              fip = item.get("fip_code")
+              cnpj = item.get("cnpj")
+              legal_entity_id = item.get("legal_entity_id")
+              origin = (item.get("evidence") or {}).get("identity_origin")
+
+              if fip:
+                  expected_entity_id = f"fip:{fip}"
+              elif origin == "susep_sandbox" and cnpj:
+                  expected_entity_id = f"cnpj:{cnpj}"
+              else:
+                  expected_entity_id = None
+
+              expected_legal_id = f"cnpj:{cnpj}" if cnpj else None
+              if entity_id != expected_entity_id or legal_entity_id != expected_legal_id:
+                  malformed_identity.append(entity_id)
+
           if malformed_identity:
               errors.append(f"malformed regulatory identities: {malformed_identity[:5]}")
 
@@ -178,13 +203,15 @@ jobs:
           if invalid_special:
               errors.append(f"invalid special-regime classifications: {invalid_special[:5]}")
 
+          sandbox_statuses = {"temporary_authorized", "sandbox_authorization_cancelled"}
           invalid_sandbox = [
               item.get("entity_id")
               for item in entities
-              if item.get("regulatory_status") == "temporary_authorized"
+              if item.get("regulatory_status") in sandbox_statuses
               and (
                   item.get("regulatory_regime") != "sandbox"
                   or item.get("entity_type") != "insurer"
+                  or not item.get("cnpj")
               )
           ]
           if invalid_sandbox:
