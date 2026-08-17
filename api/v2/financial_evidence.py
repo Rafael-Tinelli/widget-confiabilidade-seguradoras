@@ -9,7 +9,7 @@ from api.sources.susep_financial_evidence import (
     OPERATING_FORMULA_CMPIDS,
 )
 
-FINANCIAL_EVIDENCE_VERSION = "2.0-draft-evidence-profile-1"
+FINANCIAL_EVIDENCE_VERSION = "2.0-draft-evidence-profile-2"
 CORE_HISTORY_MONTHS = 12
 DESCRIPTIVE_HISTORY_WINDOWS = (12, 24, 36)
 
@@ -74,6 +74,32 @@ def _formula_presence(
     return output
 
 
+def _is_zero_filled_capital_record(record: dict[str, Any] | None) -> bool:
+    if not record:
+        return False
+    keys = ("pla_adjusted", "cmr", "accounting_equity", "new_pla")
+    values = [record.get(key) for key in keys]
+    return all(value is not None and float(value) == 0.0 for value in values)
+
+
+def _capital_metric_state(record: dict[str, Any] | None) -> str:
+    if not record:
+        return "unavailable"
+    if _is_zero_filled_capital_record(record):
+        return "zero_filled_record_unusable"
+    pla = record.get("pla_adjusted")
+    cmr = record.get("cmr")
+    if pla is None:
+        return "pla_missing"
+    if cmr is None:
+        return "cmr_missing"
+    if float(cmr) == 0.0:
+        return "cmr_zero_unusable"
+    if float(cmr) < 0.0:
+        return "cmr_negative_invalid"
+    return "pla_cmr_derivable"
+
+
 def _capital_profile(
     evidence: dict[str, Any],
     reference_period: int | None,
@@ -85,24 +111,31 @@ def _capital_profile(
         months: month_window(reference_period, months)
         for months in DESCRIPTIVE_HISTORY_WINDOWS
     }
+
+    adequacy_periods: set[int] = set()
+    zero_filled_periods: set[int] = set()
+    for raw_period, record in history.items():
+        period = int(raw_period)
+        if _is_zero_filled_capital_record(record):
+            zero_filled_periods.add(period)
+        if _capital_metric_state(record) == "pla_cmr_derivable":
+            adequacy_periods.add(period)
+
+    metric_state = _capital_metric_state(latest)
     latest_pla = (latest or {}).get("pla_adjusted")
     latest_cmr = (latest or {}).get("cmr")
     ratio = None
-    ratio_state = "unavailable"
-    if latest_pla is not None and latest_cmr is not None:
-        if float(latest_cmr) > 0:
-            ratio = float(latest_pla) / float(latest_cmr)
-            ratio_state = "derivable"
-        else:
-            ratio_state = "non_positive_cmr_requires_investigation"
+    if metric_state == "pla_cmr_derivable":
+        ratio = float(latest_pla) / float(latest_cmr)
 
-    latest_numeric = latest_pla is not None and latest_cmr is not None
     core_window = windows[CORE_HISTORY_MONTHS]
-    if not latest or not latest_numeric:
+    if not latest:
         state = "insufficient"
-    elif ratio_state == "non_positive_cmr_requires_investigation":
-        state = "requires_investigation"
-    elif _window_complete(periods, core_window):
+    elif metric_state == "cmr_negative_invalid":
+        state = "invalid_current_metric"
+    elif metric_state != "pla_cmr_derivable":
+        state = "metric_unavailable"
+    elif _window_complete(adequacy_periods, core_window):
         state = "complete_12m"
     else:
         state = "limited_history"
@@ -111,6 +144,7 @@ def _capital_profile(
         "source_table": "Ses_pl_margem.csv",
         "reference_period": reference_period,
         "state": state,
+        "current_metric_state": metric_state,
         "first_period": min(periods) if periods else None,
         "last_period": max(periods) if periods else None,
         "observed_periods_total": len(periods),
@@ -122,10 +156,31 @@ def _capital_profile(
             }
             for months, window in windows.items()
         },
+        "capital_adequacy_windows": {
+            str(months): {
+                "expected_months": months,
+                "derivable_months": _window_count(adequacy_periods, window),
+                "complete": _window_complete(adequacy_periods, window),
+            }
+            for months, window in windows.items()
+        },
+        "zero_filled_record_windows": {
+            str(months): _window_count(zero_filled_periods, window)
+            for months, window in windows.items()
+        },
         "latest": deepcopy(latest),
         "pla_cmr_ratio": ratio,
-        "pla_cmr_ratio_state": ratio_state,
+        "pla_cmr_ratio_state": (
+            "derivable" if metric_state == "pla_cmr_derivable" else "unavailable"
+        ),
         "duplicate_rows": int(evidence.get("duplicate_capital_rows") or 0),
+        "interpretation": (
+            "A zero CMR in Ses_pl_margem is treated as unusable evidence, not as a zero "
+            "capital requirement and not as an adverse solvency conclusion. Under SUSEP's "
+            "prudential framework, CMR is a capital requirement to be maintained by the "
+            "supervised entity; the evidence gate only uses PLA/CMR when CMR is positive "
+            "and both values are available."
+        ),
     }
 
 
@@ -241,19 +296,23 @@ def derive_financial_evidence_profile(
     if capital["state"] == "insufficient":
         state = "insufficient_core_evidence"
         reasons.append("capital_evidence_insufficient")
-    elif capital["state"] == "requires_investigation":
-        state = "requires_investigation"
-        reasons.append("capital_cmr_non_positive")
+    elif capital["state"] == "invalid_current_metric":
+        state = "requires_source_investigation"
+        reasons.append("capital_cmr_negative_invalid")
+    elif capital["state"] == "metric_unavailable":
+        state = "capital_metric_unavailable"
+        reasons.append("capital_adequacy_metric_unavailable")
+        reasons.append(f"capital_{capital['current_metric_state']}")
     elif balance["state"] == "insufficient":
         state = "insufficient_core_evidence"
         reasons.append("balance_evidence_insufficient")
     elif capital["state"] == "complete_12m" and balance["state"] == "complete_12m":
         state = "complete_core_history"
-        reasons.append("capital_and_balance_12m_complete")
+        reasons.append("capital_adequacy_and_balance_12m_complete")
     else:
         state = "limited_core_history"
         if capital["state"] != "complete_12m":
-            reasons.append("capital_history_under_12m")
+            reasons.append("capital_adequacy_history_under_12m")
         if balance["state"] != "complete_12m":
             reasons.append("balance_history_under_12m")
 
@@ -275,7 +334,9 @@ def derive_financial_evidence_profile(
         "methodology_note": (
             "This is an evidence-completeness profile, not a financial score. Twelve months "
             "is used only to identify a complete annual observation window; 24/36-month "
-            "history is retained descriptively for later stability/confidence testing."
+            "history is retained descriptively for later stability/confidence testing. "
+            "Zero-filled prudential rows and zero CMR values are treated as unavailable "
+            "evidence rather than adverse financial signals."
         ),
     }
 
@@ -320,9 +381,14 @@ def validate_financial_evidence(entities: list[dict[str, Any]]) -> None:
             errors.append(f"{entity_id}: evidence profile cannot enable ranking")
         capital = profile.get("capital") or {}
         if capital.get("pla_cmr_ratio_state") == "derivable":
-            cmr = ((capital.get("latest") or {}).get("cmr"))
+            cmr = (capital.get("latest") or {}).get("cmr")
             if cmr is None or float(cmr) <= 0:
                 errors.append(f"{entity_id}: derivable PLA/CMR ratio with invalid CMR")
+        if capital.get("current_metric_state") in {
+            "cmr_zero_unusable",
+            "zero_filled_record_unusable",
+        } and profile.get("state") == "requires_source_investigation":
+            errors.append(f"{entity_id}: zero CMR was incorrectly treated as adverse")
     if errors:
         raise FinancialEvidenceInvariantError("; ".join(errors[:20]))
 
@@ -343,6 +409,12 @@ def financial_evidence_summary(entities: list[dict[str, Any]]) -> dict[str, Any]
         )
         for entity in eligible
     )
+    capital_metric_states = Counter(
+        ((entity.get("financial_evidence") or {}).get("capital") or {}).get(
+            "current_metric_state", "missing"
+        )
+        for entity in eligible
+    )
     balance_states = Counter(
         ((entity.get("financial_evidence") or {}).get("balance") or {}).get(
             "state", "missing"
@@ -360,6 +432,7 @@ def financial_evidence_summary(entities: list[dict[str, Any]]) -> dict[str, Any]
         "regulatory_eligible_count": len(eligible),
         "financial_evidence_state_counts": dict(sorted(states.items())),
         "capital_state_counts": dict(sorted(capital_states.items())),
+        "capital_current_metric_state_counts": dict(sorted(capital_metric_states.items())),
         "balance_state_counts": dict(sorted(balance_states.items())),
         "operations_state_counts": dict(sorted(operation_states.items())),
         "core_financial_evidence_ready_count": sum(
