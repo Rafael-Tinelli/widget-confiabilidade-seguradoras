@@ -6,7 +6,6 @@ from typing import Any
 
 from api.utils.identifiers import normalize_cnpj
 
-
 _ACTIVITY_SOURCE_MAP = {
     "SEGUROS": "insurance",
     "PREVIDENCIA": "pension",
