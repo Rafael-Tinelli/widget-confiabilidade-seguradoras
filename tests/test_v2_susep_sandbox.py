@@ -36,6 +36,28 @@ def test_parse_sandbox_distinguishes_authorized_and_cancelled():
     assert "prorrogada" in clubfix["authorization_end_raw"].casefold()
 
 
+def test_parse_sandbox_split_table_cells_like_current_gov_renderer():
+    document = """
+    <h2>2ª edição do Sandbox</h2>
+    <p>Novo Seguros S.A.</p>
+    <table>
+      <tr><td>STATUS</td><td>|</td><td>Autorizada</td></tr>
+      <tr><td>CNPJ</td><td>|</td><td>50.182.327/0001-08</td></tr>
+      <tr><td>DATA DE INICIO DA AUTORIZAÇÃO TEMPORÁRIA</td><td>|</td><td>31/10/2023</td></tr>
+      <tr><td>DATA FINAL DA AUTORIZAÇÃO TEMPORÁRIA</td><td>|</td><td>30/10/2026</td></tr>
+      <tr><td>MODALIDADES</td><td>|</td><td>Seguros de Danos</td></tr>
+    </table>
+    """
+
+    record = parse_sandbox_participants_html(document)[0]
+
+    assert record["legal_name"] == "Novo Seguros S.A."
+    assert record["cnpj"] == "50182327000108"
+    assert record["regulatory_status"] == "temporary_authorized"
+    assert record["authorization_start"] == "2023-10-31"
+    assert record["authorization_end"] == "2026-10-30"
+
+
 def test_status_text_not_date_decides_current_authorization():
     document = """
     <h2>2ª edição do Sandbox</h2>
