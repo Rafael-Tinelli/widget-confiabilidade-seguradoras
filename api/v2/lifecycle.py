@@ -65,6 +65,7 @@ def apply_legal_lifecycle(
             "status_reason": record.get("status_reason"),
             "raw_status": record.get("raw_status"),
             "raw_reason": record.get("raw_reason"),
+            "data_quality_flags": list(record.get("data_quality_flags") or []),
         }
         output[matches[0]] = entity
 

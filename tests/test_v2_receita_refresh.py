@@ -34,7 +34,7 @@ def _payload(target=300, resolved=300):
 def _disable_golden_check(monkeypatch):
     monkeypatch.setattr(
         "api.v2.refresh_receita_lifecycle.load_verified_lifecycle_snapshot",
-        lambda: [],
+        list,
     )
 
 

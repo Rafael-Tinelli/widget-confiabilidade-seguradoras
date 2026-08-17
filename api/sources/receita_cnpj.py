@@ -26,7 +26,7 @@ class ReceitaLifecycleError(ValueError):
 
 def _iso_date(value: Any) -> str | None:
     text = str(value or "").strip()
-    if not text:
+    if not text or text in {"0", "00000000"}:
         return None
     if len(text) == 8 and text.isdigit():
         return f"{text[0:4]}-{text[4:6]}-{text[6:8]}"
@@ -67,6 +67,8 @@ def _canonical_reason(value: Any) -> str | None:
     folded = text.casefold()
     if folded in {"incorporacao", "incorporação"}:
         return "incorporation"
+    if folded in {"sem motivo", "sem_motivo"}:
+        return None
     return folded.replace(" ", "_")
 
 
@@ -84,12 +86,28 @@ def normalize_receita_lifecycle_record(raw: dict[str, Any]) -> dict[str, Any]:
     if not legal_name:
         raise ReceitaLifecycleError(f"Receita lifecycle record {cnpj} requires legal_name")
 
+    source_mode = str(raw.get("source_mode") or "verified_snapshot").strip()
     status = _canonical_status(raw.get("cadastral_status"))
     status_date = _iso_date(raw.get("status_date"))
     reason = _canonical_reason(raw.get("status_reason"))
 
-    if status == "closed" and not status_date:
+    # Manual/curated evidence must carry the date for a closed CNPJ. The
+    # official bulk files, however, can legitimately encode an unavailable
+    # cadastral-status date as 0/00000000. Preserve the official status and
+    # mark the missing field instead of inventing a date or dropping the row.
+    if (
+        status == "closed"
+        and not status_date
+        and source_mode != "official_open_data_bulk"
+    ):
         raise ReceitaLifecycleError(f"Closed CNPJ {cnpj} requires status_date")
+
+    raw_quality = raw.get("data_quality_flags") or []
+    if isinstance(raw_quality, str):
+        raw_quality = [raw_quality]
+    quality_flags = {str(item).strip() for item in raw_quality if str(item).strip()}
+    if source_mode == "official_open_data_bulk" and status_date is None:
+        quality_flags.add("missing_status_date")
 
     normalized = {
         "cnpj": cnpj,
@@ -107,8 +125,10 @@ def normalize_receita_lifecycle_record(raw: dict[str, Any]) -> dict[str, Any]:
             or "Comprovante de Inscrição e de Situação Cadastral"
         ).strip(),
         "observed_at": _iso_date(raw.get("observed_at")),
-        "source_mode": str(raw.get("source_mode") or "verified_snapshot").strip(),
+        "source_mode": source_mode,
     }
+    if quality_flags:
+        normalized["data_quality_flags"] = sorted(quality_flags)
 
     # Preserve structured provenance from the bulk collector without requiring
     # it from the small manually verified bridge records.

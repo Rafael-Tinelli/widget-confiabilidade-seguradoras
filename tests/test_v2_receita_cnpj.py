@@ -31,7 +31,7 @@ def test_normalizes_closed_incorporation_record():
     assert record["observed_at"] == "2026-08-17"
 
 
-def test_closed_record_requires_date():
+def test_closed_verified_record_requires_date():
     with pytest.raises(ReceitaLifecycleError, match="requires status_date"):
         normalize_receita_lifecycle_record(
             {
@@ -40,6 +40,41 @@ def test_closed_record_requires_date():
                 "cadastral_status": "BAIXADA",
             }
         )
+
+
+def test_bulk_zero_date_is_missing_not_invalid():
+    record = normalize_receita_lifecycle_record(
+        {
+            "cnpj": "12345678000190",
+            "legal_name": "TESTE BULK S.A.",
+            "cadastral_status": "ATIVA",
+            "status_date": "0",
+            "status_reason": "SEM MOTIVO",
+            "source_mode": "official_open_data_bulk",
+            "observed_at": "2026-08-17",
+        }
+    )
+
+    assert record["status_date"] is None
+    assert record["status_reason"] is None
+    assert record["data_quality_flags"] == ["missing_status_date"]
+
+
+def test_bulk_closed_zero_date_preserves_status_and_marks_missing_date():
+    record = normalize_receita_lifecycle_record(
+        {
+            "cnpj": "12345678000190",
+            "legal_name": "TESTE BULK S.A.",
+            "cadastral_status": "BAIXADA",
+            "status_date": "00000000",
+            "source_mode": "official_open_data_bulk",
+            "observed_at": "2026-08-17",
+        }
+    )
+
+    assert record["cadastral_status"] == "closed"
+    assert record["status_date"] is None
+    assert record["data_quality_flags"] == ["missing_status_date"]
 
 
 def test_snapshot_rejects_duplicate_cnpj(tmp_path: Path):

@@ -56,6 +56,23 @@ def test_extracts_only_exact_target_cnpj_and_lifecycle(tmp_path: Path):
     assert row["raw_reason_code"] == "02"
 
 
+def test_extract_accepts_zero_status_date_from_official_bulk(tmp_path: Path):
+    text = '12345678;0001;90;1;"TESTE";02;0;00\n'
+    path = _write_zip(tmp_path / "Estabelecimentos0.zip", "ESTABELE", text)
+    records = extract_target_lifecycle_from_zip(
+        path,
+        {"12345678000190": "TESTE BULK S.A."},
+        {"00": "SEM MOTIVO"},
+        source_url="https://example.gov/2026-08/Estabelecimentos0.zip",
+        source_period="2026-08",
+        observed_at="2026-08-17",
+    )
+
+    assert records[0]["cadastral_status"] == "active"
+    assert records[0]["status_date"] is None
+    assert records[0]["data_quality_flags"] == ["missing_status_date"]
+
+
 def test_extract_supports_alphanumeric_cnpj(tmp_path: Path):
     text = '12ABC345;00DE;67;1;"EMPRESA TESTE";02;20260731;00\n'
     path = _write_zip(tmp_path / "Estabelecimentos1.zip", "ESTABELE", text)
