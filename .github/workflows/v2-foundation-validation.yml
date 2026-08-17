@@ -22,6 +22,7 @@ jobs:
       SES_ALLOW_INSECURE_SSL: "1"
       SES_KEEP_ZIP: "0"
       SES_WRITE_AUDIT: "1"
+      SES_CACHE_DIR: "data/raw/ses"
 
     steps:
       - name: Checkout
@@ -41,6 +42,15 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements-dev.txt
           python -m pip install -r requirements.txt
+
+      - name: Restore SES source cache
+        id: restore-ses-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: data/raw/ses
+          key: v2-validation-ses-source-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: |
+            ses-source-${{ runner.os }}-
 
       - name: Show Ruff autofix diff
         continue-on-error: true
@@ -133,6 +143,11 @@ jobs:
               key: sum(bool((e.get("activities") or {}).get(key)) for e in entities)
               for key in sorted(required_activity_keys)
           }
+          # A run that only fell back to LISTAEMPRESAS has no activity evidence,
+          # so it must never be accepted as a complete BaseCompleta validation.
+          if sum(by_activity.values()) == 0:
+              errors.append("BaseCompleta not evidenced: all SES activity counts are zero")
+
           no_cnpj = [
               {"entity_id": e.get("entity_id"), "fip_code": e.get("fip_code"), "legal_name": e.get("legal_name")}
               for e in entities if not e.get("cnpj")
