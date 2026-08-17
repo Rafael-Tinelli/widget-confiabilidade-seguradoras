@@ -3,7 +3,7 @@ from __future__ import annotations
 import math
 from collections import Counter
 from copy import deepcopy
-from statistics import mean, median, pstdev
+from statistics import median
 from typing import Any
 
 import numpy as np
