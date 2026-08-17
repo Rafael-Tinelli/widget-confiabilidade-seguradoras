@@ -154,6 +154,16 @@ def _require_columns(
     return columns
 
 
+def _normalize_chunk_columns(chunk: pd.DataFrame) -> pd.DataFrame:
+    """Normalize the column names returned by pandas without reassigning by position.
+
+    pandas.read_csv(usecols=...) returns columns in source-file order. Replacing
+    them with the requested usecols order can silently swap semantic fields.
+    """
+    chunk.columns = [column.lower().strip() for column in chunk.columns]
+    return chunk
+
+
 def _read_capital_history(
     z: zipfile.ZipFile,
     member: str,
@@ -175,7 +185,6 @@ def _read_capital_history(
         ],
         "Ses_pl_margem.csv",
     )
-    lowercase = [column.lower().strip() for column in columns]
     history: dict[str, dict[int, dict[str, Any]]] = defaultdict(dict)
     periods: set[int] = set()
     duplicate_counts: dict[str, int] = defaultdict(int)
@@ -190,7 +199,7 @@ def _read_capital_history(
             chunksize=300_000,
             on_bad_lines="skip",
         ):
-            chunk.columns = lowercase
+            chunk = _normalize_chunk_columns(chunk)
             chunk["fip"] = _canon_fip_series(chunk["coenti"])
             chunk = chunk[chunk["fip"].isin(fips)]
             if chunk.empty:
@@ -259,7 +268,6 @@ def _read_balance_history(
         ["coenti", "damesano", "cmpid", "valor"],
         "SES_Balanco.csv",
     )
-    lowercase = [column.lower().strip() for column in columns]
     periods_by_fip: dict[str, set[int]] = defaultdict(set)
     values: dict[str, dict[int, dict[int, float]]] = defaultdict(
         lambda: defaultdict(dict)
@@ -277,7 +285,7 @@ def _read_balance_history(
             chunksize=300_000,
             on_bad_lines="skip",
         ):
-            chunk.columns = lowercase
+            chunk = _normalize_chunk_columns(chunk)
             chunk["fip"] = _canon_fip_series(chunk["coenti"])
             chunk = chunk[chunk["fip"].isin(fips)]
             if chunk.empty:
@@ -334,7 +342,6 @@ def _read_insurance_operations_presence(
         ["coenti", "damesano", "premio_ganho"],
         "Ses_seguros.csv",
     )
-    lowercase = [column.lower().strip() for column in columns]
     periods_by_fip: dict[str, set[int]] = defaultdict(set)
     nonzero_periods: dict[str, set[int]] = defaultdict(set)
     periods: set[int] = set()
@@ -349,7 +356,7 @@ def _read_insurance_operations_presence(
             chunksize=300_000,
             on_bad_lines="skip",
         ):
-            chunk.columns = lowercase
+            chunk = _normalize_chunk_columns(chunk)
             chunk["fip"] = _canon_fip_series(chunk["coenti"])
             chunk = chunk[chunk["fip"].isin(fips)]
             if chunk.empty:
