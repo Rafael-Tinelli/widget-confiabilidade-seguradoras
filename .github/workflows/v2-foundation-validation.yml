@@ -108,6 +108,17 @@ jobs:
               counts = Counter(values)
               return sorted(key for key, value in counts.items() if key and value > 1)
 
+          def valid_cnpj(cnpj):
+              if cnpj is None:
+                  return True
+              return (
+                  len(cnpj) == 14
+                  and cnpj[:12].isalnum()
+                  and cnpj[:12] == cnpj[:12].upper()
+                  and cnpj[-2:].isdigit()
+                  and cnpj != "0" * 14
+              )
+
           entity_ids = [item.get("entity_id") for item in entities]
           fips = [item.get("fip_code") for item in entities]
           cnpjs = [item.get("cnpj") for item in entities if item.get("cnpj")]
@@ -132,7 +143,7 @@ jobs:
                   malformed.append([entity_id, "invalid_fip"])
               if not name:
                   malformed.append([entity_id, "missing_legal_name"])
-              if cnpj is not None and (len(cnpj) != 14 or not cnpj.isdigit()):
+              if not valid_cnpj(cnpj):
                   malformed.append([entity_id, "invalid_cnpj"])
               if entity_id != f"fip:{fip}":
                   malformed.append([entity_id, "entity_id_mismatch"])
