@@ -150,7 +150,9 @@ def apply_economic_groups(
     SES also uses catch-all categories such as INDEPENDENTE and OUTROS GRUPOS.
     Those observations are preserved for audit but never materialized as a
     shared group relationship, because doing so would falsely imply corporate
-    affiliation between unrelated entities.
+    affiliation between unrelated entities. Historical group labels are also
+    evidence only: they do not, by themselves, establish a legal joint venture,
+    acquisition or succession event.
     """
     output = [deepcopy(item) for item in entities]
     positions = _entity_positions(output)
@@ -179,7 +181,12 @@ def apply_economic_groups(
             "group_name": group_name,
             "observed_period": observed_period,
             "is_specific_group": bool(record.get("is_specific_group")),
+            "group_history": deepcopy(record.get("group_history") or []),
             "source": record.get("source"),
+            "interpretation": (
+                "SES group history is contextual evidence. Historical group labels do not "
+                "alone establish a legal joint venture, acquisition or succession."
+            ),
         }
         entity["evidence"] = evidence
 
