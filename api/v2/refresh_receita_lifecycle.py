@@ -11,7 +11,11 @@ from api.sources.receita_cnpj import (
     load_verified_lifecycle_snapshot,
     validate_verified_snapshot_against_bulk,
 )
-from api.sources.receita_cnpj_bulk import refresh_filtered_lifecycle
+from api.sources.receita_cnpj_bulk import (
+    ReceitaOpenDataRelease,
+    discover_latest_release,
+    refresh_filtered_lifecycle,
+)
 from api.sources.ses import extract_ses_master_and_financials
 from api.sources.susep_licensed import fetch_licensed_entities
 from api.sources.susep_sandbox import fetch_sandbox_participants
@@ -30,6 +34,13 @@ def _coverage(payload: dict[str, Any]) -> float:
     target = int(meta.get("target_count") or 0)
     resolved = int(meta.get("resolved_count") or 0)
     return resolved / target if target else 0.0
+
+
+def _existing_reference_period(path: Path) -> str | None:
+    if not path.exists():
+        return None
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    return str((payload.get("source") or {}).get("reference_period") or "").strip() or None
 
 
 def validate_refresh_payload(
@@ -118,9 +129,11 @@ def refresh_receita_lifecycle(
     *,
     output: Path = DEFAULT_FILTERED_SNAPSHOT,
     min_coverage: float = DEFAULT_MIN_COVERAGE,
+    release: ReceitaOpenDataRelease | None = None,
 ) -> dict[str, Any]:
+    resolved_release = release or discover_latest_release()
     entities = build_current_regulatory_universe()
-    payload = refresh_filtered_lifecycle(entities)
+    payload = refresh_filtered_lifecycle(entities, release=resolved_release)
 
     previous_records = None
     if output.exists():
@@ -149,11 +162,26 @@ def main() -> None:
         type=float,
         default=DEFAULT_MIN_COVERAGE,
     )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Refresh even when the stored snapshot already matches the latest release.",
+    )
     args = parser.parse_args()
+
+    release = discover_latest_release()
+    existing_period = _existing_reference_period(args.output)
+    if not args.force and existing_period == release.period:
+        print(
+            "Receita lifecycle refresh skipped: "
+            f"stored snapshot already uses reference_period={release.period}"
+        )
+        return
 
     payload = refresh_receita_lifecycle(
         output=args.output,
         min_coverage=args.min_coverage,
+        release=release,
     )
     meta = payload["meta"]
     source = payload["source"]
