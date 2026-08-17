@@ -33,16 +33,48 @@ def _clean(value: Any) -> str:
     return "" if text.casefold() in {"nan", "none"} else text
 
 
+def _is_specific_group(code: str | None, name: str | None) -> bool:
+    if not code or not name:
+        return False
+    return (code, name.upper()) not in GENERIC_GROUP_BUCKETS
+
+
+def _compress_group_history(rows: pd.DataFrame) -> list[dict[str, Any]]:
+    """Compress monthly SES rows into contiguous group-label periods."""
+    history: list[dict[str, Any]] = []
+    current: dict[str, Any] | None = None
+
+    for _, row in rows.sort_values("damesano").iterrows():
+        period = _clean(row.get("damesano"))
+        code = _clean(row.get("cogrupo")) or None
+        name = _clean(row.get("nogrupo")) or None
+        key = (code, name)
+
+        if current and (current["group_code"], current["group_name"]) == key:
+            current["to_period"] = period
+            continue
+
+        current = {
+            "group_code": code,
+            "group_name": name,
+            "from_period": period,
+            "to_period": period,
+            "is_specific_group": _is_specific_group(code, name),
+        }
+        history.append(current)
+
+    return history
+
+
 def load_susep_economic_groups(
     zip_path: Path | None = None,
 ) -> list[dict[str, Any]]:
-    """Read the latest official SES economic-group observation for each FIP.
+    """Read official SES economic-group history and latest observation by FIP.
 
-    ``Ses_grupos_economicos.csv`` is a monthly history. Only the most recent
-    observation for each FIP is returned. Generic buckets such as INDEPENDENTE
-    and OUTROS GRUPOS are retained as source observations but explicitly marked
-    as non-specific so the relationship layer does not turn them into false
-    shared corporate groups.
+    ``Ses_grupos_economicos.csv`` is monthly. The returned record contains the
+    latest observation plus a compact transition history. Generic buckets such
+    as INDEPENDENTE and OUTROS GRUPOS are retained as source observations but
+    marked non-specific so they never become false shared corporate groups.
     """
     path = zip_path or (SES_CACHE_DIR / "BaseCompleta.zip")
     if not path.exists() or not zipfile.is_zipfile(path):
@@ -75,11 +107,11 @@ def load_susep_economic_groups(
         raise SusepGroupSourceError("SES economic-group history contains no valid periods")
 
     frame = frame.sort_values(["coenti", "damesano"])
-    latest = frame.groupby("coenti", as_index=False, sort=False).tail(1)
-
     records: list[dict[str, Any]] = []
     seen_fips: set[str] = set()
-    for _, row in latest.iterrows():
+
+    for _, rows in frame.groupby("coenti", sort=False):
+        row = rows.iloc[-1]
         fip = canonical_fip_code(row.get("coenti"))
         if not fip:
             continue
@@ -91,11 +123,6 @@ def load_susep_economic_groups(
 
         group_code = _clean(row.get("cogrupo")) or None
         group_name = _clean(row.get("nogrupo")) or None
-        is_specific_group = bool(group_code and group_name) and (
-            group_code,
-            group_name.upper(),
-        ) not in GENERIC_GROUP_BUCKETS
-
         records.append(
             {
                 "fip_code": fip,
@@ -103,7 +130,8 @@ def load_susep_economic_groups(
                 "group_code": group_code,
                 "group_name": group_name,
                 "observed_period": _clean(row.get("damesano")),
-                "is_specific_group": is_specific_group,
+                "is_specific_group": _is_specific_group(group_code, group_name),
+                "group_history": _compress_group_history(rows),
                 "source": "SUSEP SES / Ses_grupos_economicos.csv",
             }
         )
