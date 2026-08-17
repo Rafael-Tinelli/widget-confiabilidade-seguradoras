@@ -1,0 +1,55 @@
+name: V2 Classification Source Probe
+
+on:
+  pull_request:
+    branches: ["main"]
+    paths:
+      - ".github/workflows/v2-classification-probe.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe-licensed-entities:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Probe SUSEP licensed-entities form
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import re
+          import requests
+
+          url = "https://www2.susep.gov.br/menuatendimento/procura_2011.asp"
+          headers = {
+              "User-Agent": "Mozilla/5.0 (compatible; SanidaResearch/1.0; +https://sanida.com.br)",
+              "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+              "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.5",
+          }
+          r = requests.get(url, headers=headers, timeout=30, verify=False)
+          print("STATUS", r.status_code)
+          print("FINAL_URL", r.url)
+          print("CONTENT_TYPE", r.headers.get("content-type"))
+          print("LENGTH", len(r.content))
+          text = r.content.decode(r.encoding or "latin-1", errors="replace")
+          print("FORMS")
+          for m in re.finditer(r"<form\b.*?</form>", text, flags=re.I | re.S):
+              block = re.sub(r"\s+", " ", m.group(0))
+              print(block[:8000])
+          print("SELECTS")
+          for m in re.finditer(r"<select\b.*?</select>", text, flags=re.I | re.S):
+              block = re.sub(r"\s+", " ", m.group(0))
+              print(block[:8000])
+          print("INPUTS")
+          for m in re.finditer(r"<input\b[^>]*>", text, flags=re.I):
+              print(re.sub(r"\s+", " ", m.group(0))[:2000])
+          print("LINKS_WITH_PROCURA")
+          for href in re.findall(r'href=["\']([^"\']+)["\']', text, flags=re.I):
+              if "procura" in href.lower() or "empresa" in href.lower() or "cia" in href.lower():
+                  print(href)
+          if r.status_code >= 400:
+              raise SystemExit(f"SUSEP licensed-entities form returned HTTP {r.status_code}")
+          PY
