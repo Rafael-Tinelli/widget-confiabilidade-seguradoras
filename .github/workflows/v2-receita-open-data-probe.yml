@@ -12,30 +12,36 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Verify official Receita Nextcloud WebDAV contract over IPv4
+      - name: Verify latest Receita CNPJ release through official WebDAV
         shell: bash
         run: |
-          set +e
+          set -euo pipefail
           token="YggdBLfdninEJX9"
           host="https://arquivos.receitafederal.gov.br"
           dav="${host}/public.php/dav/files/${token}/"
-          share="${host}/index.php/s/${token}"
           body='<?xml version="1.0"?><d:propfind xmlns:d="DAV:"><d:prop><d:displayname/><d:getcontentlength/><d:getlastmodified/><d:resourcetype/></d:prop></d:propfind>'
 
-          echo "== PROPFIND public WebDAV =="
           curl -4 -sS -u "${token}:" -X PROPFIND -H 'Depth: 1' -H 'Content-Type: application/xml' --data "$body" \
-            --connect-timeout 10 --max-time 30 -D /tmp/dav.headers -o /tmp/dav.xml "$dav" || true
-          cat /tmp/dav.headers 2>/dev/null || true
-          echo "--- DAV body head ---"
-          head -c 12000 /tmp/dav.xml 2>/dev/null || true
-          echo
+            --connect-timeout 10 --max-time 30 -o /tmp/root.xml "$dav"
 
-          echo "== Download URL headers =="
-          for file in Motivos.zip Estabelecimentos0.zip; do
-            echo "FILE=$file"
-            curl -4 -sS -I -L --connect-timeout 10 --max-time 30 \
-              "${share}/download?path=/&files=${file}" || true
-          done
+          latest="$(grep -oE '<d:displayname>20[0-9]{2}-[0-9]{2}</d:displayname>' /tmp/root.xml | sed -E 's#</?d:displayname>##g' | sort | tail -1)"
+          echo "LATEST=$latest"
+          test -n "$latest"
 
-          echo "Diagnostic only: external reachability does not fail the PR."
-          exit 0
+          month_url="${dav}${latest}/"
+          curl -4 -sS -u "${token}:" -X PROPFIND -H 'Depth: 1' -H 'Content-Type: application/xml' --data "$body" \
+            --connect-timeout 10 --max-time 30 -o /tmp/month.xml "$month_url"
+
+          echo "== ZIP resources in $latest =="
+          grep -oE '<d:displayname>[^<]+\.zip</d:displayname>' /tmp/month.xml | sed -E 's#</?d:displayname>##g' | sort | tee /tmp/files.txt
+
+          grep -qx 'Motivos.zip' /tmp/files.txt
+          grep -qx 'Estabelecimentos0.zip' /tmp/files.txt
+
+          echo "== Direct WebDAV HEAD: Motivos.zip =="
+          curl -4 -sS -I -u "${token}:" --connect-timeout 10 --max-time 30 \
+            "${month_url}Motivos.zip"
+
+          echo "== Direct WebDAV HEAD: Estabelecimentos0.zip =="
+          curl -4 -sS -I -u "${token}:" --connect-timeout 10 --max-time 30 \
+            "${month_url}Estabelecimentos0.zip"
