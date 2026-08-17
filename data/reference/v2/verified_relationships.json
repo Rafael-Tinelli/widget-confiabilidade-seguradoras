@@ -1,0 +1,122 @@
+{
+  "schema_version": "1.0",
+  "note": "Small, source-backed relationship registry for facts that cannot be derived safely from SES identity alone. Corporate succession records are event-driven and should only be added with explicit documentary support.",
+  "corporate_relationships": [
+    {
+      "relationship_type": "incorporated_into",
+      "source_cnpj": "33061813000140",
+      "target_cnpj": "21986074000119",
+      "effective_date": "2024-11-01",
+      "evidence": {
+        "authority": "SUSEP",
+        "reference": "Portaria DIORE/SUSEP nº 047, de 27/12/2024",
+        "process": "15414.652952/2024-02",
+        "fact": "incorporação da totalidade do patrimônio de Prudential do Brasil Seguros de Vida S.A. por Prudential do Brasil Seguros S.A."
+      }
+    },
+    {
+      "relationship_type": "incorporated_into",
+      "source_cnpj": "08816067000100",
+      "target_cnpj": "61198164000160",
+      "effective_date": "2026-02-28",
+      "evidence": {
+        "authority": "SUSEP",
+        "reference": "Portaria DIORE/SUSEP nº 150, de 15/07/2026",
+        "process": "15414.616994/2026-33",
+        "fact": "incorporação da totalidade do patrimônio de Itaú Seguros de Auto e Residência S.A. por Porto Seguro Companhia de Seguros Gerais S.A., com sucessão"
+      }
+    },
+    {
+      "relationship_type": "incorporated_into",
+      "source_cnpj": "01356570000181",
+      "target_cnpj": "61074175000138",
+      "effective_date": "2019-11-01",
+      "evidence": {
+        "authority": "MAPFRE",
+        "reference": "Dados para faturamento — incorporação de Brasil Veículos por MAPFRE Seguros Gerais S.A.",
+        "url": "https://www.mapfre.com.br/prestadores/oficinas/dados-faturamento/",
+        "fact": "o CNPJ da Brasil Veículos passou a ser incorporado pelo CNPJ da MAPFRE Seguros Gerais S.A."
+      }
+    },
+    {
+      "relationship_type": "incorporated_into",
+      "source_cnpj": "33822131000103",
+      "target_cnpj": "19323190000106",
+      "effective_date": "2022-11-01",
+      "evidence": {
+        "authority": "SUSEP",
+        "reference": "Portaria SUSEP nº 8.140, de 17/04/2023",
+        "process": "15414.636691/2022-11",
+        "fact": "incorporação da totalidade do patrimônio de AXA XL Seguros S.A. por AXA Seguros S.A. e extinção da incorporada"
+      }
+    },
+    {
+      "relationship_type": "incorporated_into",
+      "source_cnpj": "14448493000131",
+      "target_cnpj": "33822131000103",
+      "effective_date": "2020-12-01",
+      "evidence": {
+        "authority": "SUSEP",
+        "reference": "Portaria SUSEP nº 7.820, de 14/07/2021",
+        "process": "15414.606206/2020-13",
+        "fact": "incorporação da totalidade do patrimônio de XL Seguros Brasil S.A. por AXA Corporate Solutions Seguros S.A., posteriormente denominada AXA XL Seguros S.A."
+      }
+    }
+  ],
+  "brands": [
+    {
+      "brand_id": "brand:prudential",
+      "name": "Prudential",
+      "aliases": ["Prudential do Brasil", "Prudential Seguros"],
+      "relationships": [
+        {
+          "relationship_type": "brand_of",
+          "target_cnpj": "21986074000119",
+          "status": "current",
+          "evidence": {
+            "authority": "Prudential do Brasil",
+            "url": "https://www.prudential.com.br/",
+            "fact": "site institucional identifica Prudential do Brasil Seguros S.A., CNPJ 21.986.074/0001-19"
+          }
+        }
+      ]
+    },
+    {
+      "brand_id": "brand:axa",
+      "name": "AXA",
+      "aliases": ["AXA Brasil"],
+      "relationships": [
+        {
+          "relationship_type": "brand_of",
+          "target_cnpj": "19323190000106",
+          "status": "current",
+          "evidence": {
+            "authority": "AXA no Brasil",
+            "url": "https://axa.com.br/central-de-ajuda/privacidade-de-dados/quem-sao-os-controladores-dos-seus-dados-pessoais",
+            "fact": "AXA Seguros S.A. é identificada pelo CNPJ 19.323.190/0001-06 no site oficial"
+          }
+        }
+      ]
+    },
+    {
+      "brand_id": "brand:itau-seguro-auto",
+      "name": "Itaú Seguro Auto",
+      "aliases": ["Seguro Auto Itaú", "Itaú Auto"],
+      "relationships": [
+        {
+          "relationship_type": "risk_carrier",
+          "target_cnpj": "61198164000160",
+          "status": "current",
+          "effective_from": "2026-02-28",
+          "scope": "Itaú-branded auto insurance after incorporation of Itaú Seguros de Auto e Residência S.A.",
+          "evidence": {
+            "authority": "Porto",
+            "url": "https://www.portoseguro.com.br/institucional/sobre-a-porto-seguro/empresas-do-grupo",
+            "reference": "Portaria DIORE/SUSEP nº 150, de 15/07/2026",
+            "fact": "Porto Seguro Companhia de Seguros Gerais sucedeu Itaú Seguros de Auto e Residência S.A.; a página oficial do Grupo Porto mantém os produtos Itaú Seguro Auto no ecossistema Porto"
+          }
+        }
+      ]
+    }
+  ]
+}
