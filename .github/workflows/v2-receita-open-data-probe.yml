@@ -18,56 +18,31 @@ jobs:
           python-version: '3.11'
       - name: Install probe dependency
         run: python -m pip install requests
-      - name: Probe official Receita CNPJ open-data endpoints
+      - name: Probe official Portal de Dados Abertos catalog API
         run: |
           python - <<'PY'
-          import re
+          import json
           import requests
-          from datetime import date
-          from urllib.parse import urljoin
 
-          urls = [
-              'https://arquivos.receitafederal.gov.br/dados/cnpj/dados_abertos_cnpj/',
-              'https://dadosabertos.rfb.gov.br/CNPJ/dados_abertos_cnpj/',
+          endpoints = [
+              'https://dados.gov.br/api/publico/conjuntos-dados/cadastro-nacional-da-pessoa-juridica---cnpj',
+              'https://dados.gov.br/dados/api/publico/conjuntos-dados/cadastro-nacional-da-pessoa-juridica---cnpj',
           ]
-
           session = requests.Session()
-          session.headers['User-Agent'] = 'Sanida-CNPJ-Source-Probe/1.0'
+          session.headers['User-Agent'] = 'Sanida-CNPJ-Source-Probe/2.0'
 
-          for base in urls:
-              print('\nBASE', base)
+          for url in endpoints:
+              print('\nCATALOG', url)
               try:
-                  r = session.get(base, timeout=30, allow_redirects=True)
-                  print('status=', r.status_code, 'final=', r.url, 'content-type=', r.headers.get('content-type'))
-                  print('length=', len(r.content))
-                  text = r.text[:200000] if 'text' in (r.headers.get('content-type') or '') else ''
-                  hrefs = re.findall(r'href=["\']([^"\']+)["\']', text, flags=re.I)
-                  print('href sample=', hrefs[:30])
-                  periods = sorted(set(re.findall(r'20\d{2}-\d{2}', text)))
-                  print('periods=', periods[-24:])
+                  r = session.get(url, timeout=30, allow_redirects=True)
+                  print('status=', r.status_code, 'final=', r.url, 'type=', r.headers.get('content-type'), 'len=', len(r.content))
+                  print('text head=', r.text[:1000])
+                  if r.status_code == 200 and 'json' in (r.headers.get('content-type') or '').lower():
+                      data = r.json()
+                      print('top type=', type(data).__name__)
+                      if isinstance(data, dict):
+                          print('top keys=', sorted(data.keys()))
+                          print(json.dumps(data, ensure_ascii=False, indent=2)[:50000])
               except Exception as exc:
                   print('ERROR', repr(exc))
-
-          candidates = []
-          y, m = date.today().year, date.today().month
-          for delta in range(0, 5):
-              mm = m - delta
-              yy = y
-              while mm <= 0:
-                  yy -= 1
-                  mm += 12
-              candidates.append(f'{yy:04d}-{mm:02d}')
-
-          for base in urls:
-              for period in candidates:
-                  u = urljoin(base, period + '/')
-                  try:
-                      r = session.get(u, timeout=20, allow_redirects=True)
-                      print('PERIOD', u, 'status=', r.status_code, 'final=', r.url, 'len=', len(r.content))
-                      if r.status_code == 200:
-                          text = r.text[:300000]
-                          files = sorted(set(re.findall(r'href=["\']([^"\']+\.zip)["\']', text, flags=re.I)))
-                          print('zip files=', files[:80])
-                  except Exception as exc:
-                      print('PERIOD ERROR', u, repr(exc))
           PY
