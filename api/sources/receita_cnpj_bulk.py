@@ -4,6 +4,8 @@ import csv
 import io
 import re
 import tempfile
+import time
+import xml.etree.ElementTree as ET
 import zipfile
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -17,12 +19,13 @@ import requests
 from api.sources.receita_cnpj import normalize_receita_lifecycle_record
 from api.utils.identifiers import normalize_cnpj_v2
 
-# Legacy publication paths are kept only as optional discovery candidates.
-# They are NOT considered a guaranteed contract: the production refresh must
-# validate the resolved resource before downloading any bulk payload.
-OFFICIAL_CNPJ_BASE_URLS = (
-    "https://arquivos.receitafederal.gov.br/dados/cnpj/dados_abertos_cnpj/",
-    "https://dadosabertos.rfb.gov.br/CNPJ/dados_abertos_cnpj/",
+OFFICIAL_CNPJ_HOST = "https://arquivos.receitafederal.gov.br"
+OFFICIAL_CNPJ_SHARE_TOKEN = "YggdBLfdninEJX9"
+OFFICIAL_CNPJ_SHARE_URL = (
+    f"{OFFICIAL_CNPJ_HOST}/index.php/s/{OFFICIAL_CNPJ_SHARE_TOKEN}"
+)
+OFFICIAL_CNPJ_DAV_ROOT = (
+    f"{OFFICIAL_CNPJ_HOST}/public.php/dav/files/{OFFICIAL_CNPJ_SHARE_TOKEN}/"
 )
 
 STATUS_CODE_TO_LABEL = {
@@ -38,7 +41,19 @@ ESTABLISHMENT_FILE_RE = re.compile(
     r"Estabelecimentos\d+\.zip$",
     re.IGNORECASE,
 )
-DEFAULT_TIMEOUT = (15, 60)
+PERIOD_RE = re.compile(r"20\d{2}-\d{2}$")
+DEFAULT_TIMEOUT = (15, 120)
+DAV_PROPFIND_BODY = """<?xml version="1.0"?>
+<d:propfind xmlns:d="DAV:">
+  <d:prop>
+    <d:displayname/>
+    <d:getcontentlength/>
+    <d:getlastmodified/>
+    <d:getetag/>
+    <d:resourcetype/>
+  </d:prop>
+</d:propfind>
+"""
 
 
 class ReceitaOpenDataError(RuntimeError):
@@ -49,9 +64,10 @@ class ReceitaOpenDataError(RuntimeError):
 class ReceitaOpenDataRelease:
     base_url: str
     release_url: str
-    period: str | None
+    period: str
     establishment_files: tuple[str, ...]
     reasons_file: str = "Motivos.zip"
+    resource_metadata: tuple[dict[str, Any], ...] = ()
 
 
 def _utc_now() -> str:
@@ -62,92 +78,98 @@ def _today_utc() -> date:
     return datetime.now(timezone.utc).date()
 
 
-def _month_candidates(today: date | None = None, lookback: int = 8) -> list[str]:
-    current = today or _today_utc()
-    year = current.year
-    month = current.month
-    out: list[str] = []
-    for delta in range(lookback):
-        yy = year
-        mm = month - delta
-        while mm <= 0:
-            yy -= 1
-            mm += 12
-        out.append(f"{yy:04d}-{mm:02d}")
-    return out
+def _configure_official_session(session: requests.Session) -> None:
+    session.headers.setdefault("User-Agent", "Sanida-CNPJ-Lifecycle/2.0")
+    session.auth = (OFFICIAL_CNPJ_SHARE_TOKEN, "")
 
 
-def _request_exists(session: requests.Session, url: str) -> bool:
+def _dav_resources(xml_payload: bytes) -> list[dict[str, Any]]:
     try:
-        response = session.head(url, timeout=DEFAULT_TIMEOUT, allow_redirects=True)
-        if response.status_code == 200:
-            return True
-        if response.status_code not in {403, 405}:
-            return False
-    except requests.RequestException:
-        pass
+        root = ET.fromstring(xml_payload)
+    except ET.ParseError as exc:
+        raise ReceitaOpenDataError(f"Invalid Receita WebDAV XML: {exc}") from exc
 
-    try:
-        response = session.get(
-            url,
-            timeout=DEFAULT_TIMEOUT,
-            stream=True,
-            allow_redirects=True,
+    ns = {"d": "DAV:"}
+    resources: list[dict[str, Any]] = []
+    for response in root.findall("d:response", ns):
+        propstat = next(
+            (
+                item
+                for item in response.findall("d:propstat", ns)
+                if "200" in (item.findtext("d:status", default="", namespaces=ns) or "")
+            ),
+            None,
         )
-        ok = response.status_code == 200
-        response.close()
-        return ok
-    except requests.RequestException:
-        return False
-
-
-def _directory_zip_files(session: requests.Session, url: str) -> list[str]:
-    try:
-        response = session.get(url, timeout=DEFAULT_TIMEOUT, allow_redirects=True)
-        if response.status_code != 200:
-            return []
-        text = response.text
-    except requests.RequestException:
-        return []
-
-    hrefs = re.findall(
-        r'href=["\']([^"\']+\.zip)["\']',
-        text,
-        flags=re.IGNORECASE,
-    )
-    names = [Path(href.split("?")[0]).name for href in hrefs]
-    return sorted(set(names))
-
-
-def _probe_establishment_files(
-    session: requests.Session,
-    release_url: str,
-) -> list[str]:
-    listed = [
-        name
-        for name in _directory_zip_files(session, release_url)
-        if ESTABLISHMENT_FILE_RE.fullmatch(name)
-    ]
-    if listed:
-        return sorted(listed, key=_establishment_sort_key)
-
-    # Directory indexes are not guaranteed. Probe the conventional numbered
-    # partitions without downloading the payload.
-    found: list[str] = []
-    misses_after_hit = 0
-    for index in range(100):
-        name = f"Estabelecimentos{index}.zip"
-        if _request_exists(session, urljoin(release_url, name)):
-            found.append(name)
-            misses_after_hit = 0
+        if propstat is None:
             continue
-        if found:
-            misses_after_hit += 1
-            if misses_after_hit >= 3:
-                break
-        elif index >= 12:
-            break
-    return found
+        prop = propstat.find("d:prop", ns)
+        if prop is None:
+            continue
+
+        name = prop.findtext("d:displayname", default="", namespaces=ns).strip()
+        if not name:
+            continue
+        href = response.findtext("d:href", default="", namespaces=ns).strip()
+        size_text = prop.findtext("d:getcontentlength", default="", namespaces=ns).strip()
+        resource_type = prop.find("d:resourcetype", ns)
+        is_collection = bool(
+            resource_type is not None and resource_type.find("d:collection", ns) is not None
+        )
+        resources.append(
+            {
+                "name": name,
+                "href": href,
+                "size": int(size_text) if size_text.isdigit() else None,
+                "last_modified": prop.findtext(
+                    "d:getlastmodified",
+                    default="",
+                    namespaces=ns,
+                ).strip()
+                or None,
+                "etag": prop.findtext("d:getetag", default="", namespaces=ns).strip()
+                or None,
+                "is_collection": is_collection,
+            }
+        )
+    return resources
+
+
+def _propfind(
+    session: requests.Session,
+    url: str,
+    *,
+    retries: int = 5,
+) -> list[dict[str, Any]]:
+    last_error: Exception | None = None
+    headers = {"Depth": "1", "Content-Type": "application/xml"}
+
+    for attempt in range(retries):
+        try:
+            response = session.request(
+                "PROPFIND",
+                url,
+                headers=headers,
+                data=DAV_PROPFIND_BODY.encode("utf-8"),
+                timeout=DEFAULT_TIMEOUT,
+            )
+            if response.status_code != 207:
+                raise ReceitaOpenDataError(
+                    f"Receita WebDAV PROPFIND returned HTTP {response.status_code}: {url}"
+                )
+            resources = _dav_resources(response.content)
+            if not resources:
+                raise ReceitaOpenDataError(
+                    f"Receita WebDAV returned no resources for {url}"
+                )
+            return resources
+        except (requests.RequestException, ReceitaOpenDataError) as exc:
+            last_error = exc
+            if attempt + 1 < retries:
+                time.sleep(min(2 ** attempt, 8))
+
+    raise ReceitaOpenDataError(
+        f"Failed to read official Receita WebDAV manifest {url}: {last_error}"
+    )
 
 
 def _establishment_sort_key(name: str) -> tuple[int, str]:
@@ -157,63 +179,93 @@ def _establishment_sort_key(name: str) -> tuple[int, str]:
 
 def discover_latest_release(
     session: requests.Session | None = None,
-    today: date | None = None,
-    lookback: int = 8,
 ) -> ReceitaOpenDataRelease:
-    """Discover a usable official Receita CNPJ open-data release.
-
-    Discovery is fail-closed. A legacy path is accepted only when both the
-    establishment partitions and the official motive dictionary are actually
-    reachable and structurally present. This avoids treating an old URL
-    convention as an enduring source contract.
-    """
+    """Discover the newest complete official CNPJ release via Receita WebDAV."""
     own_session = session is None
     sess = session or requests.Session()
-    sess.headers.setdefault("User-Agent", "Sanida-CNPJ-Lifecycle/2.0")
-    try:
-        for base_url in OFFICIAL_CNPJ_BASE_URLS:
-            for period in _month_candidates(today=today, lookback=lookback):
-                release_url = urljoin(base_url, period + "/")
-                sentinel = urljoin(release_url, "Estabelecimentos0.zip")
-                if not _request_exists(sess, sentinel):
-                    continue
-                files = _probe_establishment_files(sess, release_url)
-                if files and _request_exists(
-                    sess,
-                    urljoin(release_url, "Motivos.zip"),
-                ):
-                    return ReceitaOpenDataRelease(
-                        base_url=base_url,
-                        release_url=release_url,
-                        period=period,
-                        establishment_files=tuple(files),
-                    )
+    _configure_official_session(sess)
 
-            files = _probe_establishment_files(sess, base_url)
-            if files and _request_exists(sess, urljoin(base_url, "Motivos.zip")):
-                return ReceitaOpenDataRelease(
-                    base_url=base_url,
-                    release_url=base_url,
-                    period=None,
-                    establishment_files=tuple(files),
-                )
+    try:
+        root_resources = _propfind(sess, OFFICIAL_CNPJ_DAV_ROOT)
+        periods = sorted(
+            (
+                item["name"]
+                for item in root_resources
+                if item.get("is_collection") and PERIOD_RE.fullmatch(item["name"])
+            ),
+            reverse=True,
+        )
+        if not periods:
+            raise ReceitaOpenDataError(
+                "Official Receita CNPJ WebDAV contains no monthly release directories"
+            )
+
+        for period in periods:
+            release_url = urljoin(OFFICIAL_CNPJ_DAV_ROOT, period + "/")
+            resources = _propfind(sess, release_url)
+            files = {
+                item["name"]: item
+                for item in resources
+                if not item.get("is_collection")
+            }
+            establishments = sorted(
+                (
+                    name
+                    for name in files
+                    if ESTABLISHMENT_FILE_RE.fullmatch(name)
+                ),
+                key=_establishment_sort_key,
+            )
+            if "Motivos.zip" not in files or not establishments:
+                continue
+
+            expected_indexes = list(range(len(establishments)))
+            actual_indexes = [
+                int(re.search(r"(\d+)", name).group(1))
+                for name in establishments
+            ]
+            if actual_indexes != expected_indexes:
+                continue
+
+            metadata_names = {"Motivos.zip", *establishments}
+            metadata = tuple(
+                {
+                    "name": item["name"],
+                    "size": item.get("size"),
+                    "last_modified": item.get("last_modified"),
+                    "etag": item.get("etag"),
+                }
+                for item in resources
+                if item["name"] in metadata_names
+            )
+            return ReceitaOpenDataRelease(
+                base_url=OFFICIAL_CNPJ_SHARE_URL,
+                release_url=release_url,
+                period=period,
+                establishment_files=tuple(establishments),
+                resource_metadata=metadata,
+            )
     finally:
         if own_session:
             sess.close()
 
-    raise ReceitaOpenDataError("No usable official Receita CNPJ open-data release found")
+    raise ReceitaOpenDataError(
+        "No complete monthly Receita CNPJ release with Motivos and Estabelecimentos found"
+    )
 
 
 def _download_zip(
     session: requests.Session,
     url: str,
     destination: Path,
+    *,
+    retries: int = 5,
 ) -> Path:
     destination.parent.mkdir(parents=True, exist_ok=True)
     temp = destination.with_suffix(destination.suffix + ".part")
     last_error: Exception | None = None
 
-    for attempt in range(3):
+    for attempt in range(retries):
         try:
             with session.get(
                 url,
@@ -233,8 +285,8 @@ def _download_zip(
         except (requests.RequestException, OSError, ReceitaOpenDataError) as exc:
             last_error = exc
             temp.unlink(missing_ok=True)
-            if attempt == 2:
-                break
+            if attempt + 1 < retries:
+                time.sleep(min(2 ** attempt, 8))
 
     raise ReceitaOpenDataError(
         f"Failed to download official Receita ZIP {url}: {last_error}"
@@ -283,7 +335,7 @@ def extract_target_lifecycle_from_zip(
     reason_map: dict[str, str],
     *,
     source_url: str,
-    source_period: str | None,
+    source_period: str,
     observed_at: str | None = None,
 ) -> list[dict[str, Any]]:
     """Stream one Estabelecimentos ZIP and retain exact target CNPJs only."""
@@ -359,8 +411,9 @@ def refresh_filtered_lifecycle(
 ) -> dict[str, Any]:
     """Refresh lifecycle only for CNPJs in the v2 regulatory universe.
 
-    Files are downloaded and processed one at a time, then deleted, so the
-    runner never needs to keep the full Receita dataset extracted on disk.
+    Bulk partitions are processed one at a time and deleted immediately after
+    parsing. This keeps disk usage bounded even though the official monthly
+    source is large. The final artifact contains only the target CNPJs.
     """
     target_names: dict[str, str] = {}
     for entity in target_entities:
@@ -373,7 +426,7 @@ def refresh_filtered_lifecycle(
 
     own_session = session is None
     sess = session or requests.Session()
-    sess.headers.setdefault("User-Agent", "Sanida-CNPJ-Lifecycle/2.0")
+    _configure_official_session(sess)
     resolved_release = release or discover_latest_release(sess)
     observed_at = _today_utc().isoformat()
 
@@ -439,11 +492,12 @@ def refresh_filtered_lifecycle(
                 "dataset": (
                     "Cadastro Nacional da Pessoa Jurídica (CNPJ) - Dados Abertos"
                 ),
-                "base_url": resolved_release.base_url,
+                "public_share_url": resolved_release.base_url,
                 "release_url": resolved_release.release_url,
                 "reference_period": resolved_release.period,
-                "ingestion_method": "official_open_data_bulk_filtered",
+                "ingestion_method": "official_nextcloud_webdav_bulk_filtered",
                 "retrieved_at": _utc_now(),
+                "resource_metadata": list(resolved_release.resource_metadata),
             },
             "meta": {
                 "target_count": len(target_names),
