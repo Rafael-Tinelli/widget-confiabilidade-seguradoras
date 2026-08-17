@@ -17,6 +17,7 @@ RECEITA_CNPJ_LAYOUT_URL = (
 )
 
 DEFAULT_VERIFIED_SNAPSHOT = Path("data/reference/v2/receita_lifecycle_verified.json")
+DEFAULT_FILTERED_SNAPSHOT = Path("data/derived/v2/receita_cnpj_lifecycle.json")
 
 
 class ReceitaLifecycleError(ValueError):
@@ -41,6 +42,9 @@ def _canonical_status(value: Any) -> str:
     aliases = {
         "ativa": "active",
         "active": "active",
+        "ativa não regular": "active_not_regular",
+        "ativa nao regular": "active_not_regular",
+        "active_not_regular": "active_not_regular",
         "baixada": "closed",
         "closed": "closed",
         "suspensa": "suspended",
@@ -87,14 +91,16 @@ def normalize_receita_lifecycle_record(raw: dict[str, Any]) -> dict[str, Any]:
     if status == "closed" and not status_date:
         raise ReceitaLifecycleError(f"Closed CNPJ {cnpj} requires status_date")
 
-    return {
+    normalized = {
         "cnpj": cnpj,
         "legal_name": legal_name,
         "cadastral_status": status,
         "status_date": status_date,
         "status_reason": reason,
-        "raw_status": str(raw.get("cadastral_status") or "").strip(),
-        "raw_reason": str(raw.get("status_reason") or "").strip() or None,
+        "raw_status": str(raw.get("raw_status") or raw.get("cadastral_status") or "").strip(),
+        "raw_reason": (
+            str(raw.get("raw_reason") or raw.get("status_reason") or "").strip() or None
+        ),
         "source_authority": str(raw.get("source_authority") or "Receita Federal").strip(),
         "source_document": str(
             raw.get("source_document")
@@ -104,21 +110,26 @@ def normalize_receita_lifecycle_record(raw: dict[str, Any]) -> dict[str, Any]:
         "source_mode": str(raw.get("source_mode") or "verified_snapshot").strip(),
     }
 
+    # Preserve structured provenance from the bulk collector without requiring
+    # it from the small manually verified bridge records.
+    for key in (
+        "source_period",
+        "source_url",
+        "source_file",
+        "raw_status_code",
+        "raw_reason_code",
+    ):
+        value = raw.get(key)
+        if value not in {None, ""}:
+            normalized[key] = value
+    return normalized
 
-def load_verified_lifecycle_snapshot(
-    path: Path = DEFAULT_VERIFIED_SNAPSHOT,
-) -> list[dict[str, Any]]:
-    """Load a small verified snapshot derived from official Receita records.
 
-    This is intentionally separate from the full Receita CNPJ bulk dataset.
-    The v2 contract is ready for a future filtered bulk-data collector, while
-    the verified snapshot lets us model known lifecycle events without using
-    unofficial CNPJ APIs or scraping CAPTCHA-protected consultation pages.
-    """
+def _load_snapshot_records(path: Path, *, label: str) -> list[dict[str, Any]]:
     payload = json.loads(path.read_text(encoding="utf-8"))
     rows = payload.get("records") or []
     if not isinstance(rows, list):
-        raise ReceitaLifecycleError("Receita lifecycle snapshot records must be a list")
+        raise ReceitaLifecycleError(f"{label} records must be a list")
 
     normalized = [normalize_receita_lifecycle_record(dict(row)) for row in rows]
     seen: set[str] = set()
@@ -129,5 +140,75 @@ def load_verified_lifecycle_snapshot(
             duplicates.append(cnpj)
         seen.add(cnpj)
     if duplicates:
-        raise ReceitaLifecycleError(f"Duplicate Receita lifecycle CNPJ: {duplicates[:5]}")
+        raise ReceitaLifecycleError(f"Duplicate {label} CNPJ: {duplicates[:5]}")
     return normalized
+
+
+def load_verified_lifecycle_snapshot(
+    path: Path = DEFAULT_VERIFIED_SNAPSHOT,
+) -> list[dict[str, Any]]:
+    """Load the small set of official Receita records manually verified in audit."""
+    return _load_snapshot_records(path, label="verified Receita lifecycle snapshot")
+
+
+def load_filtered_lifecycle_snapshot(
+    path: Path = DEFAULT_FILTERED_SNAPSHOT,
+) -> list[dict[str, Any]]:
+    """Load the small snapshot generated from the official CNPJ open-data bulk files."""
+    return _load_snapshot_records(path, label="filtered Receita open-data snapshot")
+
+
+def validate_verified_snapshot_against_bulk(
+    bulk_records: list[dict[str, Any]],
+    verified_records: list[dict[str, Any]],
+) -> None:
+    """Use manually verified cases as golden checks for the automatic collector."""
+    bulk_by_cnpj = {row["cnpj"]: row for row in bulk_records}
+    errors: list[str] = []
+    for verified in verified_records:
+        cnpj = verified["cnpj"]
+        bulk = bulk_by_cnpj.get(cnpj)
+        if not bulk:
+            errors.append(f"verified CNPJ missing from bulk snapshot: {cnpj}")
+            continue
+        for field in ("cadastral_status", "status_date", "status_reason"):
+            expected = verified.get(field)
+            actual = bulk.get(field)
+            if expected is not None and actual != expected:
+                errors.append(f"{cnpj} {field}: bulk={actual!r} verified={expected!r}")
+    if errors:
+        raise ReceitaLifecycleError(
+            "Automatic Receita lifecycle conflicts with verified records: " + "; ".join(errors)
+        )
+
+
+def load_lifecycle_records(
+    filtered_path: Path = DEFAULT_FILTERED_SNAPSHOT,
+    verified_path: Path = DEFAULT_VERIFIED_SNAPSHOT,
+) -> list[dict[str, Any]]:
+    """Prefer official bulk-derived lifecycle; fall back to the verified bridge.
+
+    When the automatic snapshot exists, the bridge is no longer a data source:
+    it becomes a regression oracle that must agree with the bulk-derived facts.
+    """
+    verified = load_verified_lifecycle_snapshot(verified_path)
+    if not filtered_path.exists():
+        return verified
+
+    bulk = load_filtered_lifecycle_snapshot(filtered_path)
+    validate_verified_snapshot_against_bulk(bulk, verified)
+    return bulk
+
+
+def load_filtered_snapshot_metadata(
+    path: Path = DEFAULT_FILTERED_SNAPSHOT,
+) -> dict[str, Any] | None:
+    if not path.exists():
+        return None
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    return {
+        "source": dict(payload.get("source") or {}),
+        "meta": dict(payload.get("meta") or {}),
+        "status": payload.get("status"),
+        "generated_at": payload.get("generated_at"),
+    }
