@@ -7,7 +7,7 @@ from typing import Any
 
 import requests
 
-from api.utils.identifiers import normalize_cnpj
+from api.utils.identifiers import normalize_cnpj_v2
 
 SANDBOX_PARTICIPANTS_URL = (
     "https://www.gov.br/susep/pt-br/assuntos/sandbox-regulatorio/"
@@ -38,9 +38,20 @@ def _env_bool(name: str, default: bool) -> bool:
 def _normalize_label(value: str) -> str:
     text = html.unescape(value or "").casefold()
     replacements = {
-        "á": "a", "à": "a", "â": "a", "ã": "a", "é": "e", "ê": "e",
-        "í": "i", "ó": "o", "ô": "o", "õ": "o", "ú": "u", "ç": "c",
-        "ª": "a", "º": "o",
+        "á": "a",
+        "à": "a",
+        "â": "a",
+        "ã": "a",
+        "é": "e",
+        "ê": "e",
+        "í": "i",
+        "ó": "o",
+        "ô": "o",
+        "õ": "o",
+        "ú": "u",
+        "ç": "c",
+        "ª": "a",
+        "º": "o",
     }
     for source, target in replacements.items():
         text = text.replace(source, target)
@@ -140,7 +151,7 @@ def parse_sandbox_participants_html(document: str) -> list[dict[str, Any]]:
                 if value is not None and key not in fields:
                     fields[key] = value
 
-        cnpj = normalize_cnpj(fields.get("cnpj"))
+        cnpj = normalize_cnpj_v2(fields.get("cnpj"))
         if not cnpj:
             raise SandboxSourceError(f"Sandbox participant without valid CNPJ: {name}")
         records.append(
