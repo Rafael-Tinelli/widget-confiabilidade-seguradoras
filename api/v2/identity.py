@@ -4,7 +4,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from api.utils.identifiers import normalize_cnpj
+from api.utils.identifiers import normalize_cnpj_v2
 
 _ACTIVITY_SOURCE_MAP = {
     "SEGUROS": "insurance",
@@ -120,7 +120,7 @@ def build_canonical_identity(
     if not fip_code:
         raise ValueError("Canonical identity requires a valid FIP/SES code")
 
-    cnpj = normalize_cnpj(record.get("cnpj"))
+    cnpj = normalize_cnpj_v2(record.get("cnpj"))
     legal_name = str(record.get("legal_name") or record.get("name") or "").strip()
     if not legal_name:
         raise ValueError(f"Canonical identity {fip_code} requires a legal name")
