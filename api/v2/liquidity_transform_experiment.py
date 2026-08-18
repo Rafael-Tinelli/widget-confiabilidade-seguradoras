@@ -9,11 +9,14 @@ from scipy.stats import rankdata, spearmanr
 
 from api.v2.financial_evidence import month_window
 
-LIQUIDITY_TRANSFORM_EXPERIMENT_VERSION = "2.0-draft-liquidity-transform-1"
+LIQUIDITY_TRANSFORM_EXPERIMENT_VERSION = "2.0-draft-liquidity-transform-2"
 HARD_CAPS = (2.0, 3.0, 5.0)
 TANH_TAUS = (0.75, 1.0, 1.5)
 HISTORY_CURRENT_WEIGHTS = (0.0, 0.25, 0.50, 0.75)
+RECOVERY_CURRENT_WEIGHTS = (0.25, 0.50, 0.75)
 REFERENCE_RATIOS = (0.25, 0.50, 0.75, 1.0, 1.25, 1.5, 2.0, 3.0, 5.0, 10.0, 100.0, 600.0)
+REGIME_SHIFT_DOWN_RATIO = 0.50
+REGIME_SHIFT_UP_RATIO = 2.00
 
 
 class LiquidityTransformExperimentInvariantError(ValueError):
@@ -73,6 +76,33 @@ def geometric_history_ratio(
     return math.exp(log_value)
 
 
+def conservative_recovery_ratio(
+    current: float,
+    history_median: float,
+    recovery_current_weight: float,
+) -> float | None:
+    """Test an asymmetric temporal rule without approving it.
+
+    Deterioration relative to the trailing median is recognized fully at the
+    current value. Improvement is blended with history so that recovery must
+    persist before history loses influence. This is an experimental robustness
+    family, not an approved prudential interpretation.
+    """
+    current = _finite(current)
+    history_median = _finite(history_median)
+    if (
+        current is None
+        or history_median is None
+        or current <= 0
+        or history_median <= 0
+        or not 0 <= recovery_current_weight <= 1
+    ):
+        return None
+    if current <= history_median:
+        return current
+    return geometric_history_ratio(current, history_median, recovery_current_weight)
+
+
 def _hard_name(cap: float) -> str:
     return f"hard_log_cap_{str(cap).replace('.', '_')}"
 
@@ -84,6 +114,11 @@ def _tanh_name(tau: float) -> str:
 def _history_name(weight: float) -> str:
     pct = round(weight * 100)
     return f"history_geo_current_{pct:03d}"
+
+
+def _recovery_name(weight: float) -> str:
+    pct = round(weight * 100)
+    return f"conservative_recovery_current_{pct:03d}"
 
 
 def transform_specs() -> list[dict[str, Any]]:
@@ -126,6 +161,26 @@ def transform_specs() -> list[dict[str, Any]]:
         }
         for weight in HISTORY_CURRENT_WEIGHTS
     )
+    specs.extend(
+        {
+            "name": _recovery_name(weight),
+            "family": "conservative_recovery_12m_tanh_log",
+            "bounded": True,
+            "uses_history": True,
+            "recovery_current_weight": weight,
+            "tau": 1.0,
+        }
+        for weight in RECOVERY_CURRENT_WEIGHTS
+    )
+    specs.append(
+        {
+            "name": "recent_median_3m_tanh_log",
+            "family": "recent_median_3m_tanh_log",
+            "bounded": True,
+            "uses_history": True,
+            "tau": 1.0,
+        }
+    )
     return specs
 
 
@@ -141,8 +196,8 @@ def _series_map(entity: dict[str, Any], metric: str) -> dict[int, float]:
     return result
 
 
-def _rolling_median_12(series: dict[int, float], period: int) -> float | None:
-    window = month_window(period, 12)
+def _rolling_median(series: dict[int, float], period: int, months: int) -> float | None:
+    window = month_window(period, months)
     values = [series.get(item) for item in window]
     if any(value is None for value in values):
         return None
@@ -155,7 +210,8 @@ def _rolling_median_12(series: dict[int, float], period: int) -> float | None:
 def _apply_spec(
     ratio: float,
     spec: dict[str, Any],
-    history_median: float | None,
+    history_median_12: float | None,
+    recent_median_3: float | None,
 ) -> float | None:
     family = spec["family"]
     if family == "baseline":
@@ -165,16 +221,31 @@ def _apply_spec(
     if family == "continuous_tanh_log":
         return tanh_log_transform(ratio, float(spec["tau"]))
     if family == "history_geometric_12m_tanh_log":
-        if history_median is None:
+        if history_median_12 is None:
             return None
         blended = geometric_history_ratio(
             ratio,
-            history_median,
+            history_median_12,
             float(spec["current_weight"]),
         )
         if blended is None:
             return None
         return tanh_log_transform(blended, float(spec["tau"]))
+    if family == "conservative_recovery_12m_tanh_log":
+        if history_median_12 is None:
+            return None
+        blended = conservative_recovery_ratio(
+            ratio,
+            history_median_12,
+            float(spec["recovery_current_weight"]),
+        )
+        if blended is None:
+            return None
+        return tanh_log_transform(blended, float(spec["tau"]))
+    if family == "recent_median_3m_tanh_log":
+        if recent_median_3 is None:
+            return None
+        return tanh_log_transform(recent_median_3, float(spec["tau"]))
     raise KeyError(f"Unknown transform family: {family}")
 
 
@@ -327,8 +398,8 @@ def _shape_diagnostics(spec: dict[str, Any]) -> list[dict[str, Any]]:
         return []
     rows: list[dict[str, Any]] = []
     for ratio in REFERENCE_RATIOS:
-        value = _apply_spec(ratio, spec, None)
-        plus_10 = _apply_spec(ratio * 1.10, spec, None)
+        value = _apply_spec(ratio, spec, None, None)
+        plus_10 = _apply_spec(ratio * 1.10, spec, None, None)
         rows.append(
             {
                 "ratio": ratio,
@@ -352,6 +423,60 @@ def _history_response_scenarios(weight: float) -> list[dict[str, float]]:
         }
         for ratio in scenarios
     ]
+
+
+def _regime_shift_diagnostics(
+    series_by_entity: dict[str, dict[int, float]],
+    signals: dict[str, dict[int, float]],
+    reference_period: int,
+    entity_names: dict[str, Any],
+) -> dict[str, Any]:
+    rows: list[dict[str, Any]] = []
+    for entity_id, series in series_by_entity.items():
+        current = _finite(series.get(reference_period))
+        historical = _rolling_median(series, reference_period, 12)
+        transformed = _finite((signals.get(entity_id) or {}).get(reference_period))
+        if (
+            current is None
+            or historical is None
+            or transformed is None
+            or current <= 0
+            or historical <= 0
+        ):
+            continue
+        ratio = current / historical
+        if ratio > REGIME_SHIFT_DOWN_RATIO and ratio < REGIME_SHIFT_UP_RATIO:
+            continue
+        rows.append(
+            {
+                "entity_id": entity_id,
+                "legal_name": entity_names.get(entity_id),
+                "current": current,
+                "median_12m": historical,
+                "current_to_median_12m": ratio,
+                "transformed_signal": transformed,
+            }
+        )
+    down = [row for row in rows if row["current_to_median_12m"] <= REGIME_SHIFT_DOWN_RATIO]
+    up = [row for row in rows if row["current_to_median_12m"] >= REGIME_SHIFT_UP_RATIO]
+    return {
+        "descriptive_thresholds": {
+            "down_current_to_median12_at_or_below": REGIME_SHIFT_DOWN_RATIO,
+            "up_current_to_median12_at_or_above": REGIME_SHIFT_UP_RATIO,
+            "note": "Descriptive stress groups only; not prudential or scoring thresholds.",
+        },
+        "down_count": len(down),
+        "up_count": len(up),
+        "down_cases": sorted(
+            down,
+            key=lambda item: item["current_to_median_12m"],
+        )[:15],
+        "up_cases": sorted(
+            up,
+            key=lambda item: item["current_to_median_12m"],
+            reverse=True,
+        )[:15],
+    }
 
 
 def build_liquidity_transform_experiment(
@@ -381,12 +506,22 @@ def build_liquidity_transform_experiment(
             for entity_id, series in series_by_entity.items():
                 period_signals: dict[int, float] = {}
                 for period, ratio in series.items():
-                    history_median = (
-                        _rolling_median_12(series, period)
+                    history_median_12 = (
+                        _rolling_median(series, period, 12)
                         if spec["uses_history"]
                         else None
                     )
-                    transformed = _apply_spec(ratio, spec, history_median)
+                    recent_median_3 = (
+                        _rolling_median(series, period, 3)
+                        if spec["family"] == "recent_median_3m_tanh_log"
+                        else None
+                    )
+                    transformed = _apply_spec(
+                        ratio,
+                        spec,
+                        history_median_12,
+                        recent_median_3,
+                    )
                     if transformed is not None and math.isfinite(transformed):
                         period_signals[period] = float(transformed)
                 transform_signals[entity_id] = period_signals
@@ -436,6 +571,12 @@ def build_liquidity_transform_experiment(
                     reference_period,
                 ),
                 "shape_reference": _shape_diagnostics(spec),
+                "regime_shift_diagnostics": _regime_shift_diagnostics(
+                    series_by_entity,
+                    signals,
+                    reference_period,
+                    entity_names,
+                ),
             }
             if spec["family"] == "history_geometric_12m_tanh_log":
                 transform_payload["history_response_scenarios"] = (
@@ -455,9 +596,10 @@ def build_liquidity_transform_experiment(
         "reference_period": reference_period,
         "methodology_note": (
             "Transformations are experimental diagnostics, not approved score functions. "
-            "Parity at 1.0 is used only as a mathematical center. Hard caps, tanh tau values "
-            "and history weights are candidate geometries tested for saturation, resolution "
-            "and temporal behavior; none is a prudential threshold or production weight."
+            "Parity at 1.0 is used only as a mathematical center. Hard caps, tanh tau values, "
+            "history weights, recent medians and asymmetric recovery rules are candidate "
+            "geometries tested for saturation, resolution, responsiveness and temporal "
+            "behavior; none is a prudential threshold or production weight."
         ),
         "metrics": output_metrics,
     }
