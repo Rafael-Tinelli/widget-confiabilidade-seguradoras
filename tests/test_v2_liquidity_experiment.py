@@ -120,12 +120,12 @@ def test_current_duplicate_candidate_cmpids_exclude_current_statistics() -> None
 def test_historical_duplicate_invalidates_only_affected_period() -> None:
     source = {
         "balance_values": {
-            202306: _full_values(),
+            202401: _full_values(),
             202605: _full_values(),
             202606: _full_values(),
         },
         "duplicate_balance_cmpid_rows": 2,
-        "duplicate_balance_cmpid_rows_by_period": {202306: 2},
+        "duplicate_balance_cmpid_rows_by_period": {202401: 2},
     }
     experiment = build_entity_liquidity_experiment(_entity(), source, 202606)
     summary = liquidity_experiment_summary([experiment], 202606)
@@ -135,7 +135,7 @@ def test_historical_duplicate_invalidates_only_affected_period() -> None:
     assert experiment["metrics"]["ILC"]["current"]["state"] == "derivable"
     assert summary["quality_excluded_count"] == 0
     history = experiment["metrics"]["ILC"]["series_last_36"]
-    duplicate_period = next(item for item in history if item["period"] == 202306)
+    duplicate_period = next(item for item in history if item["period"] == 202401)
     assert duplicate_period["state"] == "source_duplicate_components"
     assert duplicate_period["value"] is None
     assert duplicate_period["raw_state_before_quality_gate"] == "derivable"
