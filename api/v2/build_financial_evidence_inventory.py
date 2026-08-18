@@ -22,6 +22,7 @@ from api.v2.financial_evidence import (
     financial_evidence_summary,
     validate_financial_evidence,
 )
+from api.v2.financial_periods import apply_mature_financial_reference_period
 from api.v2.relationships import load_verified_relationship_registry
 
 DEFAULT_OUTPUT = Path("data/derived/v2/entity_financial_evidence_inventory.json")
@@ -35,6 +36,7 @@ def build_financial_evidence_inventory(
     eligibility_payload: dict[str, Any],
     source_payload: dict[str, Any],
 ) -> dict[str, Any]:
+    source_payload = apply_mature_financial_reference_period(source_payload)
     entities = apply_financial_evidence(
         list(eligibility_payload.get("entities") or []),
         source_payload,
@@ -52,15 +54,20 @@ def build_financial_evidence_inventory(
             "financial_reference_periods": dict(
                 source_payload.get("reference_periods") or {}
             ),
+            "financial_period_maturity": dict(
+                source_payload.get("period_maturity") or {}
+            ),
             "financial_source": dict(source_payload.get("source") or {}),
             "financial_evidence_contract_note": (
                 "This stage profiles evidence completeness only. It does not assign a score, "
                 "rating, assessment eligibility, ranking eligibility or comparison cohort. "
-                "A complete 12-month capital and balance history identifies an annual core "
-                "observation window for methodology study; shorter histories remain visible "
-                "as limited history rather than being treated as poor financial performance. "
-                "Twenty-four and thirty-six month windows are retained for later stability "
-                "and confidence tests."
+                "Financial evidence is aligned to the latest common mature period rather than "
+                "blindly using the latest observed month when prudential coverage is still "
+                "materially incomplete. A complete 12-month capital and balance history "
+                "identifies an annual core observation window for methodology study; shorter "
+                "histories remain visible as limited history rather than being treated as poor "
+                "financial performance. Twenty-four and thirty-six month windows are retained "
+                "for later stability and confidence tests."
             ),
         },
         "unresolved": eligibility_payload.get("unresolved") or {},
@@ -114,9 +121,12 @@ def main() -> None:
     payload = build_financial_evidence_inventory(eligibility, source_payload)
     path = write_financial_evidence_inventory(payload)
     meta = payload["meta"]
+    maturity = meta.get("financial_period_maturity") or {}
     print(
         "V2 financial evidence: "
         f"regulatory={meta['regulatory_eligible_count']} "
+        f"reference={meta['financial_reference_periods'].get('capital')} "
+        f"maturity={maturity.get('status')} "
         f"core_ready={meta['core_financial_evidence_ready_count']} "
         f"states={meta['financial_evidence_state_counts']} "
         f"assessment={meta['assessment_eligible_count']} "
