@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import math
-from statistics import median
 from typing import Any
 
 import numpy as np
@@ -128,9 +127,7 @@ def _capital_redundancy(
     liquidity = [item[0] for item in paired]
     capital = [item[1] for item in paired]
     raw = _correlation(liquidity, capital)
-    positive = [
-        (liq, cap) for liq, cap in paired if liq > -1.0 and cap > -1.0
-    ]
+    positive = [(liq, cap) for liq, cap in paired if liq > -1.0 and cap > -1.0]
     log_result = _correlation(
         [math.log1p(item[0]) for item in positive],
         [math.log1p(item[1]) for item in positive],
