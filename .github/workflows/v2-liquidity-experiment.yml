@@ -69,7 +69,10 @@ jobs:
           PY
 
       - name: Run liquidity experiment unit tests
-        run: python -m pytest -q tests/test_v2_liquidity_experiment.py
+        run: |
+          python -m pytest -q \
+            tests/test_v2_liquidity_experiment.py \
+            tests/test_v2_liquidity_diagnostics.py
 
       - name: Build liquidity experiment
         run: python -m api.v2.build_liquidity_experiment
@@ -89,6 +92,7 @@ jobs:
           if payload.get("status") != "experimental":
               raise SystemExit("liquidity artifact must remain experimental")
 
+          diagnostics = summary["diagnostics"]["metrics"]
           compact = {
               "reference_period": summary.get("reference_period"),
               "entity_count": summary.get("entity_count"),
@@ -97,23 +101,25 @@ jobs:
               "current_ilc_ilt_correlation": summary.get("current_ilc_ilt_correlation"),
               "ILC": {
                   "states": summary["metrics"]["ILC"]["current_state_counts_all_entities"],
-                  "flags": summary["metrics"]["ILC"]["current_flag_counts_all_entities"],
                   "distribution": summary["metrics"]["ILC"]["current_distribution_excluding_quality_issues"],
                   "complete_history": summary["metrics"]["ILC"]["complete_derivable_history_counts"],
-                  "rank_stability": summary["metrics"]["ILC"]["cross_section_rank_stability_vs_current"],
-                  "bottom_10": summary["metrics"]["ILC"]["current_bottom_10"],
-                  "top_10": summary["metrics"]["ILC"]["current_top_10"],
-                  "outliers": summary["metrics"]["ILC"]["current_tukey_outliers"],
+                  "rank_stability": summary["metrics"]["ILC"]["cross_section_rank_stability_vs_current"]["summary"],
+                  "bands": diagnostics["ILC"]["descriptive_bands"],
+                  "denominator": diagnostics["ILC"]["denominator"],
+                  "capital_redundancy": diagnostics["ILC"]["capital_pla_cmr_redundancy"],
+                  "current_vs_history": diagnostics["ILC"]["current_vs_12m_history"],
+                  "non_derivable_current": diagnostics["ILC"]["non_derivable_current"],
               },
               "ILT": {
                   "states": summary["metrics"]["ILT"]["current_state_counts_all_entities"],
-                  "flags": summary["metrics"]["ILT"]["current_flag_counts_all_entities"],
                   "distribution": summary["metrics"]["ILT"]["current_distribution_excluding_quality_issues"],
                   "complete_history": summary["metrics"]["ILT"]["complete_derivable_history_counts"],
-                  "rank_stability": summary["metrics"]["ILT"]["cross_section_rank_stability_vs_current"],
-                  "bottom_10": summary["metrics"]["ILT"]["current_bottom_10"],
-                  "top_10": summary["metrics"]["ILT"]["current_top_10"],
-                  "outliers": summary["metrics"]["ILT"]["current_tukey_outliers"],
+                  "rank_stability": summary["metrics"]["ILT"]["cross_section_rank_stability_vs_current"]["summary"],
+                  "bands": diagnostics["ILT"]["descriptive_bands"],
+                  "denominator": diagnostics["ILT"]["denominator"],
+                  "capital_redundancy": diagnostics["ILT"]["capital_pla_cmr_redundancy"],
+                  "current_vs_history": diagnostics["ILT"]["current_vs_12m_history"],
+                  "non_derivable_current": diagnostics["ILT"]["non_derivable_current"],
               },
           }
           print(json.dumps(compact, ensure_ascii=False, indent=2))
