@@ -95,15 +95,19 @@ def test_negative_numerator_remains_derivable_but_flagged() -> None:
     assert result["flags"] == ["negative_numerator", "negative_ratio"]
 
 
-def test_duplicate_candidate_cmpids_exclude_entity_from_statistics() -> None:
+def test_current_duplicate_candidate_cmpids_exclude_current_statistics() -> None:
     source = {
         "balance_values": {202606: _full_values()},
         "duplicate_balance_cmpid_rows": 2,
+        "duplicate_balance_cmpid_rows_by_period": {202606: 2},
     }
     experiment = build_entity_liquidity_experiment(_entity(), source, 202606)
     summary = liquidity_experiment_summary([experiment], 202606)
 
     assert experiment["quality_excluded_from_statistics"] is True
+    assert experiment["duplicate_candidate_balance_cmpid_rows_current"] == 2
+    assert experiment["metrics"]["ILC"]["current"]["state"] == "source_duplicate_components"
+    assert experiment["metrics"]["ILC"]["current"]["value"] is None
     assert summary["quality_excluded_count"] == 1
     assert (
         summary["metrics"]["ILC"]["current_distribution_excluding_quality_issues"][
@@ -111,6 +115,30 @@ def test_duplicate_candidate_cmpids_exclude_entity_from_statistics() -> None:
         ]
         == 0
     )
+
+
+def test_historical_duplicate_invalidates_only_affected_period() -> None:
+    source = {
+        "balance_values": {
+            202306: _full_values(),
+            202605: _full_values(),
+            202606: _full_values(),
+        },
+        "duplicate_balance_cmpid_rows": 2,
+        "duplicate_balance_cmpid_rows_by_period": {202306: 2},
+    }
+    experiment = build_entity_liquidity_experiment(_entity(), source, 202606)
+    summary = liquidity_experiment_summary([experiment], 202606)
+
+    assert experiment["quality_excluded_from_statistics"] is False
+    assert experiment["duplicate_candidate_balance_cmpid_rows_current"] == 0
+    assert experiment["metrics"]["ILC"]["current"]["state"] == "derivable"
+    assert summary["quality_excluded_count"] == 0
+    history = experiment["metrics"]["ILC"]["series_last_36"]
+    duplicate_period = next(item for item in history if item["period"] == 202306)
+    assert duplicate_period["state"] == "source_duplicate_components"
+    assert duplicate_period["value"] is None
+    assert duplicate_period["raw_state_before_quality_gate"] == "derivable"
 
 
 def test_complete_history_is_measured_without_becoming_score() -> None:
@@ -139,7 +167,7 @@ def test_complete_history_is_measured_without_becoming_score() -> None:
     assert "score" not in experiment
 
 
-def test_artifact_validator_rejects_no_valid_experiment() -> None:
+def test_artifact_validator_accepts_valid_experiment_without_scoring_fields() -> None:
     source = {
         "balance_values": {202606: _full_values()},
         "duplicate_balance_cmpid_rows": 0,
