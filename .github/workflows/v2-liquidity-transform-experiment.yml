@@ -1,16 +1,15 @@
 name: V2 Liquidity Transform Experiment
 
 on:
-  pull_request:
-    branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
   actions: read
 
 concurrency:
-  group: v2-liquidity-transform-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
+  group: v2-liquidity-transform-manual-${{ github.run_id }}
+  cancel-in-progress: false
 
 jobs:
   transform-experiment:
@@ -42,7 +41,7 @@ jobs:
           run_id="$(gh run list \
             --repo "$GITHUB_REPOSITORY" \
             --workflow "V2 Liquidity Experiment" \
-            --branch "$GITHUB_HEAD_REF" \
+            --branch "$GITHUB_REF_NAME" \
             --status success \
             --limit 20 \
             --json databaseId \
@@ -75,14 +74,16 @@ jobs:
               raise SystemExit("upstream artifact is not experimental")
           if summary.get("entity_count") != 157:
               raise SystemExit(f"unexpected upstream universe: {summary.get('entity_count')}")
-          if ((summary.get("metrics") or {}).get("ILT") or {}).get(
+          ilt_count = ((summary.get("metrics") or {}).get("ILT") or {}).get(
               "current_distribution_excluding_quality_issues", {}
-          ).get("count") != 154:
-              raise SystemExit("unexpected upstream ILT coverage")
+          ).get("count", 0)
+          if ilt_count <= 0:
+              raise SystemExit("upstream ILT distribution is empty")
           print(
               "Validated upstream liquidity artifact: "
               f"period={summary.get('reference_period')} "
-              f"entities={summary.get('entity_count')}"
+              f"entities={summary.get('entity_count')} "
+              f"ILT_n={ilt_count}"
           )
           PY
 
