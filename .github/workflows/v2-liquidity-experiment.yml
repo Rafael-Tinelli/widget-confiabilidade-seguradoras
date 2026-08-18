@@ -72,10 +72,14 @@ jobs:
         run: |
           python -m pytest -q \
             tests/test_v2_liquidity_experiment.py \
-            tests/test_v2_liquidity_diagnostics.py
+            tests/test_v2_liquidity_diagnostics.py \
+            tests/test_v2_liquidity_transform_experiment.py
 
       - name: Build liquidity experiment
         run: python -m api.v2.build_liquidity_experiment
+
+      - name: Build liquidity transform experiment
+        run: python -m api.v2.build_liquidity_transform_experiment
 
       - name: Print quantitative diagnostics
         run: |
@@ -125,6 +129,46 @@ jobs:
           print(json.dumps(compact, ensure_ascii=False, indent=2))
           PY
 
+      - name: Print transform comparison
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          path = Path("data/derived/v2/liquidity_transform_experiment.json")
+          payload = json.loads(path.read_text(encoding="utf-8"))
+          if payload.get("status") != "experimental":
+              raise SystemExit("transform artifact must remain experimental")
+
+          def compact(metric):
+              transforms = payload["metrics"][metric]["transforms"]
+              result = {}
+              for name, item in transforms.items():
+                  stability = item["rank_stability_vs_current"]["summary"]
+                  shift = item["current_rank_shift_vs_raw"]
+                  resolution = item["current_resolution"]
+                  result[name] = {
+                      "n": item["current_distribution"].get("count", 0),
+                      "median_signal": item["current_distribution"].get("median"),
+                      "rank_spearman_vs_raw": item.get("current_rank_spearman_vs_raw"),
+                      "median_stability": stability.get("median_spearman"),
+                      "min_stability": stability.get("min_spearman"),
+                      "mean_abs_rank_shift": shift.get("mean_absolute_rank_shift"),
+                      "p90_abs_rank_shift": shift.get("p90_absolute_rank_shift"),
+                      "unique_values": resolution.get("unique_values"),
+                      "exact_ceiling": resolution.get("exact_ceiling_count", 0),
+                      "near_ceiling_0_99": resolution.get("near_ceiling_0_99_count", 0),
+                  }
+              return result
+
+          print(json.dumps({
+              "reference_period": payload["reference_period"],
+              "ILT": compact("ILT"),
+              "ILC_control": compact("ILC"),
+          }, ensure_ascii=False, indent=2))
+          PY
+
       - name: Upload liquidity experiment artifact
         if: always()
         uses: actions/upload-artifact@v4
@@ -134,4 +178,5 @@ jobs:
           if-no-files-found: warn
           path: |
             data/derived/v2/liquidity_experiment.json
+            data/derived/v2/liquidity_transform_experiment.json
             data/derived/audit/ses/**
