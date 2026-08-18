@@ -11,7 +11,7 @@ from scipy.stats import spearmanr
 
 from api.v2.financial_evidence import month_window
 
-LIQUIDITY_EXPERIMENT_VERSION = "2.0-draft-liquidity-experiment-1"
+LIQUIDITY_EXPERIMENT_VERSION = "2.0-draft-liquidity-experiment-2"
 HISTORY_WINDOWS = (12, 24, 36)
 
 # SUSEP, "Índices para Análise Econômico-Financeira das Supervisionadas" (2018).
@@ -131,6 +131,24 @@ def calculate_liquidity_observation(
     }
 
 
+def _invalidate_duplicate_period(
+    observation: dict[str, Any], duplicate_rows: int
+) -> dict[str, Any]:
+    if duplicate_rows <= 0:
+        return observation
+    output = dict(observation)
+    output["raw_state_before_quality_gate"] = output.get("state")
+    output["raw_value_before_quality_gate"] = output.get("value")
+    output["state"] = "source_duplicate_components"
+    output["value"] = None
+    output["duplicate_candidate_balance_cmpid_rows"] = duplicate_rows
+    output["flags"] = list(dict.fromkeys([
+        *(output.get("flags") or []),
+        "duplicate_candidate_balance_cmpids",
+    ]))
+    return output
+
+
 def _robust_stats(values: list[float]) -> dict[str, Any]:
     if not values:
         return {"count": 0}
@@ -215,13 +233,24 @@ def build_entity_liquidity_experiment(
 ) -> dict[str, Any]:
     balance_values = source_entity.get("balance_values") or {}
     duplicate_count = int(source_entity.get("duplicate_balance_cmpid_rows") or 0)
-    quality_excluded = duplicate_count > 0
+    duplicate_by_period = {
+        int(period): int(count)
+        for period, count in (
+            source_entity.get("duplicate_balance_cmpid_rows_by_period") or {}
+        ).items()
+    }
+    current_duplicate_count = int(duplicate_by_period.get(reference_period or -1, 0))
+    quality_excluded = current_duplicate_count > 0
     metrics: dict[str, Any] = {}
     for metric in LIQUIDITY_FORMULAS:
         series: list[dict[str, Any]] = []
         for period in sorted(int(item) for item in balance_values):
             observation = calculate_liquidity_observation(
                 balance_values.get(period, {}), metric
+            )
+            observation = _invalidate_duplicate_period(
+                observation,
+                duplicate_by_period.get(period, 0),
             )
             series.append({"period": period, **observation})
         current = next(
@@ -244,11 +273,13 @@ def build_entity_liquidity_experiment(
         "reference_period": reference_period,
         "quality_excluded_from_statistics": quality_excluded,
         "quality_reason_codes": (
-            ["duplicate_candidate_balance_cmpids_require_review"]
+            ["duplicate_candidate_balance_cmpids_current_period"]
             if quality_excluded
             else []
         ),
         "duplicate_candidate_balance_cmpid_rows": duplicate_count,
+        "duplicate_candidate_balance_cmpid_rows_current": current_duplicate_count,
+        "duplicate_candidate_balance_cmpid_rows_by_period": duplicate_by_period,
         "metrics": metrics,
     }
 
@@ -435,8 +466,8 @@ def liquidity_experiment_summary(
                 "entity_id": item.get("entity_id"),
                 "fip_code": item.get("fip_code"),
                 "legal_name": item.get("legal_name"),
-                "duplicate_candidate_balance_cmpid_rows": item.get(
-                    "duplicate_candidate_balance_cmpid_rows"
+                "duplicate_candidate_balance_cmpid_rows_current": item.get(
+                    "duplicate_candidate_balance_cmpid_rows_current"
                 ),
             }
             for item in quality_excluded
@@ -447,8 +478,8 @@ def liquidity_experiment_summary(
             "Experimental calculations only. No liquidity value, distribution position, "
             "outlier flag or temporal statistic changes assessment eligibility, ranking "
             "eligibility or any score. Missing CMPIDs are not imputed as zero; non-positive "
-            "denominators are not divided; entities with duplicate candidate CMPIDs are "
-            "excluded from cross-sectional statistics pending source review."
+            "denominators are not divided; duplicate candidate CMPIDs invalidate only the "
+            "affected reporting period rather than the entity's entire history."
         ),
     }
 
