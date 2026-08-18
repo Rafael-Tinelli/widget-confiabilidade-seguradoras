@@ -261,6 +261,7 @@ def _read_balance_history(
     dict[str, dict[int, dict[int, float]]],
     set[int],
     dict[str, int],
+    dict[str, dict[int, int]],
 ]:
     _, mapping = _header_map(z, member)
     columns = _require_columns(
@@ -274,6 +275,9 @@ def _read_balance_history(
     )
     periods: set[int] = set()
     duplicate_counts: dict[str, int] = defaultdict(int)
+    duplicate_counts_by_period: dict[str, dict[int, int]] = defaultdict(
+        lambda: defaultdict(int)
+    )
 
     with z.open(member) as handle:
         for chunk in pd.read_csv(
@@ -316,6 +320,7 @@ def _read_balance_history(
                 existing = values[fip][period].get(cmpid)
                 if existing is not None:
                     duplicate_counts[fip] += 1
+                    duplicate_counts_by_period[fip][period] += 1
                     values[fip][period][cmpid] = existing + float(amount)
                 else:
                     values[fip][period][cmpid] = float(amount)
@@ -328,6 +333,10 @@ def _read_balance_history(
         },
         periods,
         dict(duplicate_counts),
+        {
+            fip: dict(period_counts)
+            for fip, period_counts in duplicate_counts_by_period.items()
+        },
     )
 
 
@@ -420,6 +429,7 @@ def load_susep_financial_evidence(
             balance_values,
             balance_periods,
             balance_duplicates,
+            balance_duplicates_by_period,
         ) = _read_balance_history(z, balance_member, fips)
         (
             operation_periods_by_fip,
@@ -437,6 +447,9 @@ def load_susep_financial_evidence(
             "nonzero_premium_periods": nonzero_premium_periods.get(fip, set()),
             "duplicate_capital_rows": capital_duplicates.get(fip, 0),
             "duplicate_balance_cmpid_rows": balance_duplicates.get(fip, 0),
+            "duplicate_balance_cmpid_rows_by_period": balance_duplicates_by_period.get(
+                fip, {}
+            ),
         }
 
     return {
