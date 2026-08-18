@@ -4,6 +4,7 @@ import math
 
 from api.v2.liquidity_transform_experiment import (
     build_liquidity_transform_experiment,
+    conservative_recovery_ratio,
     geometric_history_ratio,
     hard_log_saturation,
     tanh_log_transform,
@@ -105,6 +106,18 @@ def test_geometric_history_blend_has_expected_endpoints() -> None:
     assert math.isclose(geometric_history_ratio(4.0, 1.0, 0.5), 2.0)
 
 
+def test_conservative_recovery_recognizes_deterioration_fully() -> None:
+    assert math.isclose(conservative_recovery_ratio(0.5, 2.0, 0.25), 0.5)
+    assert math.isclose(conservative_recovery_ratio(1.5, 2.0, 0.25), 1.5)
+
+
+def test_conservative_recovery_smooths_improvement_only() -> None:
+    result = conservative_recovery_ratio(4.0, 1.0, 0.5)
+    assert result is not None
+    assert math.isclose(result, 2.0)
+    assert 1.0 < result < 4.0
+
+
 def test_transform_experiment_keeps_raw_and_history_families_separate() -> None:
     result = build_liquidity_transform_experiment(_payload())
     ilt = result["metrics"]["ILT"]["transforms"]
@@ -113,6 +126,8 @@ def test_transform_experiment_keeps_raw_and_history_families_separate() -> None:
     assert ilt["raw_ratio"]["current_distribution"]["count"] == 6
     assert ilt["tanh_log_tau_1_0"]["current_rank_spearman_vs_raw"] == 1.0
     assert ilt["history_geo_current_050"]["current_distribution"]["count"] == 6
+    assert ilt["recent_median_3m_tanh_log"]["current_distribution"]["count"] == 6
+    assert ilt["conservative_recovery_current_050"]["current_distribution"]["count"] == 6
     assert (
         ilt["history_geo_current_050"]["rank_stability_vs_current"]["summary"][
             "count"
@@ -129,6 +144,17 @@ def test_hard_cap_creates_explicit_saturation_resolution_loss() -> None:
 
     assert item["current_resolution"]["exact_ceiling_count"] >= 2
     assert item["current_resolution"]["unique_values"] < 7
+
+
+def test_regime_shift_diagnostics_are_explicitly_descriptive() -> None:
+    result = build_liquidity_transform_experiment(_payload())
+    diagnostics = result["metrics"]["ILT"]["transforms"]["raw_ratio"][
+        "regime_shift_diagnostics"
+    ]
+    assert diagnostics["descriptive_thresholds"][
+        "down_current_to_median12_at_or_below"
+    ] == 0.5
+    assert "not prudential" in diagnostics["descriptive_thresholds"]["note"]
 
 
 def test_transform_artifact_contains_no_scoring_contract_fields() -> None:
