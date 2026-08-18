@@ -17,6 +17,7 @@ from api.v2.build_eligibility_inventory import build_eligibility_inventory
 from api.v2.build_lifecycle_relationship_inventory import (
     build_lifecycle_relationship_inventory,
 )
+from api.v2.liquidity_diagnostics import build_liquidity_diagnostics
 from api.v2.liquidity_experiment import (
     build_entity_liquidity_experiment,
     liquidity_experiment_summary,
@@ -52,6 +53,7 @@ def build_liquidity_experiment(
     ]
     entities.sort(key=lambda item: str(item.get("entity_id") or ""))
     summary = liquidity_experiment_summary(entities, reference_period)
+    summary["diagnostics"] = build_liquidity_diagnostics(entities, source_payload)
     payload = {
         "artifact": "v2_liquidity_experiment",
         "generated_at": _utc_now(),
@@ -106,13 +108,16 @@ def main() -> None:
     ilc = summary["metrics"]["ILC"]["current_distribution_excluding_quality_issues"]
     ilt = summary["metrics"]["ILT"]["current_distribution_excluding_quality_issues"]
     corr = summary["current_ilc_ilt_correlation"]
+    diagnostics = summary["diagnostics"]["metrics"]
     print(
         "V2 liquidity experiment: "
         f"entities={summary['entity_count']} "
         f"quality_excluded={summary['quality_excluded_count']} "
         f"ILC_n={ilc.get('count', 0)} ILC_median={ilc.get('median')} "
         f"ILT_n={ilt.get('count', 0)} ILT_median={ilt.get('median')} "
-        f"paired={corr.get('count')} spearman={corr.get('spearman')}; "
+        f"paired={corr.get('count')} spearman={corr.get('spearman')} "
+        f"ILC_capital_spearman={diagnostics['ILC']['capital_pla_cmr_redundancy']['raw']['spearman']} "
+        f"ILT_capital_spearman={diagnostics['ILT']['capital_pla_cmr_redundancy']['raw']['spearman']}; "
         f"written to {path}"
     )
 
