@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 from statistics import median
-from typing import Any, Callable
+from typing import Any
 
 import numpy as np
 from scipy.stats import rankdata, spearmanr
@@ -82,7 +82,7 @@ def _tanh_name(tau: float) -> str:
 
 
 def _history_name(weight: float) -> str:
-    pct = int(round(weight * 100))
+    pct = round(weight * 100)
     return f"history_geo_current_{pct:03d}"
 
 
@@ -415,7 +415,7 @@ def build_liquidity_transform_experiment(
             rank_shift = _rank_shift(raw_current, current)
             for mover in rank_shift.get("largest_movers") or []:
                 mover["legal_name"] = entity_names.get(mover["entity_id"])
-            payload: dict[str, Any] = {
+            transform_payload: dict[str, Any] = {
                 "family": spec["family"],
                 "parameters": {
                     key: value
@@ -438,10 +438,10 @@ def build_liquidity_transform_experiment(
                 "shape_reference": _shape_diagnostics(spec),
             }
             if spec["family"] == "history_geometric_12m_tanh_log":
-                payload["history_response_scenarios"] = _history_response_scenarios(
-                    float(spec["current_weight"])
+                transform_payload["history_response_scenarios"] = (
+                    _history_response_scenarios(float(spec["current_weight"]))
                 )
-            transform_summaries[name] = payload
+            transform_summaries[name] = transform_payload
 
         output_metrics[metric] = {
             "raw_current_count": len(raw_current),
