@@ -19,6 +19,7 @@ from api.v2.build_lifecycle_relationship_inventory import (
     build_lifecycle_relationship_inventory,
 )
 from api.v2.eligibility import validate_eligibility
+from api.v2.financial_periods import apply_mature_financial_reference_period
 from api.v2.liquidity_diagnostics import build_liquidity_diagnostics
 from api.v2.liquidity_experiment import (
     build_entity_liquidity_experiment,
@@ -69,6 +70,7 @@ def build_liquidity_experiment(
     eligibility_payload: dict[str, Any],
     source_payload: dict[str, Any],
 ) -> dict[str, Any]:
+    source_payload = apply_mature_financial_reference_period(source_payload)
     source_entities = source_payload.get("entities") or {}
     reference_period = (source_payload.get("reference_periods") or {}).get("balance")
     eligible_entities = [
@@ -86,6 +88,7 @@ def build_liquidity_experiment(
     ]
     entities.sort(key=lambda item: str(item.get("entity_id") or ""))
     summary = liquidity_experiment_summary(entities, reference_period)
+    summary["period_maturity"] = dict(source_payload.get("period_maturity") or {})
     summary["diagnostics"] = build_liquidity_diagnostics(entities, source_payload)
     payload = {
         "artifact": "v2_liquidity_experiment",
@@ -153,10 +156,13 @@ def main() -> None:
     ilt = summary["metrics"]["ILT"]["current_distribution_excluding_quality_issues"]
     corr = summary["current_ilc_ilt_correlation"]
     diagnostics = summary["diagnostics"]["metrics"]
+    maturity = summary.get("period_maturity") or {}
     print(
         "V2 liquidity experiment: "
         f"eligibility_source={eligibility_source} "
         f"entities={summary['entity_count']} "
+        f"reference={summary.get('reference_period')} "
+        f"maturity={maturity.get('status')} "
         f"quality_excluded={summary['quality_excluded_count']} "
         f"ILC_n={ilc.get('count', 0)} ILC_median={ilc.get('median')} "
         f"ILT_n={ilt.get('count', 0)} ILT_median={ilt.get('median')} "
