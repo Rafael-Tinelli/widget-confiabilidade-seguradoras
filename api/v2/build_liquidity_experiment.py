@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -17,6 +18,7 @@ from api.v2.build_eligibility_inventory import build_eligibility_inventory
 from api.v2.build_lifecycle_relationship_inventory import (
     build_lifecycle_relationship_inventory,
 )
+from api.v2.eligibility import validate_eligibility
 from api.v2.liquidity_diagnostics import build_liquidity_diagnostics
 from api.v2.liquidity_experiment import (
     build_entity_liquidity_experiment,
@@ -26,10 +28,41 @@ from api.v2.liquidity_experiment import (
 from api.v2.relationships import load_verified_relationship_registry
 
 DEFAULT_OUTPUT = Path("data/derived/v2/liquidity_experiment.json")
+ELIGIBILITY_INPUT_ENV = "V2_ELIGIBILITY_INPUT"
 
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def load_validated_eligibility_artifact(path: Path) -> dict[str, Any]:
+    """Load a previously validated upstream eligibility snapshot.
+
+    Downstream financial experiments should not need to re-query live regulatory
+    identity sources when their input contract is already materialized by the
+    eligibility workflow. The artifact is still revalidated before use.
+    """
+    if not path.exists():
+        raise RuntimeError(f"Eligibility artifact unavailable at {path}")
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if payload.get("artifact") != "v2_entity_eligibility_inventory":
+        raise RuntimeError("Unexpected eligibility artifact contract")
+    entities = list(payload.get("entities") or [])
+    validate_eligibility(entities)
+    expected = int(
+        ((payload.get("meta") or {}).get("regulatory_universe_eligible_count")) or 0
+    )
+    actual = sum(
+        bool((entity.get("eligibility") or {}).get("regulatory_universe_eligible"))
+        for entity in entities
+    )
+    if expected != actual:
+        raise RuntimeError(
+            f"Eligibility artifact count mismatch: meta={expected} actual={actual}"
+        )
+    if actual <= 0:
+        raise RuntimeError("Eligibility artifact contains no regulatory universe")
+    return payload
 
 
 def build_liquidity_experiment(
@@ -76,7 +109,7 @@ def write_liquidity_experiment(
     return output
 
 
-def main() -> None:
+def _build_live_eligibility() -> dict[str, Any]:
     group_records = load_susep_economic_groups()
     ses_out = extract_ses_master_and_financials()
     if not isinstance(ses_out, tuple) or len(ses_out) < 2:
@@ -94,7 +127,18 @@ def main() -> None:
         load_verified_relationship_registry(),
         group_records,
     )
-    eligibility = build_eligibility_inventory(lifecycle)
+    return build_eligibility_inventory(lifecycle)
+
+
+def main() -> None:
+    eligibility_input = os.getenv(ELIGIBILITY_INPUT_ENV, "").strip()
+    if eligibility_input:
+        eligibility = load_validated_eligibility_artifact(Path(eligibility_input))
+        eligibility_source = f"validated_artifact:{eligibility_input}"
+    else:
+        eligibility = _build_live_eligibility()
+        eligibility_source = "live_upstream_rebuild"
+
     eligible_fips = [
         str(entity.get("fip_code") or "")
         for entity in eligibility["entities"]
@@ -111,6 +155,7 @@ def main() -> None:
     diagnostics = summary["diagnostics"]["metrics"]
     print(
         "V2 liquidity experiment: "
+        f"eligibility_source={eligibility_source} "
         f"entities={summary['entity_count']} "
         f"quality_excluded={summary['quality_excluded_count']} "
         f"ILC_n={ilc.get('count', 0)} ILC_median={ilc.get('median')} "
