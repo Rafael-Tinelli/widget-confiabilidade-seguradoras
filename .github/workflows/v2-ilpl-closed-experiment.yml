@@ -1,0 +1,172 @@
+name: V2 ILPL Closed Experiment
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: v2-ilpl-closed-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  ilpl-closed-experiment:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      GH_TOKEN: ${{ github.token }}
+      V2_ELIGIBILITY_INPUT: data/derived/v2/entity_eligibility_inventory.json
+      SES_ALLOW_INSECURE_SSL: "1"
+      SES_KEEP_ZIP: "1"
+      SES_WRITE_AUDIT: "1"
+      SES_CACHE_DIR: "data/raw/ses"
+      SES_ZIP_URL: "http://127.0.0.1:9/BaseCompleta.zip"
+      SES_ZIP_URL_FALLBACK: "http://127.0.0.1:9/BaseCompleta.zip"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install -r requirements-dev.txt
+
+      - name: Restore validated SES source cache
+        uses: actions/cache/restore@v4
+        with:
+          path: data/raw/ses
+          key: v2-ilpl-ses-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: |
+            ses-source-${{ runner.os }}-
+
+      - name: Verify cached BaseCompleta
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import zipfile
+          from pathlib import Path
+          path = Path("data/raw/ses/BaseCompleta.zip")
+          if not path.exists() or path.stat().st_size < 100_000_000:
+              raise SystemExit("valid cached BaseCompleta.zip is required")
+          if not zipfile.is_zipfile(path):
+              raise SystemExit("cached BaseCompleta.zip is not a valid ZIP")
+          print(f"SES cache OK: {path.stat().st_size} bytes")
+          PY
+
+      - name: Restore latest validated eligibility artifact
+        run: |
+          set -euo pipefail
+          run_id="$(gh run list \
+            --repo "$GITHUB_REPOSITORY" \
+            --workflow "V2 Eligibility Validation" \
+            --branch "$GITHUB_HEAD_REF" \
+            --status success \
+            --limit 20 \
+            --json databaseId \
+            --jq '.[0].databaseId')"
+          if [[ -z "$run_id" || "$run_id" == "null" ]]; then
+            echo "No successful upstream eligibility artifact found." >&2
+            exit 1
+          fi
+          rm -rf "$RUNNER_TEMP/eligibility-upstream"
+          mkdir -p "$RUNNER_TEMP/eligibility-upstream"
+          gh run download "$run_id" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name "v2-eligibility-$run_id" \
+            --dir "$RUNNER_TEMP/eligibility-upstream"
+          source_file="$(find "$RUNNER_TEMP/eligibility-upstream" -type f -name entity_eligibility_inventory.json | head -n 1)"
+          if [[ -z "$source_file" ]]; then
+            echo "Upstream artifact does not contain entity_eligibility_inventory.json" >&2
+            exit 1
+          fi
+          mkdir -p "$(dirname "$V2_ELIGIBILITY_INPUT")"
+          cp "$source_file" "$V2_ELIGIBILITY_INPUT"
+
+      - name: Verify preregistered criteria are frozen
+        run: |
+          python - <<'PY'
+          from api.v2.ilpl_experiment import SURVIVAL_CRITERIA, SURVIVAL_CRITERIA_VERSION
+          expected = {
+              "current_coverage_min": 0.90,
+              "paired_prior_equivalent_coverage_min": 0.75,
+              "same_month_rank_stability_median_min": 0.70,
+              "year_end_rank_stability_median_min": 0.70,
+              "sign_persistence_min": 0.70,
+              "scale_bias_abs_spearman_max": 0.30,
+              "redundancy_abs_spearman_max": 0.50,
+              "minimum_same_month_comparisons": 2,
+              "minimum_year_end_comparisons": 2,
+          }
+          if SURVIVAL_CRITERIA != expected:
+              raise SystemExit("closed ILPL survival criteria differ from preregistration")
+          print(SURVIVAL_CRITERIA_VERSION, SURVIVAL_CRITERIA)
+          PY
+
+      - name: Run closed ILPL unit tests
+        run: python -m pytest -q tests/test_v2_ilpl_experiment.py
+
+      - name: Build closed ILPL experiment
+        run: python -m api.v2.build_ilpl_experiment
+
+      - name: Print closed decision record
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          payload = json.loads(
+              Path("data/derived/v2/ilpl_experiment.json").read_text(encoding="utf-8")
+          )
+          if payload.get("status") != "experimental_closed":
+              raise SystemExit("ILPL artifact must remain experimental_closed")
+          summary = payload["summary"]
+          survival = payload["survival"]
+          if summary.get("entity_count") != 157:
+              raise SystemExit(f"unexpected ILPL universe: {summary.get('entity_count')}")
+
+          compact = {
+              "criteria_version": payload.get("criteria_version"),
+              "criteria": payload.get("criteria_locked_before_first_basecompleta_run"),
+              "reference_period": summary.get("reference_period"),
+              "period_maturity": payload.get("period_maturity"),
+              "current_state_counts": summary.get("current_state_counts"),
+              "current_derivable_count": summary.get("current_derivable_count"),
+              "current_coverage": summary.get("current_coverage"),
+              "current_distribution": summary.get("current_distribution"),
+              "current_sign_counts": summary.get("current_sign_counts"),
+              "prior_equivalent_period": summary.get("prior_equivalent_period"),
+              "paired_prior_equivalent_count": summary.get("paired_prior_equivalent_count"),
+              "paired_prior_equivalent_coverage": summary.get("paired_prior_equivalent_coverage"),
+              "same_month_rank_stability": summary.get("same_month_rank_stability"),
+              "year_end_reference_period": summary.get("year_end_reference_period"),
+              "year_end_rank_stability": summary.get("year_end_rank_stability"),
+              "sign_persistence": summary.get("sign_persistence"),
+              "scale_bias_abs_ilpl_vs_average_equity": summary.get("scale_bias_abs_ilpl_vs_average_equity"),
+              "redundancy": summary.get("redundancy"),
+              "extreme_diagnostics": summary.get("extreme_diagnostics"),
+              "survival": survival,
+          }
+          print(json.dumps(compact, ensure_ascii=False, indent=2))
+          PY
+
+      - name: Upload closed ILPL artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: v2-ilpl-closed-experiment-${{ github.run_id }}
+          retention-days: 14
+          path: data/derived/v2/ilpl_experiment.json
