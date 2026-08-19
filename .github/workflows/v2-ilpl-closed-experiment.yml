@@ -1,16 +1,15 @@
 name: V2 ILPL Closed Experiment
 
 on:
-  pull_request:
-    branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
   actions: read
 
 concurrency:
-  group: v2-ilpl-closed-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
+  group: v2-ilpl-closed-manual-${{ github.run_id }}
+  cancel-in-progress: false
 
 jobs:
   ilpl-closed-experiment:
@@ -73,7 +72,7 @@ jobs:
           run_id="$(gh run list \
             --repo "$GITHUB_REPOSITORY" \
             --workflow "V2 Eligibility Validation" \
-            --branch "$GITHUB_HEAD_REF" \
+            --branch "$GITHUB_REF_NAME" \
             --status success \
             --limit 20 \
             --json databaseId \
