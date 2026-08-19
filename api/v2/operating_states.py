@@ -172,7 +172,6 @@ def build_operating_state(
         "reason_codes": list(dict.fromkeys(reason_codes)),
         "history": history_details,
         "signal": signal_details,
-        "score": None,
         "assessment_effect": "none_experimental",
         "ranking_effect": "none_experimental",
     }
