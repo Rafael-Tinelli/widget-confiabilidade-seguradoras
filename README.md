@@ -1,8 +1,9 @@
 # Ranking de Seguradoras Sanida — Pipeline de Dados e Metodologia v2
 
 > **Status do projeto:** refatoração metodológica e arquitetural em andamento.  
+> **Marco atual (2026-08-19):** a arquitetura conceitual do pilar econômico-financeiro foi fechada; a próxima investigação metodológica é o pilar de conduta com o consumidor, sinistros e reclamações.  
 > Este README funciona, nesta fase, como **contrato de projeto, guia de implementação e registro das decisões já tomadas**.  
-> Regras marcadas como **EM VALIDAÇÃO** não devem ser tratadas como metodologia definitiva nem incorporadas ao scoring sem os testes previstos neste documento.
+> Regras marcadas como **EM VALIDAÇÃO** ou **EM CALIBRAÇÃO** não devem ser tratadas como metodologia definitiva nem incorporadas ao scoring sem os testes previstos neste documento.
 
 ---
 
@@ -516,84 +517,78 @@ direcionamento à entidade responsável: quando possível
 
 ---
 
-## 9. Pilares candidatos da avaliação geral
+## 9. Pilares da avaliação geral
 
-A hipótese de trabalho atual utiliza dois pilares:
-
-```text
-1. solidez econômico-financeira
-2. atendimento / reclamações
-```
-
-A escolha final dos pesos ainda está **EM VALIDAÇÃO**.
-
-### Hipótese inicial
+A v2 passa a organizar a confiabilidade institucional da seguradora em dois pilares de natureza diferente:
 
 ```text
-Financeiro:   60%
-Atendimento:  40%
+1. capacidade econômico-financeira
+2. conduta com o consumidor, sinistros e reclamações
 ```
 
-Esses pesos **não estão aprovados**.
+O primeiro pilar atingiu um **marco de arquitetura em 2026-08-19**: encerrou-se a procura por novos indicadores financeiros que pudessem virar eixos independentes de pontuação.
 
-Antes de serem incorporados como regra definitiva, deverão passar por:
+Isso não significa que os pesos e transformações matemáticas estejam fechados. Significa que a pergunta conceitual — **o que o pilar financeiro deve observar?** — está suficientemente delimitada para que o projeto avance sem continuar procurando novos índices até encontrar uma combinação conveniente.
 
-- análise de distribuição;
-- análise de sensibilidade;
-- inspeção de outliers;
-- testes em seguradoras conhecidas;
-- estabilidade temporal;
-- comparação com cenários 50/50, 55/45, 60/40, 65/35 e outros relevantes;
-- avaliação do quanto pequenas mudanças de peso alteram o ranking.
-
-Se alterações pequenas de peso provocarem mudanças excessivas de classificação, a metodologia deverá ser revista.
+A escolha do peso entre os dois pilares gerais permanece **EM VALIDAÇÃO**. A antiga hipótese 60/40 não deve funcionar como âncora metodológica: o peso só será definido depois que o segundo pilar possuir dados, semântica, cobertura e estabilidade suficientemente compreendidos.
 
 ---
 
-## 10. Pilar econômico-financeiro
+## 10. Pilar econômico-financeiro — arquitetura conceitual fechada
 
-A versão atual do projeto utiliza um indicador denominado “Solvência” baseado, entre outros fatores, em patrimônio, escala e sinistralidade.
+Este pilar procura responder:
 
-Essa lógica deverá ser **substituída**.
+> **A seguradora apresenta sinais financeiros e operacionais compatíveis com a capacidade de honrar seus compromissos e sustentar sua atividade ao longo do tempo?**
 
-A Base Completa da SUSEP disponibiliza elementos mais apropriados para a análise econômico-financeira e prudencial.
+A pergunta inclui obrigações perante segurados e outros terceiros, relações comerciais que dependem da continuidade da empresa e a própria capacidade de permanecer economicamente viável. Uma seguradora também precisa gerar resultado suficiente para preservar sua continuidade e capacidade futura.
 
-### 10.1. Componentes candidatos
+O pilar não pretende prever o futuro nem certificar que determinada obrigação será paga. Ele reúne sinais públicos, atuais e históricos, para avaliar **capacidade, resiliência e sustentabilidade**, com limites explícitos.
 
-Hipótese inicial:
+### 10.1. Arquitetura aprovada
 
-| Componente | Peso interno candidato | Status |
-|---|---:|---|
-| Capital regulatório | ~45% | EM VALIDAÇÃO |
-| Liquidez | ~30% | EM VALIDAÇÃO |
-| Sustentabilidade operacional | ~25% | EM VALIDAÇÃO |
+| Dimensão | Referência principal | Papel metodológico | Decisão |
+|---|---|---|---|
+| Capital regulatório | PLA/CMR | capacidade prudencial de absorção | eixo quantitativo principal |
+| Liquidez | ILT | capacidade de honrar obrigações com recursos compatíveis | eixo quantitativo principal |
+| Liquidez de curto prazo | ILC | diagnóstico complementar | não recebe eixo próprio de pontuação |
+| Filme operacional | ICA, com IC e componentes explicativos | trajetória de equilíbrio/pressão da operação | estado longitudinal e explicação; não é um terceiro score bruto |
+| Rentabilidade | ILPL | capacidade de geração de resultado sobre o patrimônio | diagnóstico complementar; rejeitado como eixo independente de scoring |
 
-Esses pesos não são definitivos.
+A arquitetura financeira, portanto, não será expandida com novos indicadores apenas porque eles existam na base.
 
-### Não entram isoladamente na nota
+### 10.2. O que ainda está em calibração
 
-- sinistralidade;
-- prêmio total;
-- patrimônio absoluto;
-- market share;
-- rentabilidade isolada, até validação;
-- tamanho da empresa.
+Permanecem abertos:
+
+- transformação de PLA/CMR em avaliação limitada e interpretável;
+- transformação de ILT com saturação de extremos;
+- pesos relativos entre capital e liquidez;
+- forma pela qual o filme operacional influencia cautela, explicação e/ou confiança da avaliação financeira sem virar, por acidente, um terceiro score redundante;
+- tratamento final de histórico curto e evidência insuficiente;
+- faixas verbais e `reason_codes` definitivos.
+
+Esses pontos são **EM CALIBRAÇÃO**. Não reabrem a seleção de novos eixos financeiros.
 
 ---
 
-## 11. Capital regulatório
+## 11. Capital regulatório — PLA/CMR
 
-A principal medida candidata é a relação:
+A relação:
 
 ```text
 PLA / CMR
 ```
 
-ou outra expressão equivalente metodologicamente aprovada com base nos dados oficiais.
+permanece como a principal referência para a dimensão de capital regulatório.
 
-### 11.1. Princípios aprovados
+### 11.1. Decisões aprovadas
 
-O indicador não será tratado linearmente.
+- o indicador não será tratado linearmente;
+- magnitude maior não significa benefício proporcionalmente maior;
+- CMR zero ou evidência inutilizável não é convertido automaticamente em desempenho ruim;
+- histórico curto é limitação de evidência, não penalidade de desempenho;
+- a leitura deve respeitar saturação, estabilidade e contexto prudencial;
+- porte absoluto não gera pontos por si só.
 
 Não é aceitável inferir:
 
@@ -601,109 +596,220 @@ Não é aceitável inferir:
 PLA/CMR 2,0 = duas vezes melhor que PLA/CMR 1,0
 ```
 
-A transformação deverá respeitar:
+### 11.2. EM CALIBRAÇÃO
 
-- significado regulatório;
-- zonas economicamente relevantes;
-- ganhos decrescentes;
-- saturação;
-- histórico;
-- estabilidade;
-- situações de proximidade ou insuficiência.
+Ainda devem ser fechados:
 
-### 11.2. EM VALIDAÇÃO
-
-Antes da fórmula definitiva serão testados:
-
-- valor atual;
-- média recente;
-- mínimo recente;
-- volatilidade;
-- frequência de aproximação do limite;
-- períodos ideais de observação;
-- comportamento dos extremos da distribuição;
-- situações de CMR zero, negativo, ausente ou não aplicável.
+- função de transformação;
+- zonas semânticas;
+- peso relativo dentro do pilar financeiro;
+- interação com histórico e confiança da evidência.
 
 ---
 
-## 12. Liquidez
+## 12. Liquidez — ILT como referência principal
 
-A liquidez será estudada a partir dos campos e conceitos econômico-financeiros compatíveis com a estrutura SUSEP.
+A investigação de liquidez separou dois conceitos relacionados, mas não idênticos:
 
-### EM VALIDAÇÃO
+- **ILT — Índice de Liquidez Total:** referência principal da dimensão de liquidez;
+- **ILC — Índice de Liquidez Corrente:** sinal complementar de curto prazo.
 
-Será necessário testar:
+### 12.1. Decisões aprovadas
 
-- índice de liquidez corrente;
-- índice de liquidez total;
-- eventual combinação;
-- redundância estatística com PLA/CMR;
-- comportamento por tipo de entidade;
-- zonas de adequação;
-- saturação;
-- estabilidade temporal.
+- ILT e ILC não receberão pesos independentes que contem liquidez duas vezes;
+- ILT permanece como o principal candidato de pontuação da dimensão;
+- ILC permanece diagnóstico explicativo;
+- valores extremos de ILT não podem receber recompensa linear;
+- a referência aritmética `1,0` pode ajudar a explicar a relação entre recursos e obrigações, mas não deve ser apresentada como selo ou corte regulatório da SUSEP;
+- segmentação prudencial pode fornecer contexto de comparabilidade, mas não resolve sozinha os efeitos de denominadores pequenos nem vira bônus de porte.
 
-Indicadores altamente redundantes não devem receber pesos independentes que contem a mesma característica duas vezes.
+### 12.2. EM CALIBRAÇÃO
 
----
+Ainda devem ser fechados:
 
-## 13. Sustentabilidade operacional
-
-O componente operacional deve medir, na medida permitida pelos dados, o equilíbrio econômico da operação.
-
-O estudo deverá priorizar conceitos mais completos que sinistralidade isolada, como indicadores combinados ou equivalentes compatíveis com a metodologia oficial disponível.
-
-### EM VALIDAÇÃO
-
-Testar:
-
-- índice combinado;
-- índice combinado ampliado;
-- custos de aquisição;
-- despesas administrativas;
-- resultado financeiro;
-- estabilidade em múltiplos períodos;
-- influência do mix operacional;
-- outliers;
-- comparabilidade.
-
-Nenhum indicador será incluído apenas porque está disponível na base.
+- saturação da magnitude;
+- zonas semânticas;
+- peso relativo frente ao capital;
+- regra final de histórico/confiança.
 
 ---
 
-## 14. Atendimento e reclamações
+## 13. Filme operacional — ICA, IC e componentes
 
-O objetivo deste pilar é responder, com dados comparáveis:
+A dimensão operacional não será tratada como uma fotografia mensal isolada nem como uma soma de vários índices que contem a mesma operação repetidamente.
 
-> Como a empresa se comporta diante de problemas relatados pelos consumidores?
+O objetivo é observar **trajetória**:
 
-### 14.1. Hierarquia pretendida
+```text
+operação equilibrada de forma persistente
+melhora
+pressão recente
+pressão persistente
+histórico insuficiente
+```
 
-Preferência por fonte regulatória oficial que forneça medida comparável e normalizada, especialmente quando houver estrutura adequada do SusepCon/BDR.
+### 13.1. Papel das métricas
 
-O Consumidor.gov poderá funcionar como:
+- **ICA** funciona como referência principal do estado operacional porque incorpora o efeito do resultado financeiro na capacidade de sustentar os custos da operação;
+- **IC** ajuda a mostrar como a operação se comporta antes desse efeito financeiro;
+- **ISR, IDC, IORDO, IRRES e IDA** explicam a composição do resultado e não devem virar cinco novos pilares de pontos;
+- comparações temporais devem respeitar horizontes equivalentes, pois contas de resultado acumuladas no exercício não podem ser comparadas ingenuamente entre meses de maturidade diferente.
 
-- fonte complementar;
-- evidência adicional;
-- informação de resolução/satisfação;
-- contingência metodológica, se aprovada.
+O filme operacional integra a leitura do pilar financeiro, mas **não é um terceiro score bruto independente** nesta arquitetura.
 
-A presença no Consumidor.gov não deve ser automaticamente convertida em verdade sobre uma pessoa jurídica quando a fonte não permitir identidade inequívoca.
+### 13.2. Investigação fechada do ILPL
 
-### 14.2. EM VALIDAÇÃO
+O ILPL foi submetido a uma única investigação fechada, com critérios de sobrevivência definidos e registrados antes da primeira execução contra a BaseCompleta real.
 
-Definir:
+Os gates exigiam, entre outros pontos:
 
-- fonte principal automatizável;
-- atualização disponível;
-- granularidade;
-- amostra mínima;
-- tratamento de baixa amostra;
-- normalização por porte/arrecadação;
-- coortes;
-- estabilidade;
-- substituição/fallback entre SusepCon, BDR e Consumidor.gov;
-- efeitos da indisponibilidade temporária da fonte.
+- cobertura corrente mínima de 90%;
+- cobertura pareada mínima de 75%;
+- estabilidade mediana de ordenação de pelo menos `0,70` em meses equivalentes;
+- estabilidade mediana de pelo menos `0,70` em fechamentos anuais;
+- persistência de sinal lucro/prejuízo mínima de 70%;
+- baixa associação com porte patrimonial;
+- baixa redundância com PLA/CMR e ILT.
+
+Resultado observado na competência madura `2026-05`:
+
+```text
+cobertura corrente                    94,27%   PASS
+cobertura pareada mai/26 × mai/25     88,54%   PASS
+estabilidade em meses equivalentes     0,581   FAIL
+estabilidade em fechamentos anuais     0,748   PASS
+persistência de sinal                 82,73%   PASS
+|rho| ILPL × patrimônio médio          0,118   PASS
+|rho| máximo com PLA/CMR ou ILT        0,343   PASS
+```
+
+O único gate reprovado foi justamente a estabilidade longitudinal da ordenação em meses equivalentes.
+
+Decisão:
+
+> **ILPL não sobrevive como componente independente de scoring e não receberá iteração de resgate pós-resultado.**
+
+Ele pode permanecer como diagnóstico explicativo de geração de resultado, mas sua magnitude não terá um eixo próprio de pontos.
+
+Essa decisão encerra a procura por novos componentes financeiros independentes nesta etapa.
+
+---
+
+## 14. Conduta com o consumidor, sinistros e reclamações — próximo pilar
+
+O próximo pilar deve responder a uma pergunta diferente da financeira:
+
+> **Como a seguradora se comporta diante do consumidor quando vende, administra e efetivamente precisa cumprir a proteção contratada?**
+
+O interesse não é apenas saber se a empresa responde rápido a uma reclamação. É procurar sinais consistentes de **justiça, qualidade de conduta, cumprimento contratual, tratamento do sinistro e capacidade de aprender com problemas recorrentes**.
+
+Reclamações são rastros observáveis desse comportamento. Elas podem revelar padrões relacionados, por exemplo, a:
+
+- divergências de cobertura;
+- negativas de sinistro;
+- liquidação e regulação de sinistros;
+- cancelamentos;
+- venda, informação e adequação do produto;
+- cobrança;
+- demora operacional;
+- descumprimento ou controvérsia contratual;
+- qualidade da resposta e da solução oferecida ao consumidor.
+
+A taxonomia final dependerá do que as fontes realmente permitirem distinguir de forma sustentável.
+
+### 14.1. Reclamação não é prova automática de abuso
+
+Uma reclamação individual registra uma insatisfação ou alegação. Sozinha, não prova que a empresa agiu de forma abusiva, que um produto foi deliberadamente desenhado para negar cobertura ou que determinada liquidação de sinistro foi incorreta.
+
+A metodologia deve procurar **padrões**, não sentenças improvisadas.
+
+Por isso, são proibidas inferências do tipo:
+
+```text
+houve reclamação → houve abuso
+houve negativa → produto é ruim
+respondeu rápido → conduta é boa
+```
+
+Quando a própria fonte trouxer classificação, procedência, resultado, decisão regulatória ou outro estado verificável, essa informação poderá ter significado diferente de uma alegação sem desfecho.
+
+### 14.2. O pilar deve medir o filme, não a foto
+
+O comportamento ao longo do tempo é central.
+
+Uma empresa que apresenta um problema, identifica a causa, corrige produto ou conduta e reduz de forma sustentada a recorrência do problema deve ser distinguida de uma empresa que apenas responde reclamações individualmente enquanto o mesmo padrão continua reaparecendo.
+
+Assim, a futura metodologia deverá estudar pelo menos quatro dimensões:
+
+```text
+incidência normalizada de problemas
+natureza e gravidade dos temas
+resposta / resolução dos casos
+recorrência e adaptação ao longo do tempo
+```
+
+A **adaptação estrutural** pode ser tão ou mais informativa que a velocidade de resposta. Tempo de resposta, isoladamente, não será tratado como sinônimo de boa conduta.
+
+### 14.3. Sinais candidatos — ainda sem pontuação
+
+A investigação deverá verificar se as fontes permitem construir, sem forçar os dados:
+
+- frequência de reclamações normalizada por uma medida defensável de exposição;
+- concentração em temas materialmente ligados à proteção contratada e ao sinistro;
+- proporção de casos resolvidos ou com desfecho favorável, quando a fonte oferecer esse conceito de forma comparável;
+- satisfação posterior, quando houver amostra e semântica suficientes;
+- reincidência do mesmo tipo de problema;
+- tendência de melhora, estabilidade ou deterioração;
+- persistência de problemas apesar das respostas individuais;
+- divergência ou convergência entre diferentes canais;
+- qualidade e velocidade da resposta, sem supervalorizar rapidez formal.
+
+Estados longitudinais candidatos poderão assumir linguagem semelhante a:
+
+```text
+melhora sustentada
+conduta estável sem pressão relevante
+pressão recente
+pressão persistente
+deterioração
+histórico insuficiente
+```
+
+Esses nomes são conceituais e ainda não constituem `reason_codes` definitivos.
+
+### 14.4. Múltiplos canais exigem deduplicação e identidade
+
+O projeto poderá estudar diversos canais, mas não deve simplesmente somar reclamações de fontes diferentes.
+
+Antes de qualquer agregação será necessário resolver:
+
+- identidade jurídica da empresa reclamada;
+- diferenças de cobertura entre canais;
+- duplicidade provável do mesmo caso;
+- períodos comparáveis;
+- taxonomias incompatíveis;
+- diferenças entre reclamação, consulta, denúncia e processo;
+- denominadores disponíveis;
+- viés de seleção de cada plataforma.
+
+Fontes regulatórias e públicas estruturadas têm prioridade. Outros canais só poderão influenciar a metodologia se forem sustentáveis, automatizáveis, auditáveis e semanticamente compatíveis.
+
+### 14.5. Primeira investigação do novo pilar
+
+A próxima etapa não é criar um score de reclamações.
+
+É construir um **inventário fechado das fontes e da semântica disponível**, respondendo:
+
+1. quais canais possuem dados estruturados e historicamente recuperáveis;
+2. qual entidade jurídica cada registro representa;
+3. quais temas de reclamação são distinguíveis;
+4. quais desfechos são realmente observáveis;
+5. qual denominador permite comparação justa;
+6. qual histórico permite detectar recorrência e adaptação;
+7. onde diferentes fontes se complementam e onde apenas duplicam o mesmo fenômeno;
+8. quais sinais podem ser explicados ao consumidor sem extrapolar a evidência.
+
+Somente depois desse inventário serão definidos critérios de sobrevivência para os indicadores candidatos do segundo pilar.
 
 ---
 
@@ -930,7 +1036,16 @@ Exemplo de contrato preliminar:
           },
 
           "operations": {
-            "score": 84.0,
+            "score": null,
+            "signal": "balanced_persistent",
+            "assessment_role": "longitudinal_context",
+            "period": "2026-05"
+          },
+
+          "profitability": {
+            "score": null,
+            "metric": "ILPL",
+            "assessment_role": "diagnostic_only",
             "period": "2026-05"
           }
         },
@@ -1505,20 +1620,24 @@ A ordem abaixo é parte do contrato do projeto.
 
 ### Fase 4 — Matriz quantitativa
 
-- [ ] analisar PLA/CMR;
-- [ ] testar janelas temporais;
-- [ ] testar saturação;
-- [ ] analisar liquidez;
-- [ ] medir correlações;
-- [ ] estudar indicadores operacionais;
-- [ ] estudar reclamações;
-- [ ] definir amostras mínimas;
-- [ ] testar outliers;
-- [ ] testar dados ausentes;
-- [ ] testar empresas especializadas;
-- [ ] testar estabilidade temporal.
+- [x] delimitar o universo regulatório elegível;
+- [x] investigar PLA/CMR como referência de capital;
+- [x] investigar ILC/ILT e selecionar ILT como referência principal de liquidez;
+- [x] investigar efeito de porte/segmentação e extremos de denominador;
+- [x] investigar IC/ICA e fechar o papel de filme operacional;
+- [x] executar investigação fechada do ILPL e rejeitá-lo como eixo independente de scoring;
+- [x] fechar a arquitetura conceitual do pilar econômico-financeiro;
+- [ ] calibrar transformação de PLA/CMR;
+- [ ] calibrar transformação de ILT;
+- [ ] definir interação do filme operacional com avaliação/confiança sem criar terceiro score bruto;
+- [ ] inventariar fontes do pilar de conduta com o consumidor;
+- [ ] mapear identidade, taxonomia, desfechos, denominadores e histórico de reclamações;
+- [ ] definir critérios de sobrevivência dos indicadores candidatos de conduta;
+- [ ] testar amostras mínimas, outliers e estabilidade temporal do segundo pilar.
 
-**Somente depois:** definir fórmulas definitivas.
+**Marco:** a seleção de dimensões do pilar financeiro está encerrada. A investigação quantitativa passa agora ao comportamento da seguradora perante o consumidor.
+
+**Somente depois:** definir fórmulas e pesos definitivos da avaliação geral.
 
 ### Fase 5 — Pesos e score
 
@@ -1873,26 +1992,46 @@ A refatoração será considerada bem-sucedida quando:
 
 Até que sejam testadas, **não considerar como regras definitivas**:
 
-- peso Financeiro × Atendimento;
-- subpesos do pilar financeiro;
-- fórmula de transformação de PLA/CMR;
-- janela temporal do capital;
-- fórmula de liquidez;
-- indicador operacional final;
-- tratamento de empresas com forte especialização;
-- fonte definitiva de reclamações;
+### Pilar econômico-financeiro — arquitetura fechada, calibração aberta
+
+- transformação de PLA/CMR;
+- transformação/saturação de ILT;
+- peso Capital × Liquidez;
+- forma de incorporar o filme operacional à conclusão e/ou confiança sem convertê-lo em terceiro score bruto;
+- tratamento final de histórico financeiro curto;
+- `reason_codes` financeiros definitivos.
+
+A seleção de novos indicadores financeiros independentes **não está mais aberta** nesta etapa. ILPL foi rejeitado como eixo de scoring pela investigação pré-registrada e não receberá iteração de resgate.
+
+### Pilar de conduta com o consumidor — investigação aberta
+
+- fonte ou conjunto de fontes definitivo;
+- identidade jurídica entre canais;
+- deduplicação entre reclamações provenientes de fontes diferentes;
+- taxonomia de temas e gravidade;
+- distinção entre alegação, procedência, resolução e outros desfechos;
+- denominador para normalização;
 - amostra mínima;
-- normalização das reclamações;
-- coortes necessárias;
+- janelas temporais comparáveis;
+- forma de medir recorrência;
+- forma de medir adaptação/melhora sustentada;
+- papel da velocidade e qualidade de resposta;
+- comparabilidade entre empresas com perfis de carteira diferentes;
+- critérios de sobrevivência dos sinais candidatos.
+
+### Avaliação geral
+
+- peso Financeiro × Conduta;
+- coortes finais necessárias;
 - cálculo de `assessment_confidence`;
 - faixas de rating;
 - threshold de elegibilidade;
-- `reason_codes` finais;
+- `reason_codes` gerais;
 - quais dados de ramos devem ser resumidos publicamente;
 - formato final dos quatro JSONs;
 - eventual necessidade de fragmentação por desempenho.
 
-Esses pontos deverão ser resolvidos por análise de dados e testes, não por preferência estética.
+Esses pontos deverão ser resolvidos por análise de dados e testes, não por preferência estética nem por busca posterior de uma fórmula que produza um ranking desejado.
 
 ---
 
