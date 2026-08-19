@@ -97,7 +97,10 @@ jobs:
           cp "$source_file" "$V2_ELIGIBILITY_INPUT"
 
       - name: Run operating experiment unit tests
-        run: python -m pytest -q tests/test_v2_operating_experiment.py
+        run: |
+          python -m pytest -q \
+            tests/test_v2_operating_experiment.py \
+            tests/test_v2_operating_states.py
 
       - name: Build operating experiment
         run: python -m api.v2.build_operating_experiment
@@ -117,12 +120,20 @@ jobs:
               raise SystemExit("operating artifact must remain experimental")
           if summary.get("entity_count") != 157:
               raise SystemExit(f"unexpected operating universe: {summary.get('entity_count')}")
+          states = summary.get("operating_states") or {}
+          if sum((states.get("formula_state_counts") or {}).values()) != 157:
+              raise SystemExit("operating formula states do not cover the regulatory universe")
+          if sum((states.get("history_state_counts") or {}).values()) != 157:
+              raise SystemExit("operating history states do not cover the regulatory universe")
+          if sum((states.get("operating_signal_counts") or {}).values()) != 157:
+              raise SystemExit("operating signals do not cover the regulatory universe")
 
           compact = {
               "reference_period": summary.get("reference_period"),
               "period_maturity": payload.get("period_maturity"),
               "IC": summary["metrics"]["IC"],
               "ICA": summary["metrics"]["ICA"],
+              "operating_states": states,
               "current_ic_ica_correlation": summary.get("current_ic_ica_correlation"),
               "ic_ica_threshold_crossings": summary.get("ic_ica_threshold_crossings"),
               "ica_minus_ic_distribution": summary.get("ica_minus_ic_distribution"),
