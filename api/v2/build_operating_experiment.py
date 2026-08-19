@@ -25,6 +25,7 @@ from api.v2.operating_experiment import (
     operating_experiment_summary,
     validate_operating_experiment,
 )
+from api.v2.operating_states import build_operating_state, operating_state_summary
 from api.v2.relationships import load_verified_relationship_registry
 
 DEFAULT_OUTPUT = Path("data/derived/v2/operating_experiment.json")
@@ -55,18 +56,23 @@ def build_operating_experiment(
         )
         for entity in eligible_entities
     ]
+    for entity in entities:
+        entity["operating_state"] = build_operating_state(entity, reference_period)
     entities.sort(key=lambda item: str(item.get("entity_id") or ""))
+
+    summary = operating_experiment_summary(
+        entities,
+        source_payload,
+        reference_period,
+    )
+    summary["operating_states"] = operating_state_summary(entities)
     payload = {
         "artifact": "v2_operating_experiment",
         "generated_at": _utc_now(),
         "status": "experimental",
         "source": dict(source_payload.get("source") or {}),
         "period_maturity": dict(source_payload.get("period_maturity") or {}),
-        "summary": operating_experiment_summary(
-            entities,
-            source_payload,
-            reference_period,
-        ),
+        "summary": summary,
         "entities": entities,
     }
     validate_operating_experiment(payload)
@@ -124,6 +130,7 @@ def main() -> None:
     summary = payload["summary"]
     ic = summary["metrics"]["IC"]
     ica = summary["metrics"]["ICA"]
+    states = summary["operating_states"]
     print(
         "V2 operating experiment: "
         f"eligibility_source={eligibility_source} "
@@ -136,7 +143,8 @@ def main() -> None:
         f"ICA_median={ica['current_distribution'].get('median')} "
         f"IC_ICA_spearman={summary['current_ic_ica_correlation'].get('spearman')} "
         f"IC_ILT_spearman={ic['ilt_correlation'].get('spearman')} "
-        f"IC_capital_spearman={ic['capital_pla_cmr_correlation'].get('spearman')}; "
+        f"IC_capital_spearman={ic['capital_pla_cmr_correlation'].get('spearman')} "
+        f"operating_signals={states.get('operating_signal_counts')}; "
         f"written to {path}"
     )
 
