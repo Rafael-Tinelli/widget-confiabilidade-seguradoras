@@ -7,6 +7,10 @@ from api.v2.consumer_gov_identity import (
     load_provider_resolution_registry,
     resolve_curated_provider,
 )
+from api.v2.consumer_gov_temporal_brand import (
+    build_temporal_brand_index,
+    resolve_temporal_brand,
+)
 
 
 def test_registry_resolves_same_cnpj_historical_alias() -> None:
@@ -66,3 +70,46 @@ def test_registry_rejects_non_source_backed_rows(tmp_path: Path) -> None:
     )
     with pytest.raises(ConsumerGovIdentityError):
         load_provider_resolution_registry(path)
+
+
+def _temporal_brand_index() -> dict:
+    return build_temporal_brand_index(
+        [
+            {
+                "brand_id": "brand:test",
+                "name": "Marca Teste",
+                "aliases": ["Teste Seguro"],
+                "relationships": [
+                    {
+                        "relationship_type": "risk_carrier",
+                        "target_entity_id": "fip:000001",
+                        "effective_from": "2026-02-28",
+                        "status": "current",
+                    }
+                ],
+            }
+        ],
+        {"fip:000001"},
+    )
+
+
+def test_temporal_brand_requires_full_month_coverage() -> None:
+    result = resolve_temporal_brand("Marca Teste", "2026-02", _temporal_brand_index())
+    assert result is not None
+    assert result["resolution_state"] == "unresolved"
+    assert result["match_method"] == "verified_brand_partial_month_unresolved"
+
+
+def test_temporal_brand_resolves_after_effective_month() -> None:
+    result = resolve_temporal_brand("Teste Seguro", "2026-03", _temporal_brand_index())
+    assert result is not None
+    assert result["resolution_state"] == "matched_current_insurer"
+    assert result["entity_id"] == "fip:000001"
+    assert result["match_method"] == "verified_brand_exact_temporal"
+
+
+def test_temporal_brand_does_not_apply_before_effective_window() -> None:
+    result = resolve_temporal_brand("Marca Teste", "2026-01", _temporal_brand_index())
+    assert result is not None
+    assert result["resolution_state"] == "unresolved"
+    assert result["match_method"] == "verified_brand_out_of_window_unresolved"
