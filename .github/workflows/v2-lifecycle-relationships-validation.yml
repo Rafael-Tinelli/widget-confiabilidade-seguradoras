@@ -16,6 +16,7 @@ on:
       - "tests/test_v2_receita_cnpj.py"
       - "tests/test_v2_lifecycle.py"
       - "tests/test_v2_relationships.py"
+      - "tests/test_v2_canonical_brand_registry.py"
       - "tests/test_v2_susep_groups.py"
       - "tests/test_v2_sandbox_semantics.py"
       - "tests/test_v2_lifecycle_relationship_inventory.py"
@@ -89,6 +90,7 @@ jobs:
             tests/test_v2_receita_cnpj.py \
             tests/test_v2_lifecycle.py \
             tests/test_v2_relationships.py \
+            tests/test_v2_canonical_brand_registry.py \
             tests/test_v2_susep_groups.py \
             tests/test_v2_sandbox_semantics.py \
             tests/test_v2_lifecycle_relationship_inventory.py
@@ -139,10 +141,10 @@ jobs:
               errors.append("too few SES economic groups resolved")
           if int(meta.get("entities_with_economic_group") or 0) < 50:
               errors.append("too few entities received SES economic group membership")
-          if int(meta.get("brands_count") or 0) != 3:
-              errors.append("expected three initial verified brand resolver records")
-          if int(meta.get("brand_risk_carrier_relationships_count") or 0) < 1:
-              errors.append("expected at least one verified brand risk-carrier relationship")
+          if int(meta.get("brands_count") or 0) < 3:
+              errors.append("too few verified brand resolver records")
+          if int(meta.get("brand_risk_carrier_relationships_count") or 0) < 2:
+              errors.append("expected verified Itaú and BB Auto risk-carrier relationships")
 
           expected_successions = {
               "fip:005282": "fip:004367",
