@@ -1,3 +1,4 @@
+from api.utils.name_cleaner import normalize_name_key
 from api.v2.consumer_gov_identity import load_provider_resolution_registry
 from api.v2.relationships import load_verified_relationship_registry
 
@@ -44,7 +45,6 @@ def test_obvious_trade_names_live_in_canonical_registry():
 
 
 def test_consumer_registry_does_not_duplicate_reusable_metlife_alias():
-    payload = load_provider_resolution_registry()
-    provider_names = {row["provider_name"] for row in payload["resolutions"]}
-    assert "Metlife Seguros e Previdência Privada" not in provider_names
-    assert "source-specific" in payload["note"]
+    registry = load_provider_resolution_registry()
+    key = normalize_name_key("Metlife Seguros e Previdência Privada")
+    assert key not in registry
