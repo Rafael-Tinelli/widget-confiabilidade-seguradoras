@@ -1,6 +1,6 @@
 {
-  "schema_version": "1.0",
-  "note": "Curated Consumer.gov provider-name resolution registry. Every mapping must be source-backed. Similarity or fuzzy matching may suggest candidates but never creates a resolution. A complaint record is evidence of consumer friction, not proof of abusive conduct or contractual wrongdoing.",
+  "schema_version": "1.1",
+  "note": "Consumer.gov-specific provider-label resolution registry. Durable market facts such as reusable brands, trade names and product-to-risk-carrier relationships belong in data/reference/v2/verified_relationships.json and must be consumed from the canonical identity layer. This file is reserved for source-specific wrappers, ambiguous labels and explicit outside-universe classifications. Every mapping must be source-backed. Similarity or fuzzy matching may suggest candidates but never creates a resolution. A complaint record is evidence of consumer friction, not proof of abusive conduct or contractual wrongdoing.",
   "resolutions": [
     {
       "provider_name": "Too Seguros (antiga PAN Seguros)",
@@ -43,19 +43,6 @@
           "authority": "Brasilseg / BB Seguros",
           "url": "https://assets-bbsegurosportal.bbseguros.com.br/2021-12/Contrato_BB_Protecao-2905.pdf",
           "fact": "Official BB Seguros contract identifies Brasilseg Companhia de Seguros under CNPJ 28.196.889/0001-43."
-        }
-      ]
-    },
-    {
-      "provider_name": "Metlife Seguros e Previdência Privada",
-      "resolution_state": "matched_current_insurer",
-      "resolution_kind": "commercial_name_to_legal_entity",
-      "target_cnpj": "02102498000129",
-      "evidence": [
-        {
-          "authority": "MetLife Brasil",
-          "url": "https://www.metlife.com.br/content/dam/metlifecom/br/PDFs/Regulamento-Ouvidoria-Vida-e-Previdencia.pdf",
-          "fact": "Official MetLife document identifies METROPOLITAN LIFE SEGUROS E PREVIDENCIA PRIVADA S.A. under CNPJ 02.102.498/0001-29."
         }
       ]
     },
