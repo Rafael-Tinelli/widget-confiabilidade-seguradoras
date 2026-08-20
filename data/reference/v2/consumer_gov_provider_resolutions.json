@@ -1,0 +1,136 @@
+{
+  "schema_version": "1.0",
+  "note": "Curated Consumer.gov provider-name resolution registry. Every mapping must be source-backed. Similarity or fuzzy matching may suggest candidates but never creates a resolution. A complaint record is evidence of consumer friction, not proof of abusive conduct or contractual wrongdoing.",
+  "resolutions": [
+    {
+      "provider_name": "Too Seguros (antiga PAN Seguros)",
+      "resolution_state": "matched_current_insurer",
+      "resolution_kind": "historical_legal_name_same_cnpj",
+      "target_cnpj": "33245762000107",
+      "evidence": [
+        {
+          "authority": "Portal da Transparencia / Governo Federal",
+          "url": "https://portaldatransparencia.gov.br/pessoa-juridica/33245762000107",
+          "fact": "CNPJ 33.245.762/0001-07 is currently TOO SEGUROS S.A. and the public name history records PAN SEGUROS S.A."
+        },
+        {
+          "authority": "Too Seguros",
+          "url": "https://tooseguros.com.br/lp-seguro-cartao-consignado/",
+          "fact": "Official Too material identifies Too Seguros S.A. under CNPJ 33.245.762/0001-07."
+        }
+      ]
+    },
+    {
+      "provider_name": "Yelum Seguros (antiga Liberty Seguros)",
+      "resolution_state": "matched_current_insurer",
+      "resolution_kind": "historical_legal_name_same_cnpj",
+      "target_cnpj": "61550141000172",
+      "evidence": [
+        {
+          "authority": "Yelum Seguros",
+          "url": "https://www.yelumseguros.com.br/Pages/parceiro.aspx",
+          "fact": "Official Yelum page states that Liberty Seguros S/A was the discontinued corporate name, Yelum Seguros S.A. is the new corporate name, and the CNPJ remained 61.550.141/0001-72."
+        }
+      ]
+    },
+    {
+      "provider_name": "Brasilseg (BB Seguros)",
+      "resolution_state": "matched_current_insurer",
+      "resolution_kind": "brand_wrapper_current_legal_entity",
+      "target_cnpj": "28196889000143",
+      "evidence": [
+        {
+          "authority": "Brasilseg / BB Seguros",
+          "url": "https://assets-bbsegurosportal.bbseguros.com.br/2021-12/Contrato_BB_Protecao-2905.pdf",
+          "fact": "Official BB Seguros contract identifies Brasilseg Companhia de Seguros under CNPJ 28.196.889/0001-43."
+        }
+      ]
+    },
+    {
+      "provider_name": "Metlife Seguros e Previdência Privada",
+      "resolution_state": "matched_current_insurer",
+      "resolution_kind": "commercial_name_to_legal_entity",
+      "target_cnpj": "02102498000129",
+      "evidence": [
+        {
+          "authority": "MetLife Brasil",
+          "url": "https://www.metlife.com.br/content/dam/metlifecom/br/PDFs/Regulamento-Ouvidoria-Vida-e-Previdencia.pdf",
+          "fact": "Official MetLife document identifies METROPOLITAN LIFE SEGUROS E PREVIDENCIA PRIVADA S.A. under CNPJ 02.102.498/0001-29."
+        }
+      ]
+    },
+    {
+      "provider_name": "Kovr Seguradora (antiga Invest Seguradora)",
+      "resolution_state": "matched_current_insurer",
+      "resolution_kind": "historical_brand_wrapper_current_legal_entity",
+      "target_cnpj": "42366302000128",
+      "evidence": [
+        {
+          "authority": "KOVR Seguradora",
+          "url": "https://www.kovr.com.br/blog/materia-seguro-total",
+          "fact": "Official KOVR publication states that KOVR Seguradora is the new face of Seguradora Invest."
+        },
+        {
+          "authority": "KOVR Seguradora",
+          "url": "https://www.admin.kovr.com.br/storage/documentos/cgs/28-condicoes-gerais-garantia-setor-privado.pdf",
+          "fact": "Current official policy conditions identify KOVR SEGURADORA S.A. under CNPJ 42.366.302/0001-28."
+        }
+      ]
+    },
+    {
+      "provider_name": "Aliança do Brasil (BB Seguros)",
+      "resolution_state": "matched_current_insurer",
+      "resolution_kind": "brand_wrapper_current_legal_entity",
+      "target_cnpj": "01378407000110",
+      "evidence": [
+        {
+          "authority": "Brasilseg / BB Seguros",
+          "url": "https://assets-bbseguros.cld.brasilseg.com.br/2026-01/Regulamento_Empresa%20Protegida_VF.pdf",
+          "fact": "Official campaign regulation identifies Alianca do Brasil Seguros S.A. under CNPJ 01.378.407/0001-10."
+        }
+      ]
+    },
+    {
+      "provider_name": "HDI Seguros (e Sompo Consumer)",
+      "resolution_state": "ambiguous",
+      "resolution_kind": "multi_entity_provider_label",
+      "reason_code": "provider_label_mentions_distinct_hdi_legal_entities",
+      "evidence": [
+        {
+          "authority": "HDI Seguros",
+          "url": "https://www.hdiseguros.com.br/contato/perguntas-frequentes/a-Sompo-Consumer-Seguradora-S.A-agora-faz-parte-da-HDI-Seguros-S.A",
+          "fact": "Official HDI page states that former Sompo Consumer is now HDI Seguros do Brasil S.A., CNPJ 49.786.401/0001-08."
+        },
+        {
+          "authority": "HDI Seguros",
+          "url": "https://www.hdiseguros.com.br/grupo-hdi/fraudes",
+          "fact": "Official HDI page identifies HDI Seguros S.A. separately under CNPJ 29.980.158/0001-57."
+        }
+      ]
+    },
+    {
+      "provider_name": "LTI Seguros",
+      "resolution_state": "outside_157",
+      "resolution_kind": "sandbox_participant",
+      "reason_code": "sandbox_never_enters_ordinary_insurer_universe",
+      "evidence": [
+        {
+          "authority": "SUSEP Sandbox",
+          "fact": "The v2 regulatory classification identifies LTI Seguros as a Sandbox participant, outside the 157 ordinary-current-insurer comparison universe."
+        }
+      ]
+    },
+    {
+      "provider_name": "Bradesco Capitalização",
+      "resolution_state": "outside_157",
+      "resolution_kind": "capitalization_company",
+      "reason_code": "capitalization_outside_ordinary_insurer_universe",
+      "evidence": [
+        {
+          "authority": "SUSEP classification",
+          "fact": "Capitalization companies are searchable context entities but are explicitly outside the ordinary-insurer comparison universe in v2."
+        }
+      ]
+    }
+  ]
+}
