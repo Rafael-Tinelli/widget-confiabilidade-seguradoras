@@ -1,6 +1,6 @@
 {
-  "schema_version": "1.0",
-  "note": "Small, source-backed relationship registry for facts that cannot be derived safely from SES identity alone. Corporate succession records are event-driven and should only be added with explicit documentary support.",
+  "schema_version": "1.1",
+  "note": "Source-backed canonical relationship registry for facts that cannot be derived safely from SES identity alone. Corporate succession records are event-driven and only added with explicit documentary support. Durable brand, trade-name and product-to-risk-carrier relationships belong here so every downstream source can reuse them; source-specific wrappers remain outside this registry.",
   "corporate_relationships": [
     {
       "relationship_type": "incorporated_into",
@@ -84,7 +84,7 @@
     {
       "brand_id": "brand:axa",
       "name": "AXA",
-      "aliases": ["AXA Brasil"],
+      "aliases": ["AXA Brasil", "AXA Seguros"],
       "relationships": [
         {
           "relationship_type": "brand_of",
@@ -92,8 +92,8 @@
           "status": "current",
           "evidence": {
             "authority": "AXA no Brasil",
-            "url": "https://axa.com.br/central-de-ajuda/privacidade-de-dados/quem-sao-os-controladores-dos-seus-dados-pessoais",
-            "fact": "AXA Seguros S.A. é identificada pelo CNPJ 19.323.190/0001-06 no site oficial"
+            "url": "https://axa.com.br/minio/cms/CG_AXA_Viagem_Coletivo_15414_900150_2016_04_20251210_3674efc0b3.pdf",
+            "fact": "documento oficial identifica AXA Seguros S.A., CNPJ 19.323.190/0001-06, Registro SUSEP 02852"
           }
         }
       ]
@@ -114,6 +114,162 @@
             "url": "https://www.portoseguro.com.br/institucional/sobre-a-porto-seguro/empresas-do-grupo",
             "reference": "Portaria DIORE/SUSEP nº 150, de 15/07/2026",
             "fact": "Porto Seguro Companhia de Seguros Gerais sucedeu Itaú Seguros de Auto e Residência S.A.; a página oficial do Grupo Porto mantém os produtos Itaú Seguro Auto no ecossistema Porto"
+          }
+        }
+      ]
+    },
+    {
+      "brand_id": "brand:bb-seguro-auto",
+      "name": "BB Seguro Auto",
+      "aliases": ["Seguro Auto BB"],
+      "relationships": [
+        {
+          "relationship_type": "risk_carrier",
+          "target_cnpj": "61074175000138",
+          "status": "current",
+          "effective_from": "2024-08-27",
+          "scope": "BB Seguro Auto products documented by BB Seguros from 27/08/2024 onward",
+          "evidence": {
+            "authority": "BB Seguros",
+            "url": "https://assets-bbsegurosportal.bbseguros.com.br/2024-08/Manual_de_Assist%C3%AAncias_Auto_BB_%E2%80%93_A_partir_de_27-08-2024.pdf",
+            "fact": "manual oficial do BB Seguro Auto identifica os produtos como da MAPFRE Seguros Gerais S.A., CNPJ 61.074.175/0001-38, comercializados pela BB Corretora"
+          }
+        }
+      ]
+    },
+    {
+      "brand_id": "brand:zurich-santander-vida-previdencia",
+      "name": "Zurich Santander Vida e Previdência",
+      "aliases": ["Zurich Santander Brasil Seguros e Previdência"],
+      "relationships": [
+        {
+          "relationship_type": "brand_of",
+          "target_cnpj": "87376109000106",
+          "status": "current",
+          "evidence": {
+            "authority": "Banco Santander",
+            "url": "https://www.santander.com.br/empresas/seguros/vida-empresarial",
+            "fact": "página oficial identifica Zurich Santander Brasil Seguros e Previdência S.A., CNPJ 87.376.109/0001-06, Registro SUSEP 0507-0"
+          }
+        }
+      ]
+    },
+    {
+      "brand_id": "brand:caixa-residencial",
+      "name": "Caixa Residencial",
+      "aliases": ["CAIXA Residencial", "XS3 Seguros"],
+      "relationships": [
+        {
+          "relationship_type": "brand_of",
+          "target_cnpj": "38155802000143",
+          "status": "current",
+          "effective_from": "2020-08-19",
+          "evidence": {
+            "authority": "SUSEP",
+            "url": "https://www2.susep.gov.br/safe/menumercado/REP2/Produto.aspx/DownloadConsultaPublica/507107",
+            "fact": "condições oficiais identificam CAIXA Residencial como XS3 Seguros S.A., CNPJ 38.155.802/0001-43, Cia 0347-6"
+          }
+        }
+      ]
+    },
+    {
+      "brand_id": "brand:cardif-vida",
+      "name": "Cardif Vida",
+      "aliases": ["Cardif do Brasil Vida e Previdência"],
+      "relationships": [
+        {
+          "relationship_type": "brand_of",
+          "target_cnpj": "03546261000108",
+          "status": "current",
+          "evidence": {
+            "authority": "BNP Paribas Cardif Brasil",
+            "url": "https://bnpparibascardif.com.br/lei-geral-de-protecao-de-dados/",
+            "fact": "aviso oficial identifica Cardif do Brasil Vida e Previdência, CNPJ 03.546.261/0001-08"
+          }
+        }
+      ]
+    },
+    {
+      "brand_id": "brand:aig-brasil",
+      "name": "AIG",
+      "aliases": ["AIG Seguros", "AIG Seguros Brasil"],
+      "relationships": [
+        {
+          "relationship_type": "brand_of",
+          "target_cnpj": "33040981000150",
+          "status": "current",
+          "evidence": {
+            "authority": "AIG Brasil",
+            "url": "https://www.aig.com.br/content/dam/aig/lac/brazil/documents/condicoes-gerais/cg-seguro-de-vida-em-grupo.pdf.coredownload.pdf",
+            "fact": "condições oficiais identificam AIG Seguros Brasil S.A., CNPJ 33.040.981/0001-50"
+          }
+        }
+      ]
+    },
+    {
+      "brand_id": "brand:sulamerica-pessoas-previdencia",
+      "name": "SulAmérica Seguros de Pessoas e Previdência",
+      "aliases": ["Sul América Seguros de Pessoas e Previdência"],
+      "relationships": [
+        {
+          "relationship_type": "brand_of",
+          "target_cnpj": "01704513000146",
+          "status": "current",
+          "evidence": {
+            "authority": "SulAmérica",
+            "url": "https://www.services.sulamerica.com.br/data/files/D0/26/EE/A9/7CF11810D747B8081B4616A8/CG-%20Voc%C3%AA%20Empresa%20-%20Doen%C3%A7as%20Graves_TM_15414003487200691.pdf",
+            "fact": "condições oficiais identificam Sul América Seguros de Pessoas e Previdência S.A., CNPJ 01.704.513/0001-46"
+          }
+        }
+      ]
+    },
+    {
+      "brand_id": "brand:bp-seguradora",
+      "name": "BP Seguradora",
+      "aliases": [],
+      "relationships": [
+        {
+          "relationship_type": "brand_of",
+          "target_cnpj": "50180527000113",
+          "status": "current",
+          "evidence": {
+            "authority": "BP Seguradora",
+            "url": "https://www.bpseguradora.com.br/",
+            "fact": "site oficial da BP Seguradora identifica CNPJ 50.180.527/0001-13"
+          }
+        }
+      ]
+    },
+    {
+      "brand_id": "brand:mag-seguros",
+      "name": "MAG Seguros",
+      "aliases": ["Mongeral Aegon Seguros e Previdência", "Mongeral Aegon Seguros e Previdência - MAG"],
+      "relationships": [
+        {
+          "relationship_type": "brand_of",
+          "target_cnpj": "33608308000173",
+          "status": "current",
+          "evidence": {
+            "authority": "MAG Seguros",
+            "url": "https://mag.com.br/",
+            "fact": "site oficial informa MAG Seguros: Mongeral Aegon Seguros e Previdência S.A., CNPJ 33.608.308/0001-73"
+          }
+        }
+      ]
+    },
+    {
+      "brand_id": "brand:metlife-brasil",
+      "name": "MetLife Brasil",
+      "aliases": ["MetLife", "Metlife Seguros e Previdência Privada"],
+      "relationships": [
+        {
+          "relationship_type": "brand_of",
+          "target_cnpj": "02102498000129",
+          "status": "current",
+          "evidence": {
+            "authority": "MetLife Brasil",
+            "url": "https://www.metlife.com.br/content/dam/metlifecom/br/PDFs/Regulamento-Ouvidoria-Vida-e-Previdencia.pdf",
+            "fact": "documento oficial identifica Metropolitan Life Seguros e Previdência Privada S.A., CNPJ 02.102.498/0001-29"
           }
         }
       ]
