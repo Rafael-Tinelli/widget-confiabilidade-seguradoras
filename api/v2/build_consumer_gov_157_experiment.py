@@ -1,42 +1,47 @@
 from __future__ import annotations
 
+import gzip
 import json
-import re
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any
 
-from api.build_consumidor_gov import (
-    RAW_DIR,
-    TARGET_SEGMENT,
-    _download,
-    _iter_rows,
-    _list_basecompleta_resources,
-    _norm,
-)
 from api.utils.identifiers import normalize_cnpj_v2
 from api.utils.name_cleaner import get_name_tokens, normalize_name_key
 
 ELIGIBILITY_PATH = Path("data/derived/v2/entity_eligibility_inventory.json")
+MONTHLY_DIR = Path("data/derived/consumidor_gov/monthly")
 OUTPUT_PATH = Path("data/derived/v2/consumer_gov_157_experiment.json")
 MONTHS_BACK = 12
 
-PROVIDER_NAME_COLUMNS = ("Nome Fantasia", "Empresa", "Fornecedor", "Nome do Fornecedor")
-RESPONDED_COLUMNS = ("Respondida", "Respondida?", "Empresa Respondeu", "Respondeu")
-SITUATION_COLUMNS = ("Situação", "Situacao", "Status", "Situação da Reclamação")
-EVALUATION_COLUMNS = ("Avaliação Reclamação", "Avaliacao Reclamacao", "Avaliação")
-SCORE_COLUMNS = ("Nota do Consumidor", "Nota Consumidor", "Nota")
-AREA_COLUMNS = ("Área", "Area")
-SUBJECT_COLUMNS = ("Assunto",)
-GROUP_PROBLEM_COLUMNS = ("Grupo Problema", "Grupo de Problema")
-PROBLEM_COLUMNS = ("Problema",)
-
 GENERIC_NAME_TOKENS = {
-    "sa", "s", "a", "ltda", "cia", "companhia", "sociedade", "brasil", "brasileira",
-    "seguro", "seguros", "seguradora", "seguradoras", "gerais", "de", "da", "do", "das",
-    "dos", "e", "em", "para", "participacoes", "holding", "grupo",
+    "sa",
+    "s",
+    "a",
+    "ltda",
+    "cia",
+    "companhia",
+    "sociedade",
+    "brasil",
+    "brasileira",
+    "seguro",
+    "seguros",
+    "seguradora",
+    "seguradoras",
+    "gerais",
+    "de",
+    "da",
+    "do",
+    "das",
+    "dos",
+    "e",
+    "em",
+    "para",
+    "participacoes",
+    "holding",
+    "grupo",
 }
 
 
@@ -44,38 +49,66 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
-def _pick(row: dict[str, str], columns: tuple[str, ...]) -> str:
-    for column in columns:
-        value = row.get(column)
-        if value is not None and str(value).strip():
-            return str(value).strip()
-    return ""
+def _read_json_gz(path: Path) -> dict[str, Any]:
+    with gzip.open(path, "rb") as file:
+        value = json.loads(file.read().decode("utf-8"))
+    if not isinstance(value, dict):
+        raise TypeError(f"{path} does not contain a JSON object")
+    return value
 
 
-def _truthy_pt(value: str) -> bool:
-    return _norm(value) in {"s", "sim", "1", "true", "yes"}
+def _entries(root: dict[str, Any]) -> dict[str, Any]:
+    value = (
+        root.get("by_name_key_raw")
+        or root.get("by_name_key")
+        or root.get("by_name")
+        or {}
+    )
+    return value if isinstance(value, dict) else {}
 
 
-def _safe_float(value: str) -> float | None:
-    text = str(value or "").strip()
-    if not text:
-        return None
+def _valid_monthly_snapshot(path: Path) -> tuple[str, dict[str, Any]] | None:
     try:
-        number = float(text.replace(",", "."))
-    except ValueError:
+        root = _read_json_gz(path)
+    except (OSError, UnicodeError, ValueError, TypeError):
         return None
-    return number
+    meta = root.get("meta") if isinstance(root.get("meta"), dict) else {}
+    if meta.get("invalid") is True or str(meta.get("status") or "").lower() == "invalid":
+        return None
+    month = str(meta.get("month") or meta.get("ym") or "")
+    if not month or not _entries(root):
+        return None
+    return month, root
+
+
+def _load_latest_months() -> list[tuple[str, Path, dict[str, Any]]]:
+    valid: dict[str, tuple[Path, dict[str, Any]]] = {}
+    for path in sorted(MONTHLY_DIR.glob("consumidor_gov_20??-??.json.gz")):
+        item = _valid_monthly_snapshot(path)
+        if item is None:
+            continue
+        month, root = item
+        valid[month] = (path, root)
+    selected = sorted(valid)[-MONTHS_BACK:]
+    if len(selected) < MONTHS_BACK:
+        raise RuntimeError(
+            f"expected at least {MONTHS_BACK} valid monthly snapshots, got {len(selected)}"
+        )
+    return [(month, valid[month][0], valid[month][1]) for month in selected]
 
 
 def _core_name(name: str) -> str:
     tokens = [
-        token for token in normalize_name_key(name).split()
+        token
+        for token in normalize_name_key(name).split()
         if token not in GENERIC_NAME_TOKENS and len(token) > 1
     ]
     return " ".join(tokens)
 
 
-def _build_unique_index(pairs: list[tuple[str, str]]) -> tuple[dict[str, str], dict[str, list[str]]]:
+def _build_unique_index(
+    pairs: list[tuple[str, str]],
+) -> tuple[dict[str, str], dict[str, list[str]]]:
     raw: dict[str, set[str]] = defaultdict(set)
     for key, entity_id in pairs:
         if key:
@@ -87,24 +120,33 @@ def _build_unique_index(pairs: list[tuple[str, str]]) -> tuple[dict[str, str], d
 
 def _entity_names(entity: dict[str, Any]) -> list[str]:
     names: list[str] = []
-    for field in ("legal_name", "display_name", "name", "regulatory_name", "source_name"):
+    for field in (
+        "legal_name",
+        "display_name",
+        "name",
+        "regulatory_name",
+        "source_name",
+    ):
         value = str(entity.get(field) or "").strip()
         if value:
             names.append(value)
+
     evidence = entity.get("evidence") or {}
     for source in ("licensed", "ses_identity", "ses"):
         block = evidence.get(source) or {}
-        if isinstance(block, dict):
-            for field in ("legal_name", "name", "source_name"):
-                value = str(block.get(field) or "").strip()
-                if value:
-                    names.append(value)
+        if not isinstance(block, dict):
+            continue
+        for field in ("legal_name", "name", "source_name"):
+            value = str(block.get(field) or "").strip()
+            if value:
+                names.append(value)
     return sorted(set(names))
 
 
 def _build_indexes(payload: dict[str, Any]) -> dict[str, Any]:
     eligible = [
-        entity for entity in payload.get("entities") or []
+        entity
+        for entity in payload.get("entities") or []
         if (entity.get("eligibility") or {}).get("regulatory_universe_eligible")
     ]
     entity_by_id = {str(entity["entity_id"]): entity for entity in eligible}
@@ -137,10 +179,11 @@ def _build_indexes(payload: dict[str, Any]) -> dict[str, Any]:
         entity_id = next(iter(targets))
         for name in [brand.get("name"), *(brand.get("aliases") or [])]:
             value = str(name or "").strip()
-            if value:
-                verified_brand_pairs.append((normalize_name_key(value), entity_id))
-                core_pairs.append((_core_name(value), entity_id))
-                all_names_by_entity[entity_id].append(value)
+            if not value:
+                continue
+            verified_brand_pairs.append((normalize_name_key(value), entity_id))
+            core_pairs.append((_core_name(value), entity_id))
+            all_names_by_entity[entity_id].append(value)
 
     exact, exact_ambiguous = _build_unique_index(exact_pairs)
     brand, brand_ambiguous = _build_unique_index(verified_brand_pairs)
@@ -152,7 +195,9 @@ def _build_indexes(payload: dict[str, Any]) -> dict[str, Any]:
         "exact_name": exact,
         "verified_brand": brand,
         "core_name": core,
-        "all_names_by_entity": {k: sorted(set(v)) for k, v in all_names_by_entity.items()},
+        "all_names_by_entity": {
+            key: sorted(set(value)) for key, value in all_names_by_entity.items()
+        },
         "ambiguities": {
             "exact_name": exact_ambiguous,
             "verified_brand": brand_ambiguous,
@@ -161,32 +206,36 @@ def _build_indexes(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _detect_cnpj_columns(headers: list[str]) -> list[str]:
-    return sorted({header for header in headers if "cnpj" in normalize_name_key(header)})
-
-
 def _match_provider(
-    row: dict[str, str], indexes: dict[str, Any], cnpj_columns: list[str]
-) -> tuple[str | None, str, str]:
-    for column in cnpj_columns:
-        cnpj = normalize_cnpj_v2(row.get(column))
-        if cnpj and cnpj in indexes["cnpj"]:
-            return indexes["cnpj"][cnpj], "cnpj_exact", cnpj
+    provider_key: str,
+    entry: dict[str, Any],
+    indexes: dict[str, Any],
+) -> tuple[str | None, str]:
+    cnpj = normalize_cnpj_v2(entry.get("cnpj"))
+    if cnpj and cnpj in indexes["cnpj"]:
+        return indexes["cnpj"][cnpj], "cnpj_exact"
 
-    provider = _pick(row, PROVIDER_NAME_COLUMNS)
-    key = normalize_name_key(provider)
-    if key and key in indexes["exact_name"]:
-        return indexes["exact_name"][key], "legal_name_exact", provider
-    if key and key in indexes["verified_brand"]:
-        return indexes["verified_brand"][key], "verified_brand_exact", provider
+    key = normalize_name_key(provider_key)
+    display = str(entry.get("display_name") or entry.get("name") or provider_key)
+    display_key = normalize_name_key(display)
+    for candidate_key in (key, display_key):
+        if candidate_key and candidate_key in indexes["exact_name"]:
+            return indexes["exact_name"][candidate_key], "legal_name_exact"
+        if candidate_key and candidate_key in indexes["verified_brand"]:
+            return indexes["verified_brand"][candidate_key], "verified_brand_exact"
 
-    core = _core_name(provider)
-    if core and len(core) >= 4 and core in indexes["core_name"]:
-        return indexes["core_name"][core], "unique_core_name", provider
-    return None, "unmatched", provider
+    for candidate in (display, provider_key):
+        core = _core_name(candidate)
+        if core and len(core) >= 4 and core in indexes["core_name"]:
+            return indexes["core_name"][core], "unique_core_name"
+    return None, "unmatched"
 
 
-def _candidate_suggestions(provider: str, indexes: dict[str, Any], limit: int = 3) -> list[dict[str, Any]]:
+def _candidate_suggestions(
+    provider: str,
+    indexes: dict[str, Any],
+    limit: int = 3,
+) -> list[dict[str, Any]]:
     provider_key = normalize_name_key(provider)
     provider_tokens = set(get_name_tokens(provider))
     candidates: list[tuple[float, str, str]] = []
@@ -195,20 +244,40 @@ def _candidate_suggestions(provider: str, indexes: dict[str, Any], limit: int = 
         best_name = ""
         for name in names:
             name_key = normalize_name_key(name)
-            seq = SequenceMatcher(None, provider_key, name_key).ratio()
+            sequence = SequenceMatcher(None, provider_key, name_key).ratio()
             target_tokens = set(get_name_tokens(name))
             union = provider_tokens | target_tokens
-            jac = (len(provider_tokens & target_tokens) / len(union)) if union else 0.0
-            score = max(seq, jac)
+            jaccard = (
+                len(provider_tokens & target_tokens) / len(union) if union else 0.0
+            )
+            score = max(sequence, jaccard)
             if score > best:
                 best = score
                 best_name = name
         candidates.append((best, entity_id, best_name))
     return [
-        {"entity_id": entity_id, "name": name, "diagnostic_similarity": round(score, 4)}
+        {
+            "entity_id": entity_id,
+            "name": name,
+            "diagnostic_similarity": round(score, 4),
+        }
         for score, entity_id, name in sorted(candidates, reverse=True)[:limit]
         if score >= 0.55
     ]
+
+
+def _safe_int(value: Any) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _safe_float(value: Any) -> float:
+    try:
+        return float(value or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def _new_entity_stats(entity: dict[str, Any]) -> dict[str, Any]:
@@ -221,21 +290,17 @@ def _new_entity_stats(entity: dict[str, Any]) -> dict[str, Any]:
         "complaints": 0,
         "responded": 0,
         "finalized": 0,
-        "evaluated": 0,
         "consumer_resolved": 0,
-        "consumer_not_resolved": 0,
+        "satisfaction_count": 0,
         "satisfaction_sum": 0.0,
         "match_methods": {},
         "by_month": {},
-        "areas": {},
-        "subjects": {},
-        "problem_groups": {},
-        "problems": {},
     }
 
 
-def _top(counter: Counter[str], n: int = 20) -> dict[str, int]:
-    return dict(counter.most_common(n))
+def _stats(entry: dict[str, Any]) -> dict[str, Any]:
+    value = entry.get("statistics") or {}
+    return value if isinstance(value, dict) else {}
 
 
 def build_experiment() -> dict[str, Any]:
@@ -245,165 +310,185 @@ def build_experiment() -> dict[str, Any]:
     if len(eligible) != 157:
         raise RuntimeError(f"expected 157 regulatory eligible insurers, got {len(eligible)}")
 
-    resources = _list_basecompleta_resources()
-    selected_months = sorted(resources)[-MONTHS_BACK:]
-    if len(selected_months) < MONTHS_BACK:
-        raise RuntimeError(f"expected at least {MONTHS_BACK} Consumer.gov months, got {len(selected_months)}")
-
+    monthly = _load_latest_months()
     entity_stats = {
         str(entity["entity_id"]): _new_entity_stats(entity) for entity in eligible
     }
-    monthly_meta: list[dict[str, Any]] = []
-    all_cnpj_columns: set[str] = set()
     match_method_counts: Counter[str] = Counter()
     unmatched_provider_rows: Counter[str] = Counter()
-    unmatched_provider_names: Counter[str] = Counter()
-    insurance_rows_total = 0
-    matched_rows_total = 0
-    areas = Counter()
-    subjects = Counter()
-    problem_groups = Counter()
-    problems = Counter()
+    monthly_meta: list[dict[str, Any]] = []
+    provider_entries_total = 0
+    complaints_total = 0
+    matched_complaints = 0
+    snapshot_has_cnpj = False
+    resolution_without_satisfaction = 0
 
-    RAW_DIR.mkdir(parents=True, exist_ok=True)
-    for month in selected_months:
-        resource = resources[month]
-        suffix = Path(resource.url.split("?", 1)[0]).suffix or ".csv"
-        raw_path = RAW_DIR / f"consumer_gov_experiment_{month}{suffix}"
-        _download(resource.url, raw_path)
-
-        headers: list[str] = []
-        month_rows = month_matched = 0
+    for month, path, root in monthly:
+        entries = _entries(root)
         month_entity_counts: Counter[str] = Counter()
         month_methods: Counter[str] = Counter()
-        try:
-            for row in _iter_rows(raw_path):
-                if not headers:
-                    headers = list(row.keys())
-                if _norm(row.get("Segmento de Mercado", "")) != _norm(TARGET_SEGMENT):
-                    continue
-                if "cancelada" in _norm(_pick(row, SITUATION_COLUMNS)):
-                    continue
+        month_provider_entries = 0
+        month_complaints = 0
+        month_matched_complaints = 0
 
-                month_rows += 1
-                insurance_rows_total += 1
-                cnpj_columns = _detect_cnpj_columns(headers)
-                all_cnpj_columns.update(cnpj_columns)
-                entity_id, method, provider = _match_provider(row, indexes, cnpj_columns)
-                match_method_counts[method] += 1
-                month_methods[method] += 1
-                if not entity_id:
-                    if provider:
-                        unmatched_provider_rows[provider] += 1
-                        unmatched_provider_names[provider] += 1
-                    continue
+        for provider_key, entry in entries.items():
+            if not isinstance(entry, dict):
+                continue
+            month_provider_entries += 1
+            provider_entries_total += 1
+            stat = _stats(entry)
+            complaints = _safe_int(
+                stat.get("complaintsCount") or stat.get("total_claims")
+            )
+            if complaints <= 0:
+                continue
+            month_complaints += complaints
+            complaints_total += complaints
 
-                month_matched += 1
-                matched_rows_total += 1
-                month_entity_counts[entity_id] += 1
-                stats = entity_stats[entity_id]
-                stats["complaints"] += 1
-                stats["match_methods"][method] = stats["match_methods"].get(method, 0) + 1
+            if normalize_cnpj_v2(entry.get("cnpj")):
+                snapshot_has_cnpj = True
 
-                responded = _truthy_pt(_pick(row, RESPONDED_COLUMNS))
-                situation = _norm(_pick(row, SITUATION_COLUMNS))
-                evaluation = _norm(_pick(row, EVALUATION_COLUMNS))
-                score = _safe_float(_pick(row, SCORE_COLUMNS))
-                finalized = "finalizada" in situation or "encerrada" in situation
-                evaluated = bool(evaluation) or (score is not None and score > 0)
-                resolved = evaluation == "resolvida"
-                not_resolved = "nao resolvida" in evaluation or "não resolvida" in evaluation
+            entity_id, method = _match_provider(str(provider_key), entry, indexes)
+            match_method_counts[method] += complaints
+            month_methods[method] += complaints
+            if not entity_id:
+                display = str(
+                    entry.get("display_name") or entry.get("name") or provider_key
+                ).strip()
+                if display:
+                    unmatched_provider_rows[display] += complaints
+                continue
 
-                stats["responded"] += int(responded)
-                stats["finalized"] += int(finalized)
-                stats["evaluated"] += int(evaluated)
-                stats["consumer_resolved"] += int(resolved)
-                stats["consumer_not_resolved"] += int(not_resolved)
-                if score is not None and score > 0:
-                    stats["satisfaction_sum"] += score
+            matched_complaints += complaints
+            month_matched_complaints += complaints
+            month_entity_counts[entity_id] += complaints
+            stats = entity_stats[entity_id]
+            stats["complaints"] += complaints
+            stats["responded"] += _safe_int(
+                stat.get("respondedCount") or stat.get("responded_claims")
+            )
+            stats["finalized"] += _safe_int(
+                stat.get("finalizedCount") or stat.get("finalized_claims")
+            )
+            stats["consumer_resolved"] += _safe_int(
+                stat.get("resolvedCount") or stat.get("resolved_claims")
+            )
+            satisfaction_count = _safe_int(
+                stat.get("satisfactionCount")
+                or stat.get("satisfaction_count")
+                or stat.get("evaluatedCount")
+            )
+            stats["satisfaction_count"] += satisfaction_count
+            stats["satisfaction_sum"] += _safe_float(stat.get("scoreSum"))
+            stats["match_methods"][method] = (
+                stats["match_methods"].get(method, 0) + complaints
+            )
 
-                for columns, label, global_counter in (
-                    (AREA_COLUMNS, "areas", areas),
-                    (SUBJECT_COLUMNS, "subjects", subjects),
-                    (GROUP_PROBLEM_COLUMNS, "problem_groups", problem_groups),
-                    (PROBLEM_COLUMNS, "problems", problems),
-                ):
-                    value = _pick(row, columns)
-                    if value:
-                        global_counter[value] += 1
-                        bucket = stats[label]
-                        bucket[value] = bucket.get(value, 0) + 1
+            if _safe_int(stat.get("resolvedCount")) > satisfaction_count:
+                resolution_without_satisfaction += 1
 
-            for entity_id, count in month_entity_counts.items():
-                stats = entity_stats[entity_id]
-                stats["by_month"][month] = count
-                stats["months_with_complaints"] += 1
+        for entity_id, count in month_entity_counts.items():
+            stats = entity_stats[entity_id]
+            stats["by_month"][month] = count
+            stats["months_with_complaints"] += 1
 
-            monthly_meta.append({
+        meta = root.get("meta") if isinstance(root.get("meta"), dict) else {}
+        monthly_meta.append(
+            {
                 "month": month,
-                "resource_name": resource.name,
-                "resource_url": resource.url,
-                "headers": headers,
-                "public_cnpj_columns": _detect_cnpj_columns(headers),
-                "insurance_segment_rows": month_rows,
-                "matched_rows": month_matched,
-                "matched_row_ratio": month_matched / month_rows if month_rows else None,
+                "snapshot_path": str(path),
+                "source_resource_url": meta.get("resource_url"),
+                "source_lines_kept": meta.get("lines_kept"),
+                "source_companies": meta.get("companies"),
+                "provider_entries": month_provider_entries,
+                "complaints": month_complaints,
+                "matched_complaints": month_matched_complaints,
+                "matched_complaint_ratio": (
+                    month_matched_complaints / month_complaints
+                    if month_complaints
+                    else None
+                ),
                 "observed_insurers": len(month_entity_counts),
                 "match_methods": dict(month_methods),
-            })
-        finally:
-            raw_path.unlink(missing_ok=True)
+            }
+        )
 
     for stats in entity_stats.values():
-        evaluated = int(stats["evaluated"])
-        scored = int(stats["consumer_resolved"]) + int(stats["consumer_not_resolved"])
-        stats["evaluated_resolution_rate"] = (
-            stats["consumer_resolved"] / scored if scored else None
-        )
+        satisfaction_count = int(stats["satisfaction_count"])
         stats["average_satisfaction"] = (
-            stats["satisfaction_sum"] / evaluated if evaluated else None
+            stats["satisfaction_sum"] / satisfaction_count
+            if satisfaction_count > 0
+            else None
         )
-        for label in ("areas", "subjects", "problem_groups", "problems"):
-            stats[label] = dict(sorted(stats[label].items(), key=lambda item: (-item[1], item[0]))[:15])
+        stats["resolved_share_of_satisfaction_evaluations"] = (
+            stats["consumer_resolved"] / satisfaction_count
+            if satisfaction_count > 0
+            else None
+        )
 
     observed = [stats for stats in entity_stats.values() if stats["complaints"] > 0]
-    thresholds = [1, 5, 10, 20, 30, 50, 100]
-    threshold_counts = {
-        str(threshold): sum(stats["complaints"] >= threshold for stats in entity_stats.values())
-        for threshold in thresholds
+    complaint_thresholds = [1, 5, 10, 20, 30, 50, 100]
+    complaint_threshold_counts = {
+        str(threshold): sum(
+            stats["complaints"] >= threshold for stats in entity_stats.values()
+        )
+        for threshold in complaint_thresholds
     }
-    evaluated_thresholds = [1, 5, 10, 20, 30]
-    evaluated_counts = {
-        str(threshold): sum(stats["evaluated"] >= threshold for stats in entity_stats.values())
-        for threshold in evaluated_thresholds
+    evaluation_thresholds = [1, 5, 10, 20, 30, 50]
+    evaluation_threshold_counts = {
+        str(threshold): sum(
+            stats["satisfaction_count"] >= threshold
+            for stats in entity_stats.values()
+        )
+        for threshold in evaluation_thresholds
+    }
+    month_thresholds = [1, 3, 6, 9, 12]
+    month_threshold_counts = {
+        str(threshold): sum(
+            stats["months_with_complaints"] >= threshold
+            for stats in entity_stats.values()
+        )
+        for threshold in month_thresholds
     }
 
     top_unmatched: list[dict[str, Any]] = []
-    for provider, count in unmatched_provider_rows.most_common(40):
-        top_unmatched.append({
-            "provider": provider,
-            "rows": count,
-            "candidate_suggestions_non_authoritative": _candidate_suggestions(provider, indexes),
-        })
+    for provider, complaints in unmatched_provider_rows.most_common(50):
+        top_unmatched.append(
+            {
+                "provider": provider,
+                "complaints": complaints,
+                "candidate_suggestions_non_authoritative": _candidate_suggestions(
+                    provider, indexes
+                ),
+            }
+        )
 
     return {
         "artifact": "v2_consumer_gov_157_experiment",
         "generated_at": _utc_now(),
         "status": "experimental",
         "methodology_note": (
-            "Coverage experiment only. No score, assessment eligibility or ranking eligibility is changed. "
-            "Accepted matching is deterministic: exact public CNPJ when available; exact normalized legal/current "
-            "entity name; exact verified brand; or a unique exact core-name key. Fuzzy similarity is emitted only "
-            "as a non-authoritative diagnostic for unmatched provider names. Absence from Consumer.gov is not zero "
-            "complaints because company participation in that platform is not universal."
+            "Coverage experiment only. It consumes the repository's validated monthly "
+            "Consumer.gov snapshots, each originally generated from the official MJSP CKAN "
+            "Base Completa resource. No score, assessment eligibility or ranking eligibility "
+            "is changed. Accepted identity matching is deterministic: exact structured CNPJ "
+            "when present, exact normalized legal/current entity name, exact verified brand, "
+            "or a unique exact core-name key. Fuzzy similarity is emitted only as a diagnostic "
+            "for unmatched providers. Absence from Consumer.gov is not interpreted as zero "
+            "complaints or good conduct because platform coverage is not universal."
         ),
         "source": {
             "provider": "Senacon / Ministerio da Justica e Seguranca Publica",
             "dataset": "reclamacoes-do-consumidor-gov-br",
-            "ckan_api": "https://dados.mj.gov.br/api/3/action",
-            "target_segment": TARGET_SEGMENT,
-            "months": selected_months,
-            "public_cnpj_columns_detected": sorted(all_cnpj_columns),
+            "upstream_catalog": "https://dados.mj.gov.br/dataset/reclamacoes-do-consumidor-gov-br",
+            "snapshot_builder": "api.build_consumidor_gov",
+            "source_mode": "validated_committed_monthly_snapshots",
+            "months": [month for month, _, _ in monthly],
+            "structured_cnpj_present_in_snapshots": snapshot_has_cnpj,
+            "snapshot_semantics": (
+                "Current builder explicitly records empty CNPJ/by_cnpj structures because "
+                "the public Base Completa dump does not provide a reliable structured provider CNPJ."
+            ),
         },
         "universe": {
             "regulatory_universe": "ordinary_current_insurers",
@@ -411,25 +496,29 @@ def build_experiment() -> dict[str, Any]:
             "observed_insurers": len(observed),
             "unobserved_insurers": len(eligible) - len(observed),
             "coverage_ratio": len(observed) / len(eligible),
-            "insurers_by_min_complaints_12m": threshold_counts,
-            "insurers_by_min_evaluated_complaints_12m": evaluated_counts,
+            "insurers_by_min_complaints_12m": complaint_threshold_counts,
+            "insurers_by_min_satisfaction_evaluations_12m": evaluation_threshold_counts,
+            "insurers_by_min_months_with_complaints": month_threshold_counts,
         },
         "rows": {
-            "insurance_segment_rows": insurance_rows_total,
-            "matched_rows": matched_rows_total,
-            "matched_row_ratio": matched_rows_total / insurance_rows_total if insurance_rows_total else None,
-            "match_methods": dict(match_method_counts),
-            "unmatched_rows": insurance_rows_total - matched_rows_total,
-            "distinct_unmatched_provider_names": len(unmatched_provider_names),
-        },
-        "taxonomy": {
-            "top_areas": _top(areas),
-            "top_subjects": _top(subjects),
-            "top_problem_groups": _top(problem_groups),
-            "top_problems": _top(problems, 30),
+            "provider_entries": provider_entries_total,
+            "complaints_in_insurance_segment_snapshots": complaints_total,
+            "matched_complaints": matched_complaints,
+            "matched_complaint_ratio": (
+                matched_complaints / complaints_total if complaints_total else None
+            ),
+            "match_methods_weighted_by_complaints": dict(match_method_counts),
+            "unmatched_complaints": complaints_total - matched_complaints,
+            "distinct_unmatched_provider_names": len(unmatched_provider_rows),
+            "resolution_rows_with_resolved_count_above_satisfaction_count": (
+                resolution_without_satisfaction
+            ),
         },
         "monthly": monthly_meta,
-        "entities": sorted(entity_stats.values(), key=lambda item: (-item["complaints"], str(item["entity_id"]))),
+        "entities": sorted(
+            entity_stats.values(),
+            key=lambda item: (-item["complaints"], str(item["entity_id"])),
+        ),
         "top_unmatched_providers": top_unmatched,
         "matching_ambiguities": indexes["ambiguities"],
     }
@@ -439,16 +528,23 @@ def main() -> None:
     payload = build_experiment()
     OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
     temp = OUTPUT_PATH.with_suffix(OUTPUT_PATH.suffix + ".tmp")
-    temp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    temp.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
     temp.replace(OUTPUT_PATH)
-    print(json.dumps({
-        "artifact": payload["artifact"],
-        "months": payload["source"]["months"],
-        "public_cnpj_columns_detected": payload["source"]["public_cnpj_columns_detected"],
-        "universe": payload["universe"],
-        "rows": payload["rows"],
-        "top_unmatched_providers": payload["top_unmatched_providers"][:10],
-    }, ensure_ascii=False, indent=2))
+    print(
+        json.dumps(
+            {
+                "artifact": payload["artifact"],
+                "source": payload["source"],
+                "universe": payload["universe"],
+                "rows": payload["rows"],
+                "top_unmatched_providers": payload["top_unmatched_providers"][:15],
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
     print(f"written to {OUTPUT_PATH}")
 
 
