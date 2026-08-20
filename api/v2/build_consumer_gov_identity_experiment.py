@@ -6,11 +6,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from api.utils.identifiers import normalize_cnpj_v2
 from api.utils.name_cleaner import normalize_name_key
 from api.v2.build_consumer_gov_157_experiment import (
     ELIGIBILITY_PATH,
     _build_indexes,
     _candidate_suggestions,
+    _core_name,
     _entries,
     _load_latest_months,
     _match_provider,
@@ -20,6 +22,10 @@ from api.v2.build_consumer_gov_157_experiment import (
 from api.v2.consumer_gov_identity import (
     load_provider_resolution_registry,
     resolve_curated_provider,
+)
+from api.v2.consumer_gov_temporal_brand import (
+    build_temporal_brand_index,
+    resolve_temporal_brand,
 )
 
 OUTPUT_PATH = Path("data/derived/v2/consumer_gov_identity_experiment.json")
@@ -33,6 +39,50 @@ def _provider_display(provider_key: str, entry: dict[str, Any]) -> str:
     return str(entry.get("display_name") or entry.get("name") or provider_key).strip()
 
 
+def _build_non_brand_fallback_indexes(
+    indexes: dict[str, Any],
+    temporal_brand_index: dict[str, Any],
+) -> dict[str, Any]:
+    """Prevent current brand aliases from leaking through timeless exact/core fallbacks."""
+    brand_name_keys = set((temporal_brand_index.get("by_name") or {}).keys())
+    brand_core_keys = {
+        _core_name(name)
+        for name in temporal_brand_index.get("display_names") or []
+        if _core_name(name)
+    }
+    fallback = dict(indexes)
+    fallback["verified_brand"] = {}
+    fallback["exact_name"] = {
+        key: entity_id
+        for key, entity_id in (indexes.get("exact_name") or {}).items()
+        if key not in brand_name_keys
+    }
+    fallback["core_name"] = {
+        key: entity_id
+        for key, entity_id in (indexes.get("core_name") or {}).items()
+        if key not in brand_core_keys
+    }
+    return fallback
+
+
+def _resolve_provider_temporal_brand(
+    provider_key: str,
+    display: str,
+    month: str,
+    temporal_brand_index: dict[str, Any],
+) -> dict[str, Any] | None:
+    seen: set[str] = set()
+    for candidate in (display, provider_key):
+        key = normalize_name_key(candidate)
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        result = resolve_temporal_brand(candidate, month, temporal_brand_index)
+        if result is not None:
+            return result
+    return None
+
+
 def build_identity_experiment() -> dict[str, Any]:
     eligibility = json.loads(ELIGIBILITY_PATH.read_text(encoding="utf-8"))
     indexes = _build_indexes(eligibility)
@@ -41,6 +91,11 @@ def build_identity_experiment() -> dict[str, Any]:
         raise RuntimeError(f"expected 157 current ordinary insurers, got {len(eligible)}")
 
     registry = load_provider_resolution_registry()
+    temporal_brand_index = build_temporal_brand_index(
+        list(eligibility.get("brands") or []),
+        set(indexes["entity_by_id"]),
+    )
+    fallback_indexes = _build_non_brand_fallback_indexes(indexes, temporal_brand_index)
     monthly = _load_latest_months()
 
     complaints_total = 0
@@ -54,6 +109,9 @@ def build_identity_experiment() -> dict[str, Any]:
     curated_provider_rows: Counter[str] = Counter()
     outside_provider_rows: Counter[str] = Counter()
     ambiguous_provider_rows: Counter[str] = Counter()
+    temporal_matched_provider_rows: Counter[str] = Counter()
+    temporal_unresolved_provider_rows: Counter[str] = Counter()
+    temporal_ambiguous_provider_rows: Counter[str] = Counter()
     entity_complaints: Counter[str] = Counter()
     entity_months: dict[str, set[str]] = {str(item["entity_id"]): set() for item in eligible}
 
@@ -94,7 +152,54 @@ def build_identity_experiment() -> dict[str, Any]:
                     continue
                 raise RuntimeError(f"unexpected curated state: {state}")
 
-            entity_id, method = _match_provider(str(provider_key), entry, indexes)
+            cnpj = normalize_cnpj_v2(entry.get("cnpj"))
+            if cnpj and cnpj in indexes["cnpj"]:
+                entity_id = str(indexes["cnpj"][cnpj])
+                matched_complaints += complaints
+                resolution_states["matched_current_insurer"] += complaints
+                match_methods["cnpj_exact"] += complaints
+                entity_complaints[entity_id] += complaints
+                entity_months[entity_id].add(month)
+                continue
+
+            temporal = _resolve_provider_temporal_brand(
+                str(provider_key),
+                display,
+                month,
+                temporal_brand_index,
+            )
+            if temporal is not None:
+                state = str(temporal["resolution_state"])
+                method = str(temporal["match_method"])
+                match_methods[method] += complaints
+                if state == "matched_current_insurer":
+                    entity_id = str(temporal["entity_id"])
+                    matched_complaints += complaints
+                    resolution_states["matched_current_insurer"] += complaints
+                    temporal_matched_provider_rows[display] += complaints
+                    entity_complaints[entity_id] += complaints
+                    entity_months[entity_id].add(month)
+                    continue
+                if state == "ambiguous":
+                    ambiguous_complaints += complaints
+                    resolution_states["ambiguous"] += complaints
+                    ambiguous_provider_rows[display] += complaints
+                    temporal_ambiguous_provider_rows[display] += complaints
+                    continue
+                if state == "unresolved":
+                    unresolved_complaints += complaints
+                    resolution_states["unresolved"] += complaints
+                    temporal_unresolved_provider_rows[display] += complaints
+                    if display:
+                        unmatched_provider_rows[display] += complaints
+                    continue
+                raise RuntimeError(f"unexpected temporal brand state: {state}")
+
+            entity_id, method = _match_provider(
+                str(provider_key),
+                entry,
+                fallback_indexes,
+            )
             match_methods[method] += complaints
             if entity_id:
                 matched_complaints += complaints
@@ -155,10 +260,19 @@ def build_identity_experiment() -> dict[str, Any]:
             "accepted_resolution_order": [
                 "curated source-backed exact provider resolution",
                 "structured CNPJ exact when present",
-                "exact legal/current entity name",
-                "exact verified brand",
-                "unique exact core-name key",
+                "exact verified brand/risk-carrier relationship valid for the full source month",
+                "exact non-brand legal/current entity name",
+                "unique exact non-brand core-name key",
             ],
+            "brand_temporal_rule": (
+                "A brand/risk-carrier relationship may attribute a monthly aggregate only when "
+                "its effective window covers the entire month. A mid-month start/end remains "
+                "unresolved because the monthly source cannot be split safely."
+            ),
+            "brand_temporal_fallback_rule": (
+                "Known brand aliases are removed from timeless exact/core fallbacks so a current "
+                "carrier cannot be applied retroactively outside the verified relationship window."
+            ),
             "fuzzy_similarity_role": "diagnostic_only_never_authoritative",
             "ambiguous_provider_behavior": "preserve_ambiguity_do_not_assign",
             "outside_157_behavior": "classify_outside_universe_do_not_transfer_complaints",
@@ -169,6 +283,7 @@ def build_identity_experiment() -> dict[str, Any]:
             "provider_resolution_registry": (
                 "data/reference/v2/consumer_gov_provider_resolutions.json"
             ),
+            "canonical_brand_registry": "data/reference/v2/verified_relationships.json",
         },
         "universe": {
             "eligible_insurers": len(eligible),
@@ -201,10 +316,29 @@ def build_identity_experiment() -> dict[str, Any]:
             "match_methods_weighted_by_complaints": dict(match_methods),
             "curated_provider_names_applied": len(curated_provider_rows),
             "distinct_unresolved_provider_names": len(unmatched_provider_rows),
+            "temporal_brand_matched_complaints": sum(temporal_matched_provider_rows.values()),
+            "temporal_brand_unresolved_complaints": sum(
+                temporal_unresolved_provider_rows.values()
+            ),
+            "temporal_brand_ambiguous_complaints": sum(
+                temporal_ambiguous_provider_rows.values()
+            ),
         },
         "curated_provider_resolutions_applied": [
             {"provider": provider, "complaints": complaints}
             for provider, complaints in curated_provider_rows.most_common()
+        ],
+        "temporal_brand_matches": [
+            {"provider": provider, "complaints": complaints}
+            for provider, complaints in temporal_matched_provider_rows.most_common()
+        ],
+        "temporal_brand_unresolved_providers": [
+            {"provider": provider, "complaints": complaints}
+            for provider, complaints in temporal_unresolved_provider_rows.most_common()
+        ],
+        "temporal_brand_ambiguous_providers": [
+            {"provider": provider, "complaints": complaints}
+            for provider, complaints in temporal_ambiguous_provider_rows.most_common()
         ],
         "outside_157_providers": [
             {"provider": provider, "complaints": complaints}
@@ -243,6 +377,12 @@ def main() -> None:
                 "artifact": payload["artifact"],
                 "universe": payload["universe"],
                 "rows": payload["rows"],
+                "temporal_brand_unresolved_providers": payload[
+                    "temporal_brand_unresolved_providers"
+                ],
+                "temporal_brand_ambiguous_providers": payload[
+                    "temporal_brand_ambiguous_providers"
+                ],
                 "ambiguous_providers": payload["ambiguous_providers"],
                 "outside_157_providers": payload["outside_157_providers"],
                 "unresolved_providers": payload["unresolved_providers"],
