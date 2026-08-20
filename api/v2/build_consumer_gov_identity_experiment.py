@@ -121,9 +121,9 @@ def build_identity_experiment() -> dict[str, Any]:
     observed_entities = [
         entity_id for entity_id, complaints in entity_complaints.items() if complaints > 0
     ]
-    unresolved_top = []
-    for provider, complaints in unmatched_provider_rows.most_common(50):
-        unresolved_top.append(
+    unresolved_all = []
+    for provider, complaints in unmatched_provider_rows.most_common():
+        unresolved_all.append(
             {
                 "provider": provider,
                 "provider_key": normalize_name_key(provider),
@@ -214,7 +214,8 @@ def build_identity_experiment() -> dict[str, Any]:
             {"provider": provider, "complaints": complaints}
             for provider, complaints in ambiguous_provider_rows.most_common()
         ],
-        "top_unresolved_providers": unresolved_top,
+        "unresolved_providers": unresolved_all,
+        "top_unresolved_providers": unresolved_all[:50],
         "entities": [
             {
                 "entity_id": entity_id,
@@ -244,7 +245,7 @@ def main() -> None:
                 "rows": payload["rows"],
                 "ambiguous_providers": payload["ambiguous_providers"],
                 "outside_157_providers": payload["outside_157_providers"],
-                "top_unresolved_providers": payload["top_unresolved_providers"][:15],
+                "unresolved_providers": payload["unresolved_providers"],
             },
             ensure_ascii=False,
             indent=2,
