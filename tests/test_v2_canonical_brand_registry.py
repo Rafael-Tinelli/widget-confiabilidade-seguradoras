@@ -1,10 +1,5 @@
-from json import loads
-from pathlib import Path
-
+from api.v2.consumer_gov_identity import load_provider_resolution_registry
 from api.v2.relationships import load_verified_relationship_registry
-
-
-CONSUMER_REGISTRY = Path("data/reference/v2/consumer_gov_provider_resolutions.json")
 
 
 def _brands_by_id():
@@ -49,7 +44,7 @@ def test_obvious_trade_names_live_in_canonical_registry():
 
 
 def test_consumer_registry_does_not_duplicate_reusable_metlife_alias():
-    payload = loads(CONSUMER_REGISTRY.read_text(encoding="utf-8"))
+    payload = load_provider_resolution_registry()
     provider_names = {row["provider_name"] for row in payload["resolutions"]}
     assert "Metlife Seguros e Previdência Privada" not in provider_names
     assert "source-specific" in payload["note"]
