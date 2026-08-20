@@ -75,11 +75,14 @@ jobs:
           python -m py_compile api/v2/build_consumer_gov_157_experiment.py
           python -m py_compile api/v2/build_consumer_gov_identity_experiment.py
           python -m py_compile api/v2/consumer_gov_identity.py
+          python -m py_compile api/v2/consumer_gov_universe_resolution.py
 
-      - name: Test curated identity contract
+      - name: Test Consumer.gov identity contracts
         run: |
           set -euo pipefail
-          python -m pytest -q tests/test_v2_consumer_gov_identity.py
+          python -m pytest -q \
+            tests/test_v2_consumer_gov_identity.py \
+            tests/test_v2_consumer_gov_universe_resolution.py
 
       - name: Build formal 157-insurer eligibility universe
         run: |
