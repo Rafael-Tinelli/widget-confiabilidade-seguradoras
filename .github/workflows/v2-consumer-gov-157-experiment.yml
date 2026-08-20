@@ -110,7 +110,7 @@ jobs:
           walk(payload)
           print(json.dumps({
               "months": payload["source"]["months"],
-              "public_cnpj_columns": payload["source"]["public_cnpj_columns_detected"],
+              "structured_cnpj_present_in_snapshots": payload["source"]["structured_cnpj_present_in_snapshots"],
               "universe": payload["universe"],
               "rows": payload["rows"],
           }, ensure_ascii=False, indent=2))
