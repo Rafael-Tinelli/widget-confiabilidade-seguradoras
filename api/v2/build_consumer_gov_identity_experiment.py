@@ -27,6 +27,10 @@ from api.v2.consumer_gov_temporal_brand import (
     build_temporal_brand_index,
     resolve_temporal_brand,
 )
+from api.v2.consumer_gov_universe_resolution import (
+    build_full_universe_provider_index,
+    resolve_provider_against_full_universe,
+)
 
 OUTPUT_PATH = Path("data/derived/v2/consumer_gov_identity_experiment.json")
 
@@ -83,6 +87,19 @@ def _resolve_provider_temporal_brand(
     return None
 
 
+def _record_entity_match(
+    entity_id: str,
+    month: str,
+    complaints: int,
+    matched_complaints: int,
+    entity_complaints: Counter[str],
+    entity_months: dict[str, set[str]],
+) -> int:
+    entity_complaints[entity_id] += complaints
+    entity_months[entity_id].add(month)
+    return matched_complaints + complaints
+
+
 def build_identity_experiment() -> dict[str, Any]:
     eligibility = json.loads(ELIGIBILITY_PATH.read_text(encoding="utf-8"))
     indexes = _build_indexes(eligibility)
@@ -94,6 +111,9 @@ def build_identity_experiment() -> dict[str, Any]:
     temporal_brand_index = build_temporal_brand_index(
         list(eligibility.get("brands") or []),
         set(indexes["entity_by_id"]),
+    )
+    full_universe_index = build_full_universe_provider_index(
+        list(eligibility.get("entities") or [])
     )
     fallback_indexes = _build_non_brand_fallback_indexes(indexes, temporal_brand_index)
     monthly = _load_latest_months()
@@ -112,6 +132,8 @@ def build_identity_experiment() -> dict[str, Any]:
     temporal_matched_provider_rows: Counter[str] = Counter()
     temporal_unresolved_provider_rows: Counter[str] = Counter()
     temporal_ambiguous_provider_rows: Counter[str] = Counter()
+    canonical_full_universe_rows: Counter[str] = Counter()
+    canonical_full_universe_details: dict[str, dict[str, Any]] = {}
     entity_complaints: Counter[str] = Counter()
     entity_months: dict[str, set[str]] = {str(item["entity_id"]): set() for item in eligible}
 
@@ -135,10 +157,15 @@ def build_identity_experiment() -> dict[str, Any]:
                 curated_provider_rows[display] += complaints
                 if state == "matched_current_insurer":
                     entity_id = str(curated["entity_id"])
-                    matched_complaints += complaints
+                    matched_complaints = _record_entity_match(
+                        entity_id,
+                        month,
+                        complaints,
+                        matched_complaints,
+                        entity_complaints,
+                        entity_months,
+                    )
                     match_methods["curated_source_backed_resolution"] += complaints
-                    entity_complaints[entity_id] += complaints
-                    entity_months[entity_id].add(month)
                     continue
                 if state == "outside_157":
                     outside_157_complaints += complaints
@@ -155,11 +182,16 @@ def build_identity_experiment() -> dict[str, Any]:
             cnpj = normalize_cnpj_v2(entry.get("cnpj"))
             if cnpj and cnpj in indexes["cnpj"]:
                 entity_id = str(indexes["cnpj"][cnpj])
-                matched_complaints += complaints
+                matched_complaints = _record_entity_match(
+                    entity_id,
+                    month,
+                    complaints,
+                    matched_complaints,
+                    entity_complaints,
+                    entity_months,
+                )
                 resolution_states["matched_current_insurer"] += complaints
                 match_methods["cnpj_exact"] += complaints
-                entity_complaints[entity_id] += complaints
-                entity_months[entity_id].add(month)
                 continue
 
             temporal = _resolve_provider_temporal_brand(
@@ -174,11 +206,16 @@ def build_identity_experiment() -> dict[str, Any]:
                 match_methods[method] += complaints
                 if state == "matched_current_insurer":
                     entity_id = str(temporal["entity_id"])
-                    matched_complaints += complaints
+                    matched_complaints = _record_entity_match(
+                        entity_id,
+                        month,
+                        complaints,
+                        matched_complaints,
+                        entity_complaints,
+                        entity_months,
+                    )
                     resolution_states["matched_current_insurer"] += complaints
                     temporal_matched_provider_rows[display] += complaints
-                    entity_complaints[entity_id] += complaints
-                    entity_months[entity_id].add(month)
                     continue
                 if state == "ambiguous":
                     ambiguous_complaints += complaints
@@ -195,6 +232,51 @@ def build_identity_experiment() -> dict[str, Any]:
                     continue
                 raise RuntimeError(f"unexpected temporal brand state: {state}")
 
+            canonical = resolve_provider_against_full_universe(
+                display,
+                full_universe_index,
+            )
+            if canonical is None and normalize_name_key(display) != normalize_name_key(
+                str(provider_key)
+            ):
+                canonical = resolve_provider_against_full_universe(
+                    str(provider_key),
+                    full_universe_index,
+                )
+            if canonical is not None:
+                state = str(canonical["resolution_state"])
+                method = str(canonical["match_method"])
+                match_methods[method] += complaints
+                resolution_states[state] += complaints
+                canonical_full_universe_rows[display] += complaints
+                canonical_full_universe_details[display] = {
+                    "resolution_state": state,
+                    "matched_canonical_entity_id": canonical.get(
+                        "matched_canonical_entity_id"
+                    ),
+                    "entity_id": canonical.get("entity_id"),
+                    "entity_type": canonical.get("entity_type"),
+                    "legal_name": canonical.get("legal_name"),
+                    "reason_code": canonical.get("reason_code"),
+                    "match_method": method,
+                }
+                if state == "matched_current_insurer":
+                    entity_id = str(canonical["entity_id"])
+                    matched_complaints = _record_entity_match(
+                        entity_id,
+                        month,
+                        complaints,
+                        matched_complaints,
+                        entity_complaints,
+                        entity_months,
+                    )
+                    continue
+                if state == "outside_157":
+                    outside_157_complaints += complaints
+                    outside_provider_rows[display] += complaints
+                    continue
+                raise RuntimeError(f"unexpected canonical universe state: {state}")
+
             entity_id, method = _match_provider(
                 str(provider_key),
                 entry,
@@ -202,10 +284,15 @@ def build_identity_experiment() -> dict[str, Any]:
             )
             match_methods[method] += complaints
             if entity_id:
-                matched_complaints += complaints
+                matched_complaints = _record_entity_match(
+                    str(entity_id),
+                    month,
+                    complaints,
+                    matched_complaints,
+                    entity_complaints,
+                    entity_months,
+                )
                 resolution_states["matched_current_insurer"] += complaints
-                entity_complaints[entity_id] += complaints
-                entity_months[entity_id].add(month)
             else:
                 unresolved_complaints += complaints
                 resolution_states["unresolved"] += complaints
@@ -261,9 +348,23 @@ def build_identity_experiment() -> dict[str, Any]:
                 "curated source-backed exact provider resolution",
                 "structured CNPJ exact when present",
                 "exact verified brand/risk-carrier relationship valid for the full source month",
+                "deterministic exact/core identity across the complete classified regulatory universe",
                 "exact non-brand legal/current entity name",
                 "unique exact non-brand core-name key",
             ],
+            "full_universe_exclusion_rule": (
+                "A provider that deterministically identifies a classified non-157 entity is "
+                "recorded outside_157 instead of generic unresolved. Capitalization, open-pension, "
+                "Sandbox, reinsurance and historical legal entities are never transferred to a "
+                "same-group insurer. Names that merely identify a sales channel, broker, retailer "
+                "or cooperative remain unresolved unless source-backed curation proves their own "
+                "identity; distribution relationships never transfer complaints to carriers."
+            ),
+            "pension_name_rule": (
+                "The word previdencia is not an exclusion rule. Some SUSEP-licensed current "
+                "insurers also operate life/open-pension business. Exclusion follows canonical "
+                "entity_type and the 157 regulatory gate, never a keyword in the provider name."
+            ),
             "brand_temporal_rule": (
                 "A brand/risk-carrier relationship may attribute a monthly aggregate only when "
                 "its effective window covers the entire month. A mid-month start/end remains "
@@ -284,6 +385,7 @@ def build_identity_experiment() -> dict[str, Any]:
                 "data/reference/v2/consumer_gov_provider_resolutions.json"
             ),
             "canonical_brand_registry": "data/reference/v2/verified_relationships.json",
+            "canonical_regulatory_inventory": str(ELIGIBILITY_PATH),
         },
         "universe": {
             "eligible_insurers": len(eligible),
@@ -323,6 +425,9 @@ def build_identity_experiment() -> dict[str, Any]:
             "temporal_brand_ambiguous_complaints": sum(
                 temporal_ambiguous_provider_rows.values()
             ),
+            "canonical_full_universe_complaints": sum(
+                canonical_full_universe_rows.values()
+            ),
         },
         "curated_provider_resolutions_applied": [
             {"provider": provider, "complaints": complaints}
@@ -339,6 +444,14 @@ def build_identity_experiment() -> dict[str, Any]:
         "temporal_brand_ambiguous_providers": [
             {"provider": provider, "complaints": complaints}
             for provider, complaints in temporal_ambiguous_provider_rows.most_common()
+        ],
+        "canonical_full_universe_resolutions": [
+            {
+                "provider": provider,
+                "complaints": complaints,
+                **canonical_full_universe_details[provider],
+            }
+            for provider, complaints in canonical_full_universe_rows.most_common()
         ],
         "outside_157_providers": [
             {"provider": provider, "complaints": complaints}
@@ -382,6 +495,9 @@ def main() -> None:
                 ],
                 "temporal_brand_ambiguous_providers": payload[
                     "temporal_brand_ambiguous_providers"
+                ],
+                "canonical_full_universe_resolutions": payload[
+                    "canonical_full_universe_resolutions"
                 ],
                 "ambiguous_providers": payload["ambiguous_providers"],
                 "outside_157_providers": payload["outside_157_providers"],
