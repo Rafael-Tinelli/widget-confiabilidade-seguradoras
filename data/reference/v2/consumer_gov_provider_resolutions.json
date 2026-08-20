@@ -1,6 +1,6 @@
 {
-  "schema_version": "1.1",
-  "note": "Consumer.gov-specific provider-label resolution registry. Durable market facts such as reusable brands, trade names and product-to-risk-carrier relationships belong in data/reference/v2/verified_relationships.json and must be consumed from the canonical identity layer. This file is reserved for source-specific wrappers, ambiguous labels and explicit outside-universe classifications. Every mapping must be source-backed. Similarity or fuzzy matching may suggest candidates but never creates a resolution. A complaint record is evidence of consumer friction, not proof of abusive conduct or contractual wrongdoing.",
+  "schema_version": "1.2",
+  "note": "Consumer.gov-specific provider-label resolution registry. Durable market facts such as reusable brands, trade names and product-to-risk-carrier relationships belong in data/reference/v2/verified_relationships.json and must be consumed from the canonical identity layer. This file is reserved for source-specific wrappers, truncated provider labels, ambiguous labels and explicit outside-universe classifications. Every mapping must be source-backed. Similarity or fuzzy matching may suggest candidates but never creates a resolution. A complaint record is evidence of consumer friction, not proof of abusive conduct or contractual wrongdoing. Sales channels, brokers, cooperatives and retailers must never have their complaints transferred to a carrier merely because they distribute that carrier's products.",
   "resolutions": [
     {
       "provider_name": "Too Seguros (antiga PAN Seguros)",
@@ -74,6 +74,81 @@
           "authority": "Brasilseg / BB Seguros",
           "url": "https://assets-bbseguros.cld.brasilseg.com.br/2026-01/Regulamento_Empresa%20Protegida_VF.pdf",
           "fact": "Official campaign regulation identifies Alianca do Brasil Seguros S.A. under CNPJ 01.378.407/0001-10."
+        }
+      ]
+    },
+    {
+      "provider_name": "Sicoob Seguradora",
+      "resolution_state": "matched_current_insurer",
+      "resolution_kind": "consumer_gov_truncated_legal_name",
+      "target_cnpj": "26314512000116",
+      "evidence": [
+        {
+          "authority": "SUSEP",
+          "url": "https://www2.susep.gov.br/menuatendimento/seguradoras/info_seguradoras_2011.asp?entcodigo=03654",
+          "fact": "SUSEP identifies FIP 03654 as SICOOB SEGURADORA DE VIDA E PREVIDENCIA S.A.; this is a distinct supervised insurer, not the generic Sicoob cooperative distribution channel."
+        },
+        {
+          "authority": "Consumidor.gov.br",
+          "url": "https://www.consumidor.gov.br/pages/principal/empresas-participantes",
+          "fact": "The public participant list contains the provider label Sicoob Seguradora."
+        }
+      ]
+    },
+    {
+      "provider_name": "Capemisa Seguradora",
+      "resolution_state": "matched_current_insurer",
+      "resolution_kind": "consumer_gov_truncated_legal_name",
+      "target_cnpj": "08602745000132",
+      "evidence": [
+        {
+          "authority": "SUSEP",
+          "url": "https://www2.susep.gov.br/safe/menumercado/PVGBL/Plano.aspx/Imprimir/6479?tipoPlanoId=4",
+          "fact": "SUSEP identifies CAPEMISA SEGURADORA DE VIDA E PREVIDÊNCIA S/A as the supervised insurer; CAPEMISA CAPITALIZAÇÃO is a separate legal entity."
+        }
+      ]
+    },
+    {
+      "provider_name": "Akad Seguros (antiga Argo Seguros)",
+      "resolution_state": "matched_current_insurer",
+      "resolution_kind": "historical_legal_name_same_cnpj",
+      "target_cnpj": "14868712000131",
+      "evidence": [
+        {
+          "authority": "Portal da Transparencia / Governo Federal",
+          "url": "https://portaldatransparencia.gov.br/pessoa-juridica/14868712000131",
+          "fact": "CNPJ 14.868.712/0001-31 is currently AKAD SEGUROS S.A. and the public name history records ARGO SEGUROS BRASIL S.A."
+        }
+      ]
+    },
+    {
+      "provider_name": "Kovr Previdência (antiga Investprev Seguros e Previdência)",
+      "resolution_state": "matched_current_insurer",
+      "resolution_kind": "historical_legal_name_same_cnpj",
+      "target_cnpj": "17479056000173",
+      "evidence": [
+        {
+          "authority": "Portal da Transparencia / Governo Federal",
+          "url": "https://portaldatransparencia.gov.br/pessoa-juridica/17479056000173",
+          "fact": "CNPJ 17.479.056/0001-73 is currently KOVR PREVIDENCIA S.A. and the public name history records INVESTPREV SEGUROS E PREVIDENCIA S.A.; the v2 current regulatory inventory classifies this legal entity as an insurer in the 157 universe."
+        }
+      ]
+    },
+    {
+      "provider_name": "Seguros Honda",
+      "resolution_state": "outside_157",
+      "resolution_kind": "insurance_broker_sales_channel",
+      "reason_code": "sales_channel_not_risk_carrier_do_not_transfer_complaints",
+      "evidence": [
+        {
+          "authority": "Honda Serviços Financeiros / Seguros Honda",
+          "url": "https://www.corretoradeseguroshonda.com.br/atendimento/contatos",
+          "fact": "The official site identifies Corretora de Seguros Honda Ltda., CNPJ 56.813.140/0001-33."
+        },
+        {
+          "authority": "Honda Serviços Financeiros",
+          "url": "https://www.hondaservicosfinanceiros.com.br/",
+          "fact": "Honda describes Seguros Honda as a partner of multiple insurers; therefore complaints under this provider label must not be assigned to any one carrier."
         }
       ]
     },
