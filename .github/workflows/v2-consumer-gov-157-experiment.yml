@@ -69,34 +69,42 @@ jobs:
           print(f"SES cache OK: {path.stat().st_size} bytes")
           PY
 
-      - name: Compile experiment
+      - name: Compile experiments
         run: |
           set -euo pipefail
           python -m py_compile api/v2/build_consumer_gov_157_experiment.py
+          python -m py_compile api/v2/build_consumer_gov_identity_experiment.py
+          python -m py_compile api/v2/consumer_gov_identity.py
+
+      - name: Test curated identity contract
+        run: |
+          set -euo pipefail
+          pytest -q tests/test_v2_consumer_gov_identity.py
 
       - name: Build formal 157-insurer eligibility universe
         run: |
           set -euo pipefail
           python -m api.v2.build_eligibility_inventory
 
-      - name: Run Consumer.gov x 157 experiment
+      - name: Run Consumer.gov x 157 baseline experiment
         run: |
           set -euo pipefail
           python -m api.v2.build_consumer_gov_157_experiment
 
-      - name: Validate experiment contract
+      - name: Run Consumer.gov identity-resolution experiment
+        run: |
+          set -euo pipefail
+          python -m api.v2.build_consumer_gov_identity_experiment
+
+      - name: Validate experiment contracts
         run: |
           set -euo pipefail
           python - <<'PY'
           import json
           from pathlib import Path
-          path = Path("data/derived/v2/consumer_gov_157_experiment.json")
-          payload = json.loads(path.read_text(encoding="utf-8"))
-          if payload.get("status") != "experimental":
-              raise SystemExit("experiment must remain experimental")
-          if payload["universe"]["eligible_insurers"] != 157:
-              raise SystemExit("experiment universe is not 157 insurers")
+
           forbidden = {"score", "assessment_eligible", "ranking_eligible"}
+
           def walk(value):
               if isinstance(value, dict):
                   overlap = forbidden & set(value)
@@ -107,16 +115,44 @@ jobs:
               elif isinstance(value, list):
                   for child in value:
                       walk(child)
-          walk(payload)
+
+          baseline = json.loads(
+              Path("data/derived/v2/consumer_gov_157_experiment.json").read_text(
+                  encoding="utf-8"
+              )
+          )
+          resolved = json.loads(
+              Path("data/derived/v2/consumer_gov_identity_experiment.json").read_text(
+                  encoding="utf-8"
+              )
+          )
+          for payload in (baseline, resolved):
+              if payload.get("status") != "experimental":
+                  raise SystemExit("Consumer.gov artifacts must remain experimental")
+              if payload["universe"]["eligible_insurers"] != 157:
+                  raise SystemExit("experiment universe is not 157 insurers")
+              walk(payload)
+
+          total = resolved["rows"]["complaints_in_insurance_segment_snapshots"]
+          states = resolved["rows"]["resolution_states_weighted_by_complaints"]
+          if sum(states.values()) != total:
+              raise SystemExit("identity resolution states do not reconcile to source total")
+          if resolved["rows"]["matched_current_insurer_complaints"] < baseline["rows"]["matched_complaints"]:
+              raise SystemExit("curated identity layer unexpectedly reduced matched complaints")
+
           print(json.dumps({
-              "months": payload["source"]["months"],
-              "structured_cnpj_present_in_snapshots": payload["source"]["structured_cnpj_present_in_snapshots"],
-              "universe": payload["universe"],
-              "rows": payload["rows"],
+              "months": baseline["source"]["months"],
+              "structured_cnpj_present_in_snapshots": baseline["source"]["structured_cnpj_present_in_snapshots"],
+              "baseline_universe": baseline["universe"],
+              "baseline_rows": baseline["rows"],
+              "resolved_universe": resolved["universe"],
+              "resolved_rows": resolved["rows"],
+              "ambiguous_providers": resolved["ambiguous_providers"],
+              "outside_157_providers": resolved["outside_157_providers"],
           }, ensure_ascii=False, indent=2))
           PY
 
-      - name: Upload experiment artifact
+      - name: Upload experiment artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -125,4 +161,5 @@ jobs:
           if-no-files-found: warn
           path: |
             data/derived/v2/consumer_gov_157_experiment.json
+            data/derived/v2/consumer_gov_identity_experiment.json
             data/derived/v2/entity_eligibility_inventory.json
