@@ -1,4 +1,4 @@
-import json
+from json import loads
 from pathlib import Path
 
 from api.v2.relationships import load_verified_relationship_registry
@@ -49,7 +49,7 @@ def test_obvious_trade_names_live_in_canonical_registry():
 
 
 def test_consumer_registry_does_not_duplicate_reusable_metlife_alias():
-    payload = json.loads(CONSUMER_REGISTRY.read_text(encoding="utf-8"))
+    payload = loads(CONSUMER_REGISTRY.read_text(encoding="utf-8"))
     provider_names = {row["provider_name"] for row in payload["resolutions"]}
     assert "Metlife Seguros e Previdência Privada" not in provider_names
     assert "source-specific" in payload["note"]
