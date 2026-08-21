@@ -108,57 +108,6 @@
       ]
     },
     {
-      "provider_name": "Sompo Consumer (DESATIVADO) (Atual HDI SEGUROS)",
-      "target_cnpj": "29980158000157",
-      "resolution_state": "matched_current_insurer",
-      "reason_code": "verified_historical_insurer_incorporated_into_current_susep",
-      "legal_name_receita": "HDI SEGUROS S.A.",
-      "trade_name": "SOMPO CONSUMER",
-      "primary_cnae_code": "6512000",
-      "legal_nature_code": "2054",
-      "evidence": [
-        {
-          "authority": "HDI Seguros",
-          "url": "https://www.hdiseguros.com.br/contato/perguntas-frequentes/a-Sompo-Consumer-Seguradora-S.A-agora-faz-parte-da-HDI-Seguros-S.A",
-          "observed_fact": "A HDI informa que a antiga Sompo Consumer Seguradora S.A. passou a denominar-se HDI Seguros do Brasil S.A., CNPJ 49.786.401/0001-08."
-        },
-        {
-          "authority": "Diário Oficial da União / SUSEP",
-          "reference": "Portaria DIORE/SUSEP nº 62, de 29/05/2025",
-          "process": "15414.617322/2025-64",
-          "observed_fact": "Homologada a incorporação da totalidade do patrimônio de HDI Seguros do Brasil S.A., CNPJ 49.786.401/0001-08, por HDI Seguros S.A., CNPJ 29.980.158/0001-57, deliberada em 24/03/2025."
-        },
-        {
-          "authority": "Consumidor.gov.br",
-          "url": "https://www.consumidor.gov.br/pages/principal/empresas-participantes",
-          "observed_fact": "A lista pública de participantes usa explicitamente o rótulo 'Sompo Consumer (DESATIVADO) (Atual HDI SEGUROS)'."
-        }
-      ]
-    },
-    {
-      "provider_name": "Sompo Consumer",
-      "target_cnpj": "29980158000157",
-      "resolution_state": "matched_current_insurer",
-      "reason_code": "verified_historical_insurer_incorporated_into_current_susep",
-      "legal_name_receita": "HDI SEGUROS S.A.",
-      "trade_name": "SOMPO CONSUMER",
-      "primary_cnae_code": "6512000",
-      "legal_nature_code": "2054",
-      "evidence": [
-        {
-          "authority": "HDI Seguros",
-          "url": "https://www.hdiseguros.com.br/contato/perguntas-frequentes/a-Sompo-Consumer-Seguradora-S.A-agora-faz-parte-da-HDI-Seguros-S.A",
-          "observed_fact": "A HDI informa que a antiga Sompo Consumer Seguradora S.A. passou a denominar-se HDI Seguros do Brasil S.A., CNPJ 49.786.401/0001-08."
-        },
-        {
-          "authority": "Diário Oficial da União / SUSEP",
-          "reference": "Portaria DIORE/SUSEP nº 62, de 29/05/2025",
-          "process": "15414.617322/2025-64",
-          "observed_fact": "Homologada a incorporação da totalidade do patrimônio de HDI Seguros do Brasil S.A., CNPJ 49.786.401/0001-08, por HDI Seguros S.A., CNPJ 29.980.158/0001-57, deliberada em 24/03/2025."
-        }
-      ]
-    },
-    {
       "provider_name": "Ciclic",
       "target_cnpj": "29032677000193",
       "resolution_state": "outside_157",
