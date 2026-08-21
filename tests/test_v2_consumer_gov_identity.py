@@ -38,6 +38,33 @@ def test_registry_preserves_ambiguous_multi_entity_label() -> None:
     assert result["entity_id"] is None
 
 
+def test_registry_resolves_deactivated_sompo_consumer_to_hdi_successor() -> None:
+    registry = load_provider_resolution_registry()
+    result = resolve_curated_provider(
+        "Sompo Consumer (DESATIVADO) (Atual HDI SEGUROS)",
+        {"29980158000157": "fip:006572"},
+        registry,
+    )
+    assert result is not None
+    assert result["resolution_state"] == "matched_current_insurer"
+    assert result["entity_id"] == "fip:006572"
+    assert result["resolution_kind"] == (
+        "historical_legal_entity_incorporated_into_current_insurer"
+    )
+
+
+def test_registry_resolves_plain_sompo_consumer_to_same_hdi_successor() -> None:
+    registry = load_provider_resolution_registry()
+    result = resolve_curated_provider(
+        "Sompo Consumer",
+        {"29980158000157": "fip:006572"},
+        registry,
+    )
+    assert result is not None
+    assert result["resolution_state"] == "matched_current_insurer"
+    assert result["entity_id"] == "fip:006572"
+
+
 def test_registry_preserves_outside_universe_state() -> None:
     registry = load_provider_resolution_registry()
     result = resolve_curated_provider("LTI Seguros", {}, registry)
