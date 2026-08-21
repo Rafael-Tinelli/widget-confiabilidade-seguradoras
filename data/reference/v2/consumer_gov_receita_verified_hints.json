@@ -106,6 +106,104 @@
           "observed_fact": "CNAE principal 64.92-1-00 - Securitização de créditos"
         }
       ]
+    },
+    {
+      "provider_name": "Sompo Consumer (DESATIVADO) (Atual HDI SEGUROS)",
+      "target_cnpj": "29980158000157",
+      "resolution_state": "matched_current_insurer",
+      "reason_code": "verified_historical_insurer_incorporated_into_current_susep",
+      "legal_name_receita": "HDI SEGUROS S.A.",
+      "trade_name": "SOMPO CONSUMER",
+      "primary_cnae_code": "6512000",
+      "legal_nature_code": "2054",
+      "evidence": [
+        {
+          "authority": "HDI Seguros",
+          "url": "https://www.hdiseguros.com.br/contato/perguntas-frequentes/a-Sompo-Consumer-Seguradora-S.A-agora-faz-parte-da-HDI-Seguros-S.A",
+          "observed_fact": "A HDI informa que a antiga Sompo Consumer Seguradora S.A. passou a denominar-se HDI Seguros do Brasil S.A., CNPJ 49.786.401/0001-08."
+        },
+        {
+          "authority": "Diário Oficial da União / SUSEP",
+          "reference": "Portaria DIORE/SUSEP nº 62, de 29/05/2025",
+          "process": "15414.617322/2025-64",
+          "observed_fact": "Homologada a incorporação da totalidade do patrimônio de HDI Seguros do Brasil S.A., CNPJ 49.786.401/0001-08, por HDI Seguros S.A., CNPJ 29.980.158/0001-57, deliberada em 24/03/2025."
+        },
+        {
+          "authority": "Consumidor.gov.br",
+          "url": "https://www.consumidor.gov.br/pages/principal/empresas-participantes",
+          "observed_fact": "A lista pública de participantes usa explicitamente o rótulo 'Sompo Consumer (DESATIVADO) (Atual HDI SEGUROS)'."
+        }
+      ]
+    },
+    {
+      "provider_name": "Sompo Consumer",
+      "target_cnpj": "29980158000157",
+      "resolution_state": "matched_current_insurer",
+      "reason_code": "verified_historical_insurer_incorporated_into_current_susep",
+      "legal_name_receita": "HDI SEGUROS S.A.",
+      "trade_name": "SOMPO CONSUMER",
+      "primary_cnae_code": "6512000",
+      "legal_nature_code": "2054",
+      "evidence": [
+        {
+          "authority": "HDI Seguros",
+          "url": "https://www.hdiseguros.com.br/contato/perguntas-frequentes/a-Sompo-Consumer-Seguradora-S.A-agora-faz-parte-da-HDI-Seguros-S.A",
+          "observed_fact": "A HDI informa que a antiga Sompo Consumer Seguradora S.A. passou a denominar-se HDI Seguros do Brasil S.A., CNPJ 49.786.401/0001-08."
+        },
+        {
+          "authority": "Diário Oficial da União / SUSEP",
+          "reference": "Portaria DIORE/SUSEP nº 62, de 29/05/2025",
+          "process": "15414.617322/2025-64",
+          "observed_fact": "Homologada a incorporação da totalidade do patrimônio de HDI Seguros do Brasil S.A., CNPJ 49.786.401/0001-08, por HDI Seguros S.A., CNPJ 29.980.158/0001-57, deliberada em 24/03/2025."
+        }
+      ]
+    },
+    {
+      "provider_name": "Ciclic",
+      "target_cnpj": "29032677000193",
+      "resolution_state": "outside_157",
+      "reason_code": "receita_insurance_broker_or_agent_activity",
+      "legal_name_receita": "CICLIC CORRETORA DE SEGUROS S.A.",
+      "trade_name": "CICLIC",
+      "primary_cnae_code": "6622300",
+      "legal_nature_code": "2054",
+      "evidence": [
+        {
+          "authority": "Ciclic",
+          "url": "https://home.ciclic.com.br/termos-de-uso/",
+          "cnpj": "29.032.677/0001-93",
+          "observed_fact": "Os Termos de Uso identificam a participante como CICLIC CORRETORA DE SEGUROS S.A., CNPJ 29.032.677/0001-93."
+        },
+        {
+          "authority": "Receita Federal do Brasil",
+          "document": "Cadastro Nacional da Pessoa Jurídica",
+          "cnpj": "29.032.677/0001-93",
+          "observed_fact": "CNAE principal 66.22-3-00 - Corretores e agentes de seguros, de planos de previdência complementar e de saúde."
+        }
+      ]
+    },
+    {
+      "provider_name": "Sky Seguradora",
+      "target_cnpj": "52997050000199",
+      "resolution_state": "matched_current_insurer",
+      "reason_code": "verified_provider_label_current_susep_insurer",
+      "legal_name_receita": "SKY SEGURADORA S.A. - MICROSSEGURADORA",
+      "trade_name": "SKY SEGURADORA",
+      "primary_cnae_code": "6511101",
+      "legal_nature_code": "2054",
+      "evidence": [
+        {
+          "authority": "Sky Seguradora",
+          "url": "https://skyseguradora.com.br/",
+          "cnpj": "52.997.050/0001-99",
+          "observed_fact": "O site oficial identifica SKY SEGURADORA S.A. - MICROSSEGURADORA, Código SUSEP 0363-8, CNPJ 52.997.050/0001-99."
+        },
+        {
+          "authority": "Consumidor.gov.br",
+          "url": "https://www.consumidor.gov.br/pages/principal/empresas-participantes",
+          "observed_fact": "A lista pública de participantes contém o rótulo 'Sky Seguradora'."
+        }
+      ]
     }
   ]
 }
