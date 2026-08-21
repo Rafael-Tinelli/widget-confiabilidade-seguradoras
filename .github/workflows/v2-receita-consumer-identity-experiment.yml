@@ -10,8 +10,10 @@ on:
       - "api/v2/build_consumer_gov_receita_identity.py"
       - "api/v2/build_consumer_gov_receita_resolution_experiment.py"
       - "api/v2/consumer_gov_universe_resolution.py"
+      - "data/reference/v2/consumer_gov_receita_verified_hints.json"
       - "tests/test_v2_receita_cnpj_identity.py"
       - "tests/test_v2_consumer_gov_receita_resolution.py"
+      - "tests/test_v2_consumer_gov_receita_resolution_policy.py"
       - ".github/workflows/v2-receita-consumer-identity-experiment.yml"
 
 permissions:
@@ -93,6 +95,7 @@ jobs:
           python -m pytest -q \
             tests/test_v2_receita_cnpj_identity.py \
             tests/test_v2_consumer_gov_receita_resolution.py \
+            tests/test_v2_consumer_gov_receita_resolution_policy.py \
             tests/test_v2_consumer_gov_universe_resolution.py
 
       - name: Build formal regulatory inventory
@@ -132,6 +135,11 @@ jobs:
               raise SystemExit("SUSEP authority contract missing")
           if semantics.get("fuzzy_matching") != "not_used":
               raise SystemExit("fuzzy matching must not resolve Receita identities")
+          methodology = result.get("methodology") or {}
+          if methodology.get("fuzzy_matching") != "not_used":
+              raise SystemExit("post-Receita resolver must not use fuzzy matching")
+          if methodology.get("cooperative_or_sales_channel_transfer") != "forbidden":
+              raise SystemExit("sales-channel transfer prohibition missing")
           post = result["post_receita"]
           total = int(post["complaints_total"])
           reconciled = sum(int(post[key]) for key in (
