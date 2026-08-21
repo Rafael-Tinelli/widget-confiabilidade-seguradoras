@@ -1,0 +1,161 @@
+name: V2 Receita Consumer.gov Identity Experiment
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths:
+      - "api/sources/receita_cnpj_identity.py"
+      - "api/v2/consumer_gov_receita_resolution.py"
+      - "api/v2/build_consumer_gov_receita_identity.py"
+      - "api/v2/build_consumer_gov_receita_resolution_experiment.py"
+      - "api/v2/consumer_gov_universe_resolution.py"
+      - "tests/test_v2_receita_cnpj_identity.py"
+      - "tests/test_v2_consumer_gov_receita_resolution.py"
+      - ".github/workflows/v2-receita-consumer-identity-experiment.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: v2-receita-consumer-identity-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  receita-consumer-identity:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+
+    env:
+      SES_ALLOW_INSECURE_SSL: "1"
+      SES_KEEP_ZIP: "1"
+      SES_WRITE_AUDIT: "1"
+      SES_CACHE_DIR: "data/raw/ses"
+      SUSEP_LICENSED_VERIFY_SSL: "0"
+      SUSEP_SPECIAL_VERIFY_SSL: "0"
+      SUSEP_SANDBOX_VERIFY_SSL: "1"
+      SES_ZIP_URL: "http://127.0.0.1:9/BaseCompleta.zip"
+      SES_ZIP_URL_FALLBACK: "http://127.0.0.1:9/BaseCompleta.zip"
+      CG_MONTHS_BACK: "12"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install -r requirements-dev.txt
+
+      - name: Restore validated SES source cache
+        uses: actions/cache/restore@v4
+        with:
+          path: data/raw/ses
+          key: v2-receita-consumer-ses-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: |
+            ses-source-${{ runner.os }}-
+
+      - name: Verify cached BaseCompleta
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import zipfile
+          from pathlib import Path
+          path = Path("data/raw/ses/BaseCompleta.zip")
+          if not path.exists() or path.stat().st_size < 100_000_000:
+              raise SystemExit("valid cached BaseCompleta.zip is required")
+          if not zipfile.is_zipfile(path):
+              raise SystemExit("cached BaseCompleta.zip is not a valid ZIP")
+          print(f"SES cache OK: {path.stat().st_size} bytes")
+          PY
+
+      - name: Compile Receita identity modules
+        run: |
+          set -euo pipefail
+          python -m py_compile api/sources/receita_cnpj_identity.py
+          python -m py_compile api/v2/consumer_gov_receita_resolution.py
+          python -m py_compile api/v2/build_consumer_gov_receita_identity.py
+          python -m py_compile api/v2/build_consumer_gov_receita_resolution_experiment.py
+
+      - name: Run deterministic identity tests
+        run: |
+          set -euo pipefail
+          python -m pytest -q \
+            tests/test_v2_receita_cnpj_identity.py \
+            tests/test_v2_consumer_gov_receita_resolution.py \
+            tests/test_v2_consumer_gov_universe_resolution.py
+
+      - name: Build formal regulatory inventory
+        run: |
+          set -euo pipefail
+          python -m api.v2.build_eligibility_inventory
+
+      - name: Build pre-Receita Consumer.gov identity baseline
+        run: |
+          set -euo pipefail
+          rm -f data/derived/v2/receita_consumer_gov_identity.json
+          python -m api.v2.build_consumer_gov_identity_experiment
+
+      - name: Build filtered official Receita identity snapshot
+        run: |
+          set -euo pipefail
+          python -m api.v2.build_consumer_gov_receita_identity --force
+
+      - name: Resolve Consumer.gov remainder through Receita
+        run: |
+          set -euo pipefail
+          python -m api.v2.build_consumer_gov_receita_resolution_experiment
+
+      - name: Validate methodology boundaries
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          identity = json.loads(Path("data/derived/v2/receita_consumer_gov_identity.json").read_text(encoding="utf-8"))
+          result = json.loads(Path("data/derived/v2/consumer_gov_receita_resolution_experiment.json").read_text(encoding="utf-8"))
+          if identity.get("status") != "experimental" or result.get("status") != "experimental":
+              raise SystemExit("Receita/Consumer.gov artifacts must remain experimental")
+          semantics = identity.get("identity_semantics") or {}
+          if semantics.get("susep_role") != "authoritative_for_current_insurer_licensing_and_157_membership":
+              raise SystemExit("SUSEP authority contract missing")
+          if semantics.get("fuzzy_matching") != "not_used":
+              raise SystemExit("fuzzy matching must not resolve Receita identities")
+          post = result["post_receita"]
+          total = int(post["complaints_total"])
+          reconciled = sum(int(post[key]) for key in (
+              "matched_current_insurer_complaints",
+              "outside_157_complaints",
+              "ambiguous_complaints",
+              "unresolved_complaints",
+          ))
+          if reconciled != total:
+              raise SystemExit(f"complaint states do not reconcile: {reconciled} != {total}")
+          if int(post["unresolved_complaints"]) > int(result["base"]["unresolved_complaints"]):
+              raise SystemExit("Receita layer increased unresolved complaints")
+          print(json.dumps({"identity_meta": identity["meta"], "post_receita": post}, ensure_ascii=False, indent=2))
+          PY
+
+      - name: Upload experiment artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: v2-receita-consumer-identity-${{ github.run_id }}
+          retention-days: 14
+          if-no-files-found: warn
+          path: |
+            data/derived/v2/receita_consumer_gov_identity.json
+            data/derived/v2/consumer_gov_identity_experiment.json
+            data/derived/v2/consumer_gov_receita_resolution_experiment.json
+            data/derived/v2/entity_eligibility_inventory.json
