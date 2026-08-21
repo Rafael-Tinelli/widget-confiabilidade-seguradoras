@@ -8,7 +8,9 @@ from typing import Any
 
 from api.utils.name_cleaner import normalize_name_key
 from api.v2.build_consumer_gov_157_experiment import ELIGIBILITY_PATH
-from api.v2.build_consumer_gov_identity_experiment import OUTPUT_PATH as BASE_IDENTITY_PATH
+from api.v2.build_consumer_gov_identity_experiment import (
+    OUTPUT_PATH as BASE_IDENTITY_PATH,
+)
 from api.v2.consumer_gov_receita_resolution import (
     DEFAULT_RECEITA_IDENTITY_SNAPSHOT,
     build_receita_provider_index,
