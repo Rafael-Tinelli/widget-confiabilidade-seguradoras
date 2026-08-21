@@ -1,5 +1,5 @@
 {
-  "schema_version": "1.2",
+  "schema_version": "1.3",
   "note": "Consumer.gov-specific provider-label resolution registry. Durable market facts such as reusable brands, trade names and product-to-risk-carrier relationships belong in data/reference/v2/verified_relationships.json and must be consumed from the canonical identity layer. This file is reserved for source-specific wrappers, truncated provider labels, ambiguous labels and explicit outside-universe classifications. Every mapping must be source-backed. Similarity or fuzzy matching may suggest candidates but never creates a resolution. A complaint record is evidence of consumer friction, not proof of abusive conduct or contractual wrongdoing. Sales channels, brokers, cooperatives and retailers must never have their complaints transferred to a carrier merely because they distribute that carrier's products.",
   "resolutions": [
     {
@@ -167,6 +167,49 @@
           "authority": "HDI Seguros",
           "url": "https://www.hdiseguros.com.br/grupo-hdi/fraudes",
           "fact": "Official HDI page identifies HDI Seguros S.A. separately under CNPJ 29.980.158/0001-57."
+        }
+      ]
+    },
+    {
+      "provider_name": "Sompo Consumer (DESATIVADO) (Atual HDI SEGUROS)",
+      "resolution_state": "matched_current_insurer",
+      "resolution_kind": "historical_legal_entity_incorporated_into_current_insurer",
+      "target_cnpj": "29980158000157",
+      "evidence": [
+        {
+          "authority": "HDI Seguros",
+          "url": "https://www.hdiseguros.com.br/contato/perguntas-frequentes/a-Sompo-Consumer-Seguradora-S.A-agora-faz-parte-da-HDI-Seguros-S.A",
+          "fact": "Official HDI page states that former Sompo Consumer Seguradora S.A. became HDI Seguros do Brasil S.A., CNPJ 49.786.401/0001-08."
+        },
+        {
+          "authority": "SUSEP / Diário Oficial da União",
+          "reference": "Portaria DIORE/SUSEP nº 62, de 29/05/2025",
+          "process": "15414.617322/2025-64",
+          "fact": "SUSEP homologated the incorporation of the entire assets of HDI Seguros do Brasil S.A., CNPJ 49.786.401/0001-08, by HDI Seguros S.A., CNPJ 29.980.158/0001-57, deliberated on 24/03/2025."
+        },
+        {
+          "authority": "Consumidor.gov.br",
+          "url": "https://www.consumidor.gov.br/pages/principal/empresas-participantes",
+          "fact": "The participant list explicitly labels the provider as Sompo Consumer (DESATIVADO) (Atual HDI SEGUROS)."
+        }
+      ]
+    },
+    {
+      "provider_name": "Sompo Consumer",
+      "resolution_state": "matched_current_insurer",
+      "resolution_kind": "historical_legal_entity_incorporated_into_current_insurer",
+      "target_cnpj": "29980158000157",
+      "evidence": [
+        {
+          "authority": "HDI Seguros",
+          "url": "https://www.hdiseguros.com.br/contato/perguntas-frequentes/a-Sompo-Consumer-Seguradora-S.A-agora-faz-parte-da-HDI-Seguros-S.A",
+          "fact": "Official HDI page states that former Sompo Consumer Seguradora S.A. became HDI Seguros do Brasil S.A., CNPJ 49.786.401/0001-08."
+        },
+        {
+          "authority": "SUSEP / Diário Oficial da União",
+          "reference": "Portaria DIORE/SUSEP nº 62, de 29/05/2025",
+          "process": "15414.617322/2025-64",
+          "fact": "SUSEP homologated the incorporation of the entire assets of HDI Seguros do Brasil S.A., CNPJ 49.786.401/0001-08, by HDI Seguros S.A., CNPJ 29.980.158/0001-57, deliberated on 24/03/2025."
         }
       ]
     },
