@@ -15,9 +15,9 @@ from api.v2.consumer_gov_receita_resolution import (
     DEFAULT_RECEITA_IDENTITY_SNAPSHOT,
     build_receita_provider_index,
     load_receita_identity_snapshot,
-    resolve_provider_via_receita,
+    load_verified_receita_provider_hints,
+    resolve_provider_via_receita_payload,
 )
-from api.v2.consumer_gov_universe_resolution import build_full_universe_provider_index
 
 OUTPUT_PATH = Path("data/derived/v2/consumer_gov_receita_resolution_experiment.json")
 
@@ -34,8 +34,8 @@ def build_experiment() -> dict[str, Any]:
         raise RuntimeError("Receita identity snapshot is required")
 
     entities = list(eligibility.get("entities") or [])
-    full_index = build_full_universe_provider_index(entities)
     receita_index = build_receita_provider_index(receita)
+    verified_hints = load_verified_receita_provider_hints()
 
     deltas: Counter[str] = Counter()
     resolved_rows: list[dict[str, Any]] = []
@@ -46,7 +46,12 @@ def build_experiment() -> dict[str, Any]:
         complaints = int(row.get("complaints") or 0)
         if not provider or complaints <= 0:
             continue
-        result = resolve_provider_via_receita(provider, receita_index, full_index)
+        result = resolve_provider_via_receita_payload(
+            provider,
+            receita,
+            entities,
+            verified_hints=verified_hints,
+        )
         receita_match = receita_index.get(normalize_name_key(provider)) or {}
         if result is None:
             still_unresolved.append(
@@ -108,7 +113,10 @@ def build_experiment() -> dict[str, Any]:
             ),
         },
         "methodology": {
-            "name_role": "discover_unique_receita_legal_entity_candidate",
+            "name_role": "discover_receita_legal_entity_candidates_without_fuzzy_matching",
+            "candidate_disambiguation": "regulatory_qualifier_and_insurance_sector_relevance_may_select_only_one_resolvable_candidate",
+            "canonical_record_fallback": "deterministic_name_tokens_may_resolve_only_one_receita_cnpj_root_before_susep_check",
+            "verified_hint_registry": "source_backed_exact_cnpj_fallback_for_labels_not_safely_discovered_by_generic_name_rules",
             "insurer_admission": "exact_candidate_cnpj_must_match_current_susep_157_entity",
             "safe_exclusion": "only_canonical_non157_or_explicit_primary_cnae_allowlist",
             "insurance_cnae_without_susep": "never_admits_insurer",
