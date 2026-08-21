@@ -1,0 +1,111 @@
+{
+  "schema_version": "2.0-draft-consumer-gov-receita-hints-1",
+  "source_authority": "Receita Federal do Brasil",
+  "source_url": "https://solucoes.receita.fazenda.gov.br/Servicos/cnpjreva/",
+  "verified_at": "2026-08-21",
+  "policy": {
+    "purpose": "Persist source-backed legal-entity identities for Consumer.gov labels that generic Receita name discovery cannot safely resolve.",
+    "fuzzy_matching": "forbidden",
+    "susep_authority": "Current ordinary-insurer admission still requires exact target CNPJ resolution to the canonical SUSEP universe.",
+    "outside_157_rule": "A non-canonical CNPJ may be excluded only when the official Receita primary activity is in the explicit safe outside allowlist.",
+    "sales_channel_transfer": "Never transfer a broker, administrator, cooperative or point-of-sale complaint to a carrier without separate risk-carrier evidence."
+  },
+  "rows": [
+    {
+      "provider_name": "Ciasprev",
+      "target_cnpj": "08071645000127",
+      "resolution_state": "outside_157",
+      "reason_code": "receita_closed_pension_activity",
+      "legal_name_receita": "CIASPREV - CENTRO DE INTEGRACAO E ASSISTENCIA AOS SERVIDORES PUBLICOS PREVIDENCIA PRIVADA",
+      "trade_name": null,
+      "primary_cnae_code": "6541300",
+      "legal_nature_code": "3999",
+      "evidence": [
+        {
+          "authority": "Receita Federal do Brasil",
+          "document": "Comprovante de Inscrição e de Situação Cadastral",
+          "cnpj": "08.071.645/0001-27",
+          "observed_fact": "CNAE principal 65.41-3-00 - Previdência complementar fechada; natureza jurídica Associação Privada"
+        }
+      ]
+    },
+    {
+      "provider_name": "SudaVida (antiga Sudamerica Vida)",
+      "target_cnpj": "81052722000191",
+      "resolution_state": "outside_157",
+      "reason_code": "receita_insurance_broker_or_agent_activity",
+      "legal_name_receita": "SUDAVIDA CORRETORA DE SEGUROS LTDA",
+      "trade_name": "SUDAVIDA",
+      "primary_cnae_code": "6622300",
+      "legal_nature_code": "2240",
+      "evidence": [
+        {
+          "authority": "Receita Federal do Brasil",
+          "document": "Comprovante de Inscrição e de Situação Cadastral",
+          "cnpj": "81.052.722/0001-91",
+          "observed_fact": "Nome fantasia SUDAVIDA; CNAE principal 66.22-3-00 - Corretores e agentes de seguros, de planos de previdência complementar e de saúde"
+        }
+      ]
+    },
+    {
+      "provider_name": "American Life Seguros",
+      "target_cnpj": "67865360000127",
+      "resolution_state": "matched_current_insurer",
+      "reason_code": "receita_branch_trade_name_same_cnpj_root",
+      "legal_name_receita": "ALLSEG SEGURADORA S/A",
+      "trade_name": "AMERICAN LIFE COMPANHIA DE SEGUROS",
+      "primary_cnae_code": "6511101",
+      "legal_nature_code": "2054",
+      "evidence": [
+        {
+          "authority": "Receita Federal do Brasil",
+          "document": "Comprovante de Inscrição e de Situação Cadastral",
+          "cnpj": "67.865.360/0003-99",
+          "observed_fact": "Filial do mesmo CNPJ-base 67.865.360 usa nome fantasia AMERICAN LIFE COMPANHIA DE SEGUROS; matriz 67.865.360/0001-27 é ALLSEG SEGURADORA S/A"
+        }
+      ]
+    },
+    {
+      "provider_name": "Metlife Administradora de Fundos Multipatrocinados (MultiPrev)",
+      "target_cnpj": "07416843000112",
+      "resolution_state": "outside_157",
+      "reason_code": "receita_auxiliary_insurance_pension_activity",
+      "legal_name_receita": "METLIFE ADMINISTRADORA DE FUNDOS MULTIPATROCINADOS LTDA",
+      "trade_name": null,
+      "primary_cnae_code": "6629100",
+      "legal_nature_code": "2062",
+      "evidence": [
+        {
+          "authority": "Receita Federal do Brasil",
+          "document": "Comprovante de Inscrição e de Situação Cadastral",
+          "cnpj": "07.416.843/0001-12",
+          "observed_fact": "CNAE principal 66.29-1-00 - Atividades auxiliares dos seguros, da previdência complementar e dos planos de saúde; natureza jurídica Sociedade Empresária Limitada"
+        },
+        {
+          "authority": "Receita Federal do Brasil",
+          "document": "Comprovante de Inscrição e de Situação Cadastral",
+          "cnpj": "67.846.188/0001-64",
+          "observed_fact": "MULTIPREV FUNDO MULTIPLO DE PENSAO possui CNAE principal 65.41-3-00 - Previdência complementar fechada e natureza jurídica Associação Privada"
+        }
+      ]
+    },
+    {
+      "provider_name": "Presença Tech",
+      "target_cnpj": "49599381000166",
+      "resolution_state": "outside_157",
+      "reason_code": "receita_securitization_activity",
+      "legal_name_receita": "PRESENCA TECH SECURITIZADORA S/A",
+      "trade_name": null,
+      "primary_cnae_code": "6492100",
+      "legal_nature_code": "2054",
+      "evidence": [
+        {
+          "authority": "Receita Federal do Brasil",
+          "document": "Comprovante de Inscrição e de Situação Cadastral",
+          "cnpj": "49.599.381/0001-66",
+          "observed_fact": "CNAE principal 64.92-1-00 - Securitização de créditos"
+        }
+      ]
+    }
+  ]
+}
