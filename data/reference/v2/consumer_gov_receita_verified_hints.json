@@ -108,6 +108,58 @@
       ]
     },
     {
+      "provider_name": "MG Seguros",
+      "target_cnpj": "26136748000100",
+      "resolution_state": "matched_current_insurer",
+      "reason_code": "verified_receita_trade_name_current_susep_insurer",
+      "legal_name_receita": "BMG SEGURADORA S.A",
+      "trade_name": "MG SEGUROS",
+      "primary_cnae_code": "6511101",
+      "legal_nature_code": "2054",
+      "evidence": [
+        {
+          "authority": "Portal da Transparência / Governo Federal",
+          "url": "https://portaldatransparencia.gov.br/pessoa-juridica/26136748000100",
+          "cnpj": "26.136.748/0001-00",
+          "observed_fact": "BMG SEGURADORA S.A. tem nome fantasia MG SEGUROS e CNAE principal de seguros de vida."
+        },
+        {
+          "authority": "PROCON-MS / Cadastro de Reclamações Fundamentadas 2025",
+          "url": "https://www.procon.ms.gov.br/wp-content/uploads/2026/03/Cadastro-de-Reclamacoes-Fundamentadas-2025-%E2%80%93-Tres-Lagoas.pdf",
+          "cnpj": "26.136.748/0001-00",
+          "observed_fact": "Registro público relaciona o fornecedor MG Seguros à pessoa jurídica MG SEGUROS, VIDA E PREVIDENCIA S.A., CNPJ 26.136.748/0001-00."
+        },
+        {
+          "authority": "Consumidor.gov.br",
+          "url": "https://www.consumidor.gov.br/pages/principal/empresas-participantes",
+          "observed_fact": "A lista atual de participantes contém MG Seguros no segmento de Seguros, Capitalização e Previdência e não apresenta uma segunda entrada atual denominada BMG Seguradora."
+        }
+      ]
+    },
+    {
+      "provider_name": "Reag Seguradora",
+      "target_cnpj": "53759974000110",
+      "resolution_state": "matched_current_insurer",
+      "reason_code": "verified_legal_name_same_cnpj_current_susep_insurer",
+      "legal_name_receita": "REAG SEGURADORA S.A.",
+      "trade_name": "TAAMIN SEGURADORA",
+      "primary_cnae_code": "6512000",
+      "legal_nature_code": "2054",
+      "evidence": [
+        {
+          "authority": "Taamin Seguradora",
+          "url": "https://www.taamin.com.br/governanca",
+          "cnpj": "53.759.974/0001-10",
+          "observed_fact": "A página institucional identifica a razão social REAG Seguradora, CNPJ 53.759.974/0001-10 e Registro SUSEP 01864 sob a marca Taamin Seguradora."
+        },
+        {
+          "authority": "SUSEP / Diário Oficial da União",
+          "reference": "Portaria CGRAJ/SUSEP nº 3.047, de 30/03/2026",
+          "observed_fact": "A SUSEP identifica TAAMIN SEGURADORA S.A., CNPJ 53.759.974/0001-10, confirmando a mesma pessoa jurídica atualmente usada no inventário regulatório v2."
+        }
+      ]
+    },
+    {
       "provider_name": "Ciclic",
       "target_cnpj": "29032677000193",
       "resolution_state": "outside_157",
