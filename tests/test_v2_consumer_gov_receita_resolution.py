@@ -55,7 +55,7 @@ def test_receita_name_candidate_only_admits_insurer_after_exact_cnpj_susep_match
     assert result is not None
     assert result["resolution_state"] == "matched_current_insurer"
     assert result["entity_id"] == "fip:005193"
-    assert "cnpj_to_canonical" in result["match_method"]
+    assert "cnpj_or_activity" in result["match_method"]
 
 
 def test_capitalization_candidate_is_excluded_without_transfer_to_group_insurer() -> None:
@@ -143,7 +143,7 @@ def test_broker_candidate_is_outside_but_does_not_transfer_to_carrier() -> None:
     assert result["reason_code"] == "receita_insurance_broker_or_agent_activity"
 
 
-def test_ambiguous_receita_candidates_never_resolve() -> None:
+def test_ambiguous_receita_candidates_never_resolve_without_discriminating_evidence() -> None:
     payload = {
         "artifact": "v2_receita_cnpj_identity",
         "provider_matches": [
