@@ -70,11 +70,10 @@ jobs:
           python -m pip install -r requirements.txt
           python -m pip install -r requirements-dev.txt
 
-      - name: Show Ruff normalization for conduct builder
+      - name: Lint conduct modules
         run: |
           set -euo pipefail
-          ruff check --fix api/v2/build_consumer_gov_conduct_evidence.py
-          git diff -- api/v2/build_consumer_gov_conduct_evidence.py
+          ruff check api/v2/consumer_gov_conduct.py api/v2/build_consumer_gov_conduct_evidence.py tests/test_v2_consumer_gov_conduct.py
 
       - name: Restore validated SES source cache
         uses: actions/cache/restore@v4
@@ -123,16 +122,20 @@ jobs:
           set -euo pipefail
           python -m api.build_consumidor_gov
 
-      - name: Save Consumer.gov raw cache
-        uses: actions/cache/save@v4
-        with:
-          path: data/raw/consumidor_gov
-          key: v2-conduct-consumer-raw-${{ runner.os }}-${{ github.run_id }}
-
       - name: Build formal regulatory inventory
         run: |
           set -euo pipefail
-          python -m api.v2.build_eligibility_inventory
+          for attempt in 1 2 3; do
+            if python -m api.v2.build_eligibility_inventory; then
+              exit 0
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              echo "SUSEP inventory build failed after 3 attempts."
+              exit 1
+            fi
+            echo "SUSEP inventory attempt $attempt failed; retrying."
+            sleep $((attempt * 15))
+          done
 
       - name: Build base Consumer.gov identity
         run: |
@@ -153,6 +156,13 @@ jobs:
         run: |
           set -euo pipefail
           python -m api.v2.build_consumer_gov_conduct_evidence
+
+      - name: Save Consumer.gov raw cache after conduct acquisition
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: data/raw/consumidor_gov
+          key: v2-conduct-consumer-raw-${{ runner.os }}-${{ github.run_id }}
 
       - name: Validate conduct evidence boundaries
         run: |
