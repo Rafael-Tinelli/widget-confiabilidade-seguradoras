@@ -1,10 +1,11 @@
 name: V2 Conduct Cache Maintenance
 
 on:
-  push:
-    branches: [refactor/v2-data-foundation]
+  pull_request:
+    branches: [main]
     paths:
       - ".github/workflows/v2-conduct-cache-maintenance.yml"
+      - ".github/scripts/apply_conduct_cache_fix.py"
 
 permissions:
   contents: write
@@ -35,170 +36,7 @@ jobs:
       - name: Apply cache-first conduct corrections
         run: |
           set -euo pipefail
-          python - <<'PY'
-          from pathlib import Path
-
-          builder_path = Path("api/v2/build_consumer_gov_conduct_evidence.py")
-          text = builder_path.read_text(encoding="utf-8")
-
-          old_import = "from typing import Any\n\nfrom api.build_consumidor_gov import ("
-          new_import = "from typing import Any\n\nimport requests\n\nfrom api.build_consumidor_gov import ("
-          if old_import not in text:
-              raise SystemExit("builder import anchor not found")
-          text = text.replace(old_import, new_import, 1)
-
-          old_block = '''def _ensure_raw_csvs(months: list[str]) -> dict[str, Any]:
-    resources = _list_basecompleta_resources()
-    missing_resources = [month for month in months if month not in resources]
-    if missing_resources:
-        raise RuntimeError(
-            f"Consumer.gov resources missing for months: {missing_resources}"
-        )
-
-    result: dict[str, Any] = {}
-    for month in months:
-        resource = resources[month]
-        raw_csv = RAW_DIR / f"basecompleta_{month}.csv"
-        if not raw_csv.exists() or raw_csv.stat().st_size < CG_MIN_MONTH_BYTES:
-            _download(resource.url, raw_csv)
-        if not raw_csv.exists() or raw_csv.stat().st_size < CG_MIN_MONTH_BYTES:
-            raise RuntimeError(f"invalid Consumer.gov raw CSV for {month}: {raw_csv}")
-        result[month] = {
-            "path": raw_csv,
-            "resource_url": resource.url,
-            "resource_name": resource.name,
-            "bytes": raw_csv.stat().st_size,
-        }
-    return result
-'''
-
-          new_block = '''class TaxonomyRawSourceUnavailable(RuntimeError):
-    """Required Consumer.gov Base Completa rows are unavailable for taxonomy."""
-
-
-def _valid_raw_csv(path: Path) -> bool:
-    return path.exists() and path.stat().st_size >= CG_MIN_MONTH_BYTES
-
-
-def _ensure_raw_csvs(months: list[str]) -> dict[str, Any]:
-    result: dict[str, Any] = {}
-    missing_months: list[str] = []
-
-    for month in months:
-        raw_csv = RAW_DIR / f"basecompleta_{month}.csv"
-        if _valid_raw_csv(raw_csv):
-            result[month] = {
-                "path": raw_csv,
-                "resource_url": None,
-                "resource_name": None,
-                "bytes": raw_csv.stat().st_size,
-                "acquisition": "cache",
-            }
-        else:
-            missing_months.append(month)
-
-    if not missing_months:
-        return result
-
-    try:
-        resources = _list_basecompleta_resources()
-    except (
-        OSError,
-        RuntimeError,
-        TypeError,
-        ValueError,
-        requests.RequestException,
-    ) as exc:
-        raise TaxonomyRawSourceUnavailable(
-            "taxonomy_raw_source_unavailable: valid cached Consumer.gov Base Completa "
-            f"CSVs are missing for months {missing_months}, and CKAN discovery failed: {exc}"
-        ) from exc
-
-    missing_resources = [month for month in missing_months if month not in resources]
-    if missing_resources:
-        raise TaxonomyRawSourceUnavailable(
-            "taxonomy_raw_source_unavailable: Consumer.gov Base Completa resources "
-            f"are missing for months {missing_resources}"
-        )
-
-    for month in missing_months:
-        resource = resources[month]
-        raw_csv = RAW_DIR / f"basecompleta_{month}.csv"
-        try:
-            _download(resource.url, raw_csv)
-        except (OSError, RuntimeError, requests.RequestException) as exc:
-            raise TaxonomyRawSourceUnavailable(
-                "taxonomy_raw_source_unavailable: failed to download Consumer.gov "
-                f"Base Completa for {month}: {exc}"
-            ) from exc
-
-        if not _valid_raw_csv(raw_csv):
-            raise TaxonomyRawSourceUnavailable(
-                "taxonomy_raw_source_unavailable: downloaded Consumer.gov Base Completa "
-                f"for {month} is invalid or smaller than {CG_MIN_MONTH_BYTES} bytes"
-            )
-
-        result[month] = {
-            "path": raw_csv,
-            "resource_url": resource.url,
-            "resource_name": resource.name,
-            "bytes": raw_csv.stat().st_size,
-            "acquisition": "download",
-        }
-
-    for month, metadata in result.items():
-        resource = resources.get(month)
-        if resource is not None:
-            metadata["resource_url"] = resource.url
-            metadata["resource_name"] = resource.name
-
-    return result
-'''
-
-          if old_block not in text:
-              raise SystemExit("old _ensure_raw_csvs block not found")
-          text = text.replace(old_block, new_block, 1)
-          builder_path.write_text(text, encoding="utf-8")
-
-          tests_path = Path("tests/test_v2_consumer_gov_conduct.py")
-          tests = tests_path.read_text(encoding="utf-8")
-          import_anchor = '''import pytest\n\nfrom api.v2.consumer_gov_conduct import (\n'''
-          import_replacement = '''import pytest\n\nimport api.v2.build_consumer_gov_conduct_evidence as conduct_builder\nfrom api.v2.consumer_gov_conduct import (\n'''
-          if import_anchor not in tests:
-              raise SystemExit("test import anchor not found")
-          tests = tests.replace(import_anchor, import_replacement, 1)
-          tests += '''\n\ndef test_raw_csv_cache_is_used_without_ckan_lookup(tmp_path, monkeypatch) -> None:\n    monkeypatch.setattr(conduct_builder, "RAW_DIR", tmp_path)\n    monkeypatch.setattr(conduct_builder, "CG_MIN_MONTH_BYTES", 10)\n    for month in ("2026-05", "2026-06"):\n        (tmp_path / f"basecompleta_{month}.csv").write_bytes(b"x" * 20)\n\n    def fail_if_called():\n        raise AssertionError("CKAN discovery must not run when every raw month is cached")\n\n    monkeypatch.setattr(conduct_builder, "_list_basecompleta_resources", fail_if_called)\n\n    raw = conduct_builder._ensure_raw_csvs(["2026-05", "2026-06"])\n\n    assert set(raw) == {"2026-05", "2026-06"}\n    assert raw["2026-05"]["acquisition"] == "cache"\n    assert raw["2026-06"]["acquisition"] == "cache"\n    assert raw["2026-05"]["resource_url"] is None\n\n\ndef test_missing_raw_csv_reports_taxonomy_source_unavailable(\n    tmp_path,\n    monkeypatch,\n) -> None:\n    monkeypatch.setattr(conduct_builder, "RAW_DIR", tmp_path)\n    monkeypatch.setattr(conduct_builder, "CG_MIN_MONTH_BYTES", 10)\n    (tmp_path / "basecompleta_2026-05.csv").write_bytes(b"x" * 20)\n\n    def fail_ckan():\n        raise RuntimeError("temporary CKAN failure")\n\n    monkeypatch.setattr(conduct_builder, "_list_basecompleta_resources", fail_ckan)\n\n    with pytest.raises(\n        conduct_builder.TaxonomyRawSourceUnavailable,\n        match="taxonomy_raw_source_unavailable",\n    ) as exc_info:\n        conduct_builder._ensure_raw_csvs(["2026-05", "2026-06"])\n\n    assert "2026-06" in str(exc_info.value)\n'''
-          tests_path.write_text(tests, encoding="utf-8")
-
-          workflow_path = Path(".github/workflows/v2-consumer-gov-conduct-evidence.yml")
-          workflow = workflow_path.read_text(encoding="utf-8")
-
-          old_lint = '''      - name: Show Ruff normalization for conduct builder\n        run: |\n          set -euo pipefail\n          ruff check --fix api/v2/build_consumer_gov_conduct_evidence.py\n          git diff -- api/v2/build_consumer_gov_conduct_evidence.py\n'''
-          new_lint = '''      - name: Lint conduct modules\n        run: |\n          set -euo pipefail\n          ruff check api/v2/consumer_gov_conduct.py api/v2/build_consumer_gov_conduct_evidence.py tests/test_v2_consumer_gov_conduct.py\n'''
-          if old_lint not in workflow:
-              raise SystemExit("temporary Ruff step not found")
-          workflow = workflow.replace(old_lint, new_lint, 1)
-
-          old_save = '''      - name: Save Consumer.gov raw cache\n        uses: actions/cache/save@v4\n        with:\n          path: data/raw/consumidor_gov\n          key: v2-conduct-consumer-raw-${{ runner.os }}-${{ github.run_id }}\n\n'''
-          if old_save not in workflow:
-              raise SystemExit("early raw cache save step not found")
-          workflow = workflow.replace(old_save, "", 1)
-
-          old_eligibility = '''      - name: Build formal regulatory inventory\n        run: |\n          set -euo pipefail\n          python -m api.v2.build_eligibility_inventory\n'''
-          new_eligibility = '''      - name: Build formal regulatory inventory\n        run: |\n          set -euo pipefail\n          for attempt in 1 2 3; do\n            if python -m api.v2.build_eligibility_inventory; then\n              exit 0\n            fi\n            if [ "$attempt" -eq 3 ]; then\n              echo "SUSEP inventory build failed after 3 attempts."\n              exit 1\n            fi\n            echo "SUSEP inventory attempt $attempt failed; retrying."\n            sleep $((attempt * 15))\n          done\n'''
-          if old_eligibility not in workflow:
-              raise SystemExit("eligibility step not found")
-          workflow = workflow.replace(old_eligibility, new_eligibility, 1)
-
-          conduct_step = '''      - name: Build Consumer.gov conduct evidence\n        run: |\n          set -euo pipefail\n          python -m api.v2.build_consumer_gov_conduct_evidence\n\n'''
-          save_after_conduct = conduct_step + '''      - name: Save Consumer.gov raw cache after conduct acquisition\n        if: always()\n        uses: actions/cache/save@v4\n        with:\n          path: data/raw/consumidor_gov\n          key: v2-conduct-consumer-raw-${{ runner.os }}-${{ github.run_id }}\n\n'''
-          if conduct_step not in workflow:
-              raise SystemExit("conduct build step not found")
-          workflow = workflow.replace(conduct_step, save_after_conduct, 1)
-          workflow_path.write_text(workflow, encoding="utf-8")
-
-          Path(".github/workflows/v2-conduct-ruff-debug.yml").unlink(missing_ok=True)
-          PY
+          python .github/scripts/apply_conduct_cache_fix.py
 
       - name: Validate patched code
         run: |
@@ -211,6 +49,7 @@ def _ensure_raw_csvs(months: list[str]) -> dict[str, Any]:
       - name: Commit validated correction
         run: |
           set -euo pipefail
+          rm -f .github/scripts/apply_conduct_cache_fix.py
           rm -f .github/workflows/v2-conduct-cache-maintenance.yml
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
