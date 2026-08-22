@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+import api.v2.build_consumer_gov_conduct_evidence as conduct_builder
 from api.v2.consumer_gov_conduct import (
     accumulate_row,
     build_conduct_film,
@@ -170,3 +171,45 @@ def test_film_keeps_small_samples_indeterminate() -> None:
     assert film["conduct_signal"] == "indeterminate"
     assert film["consumer_resolution_trend"]["direction"] == "insufficient"
     assert film["satisfaction_trend"]["direction"] == "insufficient"
+
+
+
+def test_raw_csv_cache_is_used_without_ckan_lookup(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(conduct_builder, "RAW_DIR", tmp_path)
+    monkeypatch.setattr(conduct_builder, "CG_MIN_MONTH_BYTES", 10)
+    for month in ("2026-05", "2026-06"):
+        (tmp_path / f"basecompleta_{month}.csv").write_bytes(b"x" * 20)
+
+    def fail_if_called():
+        raise AssertionError("CKAN discovery must not run when every raw month is cached")
+
+    monkeypatch.setattr(conduct_builder, "_list_basecompleta_resources", fail_if_called)
+
+    raw = conduct_builder._ensure_raw_csvs(["2026-05", "2026-06"])
+
+    assert set(raw) == {"2026-05", "2026-06"}
+    assert raw["2026-05"]["acquisition"] == "cache"
+    assert raw["2026-06"]["acquisition"] == "cache"
+    assert raw["2026-05"]["resource_url"] is None
+
+
+def test_missing_raw_csv_reports_taxonomy_source_unavailable(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(conduct_builder, "RAW_DIR", tmp_path)
+    monkeypatch.setattr(conduct_builder, "CG_MIN_MONTH_BYTES", 10)
+    (tmp_path / "basecompleta_2026-05.csv").write_bytes(b"x" * 20)
+
+    def fail_ckan():
+        raise RuntimeError("temporary CKAN failure")
+
+    monkeypatch.setattr(conduct_builder, "_list_basecompleta_resources", fail_ckan)
+
+    with pytest.raises(
+        conduct_builder.TaxonomyRawSourceUnavailable,
+        match="taxonomy_raw_source_unavailable",
+    ) as exc_info:
+        conduct_builder._ensure_raw_csvs(["2026-05", "2026-06"])
+
+    assert "2026-06" in str(exc_info.value)

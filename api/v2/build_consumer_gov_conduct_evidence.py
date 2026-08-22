@@ -6,6 +6,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import requests
+
 from api.build_consumidor_gov import (
     CG_MIN_MONTH_BYTES,
     RAW_DIR,
@@ -146,28 +148,86 @@ def _resolve_provider(
     }
 
 
+class TaxonomyRawSourceUnavailable(RuntimeError):
+    """Required Consumer.gov Base Completa rows are unavailable for taxonomy."""
+
+
+def _valid_raw_csv(path: Path) -> bool:
+    return path.exists() and path.stat().st_size >= CG_MIN_MONTH_BYTES
+
+
 def _ensure_raw_csvs(months: list[str]) -> dict[str, Any]:
-    resources = _list_basecompleta_resources()
-    missing_resources = [month for month in months if month not in resources]
+    result: dict[str, Any] = {}
+    missing_months: list[str] = []
+
+    for month in months:
+        raw_csv = RAW_DIR / f"basecompleta_{month}.csv"
+        if _valid_raw_csv(raw_csv):
+            result[month] = {
+                "path": raw_csv,
+                "resource_url": None,
+                "resource_name": None,
+                "bytes": raw_csv.stat().st_size,
+                "acquisition": "cache",
+            }
+        else:
+            missing_months.append(month)
+
+    if not missing_months:
+        return result
+
+    try:
+        resources = _list_basecompleta_resources()
+    except (
+        OSError,
+        RuntimeError,
+        TypeError,
+        ValueError,
+        requests.RequestException,
+    ) as exc:
+        raise TaxonomyRawSourceUnavailable(
+            "taxonomy_raw_source_unavailable: valid cached Consumer.gov Base Completa "
+            f"CSVs are missing for months {missing_months}, and CKAN discovery failed: {exc}"
+        ) from exc
+
+    missing_resources = [month for month in missing_months if month not in resources]
     if missing_resources:
-        raise RuntimeError(
-            f"Consumer.gov resources missing for months: {missing_resources}"
+        raise TaxonomyRawSourceUnavailable(
+            "taxonomy_raw_source_unavailable: Consumer.gov Base Completa resources "
+            f"are missing for months {missing_resources}"
         )
 
-    result: dict[str, Any] = {}
-    for month in months:
+    for month in missing_months:
         resource = resources[month]
         raw_csv = RAW_DIR / f"basecompleta_{month}.csv"
-        if not raw_csv.exists() or raw_csv.stat().st_size < CG_MIN_MONTH_BYTES:
+        try:
             _download(resource.url, raw_csv)
-        if not raw_csv.exists() or raw_csv.stat().st_size < CG_MIN_MONTH_BYTES:
-            raise RuntimeError(f"invalid Consumer.gov raw CSV for {month}: {raw_csv}")
+        except (OSError, RuntimeError, requests.RequestException) as exc:
+            raise TaxonomyRawSourceUnavailable(
+                "taxonomy_raw_source_unavailable: failed to download Consumer.gov "
+                f"Base Completa for {month}: {exc}"
+            ) from exc
+
+        if not _valid_raw_csv(raw_csv):
+            raise TaxonomyRawSourceUnavailable(
+                "taxonomy_raw_source_unavailable: downloaded Consumer.gov Base Completa "
+                f"for {month} is invalid or smaller than {CG_MIN_MONTH_BYTES} bytes"
+            )
+
         result[month] = {
             "path": raw_csv,
             "resource_url": resource.url,
             "resource_name": resource.name,
             "bytes": raw_csv.stat().st_size,
+            "acquisition": "download",
         }
+
+    for month, metadata in result.items():
+        resource = resources.get(month)
+        if resource is not None:
+            metadata["resource_url"] = resource.url
+            metadata["resource_name"] = resource.name
+
     return result
 
 
