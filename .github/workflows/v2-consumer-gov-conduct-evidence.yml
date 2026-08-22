@@ -1,0 +1,275 @@
+name: V2 Consumer.gov Conduct Evidence
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths:
+      - "api/v2/consumer_gov_conduct.py"
+      - "api/v2/build_consumer_gov_conduct_evidence.py"
+      - "api/v2/build_consumer_gov_identity_experiment.py"
+      - "api/v2/consumer_gov_identity.py"
+      - "api/v2/consumer_gov_temporal_brand.py"
+      - "api/v2/consumer_gov_universe_resolution.py"
+      - "api/v2/consumer_gov_receita_resolution.py"
+      - "api/v2/build_consumer_gov_receita_identity.py"
+      - "api/v2/build_consumer_gov_receita_resolution_experiment.py"
+      - "api/sources/receita_cnpj_identity.py"
+      - "api/build_consumidor_gov.py"
+      - "data/reference/v2/consumer_gov_provider_resolutions.json"
+      - "data/reference/v2/consumer_gov_receita_verified_hints.json"
+      - "data/reference/v2/verified_relationships.json"
+      - "tests/test_v2_consumer_gov_conduct.py"
+      - ".github/workflows/v2-consumer-gov-conduct-evidence.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: v2-consumer-gov-conduct-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  conduct-evidence:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+
+    env:
+      SES_ALLOW_INSECURE_SSL: "1"
+      SES_KEEP_ZIP: "1"
+      SES_WRITE_AUDIT: "1"
+      SES_CACHE_DIR: "data/raw/ses"
+      SUSEP_LICENSED_VERIFY_SSL: "0"
+      SUSEP_SPECIAL_VERIFY_SSL: "0"
+      SUSEP_SANDBOX_VERIFY_SSL: "1"
+      SES_ZIP_URL: "http://127.0.0.1:9/BaseCompleta.zip"
+      SES_ZIP_URL_FALLBACK: "http://127.0.0.1:9/BaseCompleta.zip"
+      CG_MONTHS_BACK: "12"
+      CG_HTTP_RETRIES: "5"
+      CG_HTTP_BACKOFF: "1.5"
+      CG_CONNECT_TIMEOUT: "20"
+      CG_READ_TIMEOUT: "120"
+      CG_DOWNLOAD_READ_TIMEOUT: "300"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install -r requirements-dev.txt
+
+      - name: Restore validated SES source cache
+        uses: actions/cache/restore@v4
+        with:
+          path: data/raw/ses
+          key: v2-conduct-ses-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: |
+            ses-source-${{ runner.os }}-
+
+      - name: Restore Consumer.gov raw cache
+        uses: actions/cache/restore@v4
+        with:
+          path: data/raw/consumidor_gov
+          key: v2-conduct-consumer-raw-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: |
+            v2-conduct-consumer-raw-${{ runner.os }}-
+
+      - name: Verify cached BaseCompleta
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import zipfile
+          from pathlib import Path
+
+          path = Path("data/raw/ses/BaseCompleta.zip")
+          if not path.exists() or path.stat().st_size < 100_000_000:
+              raise SystemExit("valid cached BaseCompleta.zip is required")
+          if not zipfile.is_zipfile(path):
+              raise SystemExit("cached BaseCompleta.zip is not a valid ZIP")
+          print(f"SES cache OK: {path.stat().st_size} bytes")
+          PY
+
+      - name: Compile conduct modules
+        run: |
+          set -euo pipefail
+          python -m py_compile api/v2/consumer_gov_conduct.py
+          python -m py_compile api/v2/build_consumer_gov_conduct_evidence.py
+
+      - name: Test conduct contracts
+        run: |
+          set -euo pipefail
+          python -m pytest -q tests/test_v2_consumer_gov_conduct.py
+
+      - name: Refresh 12-month Consumer.gov source window
+        run: |
+          set -euo pipefail
+          python -m api.build_consumidor_gov
+
+      - name: Save Consumer.gov raw cache
+        uses: actions/cache/save@v4
+        with:
+          path: data/raw/consumidor_gov
+          key: v2-conduct-consumer-raw-${{ runner.os }}-${{ github.run_id }}
+
+      - name: Build formal regulatory inventory
+        run: |
+          set -euo pipefail
+          python -m api.v2.build_eligibility_inventory
+
+      - name: Build base Consumer.gov identity
+        run: |
+          set -euo pipefail
+          python -m api.v2.build_consumer_gov_identity_experiment
+
+      - name: Build filtered Receita identity snapshot
+        run: |
+          set -euo pipefail
+          python -m api.v2.build_consumer_gov_receita_identity --force
+
+      - name: Build definitive Consumer.gov identity resolution
+        run: |
+          set -euo pipefail
+          python -m api.v2.build_consumer_gov_receita_resolution_experiment
+
+      - name: Build Consumer.gov conduct evidence
+        run: |
+          set -euo pipefail
+          python -m api.v2.build_consumer_gov_conduct_evidence
+
+      - name: Validate conduct evidence boundaries
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          conduct = json.loads(
+              Path("data/derived/v2/consumer_gov_conduct_evidence.json").read_text(
+                  encoding="utf-8"
+              )
+          )
+          resolved = json.loads(
+              Path(
+                  "data/derived/v2/consumer_gov_receita_resolution_experiment.json"
+              ).read_text(encoding="utf-8")
+          )
+
+          if conduct.get("status") != "experimental":
+              raise SystemExit("conduct evidence must remain experimental")
+          if conduct.get("scoring") != "forbidden_in_this_artifact":
+              raise SystemExit("conduct evidence must explicitly forbid scoring")
+
+          forbidden = {
+              "overall_score",
+              "assessment_eligible",
+              "ranking_eligible",
+              "ranking_position",
+          }
+
+          def walk(value):
+              if isinstance(value, dict):
+                  overlap = forbidden & set(value)
+                  if overlap:
+                      raise SystemExit(f"forbidden decision fields: {sorted(overlap)}")
+                  for child in value.values():
+                      walk(child)
+              elif isinstance(value, list):
+                  for child in value:
+                      walk(child)
+
+          walk(conduct)
+
+          months = conduct["source"]["months"]
+          if len(months) != 12:
+              raise SystemExit(f"expected 12 conduct months, got {len(months)}")
+
+          taxonomy = conduct["taxonomy_catalog"]
+          for key in ("area", "assunto", "grupo_problema", "problema"):
+              if not taxonomy.get(key):
+                  raise SystemExit(f"taxonomy is empty: {key}")
+
+          summary = conduct["resolution_summary"]
+          post = resolved["post_receita"]
+          pairs = (
+              ("complaints_total", "complaints_total"),
+              (
+                  "matched_current_insurer_complaints",
+                  "matched_current_insurer_complaints",
+              ),
+              ("outside_157_complaints", "outside_157_complaints"),
+              ("ambiguous_complaints", "ambiguous_complaints"),
+              ("unresolved_complaints", "unresolved_complaints"),
+          )
+          for conduct_key, resolved_key in pairs:
+              if int(summary[conduct_key]) != int(post[resolved_key]):
+                  raise SystemExit(
+                      f"identity reconciliation mismatch {conduct_key}: "
+                      f"{summary[conduct_key]} != {post[resolved_key]}"
+                  )
+
+          entity_total = sum(
+              int(entity["totals"]["complaints"])
+              for entity in conduct["entities"]
+          )
+          if entity_total != int(summary["matched_current_insurer_complaints"]):
+              raise SystemExit(
+                  f"entity total mismatch: {entity_total} != "
+                  f"{summary['matched_current_insurer_complaints']}"
+              )
+
+          for entity in conduct["entities"]:
+              monthly_total = sum(
+                  int(item["complaints"]) for item in entity["monthly"]
+              )
+              if monthly_total != int(entity["totals"]["complaints"]):
+                  raise SystemExit(
+                      f"monthly reconciliation failed for {entity['entity_id']}"
+                  )
+
+          print(
+              json.dumps(
+                  {
+                      "source": {
+                          "months": months,
+                          "taxonomy_fields": conduct["source"]["taxonomy_fields"],
+                      },
+                      "universe": conduct["universe"],
+                      "resolution_summary": summary,
+                      "film_summary": conduct["film_summary"],
+                      "top_problem_groups": list(
+                          conduct["taxonomy_catalog"]["grupo_problema"].items()
+                      )[:15],
+                      "top_problems": list(
+                          conduct["taxonomy_catalog"]["problema"].items()
+                      )[:20],
+                  },
+                  ensure_ascii=False,
+                  indent=2,
+              )
+          )
+          PY
+
+      - name: Upload conduct artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: v2-consumer-gov-conduct-${{ github.run_id }}
+          retention-days: 14
+          if-no-files-found: warn
+          path: |
+            data/derived/v2/consumer_gov_conduct_evidence.json
+            data/derived/v2/consumer_gov_identity_experiment.json
+            data/derived/v2/consumer_gov_receita_resolution_experiment.json
+            data/derived/v2/entity_eligibility_inventory.json
