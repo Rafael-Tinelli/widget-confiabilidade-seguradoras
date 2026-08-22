@@ -46,14 +46,14 @@ jobs:
           python -m pytest -q tests/test_v2_consumer_gov_conduct.py
           git diff --check
 
-      - name: Commit validated correction
+      - name: Commit validated code correction
         run: |
           set -euo pipefail
-          rm -f .github/scripts/apply_conduct_cache_fix.py
-          rm -f .github/workflows/v2-conduct-cache-maintenance.yml
+          git restore .github/workflows/v2-consumer-gov-conduct-evidence.yml
+          git restore .github/workflows/v2-conduct-ruff-debug.yml
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add -A
+          git add api/v2/build_consumer_gov_conduct_evidence.py tests/test_v2_consumer_gov_conduct.py
           git diff --cached --check
           git commit -m "fix(v2): make Consumer.gov taxonomy acquisition cache-first"
           git push origin HEAD:refactor/v2-data-foundation
