@@ -26,13 +26,13 @@ from api.v2.build_consumer_gov_identity_experiment import (
     _resolve_provider_temporal_brand,
 )
 from api.v2.consumer_gov_conduct import (
-    TAXONOMY_COLUMNS,
     accumulate_row,
     build_conduct_film,
     finalize_month_evidence,
     new_month_evidence,
     normalize_text,
     row_value,
+    TAXONOMY_COLUMNS,
 )
 from api.v2.consumer_gov_identity import (
     load_provider_resolution_registry,
