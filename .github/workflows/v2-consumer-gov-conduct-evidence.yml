@@ -70,6 +70,12 @@ jobs:
           python -m pip install -r requirements.txt
           python -m pip install -r requirements-dev.txt
 
+      - name: Show Ruff normalization for conduct builder
+        run: |
+          set -euo pipefail
+          ruff check --fix api/v2/build_consumer_gov_conduct_evidence.py
+          git diff -- api/v2/build_consumer_gov_conduct_evidence.py
+
       - name: Restore validated SES source cache
         uses: actions/cache/restore@v4
         with:
