@@ -1,7 +1,8 @@
 # Ranking de Seguradoras Sanida — Pipeline de Dados e Metodologia v2
 
 > **Status do projeto:** refatoração metodológica e arquitetural em andamento.  
-> **Marco atual (2026-08-19):** a arquitetura conceitual do pilar econômico-financeiro foi fechada; a próxima investigação metodológica é o pilar de conduta com o consumidor, sinistros e reclamações.  
+> **Marco atual (2026-08-21):** a arquitetura conceitual do pilar econômico-financeiro está fechada e a etapa de identidade do Consumidor.gov foi encerrada com resolução automática/derivada da quase totalidade da amostra. O próximo trabalho do pilar de conduta é metodológico: fontes, taxonomia, desfechos, denominadores, recorrência e comparabilidade.  
+> **Marco de identidade Consumidor.gov (90.332 reclamações):** 82.423 atribuídas a seguradoras ordinárias atuais (91,2445%), 5.872 classificadas fora do universo corrente, 1.995 mantidas como ambíguas e apenas 42 não resolvidas (0,0465%), distribuídas por 11 nomes.  
 > Este README funciona, nesta fase, como **contrato de projeto, guia de implementação e registro das decisões já tomadas**.  
 > Regras marcadas como **EM VALIDAÇÃO** ou **EM CALIBRAÇÃO** não devem ser tratadas como metodologia definitiva nem incorporadas ao scoring sem os testes previstos neste documento.
 
@@ -136,9 +137,9 @@ FONTES OFICIAIS / PÚBLICAS
           ├── SUSEP — entidades atualmente licenciadas
           ├── SUSEP — regimes especiais
           ├── SUSEP — Sandbox Regulatório
-          ├── Receita Federal — Dados Abertos do CNPJ (lifecycle jurídico)
+          ├── Receita Federal — Dados Abertos do CNPJ (lifecycle jurídico e resolução auxiliar de identidade)
           ├── SusepCon / BDR — candidato do pilar de conduta
-          ├── Consumidor.gov — candidato complementar
+          ├── Consumidor.gov — candidato complementar; identidade v2 já instrumentada
           └── Open Insurance — contexto, sem pontos
           │
           ▼
@@ -251,7 +252,6 @@ razão social
 tipo de entidade
 status regulatório
 ```
-
 
 Na implementação v2 atual:
 
@@ -377,6 +377,8 @@ Matching fuzzy, aliases e heurísticas são ferramentas para localizar candidato
 
 Não são autorização para transformar uma hipótese em identidade confirmada.
 
+Na resolução do Consumidor.gov, matching textual pode localizar candidatos, mas a decisão final deve convergir para evidência determinística ou verificável: CNPJ exato, identidade SUSEP, atividade Receita suficientemente inequívoca para exclusão ou relação histórica/documental comprovada. Quando isso não ocorre, o estado permanece `ambiguous` ou `unresolved`.
+
 ### 6.11. A metodologia pertence ao backend
 
 O site recebe o resultado.
@@ -427,6 +429,21 @@ confidence
 Datas de vigência podem ser guardadas quando forem fornecidas de forma estruturada e sustentável pela fonte, mas a experiência pública deve priorizar o **estado atual calculado automaticamente**.
 
 O objetivo operacional é minimizar manutenção editorial.
+
+Para nomes de provedores vindos de fontes externas, o resolvedor deve distinguir:
+
+```text
+nome novo determinístico
+→ resolução automática/derivada
+
+nome novo que é não-seguradora inequivocamente identificável
+→ classificação fora do universo, sem transferir reclamações a outra empresa
+
+nome novo com homônimos, mistura de entidades ou sucessão não comprovada
+→ ambiguous / unresolved
+```
+
+A meta não é automatizar hipóteses; é automatizar todos os casos em que a evidência permite uma decisão segura e reservar intervenção humana para exceções jurídicas ou históricas reais.
 
 ### 7.2. Marcas não herdam nota
 
@@ -492,7 +509,7 @@ regulatory_universe_eligible
 → ranking_eligible
 ```
 
-O universo regulatório atual é `ordinary_current_insurers`. No marco documentado nesta branch:
+O universo regulatório é `ordinary_current_insurers`. No snapshot documentado nesta branch:
 
 ```json
 {
@@ -503,7 +520,9 @@ O universo regulatório atual é `ordinary_current_insurers`. No marco documenta
 }
 ```
 
-Os 157 registros são seguradoras ordinárias atuais que **podem prosseguir aos gates de evidência**; não são 157 seguradoras já avaliadas ou ranqueadas.
+**157 não é constante metodológica nem número hardcoded.** É a quantidade observada no snapshot corrente da fonte oficial. Se uma nova seguradora ordinária aparecer na relação oficial de entidades licenciadas da SUSEP com identidade regulatória válida, a classificação pode materializá-la mesmo antes de ela aparecer nos fluxos SES; o gate regulatório passa a refletir o novo universo automaticamente. Falta de histórico financeiro não vira zero: a nova entidade permanece `pending_evidence` até satisfazer os gates posteriores.
+
+Os 157 registros do snapshot atual são seguradoras ordinárias atuais que **podem prosseguir aos gates de evidência**; não são 157 seguradoras já avaliadas ou ranqueadas.
 
 A camada de evidência financeira já existe, mas ainda não abre `assessment_eligible`. Permanecem pendentes no gate: evidência de conduta/reclamações, calibração metodológica, confiança da avaliação e definição da coorte final.
 
@@ -876,9 +895,11 @@ Esses nomes são conceituais e ainda não constituem `reason_codes` definitivos.
 
 O projeto poderá estudar diversos canais, mas não deve simplesmente somar reclamações de fontes diferentes.
 
-Antes de qualquer agregação será necessário resolver:
+A identidade **dentro do Consumidor.gov** já possui uma camada v2 reproduzível e conservadora. O que continua aberto é a equivalência entre canais e a semântica dos registros.
 
-- identidade jurídica da empresa reclamada;
+Antes de qualquer agregação entre fontes ainda será necessário resolver:
+
+- identidade jurídica entre canais diferentes;
 - diferenças de cobertura entre canais;
 - duplicidade provável do mesmo caso;
 - períodos comparáveis;
@@ -889,14 +910,14 @@ Antes de qualquer agregação será necessário resolver:
 
 Fontes regulatórias e públicas estruturadas têm prioridade. Outros canais só poderão influenciar a metodologia se forem sustentáveis, automatizáveis, auditáveis e semanticamente compatíveis.
 
-### 14.5. Primeira investigação do novo pilar
+### 14.5. Próxima investigação do novo pilar
 
-A próxima etapa não é criar um score de reclamações.
+A próxima etapa não é criar um score de reclamações e também não precisa reabrir a pergunta operacional de **quem é quem no Consumidor.gov**.
 
 É construir um **inventário fechado das fontes e da semântica disponível**, respondendo:
 
 1. quais canais possuem dados estruturados e historicamente recuperáveis;
-2. qual entidade jurídica cada registro representa;
+2. qual entidade jurídica cada canal representa e como as identidades se relacionam entre fontes;
 3. quais temas de reclamação são distinguíveis;
 4. quais desfechos são realmente observáveis;
 5. qual denominador permite comparação justa;
@@ -1351,7 +1372,7 @@ Regra desejada:
 
 > Tudo que altera nota, elegibilidade ou situação regulatória deve ser automático ou derivado de fonte sustentável.
 
-Curadoria poderá auxiliar a resolução de marcas, aliases e apresentação, mas não deverá fabricar situação regulatória ou alterar indicadores financeiros.
+Curadoria poderá auxiliar a resolução de marcas, aliases, sucessões documentadas e apresentação, mas não deverá fabricar situação regulatória, transferir reclamações entre pessoas jurídicas sem evidência ou alterar indicadores financeiros.
 
 ---
 
@@ -1517,6 +1538,8 @@ O projeto deve minimizar manutenção editorial.
 
 Situações como:
 
+- entrada de nova seguradora ordinária;
+- entrada de nova não-seguradora regulada;
 - entrada ou saída do Sandbox;
 - mudança de status;
 - atualização financeira;
@@ -1526,6 +1549,10 @@ Situações como:
 
 devem ser recalculadas automaticamente sempre que a fonte permitir.
 
+O universo regulatório não deve depender de uma lista manual nem de uma constante como `157`. A fonte corrente de licenciadas da SUSEP define quais entidades estão atualmente autorizadas e seu tipo. Uma entidade nova pode entrar na camada regulatória antes de possuir histórico financeiro suficiente; nesse caso, a ausência de evidência mantém os gates posteriores fechados em vez de excluir artificialmente a empresa ou atribuir zero.
+
+Para nomes-surpresa de fontes como Consumidor.gov, o objetivo é **quase zero manutenção para casos determinísticos**. Nomes que convergem de modo seguro para CNPJ/entidade corrente ou para atividade inequivocamente fora do universo devem ser resolvidos automaticamente/por derivação. Homônimos, wrappers multiempresa, relações históricas não comprovadas ou casos juridicamente ambíguos devem continuar parando para revisão, sem fuzzy decisório e sem transferência silenciosa de reclamações.
+
 Evitar depender de textos manuais como:
 
 > “esta relação era válida até março de 2026”
@@ -1534,9 +1561,11 @@ para representar o estado atual.
 
 Histórico poderá ser preservado internamente e apresentado quando for material, mas a resposta padrão deverá ser derivada do **estado vigente**.
 
-Zero manutenção absoluta não é pressuposto do projeto: endpoints, formatos e regras regulatórias podem mudar.
+Zero manutenção absoluta não é pressuposto do projeto: endpoints, formatos, cadastros e regras regulatórias podem mudar.
 
-O objetivo é **quase zero manutenção editorial rotineira**, com manutenção técnica apenas quando a infraestrutura das fontes mudar ou a metodologia for revisada.
+O objetivo é **quase zero manutenção editorial rotineira**, com manutenção técnica apenas quando a infraestrutura das fontes mudar, surgir uma ambiguidade factual real ou a metodologia for revisada.
+
+A branch já contém um `Refresh data` semanal usado pelo fluxo operacional legado/v1. A v2 ainda é Draft e não deve criar um scheduler paralelo apenas para antecipar produção. Na fase de publicação/migração, os builders v2 de classificação/elegibilidade devem ser acoplados ao refresh operacional recorrente existente ou ao seu sucessor, preservando uma única rotina de atualização.
 
 ---
 
@@ -1579,6 +1608,8 @@ https://www2.susep.gov.br/menuatendimento/procura_2011.asp
 A fonte publica FIP, CNPJ, razão social e tipo. A v2 reconhece separadamente seguradoras, previdência aberta, capitalização, resseguradores, corretores de resseguro e autorregulação conforme os códigos da própria fonte.
 
 Para seguradoras ordinárias atuais, essa é a autoridade principal de **licenciamento/tipo/status regulatório**. O matching é por FIP; divergências com SES são preservadas em auditoria, não resolvidas por similaridade de nome.
+
+A implementação também materializa entidades licenciadas que ainda não estejam presentes no master SES. Isso é essencial para entrada de novas supervisionadas: o universo corrente acompanha a fonte regulatória, enquanto os gates de evidência tratam separadamente a eventual falta de histórico.
 
 ### 32.4. Regimes especiais SUSEP — IMPLEMENTADO
 
@@ -1638,6 +1669,8 @@ O workflow `Refresh Receita lifecycle`:
 - valida o bulk contra os casos golden;
 - atualiza apenas o snapshot filtrado quando necessário.
 
+A mesma infraestrutura Receita também foi reaproveitada de forma filtrada no experimento de identidade do Consumidor.gov. Nesse uso, CNAE é assimétrico: pode sustentar a exclusão de uma entidade inequivocamente não-seguradora, mas **nunca concede licença nem admite uma empresa no universo de seguradoras**, papel reservado à SUSEP.
+
 ### 32.7. Grupos econômicos e relationships — IMPLEMENTADO
 
 `Ses_grupos_economicos.csv` fornece observações mensais de grupo. A v2 comprime o histórico em períodos contíguos e distingue grupos específicos de buckets genéricos como `INDEPENDENTE` e `OUTROS GRUPOS`.
@@ -1672,11 +1705,34 @@ Continua sendo a fonte regulatória prioritária a investigar para conduta/recla
 
 A presença do nome no README **não significa que exista hoje um score ou source module v2 pronto**.
 
-### 32.11. Consumidor.gov — INFRAESTRUTURA LEGADA/COMPLEMENTAR, PAPEL v2 ABERTO
+### 32.11. Consumidor.gov — IDENTIDADE v2 IMPLEMENTADA / PAPEL METODOLÓGICO AINDA ABERTO
 
-O repositório contém coletor/agregação/matching históricos para Consumidor.gov. Isso não equivale a aprovação metodológica na v2.
+O Consumidor.gov continua candidato **complementar** para o segundo pilar; esta etapa não aprovou score, peso, denominador nem interpretação de satisfação/resolução. O que foi encerrado foi o problema de **resolução de identidade dentro dessa fonte** em grau suficiente para o projeto avançar.
 
-Antes de reutilizar essa infraestrutura no segundo pilar será necessário revalidar identidade, cobertura, amostra, denominadores, semântica de resolução/satisfação e eventual duplicidade com outros canais. Seu papel definitivo permanece **EM VALIDAÇÃO**.
+A solução combina:
+
+- identidade canônica e universo corrente vindos da SUSEP;
+- nomes normalizados e matching determinístico quando seguro;
+- Receita Federal para localizar CNPJ candidato e distinguir atividades inequivocamente fora do universo;
+- hints exatos, verificáveis e source-backed para casos em que o nome público não converge sozinho;
+- relações históricas/sucessões documentadas na camada apropriada;
+- proibição de fuzzy matching como decisão final;
+- proibição de transferir reclamação de corretora, canal, varejista, plataforma ou outra pessoa jurídica para uma seguradora apenas por parceria, grupo ou proximidade de nome.
+
+Resultado final reproduzido no artifact `consumer_gov_receita_resolution_experiment.json` sobre **90.332 reclamações**:
+
+```text
+matched_current_insurer   82.423   91,2445%
+outside_current_universe   5.872
+ambiguous                  1.995
+unresolved                    42    0,0465%
+```
+
+As 42 reclamações não resolvidas pertencem a apenas **11 nomes de provedores**. Elas permanecem deliberadamente sem atribuição enquanto a evidência não permitir decisão segura; esse residual não autoriza ampliar heurísticas.
+
+A investigação mostrou também que nomes-surpresa não precisam gerar manutenção rotineira quando a identidade é determinística. O sistema deve absorver automaticamente novos nomes que convergem para uma entidade existente ou para uma não-seguradora inequivocamente identificável. Casos genuinamente ambíguos continuam sendo exceções de curadoria verificável.
+
+O papel **metodológico** do Consumidor.gov permanece **EM VALIDAÇÃO**: ainda é necessário estudar cobertura, amostra, denominadores, taxonomia, semântica de resolução/satisfação, recorrência e eventual duplicidade com outros canais antes de permitir qualquer pontuação.
 
 ### 32.12. Hierarquia de autoridade
 
@@ -1689,7 +1745,8 @@ CNPJ jurídico e situação cadastral       → Receita Federal como cross-check
 grupo econômico observado                → SUSEP / SES
 sucessão societária                      → relação explicitamente verificada
 marca / risk carrier                     → relação verificável
-conduta/reclamações                       → ainda em investigação
+identidade de provedor Consumidor.gov    → SUSEP + Receita + relações/hints verificáveis
+conduta/reclamações como sinal de score  → ainda em investigação
 ```
 
 ## 33. Estado da API v1
@@ -1744,7 +1801,9 @@ Estão implementados:
 - `V2 Eligibility Validation` — universo regulatório e gates;
 - `V2 Financial Evidence Validation` — evidência financeira e maturidade de competência;
 - `V2 Liquidity Experiment` — diagnóstico reproduzível ILC/ILT na competência madura;
-- `V2 Operating Experiment` — IC/ICA e estados operacionais experimentais.
+- `V2 Operating Experiment` — IC/ICA e estados operacionais experimentais;
+- `V2 Consumer.gov 157 Experiment` — baseline reproduzível da identidade de provedores contra o universo corrente;
+- `V2 Receita Consumer.gov Identity Experiment` — segunda passagem com Receita e regras verificadas para reduzir o residual sem fuzzy decisório.
 
 Esses workflows geram artifacts internos de validação; não publicam score v2 nem abrem o ranking.
 
@@ -1757,9 +1816,11 @@ Dois estudos foram mantidos para auditabilidade, mas não devem continuar produz
 
 A preservação do código não significa que a investigação continue aberta.
 
-### 35.3. Atualização da Receita
+### 35.3. Atualizações operacionais existentes
 
 `Refresh Receita lifecycle` é um fluxo operacional independente, manual e agendado semanalmente. Ele reutiliza a BaseCompleta SUSEP já validada para construir o universo-alvo e atualiza somente o snapshot filtrado do CNPJ após os gates de cobertura/regressão.
+
+O repositório também já possui `Refresh data`, agendado semanalmente, para o pipeline operacional legado/v1. A v2 ainda não publica produção e, por isso, seus builders regulatórios não devem ser conectados prematuramente a esse fluxo. Essa integração pertence à fase de publicação/migração e deve reutilizar uma rotina recorrente única, não criar schedulers concorrentes.
 
 ### 35.4. Princípio operacional
 
@@ -1777,7 +1838,7 @@ A ordem continua sendo parte do contrato, mas o checklist abaixo reflete o que j
 - [x] definir arquitetura preliminar da API v2;
 - [x] registrar decisões versus pontos em validação.
 
-### Fase 1 — Fontes e ingestão — IMPLEMENTAÇÃO SUBSTANCIAL / SEGUNDO PILAR PENDENTE
+### Fase 1 — Fontes e ingestão — IMPLEMENTAÇÃO SUBSTANCIAL / SEMÂNTICA DO SEGUNDO PILAR PENDENTE
 
 - [x] mapear BaseCompleta, LISTAEMPRESAS e chaves FIP/CNPJ;
 - [x] mapear fontes SUSEP de licenciadas, regimes especiais e Sandbox;
@@ -1785,7 +1846,8 @@ A ordem continua sendo parte do contrato, mas o checklist abaixo reflete o que j
 - [x] implementar Receita CNPJ bulk filtrada com descoberta de competência;
 - [x] medir cobertura e proteger quedas anormais nas fontes já integradas;
 - [x] classificar o papel das fontes atuais como regulatória, jurídica, financeira ou contextual;
-- [ ] inventariar e validar as fontes do pilar de conduta/reclamações.
+- [x] implementar e validar a camada de identidade do Consumidor.gov como candidato complementar;
+- [ ] inventariar e validar as fontes e a semântica do pilar de conduta/reclamações.
 
 ### Fase 2 — Identidade, classificação e lifecycle — IMPLEMENTADA EM DRAFT
 
@@ -1797,12 +1859,13 @@ A ordem continua sendo parte do contrato, mas o checklist abaixo reflete o que j
 - [x] Sandbox separado como `sandbox_participant`;
 - [x] Sandbox-only por CNPJ quando não existe FIP publicado;
 - [x] lifecycle Receita separado do status regulatório;
+- [x] materialização de nova entidade licenciada mesmo quando ainda ausente do master SES;
 - [x] testes de unicidade, conflito e invariantes;
 - [x] preservar divergências em vez de escondê-las.
 
 **Estado:** base de identidade/classificação pronta para sustentar os próximos gates; ainda é versionada como draft até o fechamento da v2.
 
-### Fase 3 — Relationships, grupos, marcas e resolvedor — IMPLEMENTADA EM DRAFT / CURADORIA AINDA EXPANSÍVEL
+### Fase 3 — Relationships, grupos, marcas e resolvedor — IMPLEMENTADA EM DRAFT / RESIDUAL DE CURADORIA CONTROLADO
 
 - [x] separar marca e entidade regulatória;
 - [x] resolver `risk_carrier` por relação verificável;
@@ -1812,10 +1875,13 @@ A ordem continua sendo parte do contrato, mas o checklist abaixo reflete o que j
 - [x] integrar histórico de grupos econômicos SES sem inferir sucessão;
 - [x] impedir buckets genéricos de criarem grupos corporativos falsos;
 - [x] criar query buckets para insurer/Sandbox/historical/special/pension/capitalization/other;
-- [ ] ampliar relações verificadas quando novos casos exigirem;
-- [ ] medir e reduzir dependência de curadoria antes da publicação definitiva.
+- [x] medir a dependência de curadoria no Consumidor.gov e reduzir o residual a 42 reclamações/11 nomes sem relaxar os critérios de identidade;
+- [x] estabelecer que casos determinísticos devem ser automáticos/derivados e casos juridicamente ambíguos permanecem unresolved/ambiguous;
+- [ ] ampliar relações verificadas apenas quando novos casos reais exigirem.
 
-### Fase 4 — Matriz quantitativa — FINANCEIRO CONCEITUALMENTE FECHADO; CONDUTA É O PRÓXIMO TRABALHO
+**Estado:** a etapa de resolução de identidade do Consumidor.gov está encerrada para fins de fundação. O residual não justifica novas heurísticas; futuras exceções source-backed são manutenção episódica, não requisito de curadoria rotineira.
+
+### Fase 4 — Matriz quantitativa — FINANCEIRO CONCEITUALMENTE FECHADO; SEMÂNTICA DE CONDUTA É O PRÓXIMO TRABALHO
 
 - [x] delimitar o universo regulatório elegível;
 - [x] implementar financial evidence sem score;
@@ -1826,11 +1892,13 @@ A ordem continua sendo parte do contrato, mas o checklist abaixo reflete o que j
 - [x] investigar IC/ICA e implementar filme operacional experimental;
 - [x] executar investigação fechada do ILPL e rejeitá-lo como eixo independente de scoring;
 - [x] encerrar a procura por novos eixos financeiros;
+- [x] mapear a identidade jurídica dos provedores do Consumidor.gov em grau suficiente para prosseguir;
 - [ ] calibrar transformação de PLA/CMR;
 - [ ] calibrar transformação/saturação de ILT;
 - [ ] fechar como o filme operacional interfere em cautela/confiança sem terceiro score;
 - [ ] inventariar fontes do pilar de conduta;
-- [ ] mapear identidade, taxonomia, desfechos, denominadores e histórico de reclamações;
+- [ ] mapear taxonomia, desfechos, denominadores, recorrência e histórico de reclamações;
+- [ ] resolver equivalência/deduplicação entre canais quando mais de uma fonte sobreviver;
 - [ ] pré-registrar e testar critérios de sobrevivência dos sinais de conduta.
 
 ### Fase 5 — Pesos e score — PENDENTE
@@ -1854,7 +1922,7 @@ Só começa depois que os dois pilares possuírem semântica, cobertura e estabi
 
 ### Fase 7 — Builders v2 — FUNDAÇÃO INTERNA IMPLEMENTADA; PUBLICAÇÃO FINAL PENDENTE
 
-Já existem builders internos para:
+Já existem builders/experimentos internos para:
 
 ```text
 identity inventory
@@ -1865,6 +1933,8 @@ financial evidence inventory
 liquidity experiment
 operating experiment
 ILPL closed experiment
+Consumer.gov identity experiment
+Receita + Consumer.gov identity resolution experiment
 ```
 
 Ainda faltam os builders definitivos de assessment/ranking e os quatro contratos públicos finais:
@@ -1876,9 +1946,9 @@ Ainda faltam os builders definitivos de assessment/ranking e os quatro contratos
 
 ### Fase 8 — Testes e auditoria — SUBSTANCIALMENTE IMPLEMENTADA NA FUNDAÇÃO
 
-Já existem testes para identidade, classificação, Sandbox, lifecycle Receita, relationships, elegibilidade, evidência financeira, maturidade, liquidez, operação e ILPL.
+Já existem testes para identidade, classificação, Sandbox, lifecycle Receita, relationships, elegibilidade, evidência financeira, maturidade, liquidez, operação, ILPL e resolução de identidade do Consumidor.gov/Receita.
 
-Continuam pendentes os testes que só podem existir após score/schema final:
+Continuam pendentes os testes que só podem existir após score/schema final ou após a definição semântica do segundo pilar:
 
 - [ ] JSON Schema público;
 - [ ] regressões de score;
@@ -1890,6 +1960,7 @@ Continuam pendentes os testes que só podem existir após score/schema final:
 
 - [ ] publicar `/api/v2/`;
 - [ ] preservar `/api/v1/` durante a transição;
+- [ ] acoplar classificação/elegibilidade e demais builders v2 aprovados ao refresh operacional recorrente, sem criar scheduler paralelo desnecessário;
 - [ ] validar staging e rollback.
 
 ### Fase 10 — Frontend no site — PENDENTE E FORA DA ARQUITETURA DO REPO
@@ -2141,6 +2212,9 @@ A refatoração será considerada bem-sucedida quando:
 
 - o usuário conseguir pesquisar uma empresa ou marca sem conhecer sua natureza jurídica;
 - o sistema identificar corretamente o tipo da entidade;
+- uma nova seguradora licenciada puder entrar no universo regulatório sem manutenção de uma lista manual;
+- novas não-seguradoras e nomes-surpresa determinísticos puderem ser classificados sem curadoria rotineira;
+- casos realmente ambíguos permanecerem sem atribuição em vez de serem forçados por heurística;
 - seguradoras comparáveis receberem avaliação coerente;
 - entidades incomparáveis não sejam forçadas ao ranking;
 - ausência de dados não seja convertida em desempenho ruim;
@@ -2171,10 +2245,10 @@ Até que sejam testadas, **não considerar como regras definitivas**:
 
 A seleção de novos indicadores financeiros independentes **não está mais aberta** nesta etapa. ILPL foi rejeitado como eixo de scoring pela investigação pré-registrada e não receberá iteração de resgate.
 
-### Pilar de conduta com o consumidor — investigação aberta
+### Pilar de conduta com o consumidor — identidade Consumidor.gov fechada, metodologia aberta
 
 - fonte ou conjunto de fontes definitivo (SusepCon/BDR deve ser investigado primeiro; Consumidor.gov permanece candidato complementar);
-- identidade jurídica entre canais;
+- equivalência de identidade **entre canais** — a resolução interna do Consumidor.gov já está implementada;
 - deduplicação entre reclamações provenientes de fontes diferentes;
 - taxonomia de temas e gravidade;
 - distinção entre alegação, procedência, resolução e outros desfechos;
