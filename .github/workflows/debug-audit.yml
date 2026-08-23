@@ -31,19 +31,41 @@ jobs:
           python - <<'PY'
           from pathlib import Path
 
-          path = Path("api/sources/consumer_gov_direct.py")
-          text = path.read_text(encoding="utf-8")
-          old = (
+          source_path = Path("api/sources/consumer_gov_direct.py")
+          source = source_path.read_text(encoding="utf-8")
+          old_lambda = (
               "lambda current_driver: first_code\n"
               "                        not in current_driver.find_element("
           )
-          new = (
+          new_lambda = (
               "lambda current_driver, code=first_code: code\n"
               "                        not in current_driver.find_element("
           )
-          if old not in text:
-              raise SystemExit("expected B023 pattern not found")
-          path.write_text(text.replace(old, new, 1), encoding="utf-8")
+          if old_lambda in source:
+              source = source.replace(old_lambda, new_lambda, 1)
+          source_path.write_text(source, encoding="utf-8")
+
+          test_path = Path("tests/test_consumer_gov_direct.py")
+          test = test_path.read_text(encoding="utf-8")
+          old_url = (
+              '    assert urls == [\n'
+              '        "https://consumidor.gov.br/datatablesController/"\n'
+              '        "datatables-67143.min.js?id=publicacoesDT&t=main&"\n'
+              '        "c=%2Fpages%2Fdadosabertos%2Fexterno%2F"\n'
+              '    ]'
+          )
+          new_url = (
+              '    assert urls == [\n'
+              '        (\n'
+              '            "https://consumidor.gov.br/datatablesController/"\n'
+              '            "datatables-67143.min.js?id=publicacoesDT&t=main&"\n'
+              '            "c=%2Fpages%2Fdadosabertos%2Fexterno%2F"\n'
+              '        )\n'
+              '    ]'
+          )
+          if old_url not in test:
+              raise SystemExit("expected ISC004 test pattern not found")
+          test_path.write_text(test.replace(old_url, new_url, 1), encoding="utf-8")
           PY
           ruff check \
             api/sources/consumer_gov_direct.py \
