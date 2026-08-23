@@ -4,4 +4,5 @@ certifi>=2024.0.0
 numpy>=1.26.0
 pandas>=2.1.0
 scipy>=1.11.0
+# Headless fallback for resilient Consumer.gov publication discovery.
 selenium>=4.25.0,<5
