@@ -36,7 +36,7 @@ READ_TIMEOUT = float(os.getenv("CG_READ_TIMEOUT", "120"))
 DOWNLOAD_TIMEOUT = float(os.getenv("CG_DOWNLOAD_READ_TIMEOUT", "300"))
 HEADLESS_TIMEOUT = int(os.getenv("CG_HEADLESS_TIMEOUT", "120"))
 HEADLESS_MAX_PAGES = int(os.getenv("CG_HEADLESS_MAX_PAGES", "100"))
-SCHEMA_VERSION = "consumer-gov-base-completa-v3-2026-08"
+SCHEMA_VERSION = "consumer-gov-monthly-conduct-core-v1-2026-08"
 
 REQUIRED_FIELDS: dict[str, tuple[str, ...]] = {
     "provider": ("Nome Fantasia", "Empresa", "Fornecedor"),
@@ -52,7 +52,6 @@ REQUIRED_FIELDS: dict[str, tuple[str, ...]] = {
     "problem_group": ("Grupo Problema",),
     "problem": ("Problema",),
     "purchase_channel": ("Como Comprou Contratou", "Como Comprou/Contratou"),
-    "origin_channel": ("Canal de Origem",),
 }
 
 _MONTH_NAMES = {
@@ -742,6 +741,8 @@ def _month_from_row(
         "Data Abertura",
         "Data da Reclamação",
         "Data Reclamacao",
+        "Data Finalização",
+        "Data Finalizacao",
     ):
         key = normalized_keys.get(_norm(alias))
         value = row.get(key, "") if key else ""

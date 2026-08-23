@@ -1,77 +1,254 @@
 name: Debug Audit
 
 on:
-  pull_request:
-    branches: [main]
-    paths:
-      - ".github/workflows/debug-audit.yml"
   workflow_dispatch:
+    inputs:
+      mode:
+        description: "fast = audita artefatos; full = refaz os dados e audita"
+        type: choice
+        options: [fast, full]
+        default: full
+      tag:
+        description: "Tag/snapshot opcional. Vazio deixa o build decidir."
+        required: false
+        type: string
+      months_back:
+        description: "Consumidor.gov: quantidade de meses-alvo"
+        required: false
+        type: string
+        default: "12"
+      cg_force_download:
+        description: "Consumidor.gov: ignorar cache mensal válido"
+        type: boolean
+        default: false
+      ses_write_audit:
+        description: "SES: gerar arquivos de auditoria durante o build"
+        type: boolean
+        default: true
+      ses_fin_year_mode:
+        description: "SES: ano-base financeiro"
+        type: choice
+        options: [max_year, last_full_year]
+        default: max_year
+
+  push:
+    paths:
+      - api/v1/insurers.json
+      - api/v1/participants.json
+      - data/derived/**
+      - data/snapshots/**
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: debug-audit-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  one-time-consumer-gov-schema-adjustment:
+  debug-audit:
     runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      PYTHONUNBUFFERED: "1"
+      SES_ZIP_URL: "https://www2.susep.gov.br/download/estatisticas/BaseCompleta.zip"
+
     steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: refactor/v2-data-foundation
-          fetch-depth: 0
-      - uses: actions/setup-python@v5
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Align direct-source validation with conduct-required schema
+          cache: pip
+
+      - name: Resolve parameters
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "MODE=${{ inputs.mode }}" >> "$GITHUB_ENV"
+            echo "TAG=${{ inputs.tag }}" >> "$GITHUB_ENV"
+            echo "CG_MONTHS_BACK=${{ inputs.months_back }}" >> "$GITHUB_ENV"
+            echo "CG_FORCE_DOWNLOAD=${{ inputs.cg_force_download && '1' || '0' }}" >> "$GITHUB_ENV"
+            echo "SES_WRITE_AUDIT=${{ inputs.ses_write_audit && '1' || '0' }}" >> "$GITHUB_ENV"
+            echo "SES_FIN_YEAR_MODE=${{ inputs.ses_fin_year_mode }}" >> "$GITHUB_ENV"
+          else
+            echo "MODE=fast" >> "$GITHUB_ENV"
+            echo "TAG=" >> "$GITHUB_ENV"
+            echo "CG_MONTHS_BACK=12" >> "$GITHUB_ENV"
+            echo "CG_FORCE_DOWNLOAD=0" >> "$GITHUB_ENV"
+            echo "SES_WRITE_AUDIT=0" >> "$GITHUB_ENV"
+            echo "SES_FIN_YEAR_MODE=max_year" >> "$GITHUB_ENV"
+          fi
+
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt -r requirements-dev.txt
+          python -m pip install certifi
+
+      - name: Configure CA bundle
+        run: |
+          set -euo pipefail
+          python - <<'PY' >> "$GITHUB_ENV"
+          import certifi
+
+          ca_bundle = certifi.where()
+          print(f"REQUESTS_CA_BUNDLE={ca_bundle}")
+          print(f"SSL_CERT_FILE={ca_bundle}")
+          PY
+
+      - name: Build Open Insurance participants snapshot
+        if: ${{ env.MODE == 'full' }}
+        env:
+          OPIN_PARTICIPANTS_URL: "https://data.directory.opinbrasil.com.br/participants"
+        run: |
+          set -euo pipefail
+          python -m api.build_json
+
+      - name: Build Consumidor.gov derived data
+        if: ${{ env.MODE == 'full' }}
+        env:
+          CG_MONTHS_BACK: ${{ env.CG_MONTHS_BACK }}
+          CG_FORCE_DOWNLOAD: ${{ env.CG_FORCE_DOWNLOAD }}
+        run: |
+          set -euo pipefail
+          echo "CG_MONTHS_BACK=$CG_MONTHS_BACK"
+          echo "CG_FORCE_DOWNLOAD=$CG_FORCE_DOWNLOAD"
+          python -m api.build_consumidor_gov
+
+      - name: Build insurers
+        if: ${{ env.MODE == 'full' }}
+        env:
+          TAG: ${{ env.TAG }}
+          SES_WRITE_AUDIT: ${{ env.SES_WRITE_AUDIT }}
+          SES_FIN_YEAR_MODE: ${{ env.SES_FIN_YEAR_MODE }}
+          MIN_INSURERS_COUNT: "200"
+          MAX_COUNT_DROP_PCT: "0.20"
+        run: |
+          set -euo pipefail
+          echo "TAG=$TAG"
+          echo "SES_WRITE_AUDIT=$SES_WRITE_AUDIT"
+          echo "SES_FIN_YEAR_MODE=$SES_FIN_YEAR_MODE"
+          python -m api.build_insurers
+
+      - name: Audit insurers.json
+        run: |
+          set -euo pipefail
+          test -f scripts/audit_insurers_json.py
+          python scripts/audit_insurers_json.py api/v1/insurers.json
+
+      - name: Debug summary
         run: |
           set -euo pipefail
           python - <<'PY'
+          import glob
+          import gzip
+          import json
+          import sys
+          from collections import Counter
           from pathlib import Path
 
-          path = Path("api/sources/consumer_gov_direct.py")
-          text = path.read_text(encoding="utf-8")
+          def load_json(path: Path):
+              return json.loads(path.read_text(encoding="utf-8"))
 
-          old_version = 'SCHEMA_VERSION = "consumer-gov-base-completa-v3-2026-08"'
-          new_version = 'SCHEMA_VERSION = "consumer-gov-monthly-conduct-core-v1-2026-08"'
-          if old_version not in text:
-              raise SystemExit("expected schema-version marker not found")
-          text = text.replace(old_version, new_version, 1)
+          errors = []
+          warnings = []
+          insurers_path = Path("api/v1/insurers.json")
+          if not insurers_path.exists():
+              raise SystemExit(f"arquivo ausente: {insurers_path}")
 
-          origin_line = '    "origin_channel": ("Canal de Origem",),\n'
-          if origin_line not in text:
-              raise SystemExit("expected origin-channel requirement not found")
-          text = text.replace(origin_line, "", 1)
+          payload = load_json(insurers_path)
+          insurers = payload.get("insurers")
+          if not isinstance(insurers, list) or not insurers:
+              errors.append("insurers[] vazio ou inválido")
+              insurers = []
 
-          old_dates = (
-              '    for alias in (\n'
-              '        "Data Abertura",\n'
-              '        "Data da Reclamação",\n'
-              '        "Data Reclamacao",\n'
-              '    ):'
+          print("=== insurers.json meta ===")
+          print(json.dumps(payload.get("meta", {}), ensure_ascii=False, indent=2))
+
+          missing_core = []
+          for index, insurer in enumerate(insurers[:50]):
+              for key in ("id", "name"):
+                  if key not in insurer:
+                      missing_core.append((index, key))
+          if missing_core:
+              errors.append(f"campos essenciais ausentes: {missing_core[:10]}")
+
+          ids = [str(item.get("id")) for item in insurers if item.get("id")]
+          duplicates = [key for key, count in Counter(ids).items() if count > 1]
+          if duplicates:
+              errors.append(f"IDs duplicados: {duplicates[:10]}")
+
+          match_path = Path(
+              "data/derived/consumidor_gov/match_report_insurers.json"
           )
-          new_dates = (
-              '    for alias in (\n'
-              '        "Data Abertura",\n'
-              '        "Data da Reclamação",\n'
-              '        "Data Reclamacao",\n'
-              '        "Data Finalização",\n'
-              '        "Data Finalizacao",\n'
-              '    ):'
+          if match_path.exists():
+              report = load_json(match_path)
+              stats = report.get("stats") or {}
+              matched = int(stats.get("matched") or 0)
+              total = int(stats.get("insurers_total") or len(insurers))
+              print(f"matching: matched={matched} | total={total}")
+              if len(insurers) >= 50 and matched == 0:
+                  errors.append("matching zerado com universo relevante")
+          else:
+              warnings.append(f"relatório ausente: {match_path}")
+
+          aggregate_path = Path(
+              "data/derived/consumidor_gov/consumidor_gov_agg.json.gz"
           )
-          if old_dates not in text:
-              raise SystemExit("expected month-date alias block not found")
-          text = text.replace(old_dates, new_dates, 1)
-          path.write_text(text, encoding="utf-8")
+          if aggregate_path.exists():
+              with gzip.open(aggregate_path, "rt", encoding="utf-8") as file:
+                  aggregate = json.load(file)
+              by_key = (
+                  aggregate.get("by_name_key_raw")
+                  or aggregate.get("by_name_key")
+                  or aggregate.get("by_name")
+                  or {}
+              )
+              print(f"Consumidor.gov agregado: empresas={len(by_key)}")
+              if not by_key:
+                  errors.append("agregado do Consumidor.gov sem empresas")
+          else:
+              warnings.append(f"agregado ausente: {aggregate_path}")
+
+          opin_count = sum(
+              1
+              for insurer in insurers
+              if bool((insurer.get("flags") or {}).get("openInsuranceParticipant"))
+          )
+          print(f"OPIN participants: {opin_count}")
+          if insurers and opin_count == 0:
+              warnings.append("nenhum participante OPIN identificado")
+
+          audit_dir = Path("data/derived/audit")
+          if audit_dir.is_dir():
+              audits = glob.glob(str(audit_dir / "**/*.audit.json"), recursive=True)
+              print(f"arquivos *.audit.json: {len(audits)}")
+
+          for warning in warnings:
+              print("WARN:", warning)
+          if errors:
+              for error in errors:
+                  print("ERROR:", error)
+              sys.exit(1)
+
+          print("OK: debug audit concluído sem erros bloqueantes.")
           PY
-          python -m pip install 'ruff>=0.16.4'
-          ruff check api/sources/consumer_gov_direct.py
-          python -m py_compile api/sources/consumer_gov_direct.py
-      - name: Restore debug workflow and commit source adjustment
-        run: |
-          set -euo pipefail
-          git fetch origin main
-          git checkout origin/main -- .github/workflows/debug-audit.yml
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add .github/workflows/debug-audit.yml api/sources/consumer_gov_direct.py
-          git commit -m 'fix(v2): validate Consumer.gov conduct core schema'
-          git push origin HEAD:refactor/v2-data-foundation
+
+      - name: Upload audit artifacts
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-audit-${{ github.run_id }}
+          if-no-files-found: warn
+          path: |
+            api/v1/insurers.json
+            api/v1/participants.json
+            data/derived/consumidor_gov/match_report_insurers.json
+            data/derived/consumidor_gov/consumidor_gov_agg.json.gz
+            data/derived/audit/**
+            data/snapshots/**
