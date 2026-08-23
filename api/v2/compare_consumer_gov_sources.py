@@ -39,6 +39,12 @@ def _entries(payload: dict[str, Any]) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
+def _metric(value: Any) -> Any:
+    if isinstance(value, float):
+        return round(value, 8)
+    return value
+
+
 def _canonical_entry_payload(payload: dict[str, Any]) -> dict[str, Any]:
     out: dict[str, Any] = {}
     for key, entry in sorted(_entries(payload).items()):
@@ -46,26 +52,20 @@ def _canonical_entry_payload(payload: dict[str, Any]) -> dict[str, Any]:
             continue
         stats = entry.get("statistics") or {}
         out[str(key)] = {
-            "name": str(entry.get("name") or entry.get("display_name") or ""),
-            "display_name": str(
-                entry.get("display_name") or entry.get("name") or ""
-            ),
-            "statistics": {
-                field: stats.get(field)
-                for field in (
-                    "complaintsCount",
-                    "respondedCount",
-                    "resolvedCount",
-                    "finalizedCount",
-                    "scoreSum",
-                    "satisfactionCount",
-                    "total_claims",
-                    "responded_claims",
-                    "resolved_claims",
-                    "finalized_claims",
-                    "averageScore",
-                )
-            },
+            field: _metric(stats.get(field))
+            for field in (
+                "complaintsCount",
+                "respondedCount",
+                "resolvedCount",
+                "finalizedCount",
+                "scoreSum",
+                "satisfactionCount",
+                "total_claims",
+                "responded_claims",
+                "resolved_claims",
+                "finalized_claims",
+                "averageScore",
+            )
         }
     return out
 
