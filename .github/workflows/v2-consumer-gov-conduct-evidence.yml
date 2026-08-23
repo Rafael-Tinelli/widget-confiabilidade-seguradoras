@@ -14,12 +14,17 @@ on:
       - "api/v2/consumer_gov_receita_resolution.py"
       - "api/v2/build_consumer_gov_receita_identity.py"
       - "api/v2/build_consumer_gov_receita_resolution_experiment.py"
+      - "api/v2/acquire_consumer_gov_raw.py"
+      - "api/v2/compare_consumer_gov_sources.py"
+      - "api/sources/consumer_gov_direct.py"
       - "api/sources/receita_cnpj_identity.py"
       - "api/build_consumidor_gov.py"
       - "data/reference/v2/consumer_gov_provider_resolutions.json"
       - "data/reference/v2/consumer_gov_receita_verified_hints.json"
       - "data/reference/v2/verified_relationships.json"
+      - "requirements.txt"
       - "tests/test_v2_consumer_gov_conduct.py"
+      - "tests/test_consumer_gov_direct.py"
       - ".github/workflows/v2-consumer-gov-conduct-evidence.yml"
 
 permissions:
@@ -50,6 +55,8 @@ jobs:
       CG_CONNECT_TIMEOUT: "20"
       CG_READ_TIMEOUT: "120"
       CG_DOWNLOAD_READ_TIMEOUT: "300"
+      CG_HEADLESS_TIMEOUT: "120"
+      CG_HEADLESS_MAX_PAGES: "100"
 
     steps:
       - name: Checkout
@@ -70,10 +77,33 @@ jobs:
           python -m pip install -r requirements.txt
           python -m pip install -r requirements-dev.txt
 
+      - name: Verify headless fallback runtime
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import shutil
+
+          chrome = (
+              shutil.which("google-chrome")
+              or shutil.which("chromium")
+              or shutil.which("chromium-browser")
+          )
+          if not chrome:
+              raise SystemExit("Chrome/Chromium is required for the DOM fallback")
+          print(f"headless fallback browser: {chrome}")
+          PY
+
       - name: Lint conduct modules
         run: |
           set -euo pipefail
-          ruff check api/v2/consumer_gov_conduct.py api/v2/build_consumer_gov_conduct_evidence.py tests/test_v2_consumer_gov_conduct.py
+          ruff check \
+            api/sources/consumer_gov_direct.py \
+            api/v2/acquire_consumer_gov_raw.py \
+            api/v2/compare_consumer_gov_sources.py \
+            api/v2/consumer_gov_conduct.py \
+            api/v2/build_consumer_gov_conduct_evidence.py \
+            tests/test_consumer_gov_direct.py \
+            tests/test_v2_consumer_gov_conduct.py
 
       - name: Restore validated SES source cache
         uses: actions/cache/restore@v4
@@ -109,13 +139,25 @@ jobs:
       - name: Compile conduct modules
         run: |
           set -euo pipefail
+          python -m py_compile api/sources/consumer_gov_direct.py
+          python -m py_compile api/v2/acquire_consumer_gov_raw.py
+          python -m py_compile api/v2/compare_consumer_gov_sources.py
           python -m py_compile api/v2/consumer_gov_conduct.py
           python -m py_compile api/v2/build_consumer_gov_conduct_evidence.py
 
-      - name: Test conduct contracts
+      - name: Test conduct and raw-source contracts
         run: |
           set -euo pipefail
-          python -m pytest -q tests/test_v2_consumer_gov_conduct.py
+          python -m pytest -q \
+            tests/test_consumer_gov_direct.py \
+            tests/test_v2_consumer_gov_conduct.py
+
+      - name: Validate direct Consumer.gov source compatibility
+        run: |
+          set -euo pipefail
+          python -m api.v2.compare_consumer_gov_sources \
+            --month 2026-03 \
+            --expected-rows 342527
 
       - name: Refresh 12-month Consumer.gov source window
         run: |
@@ -141,6 +183,11 @@ jobs:
         run: |
           set -euo pipefail
           python -m api.v2.build_consumer_gov_identity_experiment
+
+      - name: Acquire validated Consumer.gov raw source window
+        run: |
+          set -euo pipefail
+          python -m api.v2.acquire_consumer_gov_raw
 
       - name: Build filtered Receita identity snapshot
         run: |
@@ -285,7 +332,9 @@ jobs:
           retention-days: 14
           if-no-files-found: warn
           path: |
+            data/derived/v2/consumer_gov_source_compatibility.json
             data/derived/v2/consumer_gov_conduct_evidence.json
             data/derived/v2/consumer_gov_identity_experiment.json
             data/derived/v2/consumer_gov_receita_resolution_experiment.json
             data/derived/v2/entity_eligibility_inventory.json
+            data/raw/consumidor_gov/manifest.json
