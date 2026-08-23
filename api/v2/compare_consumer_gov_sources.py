@@ -4,11 +4,16 @@ import argparse
 import gzip
 import json
 import tempfile
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
 from api.build_consumidor_gov import _aggregate_basecompleta
-from api.sources.consumer_gov_direct import ensure_months, validate_month_csv
+from api.sources.consumer_gov_direct import (
+    discover_publications,
+    ensure_months,
+    validate_month_csv,
+)
 
 DEFAULT_MONTH = "2026-03"
 DEFAULT_EXPECTED_ROWS = 342_527
@@ -70,6 +75,10 @@ def _canonical_entry_payload(payload: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+def _complaint_total(entries: dict[str, dict[str, Any]]) -> int:
+    return sum(int(item.get("complaintsCount") or 0) for item in entries.values())
+
+
 def compare_month(
     month: str = DEFAULT_MONTH,
     *,
@@ -85,15 +94,24 @@ def compare_month(
         )
     historical = _read_json_gz(historical_path)
 
+    candidates = [
+        asdict(item)
+        for item in discover_publications({month})
+        if item.month == month
+    ]
+
     with tempfile.TemporaryDirectory(
         prefix="consumer-gov-direct-compat-"
     ) as tmp:
         temp_dir = Path(tmp)
+        manifest_path = temp_dir / "manifest.json"
         acquired = ensure_months(
             [month],
             raw_dir=temp_dir,
-            manifest_path=temp_dir / "manifest.json",
+            manifest_path=manifest_path,
         )
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        selected = dict((manifest.get("months") or {}).get(month) or {})
         direct_path = Path(acquired[month]["path"])
         validation = validate_month_csv(direct_path, month)
         direct_aggregate = _aggregate_basecompleta(
@@ -104,24 +122,50 @@ def compare_month(
 
     historical_entries = _canonical_entry_payload(historical)
     direct_entries = _canonical_entry_payload(direct_aggregate)
-    entry_keys_equal = set(historical_entries) == set(direct_entries)
+    historical_keys = set(historical_entries)
+    direct_keys = set(direct_entries)
+    entry_keys_equal = historical_keys == direct_keys
     aggregate_equal = historical_entries == direct_entries
     rows_match_reference = (
         expected_rows is None or validation.rows == expected_rows
     )
     compatible = aggregate_equal and rows_match_reference
 
+    only_historical = sorted(historical_keys - direct_keys)
+    only_direct = sorted(direct_keys - historical_keys)
+
     return {
         "artifact": "consumer_gov_source_compatibility",
         "status": "compatible" if compatible else "incompatible",
         "month": month,
+        "source_discovery": {
+            "candidate_count": len(candidates),
+            "candidates": candidates,
+            "selected_publication": {
+                key: selected.get(key)
+                for key in (
+                    "publication_code",
+                    "publication_title",
+                    "filename",
+                    "published_at",
+                    "source_url",
+                    "discovery_method",
+                )
+            },
+        },
         "comparison": {
             "historical_source_role": "legacy_ckan_derived_monthly_aggregate",
             "direct_source_role": "consumer_gov_direct_dados_abertos",
             "historical_companies": len(historical_entries),
             "direct_companies": len(direct_entries),
+            "historical_target_segment_complaints": _complaint_total(
+                historical_entries
+            ),
+            "direct_target_segment_complaints": _complaint_total(direct_entries),
             "entry_keys_equal": entry_keys_equal,
             "aggregate_equal": aggregate_equal,
+            "company_keys_only_historical": only_historical,
+            "company_keys_only_direct": only_direct,
             "expected_raw_rows_external_crosscheck": expected_rows,
             "external_row_count_reference": EXTERNAL_ROW_COUNT_REFERENCE,
             "direct_raw_rows": validation.rows,
