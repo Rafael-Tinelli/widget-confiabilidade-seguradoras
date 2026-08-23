@@ -1,3 +1,4 @@
+# Temporary diagnostic workflow; remove after source inspection.
 name: V2 Consumer.gov Source Probe
 
 on:
