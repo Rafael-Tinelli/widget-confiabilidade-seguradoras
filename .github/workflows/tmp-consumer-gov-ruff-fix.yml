@@ -1,0 +1,57 @@
+name: TEMP Consumer.gov Ruff Fix
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/tmp-consumer-gov-ruff-fix.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: refactor/v2-data-foundation
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install Ruff
+        run: python -m pip install 'ruff>=0.16.4'
+      - name: Apply safe Ruff fixes
+        run: |
+          set -euo pipefail
+          ruff check --fix \
+            api/sources/consumer_gov_direct.py \
+            tests/test_consumer_gov_direct.py || true
+          # B023 is intentionally fixed explicitly: bind the current page key.
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('api/sources/consumer_gov_direct.py')
+          text = path.read_text(encoding='utf-8')
+          old = 'lambda current_driver: first_code\n                        not in current_driver.find_element('
+          new = 'lambda current_driver, code=first_code: code\n                        not in current_driver.find_element('
+          if old not in text:
+              raise SystemExit('expected B023 pattern not found')
+          path.write_text(text.replace(old, new, 1), encoding='utf-8')
+          PY
+          ruff check \
+            api/sources/consumer_gov_direct.py \
+            tests/test_consumer_gov_direct.py
+      - name: Commit fixes
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add api/sources/consumer_gov_direct.py tests/test_consumer_gov_direct.py
+          if git diff --cached --quiet; then
+            echo 'No changes.'
+            exit 0
+          fi
+          git commit -m 'fix(v2): satisfy Consumer.gov source lint contracts'
+          git push origin HEAD:refactor/v2-data-foundation
