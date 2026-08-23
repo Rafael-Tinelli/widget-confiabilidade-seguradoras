@@ -1,0 +1,102 @@
+name: V2 Consumer.gov Source Probe
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/v2-consumer-gov-source-probe.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Probe Consumer.gov public data page and generated DataTables asset
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import html
+          import json
+          import re
+          from urllib.parse import urljoin
+
+          import requests
+
+          PAGE = "https://www.consumidor.gov.br/pages/dadosabertos/externo/"
+          KNOWN_DOWNLOAD = "https://www.consumidor.gov.br/pages/publicacao/externo/20260800000010945/download"
+          session = requests.Session()
+          session.headers.update({"User-Agent": "Mozilla/5.0 (compatible; SanidaSourceProbe/1.0)"})
+
+          def get(url, *, stream=False):
+              r = session.get(url, timeout=(20, 60), allow_redirects=True, stream=stream)
+              print(f"GET {url}")
+              print(f"  status={r.status_code} final={r.url} content-type={r.headers.get('content-type')} length={r.headers.get('content-length')}")
+              r.raise_for_status()
+              return r
+
+          page = get(PAGE)
+          body = page.text
+          print(f"PAGE bytes={len(page.content)} chars={len(body)}")
+          print(f"PAGE contains Base Completa? {'base completa' in body.lower() or 'basecompleta' in body.lower()}")
+          print(f"PAGE contains publicacoesDT? {'publicacoesDT' in body}")
+
+          scripts = re.findall(r'<script[^>]+src=[\"\']([^\"\']+)[\"\']', body, flags=re.I)
+          dt_scripts = [html.unescape(src) for src in scripts if 'datatablesController' in src and 'publicacoesDT' in src]
+          print("DATATABLE scripts:")
+          print(json.dumps(dt_scripts, ensure_ascii=False, indent=2))
+          if not dt_scripts:
+              raise SystemExit("No generated publicacoesDT DataTables script found")
+
+          script_url = urljoin(PAGE, dt_scripts[-1])
+          js = get(script_url).text
+          print(f"JS chars={len(js)}")
+
+          patterns = {
+              "sAjaxSource": r'sAjaxSource\s*[:=]\s*[\"\']([^\"\']+)',
+              "ajax_string": r'ajax\s*:\s*[\"\']([^\"\']+)',
+              "ajax_url": r'ajax\s*:\s*\{[^{}]{0,1500}?url\s*:\s*[\"\']([^\"\']+)',
+          }
+          found = []
+          for label, pattern in patterns.items():
+              for match in re.finditer(pattern, js, flags=re.I | re.S):
+                  found.append((label, html.unescape(match.group(1))))
+          print("AJAX URL candidates:")
+          print(json.dumps(found, ensure_ascii=False, indent=2))
+
+          for token in ('publicacoesDT', 'sAjaxSource', 'ajax', '/pages/', 'publicacao', 'dadosabertos'):
+              print(f"--- snippets for {token!r} ---")
+              hits = list(re.finditer(re.escape(token), js, flags=re.I))[:10]
+              if not hits:
+                  print("(none)")
+              for m in hits:
+                  lo = max(0, m.start() - 350)
+                  hi = min(len(js), m.end() + 700)
+                  print(js[lo:hi].replace('\n', ' '))
+
+          urls = []
+          for label, candidate in found:
+              absolute = urljoin(PAGE, candidate)
+              if absolute not in urls:
+                  urls.append(absolute)
+
+          for ajax_url in urls:
+              try:
+                  r = get(ajax_url)
+                  text = r.text
+                  print(f"AJAX sample chars={len(text)}")
+                  print(text[:5000])
+              except Exception as exc:
+                  print(f"AJAX probe failed for {ajax_url}: {type(exc).__name__}: {exc}")
+
+          try:
+              r = get(KNOWN_DOWNLOAD, stream=True)
+              first = next(r.iter_content(chunk_size=1024), b'')
+              print(f"KNOWN_DOWNLOAD first_bytes={first[:160]!r}")
+          except Exception as exc:
+              print(f"KNOWN_DOWNLOAD failed: {type(exc).__name__}: {exc}")
+          PY
