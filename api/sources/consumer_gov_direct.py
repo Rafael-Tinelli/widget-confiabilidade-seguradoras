@@ -71,15 +71,15 @@ _MONTH_NAMES = {
 }
 _CODE_RE = re.compile(r"(?<!\d)(20\d{10,18})(?!\d)")
 _DOWNLOAD_CODE_RE = re.compile(
-    r"download\s*\(\s*['\"](?P<code>\d{10,24})['\"]\s*\)", re.I
+    r"download\s*\(\s*['\"](?P<code>\d{10,24})['\"]\s*\)", re.IGNORECASE
 )
-_SCRIPT_RE = re.compile(r"<script[^>]+src=['\"]([^'\"]+)['\"]", re.I)
+_SCRIPT_RE = re.compile(r"<script[^>]+src=['\"]([^'\"]+)['\"]", re.IGNORECASE)
 _AJAX_PATTERNS = (
-    re.compile(r"['\"]?sAjaxSource['\"]?\s*[:=]\s*['\"]([^'\"]+)", re.I),
-    re.compile(r"['\"]?ajax['\"]?\s*:\s*['\"]([^'\"]+)", re.I),
+    re.compile(r"['\"]?sAjaxSource['\"]?\s*[:=]\s*['\"]([^'\"]+)", re.IGNORECASE),
+    re.compile(r"['\"]?ajax['\"]?\s*:\s*['\"]([^'\"]+)", re.IGNORECASE),
     re.compile(
         r"['\"]?ajax['\"]?\s*:\s*\{.{0,1800}?['\"]?url['\"]?\s*:\s*['\"]([^'\"]+)",
-        re.I | re.S,
+        re.IGNORECASE | re.DOTALL,
     ),
 )
 
@@ -488,7 +488,7 @@ def _dom_publication(
     filename_match = re.search(
         r"Download\s+['\"]([^'\"]+)['\"]",
         title_attr or "",
-        re.I,
+        re.IGNORECASE,
     )
     filename = filename_match.group(1).strip() if filename_match else None
     month = _extract_month(filename or "") or _extract_month(row_text)
@@ -604,7 +604,7 @@ def discover_headless_publications(
             if first_code:
                 try:
                     wait.until(
-                        lambda current_driver: first_code
+                        lambda current_driver, code=first_code: code
                         not in current_driver.find_element(
                             By.CSS_SELECTOR,
                             "#publicacoesDT tbody",

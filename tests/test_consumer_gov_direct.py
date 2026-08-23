@@ -71,9 +71,11 @@ def test_extracts_generated_datatables_and_ajax_urls() -> None:
     )
     urls = direct._datatables_script_urls(page)
     assert urls == [
-        "https://consumidor.gov.br/datatablesController/"
-        "datatables-67143.min.js?id=publicacoesDT&t=main&"
-        "c=%2Fpages%2Fdadosabertos%2Fexterno%2F"
+        (
+            "https://consumidor.gov.br/datatablesController/"
+            "datatables-67143.min.js?id=publicacoesDT&t=main&"
+            "c=%2Fpages%2Fdadosabertos%2Fexterno%2F"
+        )
     ]
 
     js = (
