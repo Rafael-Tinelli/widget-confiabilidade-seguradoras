@@ -1,0 +1,131 @@
+name: V2 Conduct Comparative Preflight
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths:
+      - "api/v2/conduct_source_cascade.py"
+      - "api/v2/conduct_comparative.py"
+      - "api/sources/susep_conduct_exposure.py"
+      - "tests/test_v2_conduct_source_cascade.py"
+      - "tests/test_v2_conduct_comparative.py"
+      - "tests/test_susep_conduct_exposure.py"
+      - ".github/workflows/v2-conduct-comparative-preflight.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  conduct-preflight:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      SES_CACHE_DIR: "data/raw/ses"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install -r requirements-dev.txt
+
+      - name: Restore validated SES source cache
+        uses: actions/cache/restore@v4
+        with:
+          path: data/raw/ses
+          key: v2-conduct-preflight-ses-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: |
+            ses-source-${{ runner.os }}-
+
+      - name: Lint conduct preflight modules
+        run: |
+          set -euo pipefail
+          ruff check \
+            api/v2/conduct_source_cascade.py \
+            api/v2/conduct_comparative.py \
+            api/sources/susep_conduct_exposure.py \
+            tests/test_v2_conduct_source_cascade.py \
+            tests/test_v2_conduct_comparative.py \
+            tests/test_susep_conduct_exposure.py
+
+      - name: Run conduct preflight unit tests
+        run: |
+          set -euo pipefail
+          python -m pytest -q \
+            tests/test_v2_conduct_source_cascade.py \
+            tests/test_v2_conduct_comparative.py \
+            tests/test_susep_conduct_exposure.py
+
+      - name: Validate real SES exposure schema and sample
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import zipfile
+          from pathlib import Path
+
+          import pandas as pd
+
+          from api.sources.susep_conduct_exposure import (
+              load_susep_conduct_exposure,
+              probe_susep_conduct_exposure,
+          )
+
+          path = Path("data/raw/ses/BaseCompleta.zip")
+          if not path.exists() or not zipfile.is_zipfile(path):
+              raise SystemExit("validated SES BaseCompleta.zip cache is required")
+
+          probe = probe_susep_conduct_exposure(path)
+          if probe.get("state") != "available":
+              raise SystemExit(f"SES conduct exposure preflight failed: {probe}")
+
+          with zipfile.ZipFile(path) as z:
+              member = next(
+                  name for name in z.namelist()
+                  if name.lower().endswith("ses_seguros.csv")
+              )
+              with z.open(member) as handle:
+                  sample = pd.read_csv(
+                      handle,
+                      sep=";",
+                      encoding="latin1",
+                      dtype=str,
+                      usecols=lambda col: str(col).strip().lower() == "coenti",
+                      nrows=20_000,
+                  )
+
+          fips = [
+              str(value)
+              for value in sample.iloc[:, 0].dropna().drop_duplicates().head(5)
+          ]
+          if not fips:
+              raise SystemExit("SES sample did not expose any FIP codes")
+
+          payload = load_susep_conduct_exposure(fips, path)
+          observed = [
+              entity
+              for entity in payload["entities"].values()
+              if entity["months"]
+          ]
+          if not observed or payload["reference_period"] is None:
+              raise SystemExit("SES exposure reader returned no real monthly evidence")
+          if payload["source"]["denominator_selected"] is not None:
+              raise SystemExit("preflight must not select the final exposure denominator")
+
+          print({
+              "probe": probe,
+              "sample_fips": fips,
+              "reference_period": payload["reference_period"],
+              "observed_entities": len(observed),
+          })
+          PY
