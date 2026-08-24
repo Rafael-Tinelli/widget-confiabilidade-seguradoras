@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from collections import Counter
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from api.build_consumidor_gov import (
     CG_MIN_MONTH_BYTES,
@@ -13,11 +14,7 @@ from api.build_consumidor_gov import (
     _iter_rows,
     _load_valid_monthly,
 )
-from api.sources.consumer_gov_direct import (
-    ConsumerGovMonthMismatch,
-    ConsumerGovSchemaMismatch,
-    validate_month_csv,
-)
+from api.sources.consumer_gov_direct import validate_month_csv
 from api.utils.name_cleaner import normalize_name_key
 from api.v2.consumer_gov_conduct import TAXONOMY_COLUMNS, normalize_text, row_value
 
@@ -236,10 +233,7 @@ def build_cached_taxonomy_enrichment(
 
     for month in months:
         path = state["files"][month]
-        try:
-            validation = validate_month_csv(path, month)
-        except (ConsumerGovSchemaMismatch, ConsumerGovMonthMismatch):
-            raise
+        validation = validate_month_csv(path, month)
 
         raw_resources[month] = {
             "path": str(path),
