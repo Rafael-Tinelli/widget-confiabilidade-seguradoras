@@ -5,18 +5,10 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from api.build_consumidor_gov import (
-    CG_MIN_MONTH_BYTES,
-    MONTHLY_DIR,
-    RAW_DIR,
-    TARGET_SEGMENT,
-    _entries_from_root,
-    _iter_rows,
-    _load_valid_monthly,
-)
+import api.build_consumidor_gov as consumer_gov_build
 from api.sources.consumer_gov_direct import validate_month_csv
 from api.utils.name_cleaner import normalize_name_key
-from api.v2.consumer_gov_conduct import TAXONOMY_COLUMNS, normalize_text, row_value
+from api.v2 import consumer_gov_conduct
 
 
 CORE_SOURCE_ROLE = "legacy_basecompleta_monthly_aggregate"
@@ -48,16 +40,16 @@ def _float_stat(stats: dict[str, Any], *names: str) -> float:
 def load_monthly_entries(
     month: str,
     *,
-    monthly_dir: Path = MONTHLY_DIR,
+    monthly_dir: Path = consumer_gov_build.MONTHLY_DIR,
 ) -> tuple[dict[str, Any], dict[str, Any], Path]:
     path = monthly_dir / f"consumidor_gov_{month}.json.gz"
-    root = _load_valid_monthly(path, month)
+    root = consumer_gov_build._load_valid_monthly(path, month)
     if root is None:
         raise RuntimeError(
             "consumer_gov_core_source_unavailable: valid preserved monthly aggregate "
             f"is required for {month}: {path}"
         )
-    entries = _entries_from_root(root)
+    entries = consumer_gov_build._entries_from_root(root)
     if not entries:
         raise RuntimeError(
             "consumer_gov_core_source_invalid: monthly aggregate has no provider entries "
@@ -116,7 +108,7 @@ def aggregate_entry_to_month(
         "consumer_contacted_company_state": (
             "not_preserved_in_legacy_monthly_aggregate"
         ),
-        "taxonomy": {key: {} for key in TAXONOMY_COLUMNS},
+        "taxonomy": {key: {} for key in consumer_gov_conduct.TAXONOMY_COLUMNS},
         "situacao": {},
         "avaliacao_reclamacao": {},
         "analise_recusa": {},
@@ -154,7 +146,10 @@ def empty_taxonomy_counters(
 ) -> dict[str, dict[str, dict[str, collections.Counter[str]]]]:
     return {
         entity_id: {
-            month: {key: collections.Counter() for key in TAXONOMY_COLUMNS}
+            month: {
+                key: collections.Counter()
+                for key in consumer_gov_conduct.TAXONOMY_COLUMNS
+            }
             for month in months
         }
         for entity_id in entity_ids
@@ -164,8 +159,8 @@ def empty_taxonomy_counters(
 def taxonomy_cache_state(
     months: list[str],
     *,
-    raw_dir: Path = RAW_DIR,
-    min_month_bytes: int = CG_MIN_MONTH_BYTES,
+    raw_dir: Path = consumer_gov_build.RAW_DIR,
+    min_month_bytes: int = consumer_gov_build.CG_MIN_MONTH_BYTES,
 ) -> dict[str, Any]:
     available: list[str] = []
     missing: list[str] = []
@@ -207,8 +202,8 @@ def build_cached_taxonomy_enrichment(
     *,
     core_source_month_totals: dict[str, int],
     core_market_month_totals: dict[str, int],
-    raw_dir: Path = RAW_DIR,
-    min_month_bytes: int = CG_MIN_MONTH_BYTES,
+    raw_dir: Path = consumer_gov_build.RAW_DIR,
+    min_month_bytes: int = consumer_gov_build.CG_MIN_MONTH_BYTES,
 ) -> tuple[
     dict[str, Any],
     dict[str, dict[str, dict[str, collections.Counter[str]]]],
@@ -220,7 +215,10 @@ def build_cached_taxonomy_enrichment(
         min_month_bytes=min_month_bytes,
     )
     counters = empty_taxonomy_counters(entity_ids, months)
-    catalog = {key: collections.Counter() for key in TAXONOMY_COLUMNS}
+    catalog = {
+        key: collections.Counter()
+        for key in consumer_gov_conduct.TAXONOMY_COLUMNS
+    }
     if state["state"] == "source_unavailable":
         state.pop("files", None)
         return state, counters, catalog
@@ -229,7 +227,9 @@ def build_cached_taxonomy_enrichment(
     raw_resources: dict[str, Any] = {}
     raw_source_totals: collections.Counter[str] = collections.Counter()
     raw_market_totals: collections.Counter[str] = collections.Counter()
-    target_segment = normalize_text(TARGET_SEGMENT)
+    target_segment = consumer_gov_conduct.normalize_text(
+        consumer_gov_build.TARGET_SEGMENT
+    )
 
     for month in months:
         path = state["files"][month]
@@ -244,11 +244,14 @@ def build_cached_taxonomy_enrichment(
         }
 
         provider_cache: dict[str, dict[str, Any]] = {}
-        for row in _iter_rows(path):
+        for row in consumer_gov_build._iter_rows(path):
             source_columns.update(str(key) for key in row)
-            if normalize_text(row.get("Segmento de Mercado")) != target_segment:
+            if (
+                consumer_gov_conduct.normalize_text(row.get("Segmento de Mercado"))
+                != target_segment
+            ):
                 continue
-            if "cancelada" in normalize_text(row.get("Situação")):
+            if "cancelada" in consumer_gov_conduct.normalize_text(row.get("Situação")):
                 continue
 
             provider = str(
@@ -277,8 +280,8 @@ def build_cached_taxonomy_enrichment(
                 )
             raw_market_totals[month] += 1
 
-            for taxonomy_key, aliases in TAXONOMY_COLUMNS.items():
-                label = row_value(row, aliases)
+            for taxonomy_key, aliases in consumer_gov_conduct.TAXONOMY_COLUMNS.items():
+                label = consumer_gov_conduct.row_value(row, aliases)
                 if not label:
                     continue
                 counters[entity_id][month][taxonomy_key][label] += 1
