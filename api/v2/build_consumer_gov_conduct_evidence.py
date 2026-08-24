@@ -6,16 +6,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-import requests
-
-from api.build_consumidor_gov import (
-    CG_MIN_MONTH_BYTES,
-    RAW_DIR,
-    TARGET_SEGMENT,
-    _download,
-    _iter_rows,
-    _list_basecompleta_resources,
-)
 from api.utils.name_cleaner import normalize_name_key
 from api.v2.build_consumer_gov_157_experiment import (
     ELIGIBILITY_PATH,
@@ -31,12 +21,13 @@ from api.v2.build_consumer_gov_identity_experiment import (
 )
 from api.v2.consumer_gov_conduct import (
     TAXONOMY_COLUMNS,
-    accumulate_row,
     build_conduct_film,
-    finalize_month_evidence,
-    new_month_evidence,
-    normalize_text,
-    row_value,
+)
+from api.v2.consumer_gov_conduct_core import (
+    add_entry_statistics,
+    aggregate_entry_to_month,
+    build_cached_taxonomy_enrichment,
+    load_monthly_entries,
 )
 from api.v2.consumer_gov_identity import (
     load_provider_resolution_registry,
@@ -61,21 +52,22 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
-def _provider_name(row: dict[str, Any]) -> str:
-    return str(
-        row.get("Nome Fantasia")
-        or row.get("Empresa")
-        or row.get("Fornecedor")
-        or ""
-    ).strip()
-
-
 def _eligible_entities(payload: dict[str, Any]) -> list[dict[str, Any]]:
     return [
         entity
         for entity in payload.get("entities") or []
         if (entity.get("eligibility") or {}).get("regulatory_universe_eligible")
     ]
+
+
+def _provider_name(entry: dict[str, Any], fallback: str = "") -> str:
+    return str(
+        entry.get("display_name")
+        or entry.get("name")
+        or entry.get("provider")
+        or fallback
+        or ""
+    ).strip()
 
 
 def _resolve_provider(
@@ -148,100 +140,6 @@ def _resolve_provider(
     }
 
 
-class TaxonomyRawSourceUnavailable(RuntimeError):
-    """Required Consumer.gov Base Completa rows are unavailable for taxonomy."""
-
-
-def _valid_raw_csv(path: Path) -> bool:
-    return path.exists() and path.stat().st_size >= CG_MIN_MONTH_BYTES
-
-
-def _ensure_raw_csvs(months: list[str]) -> dict[str, Any]:
-    result: dict[str, Any] = {}
-    missing_months: list[str] = []
-
-    for month in months:
-        raw_csv = RAW_DIR / f"basecompleta_{month}.csv"
-        if _valid_raw_csv(raw_csv):
-            result[month] = {
-                "path": raw_csv,
-                "resource_url": None,
-                "resource_name": None,
-                "bytes": raw_csv.stat().st_size,
-                "acquisition": "cache",
-            }
-        else:
-            missing_months.append(month)
-
-    if not missing_months:
-        return result
-
-    try:
-        resources = _list_basecompleta_resources()
-    except (
-        OSError,
-        RuntimeError,
-        TypeError,
-        ValueError,
-        requests.RequestException,
-    ) as exc:
-        raise TaxonomyRawSourceUnavailable(
-            "taxonomy_raw_source_unavailable: valid cached Consumer.gov Base Completa "
-            f"CSVs are missing for months {missing_months}, and CKAN discovery failed: {exc}"
-        ) from exc
-
-    missing_resources = [month for month in missing_months if month not in resources]
-    if missing_resources:
-        raise TaxonomyRawSourceUnavailable(
-            "taxonomy_raw_source_unavailable: Consumer.gov Base Completa resources "
-            f"are missing for months {missing_resources}"
-        )
-
-    for month in missing_months:
-        resource = resources[month]
-        raw_csv = RAW_DIR / f"basecompleta_{month}.csv"
-        try:
-            _download(resource.url, raw_csv)
-        except (OSError, RuntimeError, requests.RequestException) as exc:
-            raise TaxonomyRawSourceUnavailable(
-                "taxonomy_raw_source_unavailable: failed to download Consumer.gov "
-                f"Base Completa for {month}: {exc}"
-            ) from exc
-
-        if not _valid_raw_csv(raw_csv):
-            raise TaxonomyRawSourceUnavailable(
-                "taxonomy_raw_source_unavailable: downloaded Consumer.gov Base Completa "
-                f"for {month} is invalid or smaller than {CG_MIN_MONTH_BYTES} bytes"
-            )
-
-        result[month] = {
-            "path": raw_csv,
-            "resource_url": resource.url,
-            "resource_name": resource.name,
-            "bytes": raw_csv.stat().st_size,
-            "acquisition": "download",
-        }
-
-    for month, metadata in result.items():
-        resource = resources.get(month)
-        if resource is not None:
-            metadata["resource_url"] = resource.url
-            metadata["resource_name"] = resource.name
-
-    return result
-
-
-def _sum_taxonomy(
-    target: dict[str, Counter[str]],
-    month_payload: dict[str, Any],
-) -> None:
-    for key in TAXONOMY_COLUMNS:
-        for label, count in (
-            (month_payload.get("taxonomy") or {}).get(key) or {}
-        ).items():
-            target[key][str(label)] += int(count or 0)
-
-
 def _sorted_counter(counter: Counter[str]) -> dict[str, int]:
     return {
         key: int(value)
@@ -256,11 +154,7 @@ def _entity_totals(months: list[dict[str, Any]]) -> dict[str, Any]:
     complaints = sum(int(item.get("complaints") or 0) for item in months)
     responded = sum(int(item.get("responded") or 0) for item in months)
     finalized = sum(int(item.get("finalized") or 0) for item in months)
-    evaluated = sum(int(item.get("evaluated") or 0) for item in months)
     resolved = sum(int(item.get("consumer_resolved") or 0) for item in months)
-    not_resolved = sum(
-        int(item.get("consumer_not_resolved") or 0) for item in months
-    )
     satisfaction_count = sum(
         int(item.get("satisfaction_count") or 0) for item in months
     )
@@ -269,33 +163,24 @@ def _entity_totals(months: list[dict[str, Any]]) -> dict[str, Any]:
         * int(item.get("satisfaction_count") or 0)
         for item in months
     )
-    response_time_count = sum(
-        int(item.get("response_time_count") or 0) for item in months
-    )
-    response_time_sum = sum(
-        float(item.get("average_response_time_days") or 0.0)
-        * int(item.get("response_time_count") or 0)
-        for item in months
-    )
     return {
         "complaints": complaints,
         "responded": responded,
         "response_rate": responded / complaints if complaints else None,
         "finalized": finalized,
         "finalized_rate": finalized / complaints if complaints else None,
-        "evaluated": evaluated,
         "consumer_resolved": resolved,
-        "consumer_not_resolved": not_resolved,
-        "consumer_resolved_rate_among_evaluated": (
-            resolved / evaluated if evaluated else None
+        "consumer_resolution_denominator_state": (
+            "not_preserved_in_legacy_monthly_aggregate"
         ),
+        "consumer_resolved_rate_among_evaluated": None,
         "satisfaction_count": satisfaction_count,
         "average_satisfaction": (
             satisfaction_sum / satisfaction_count if satisfaction_count else None
         ),
-        "response_time_count": response_time_count,
-        "average_response_time_days": (
-            response_time_sum / response_time_count if response_time_count else None
+        "response_time_state": "not_preserved_in_legacy_monthly_aggregate",
+        "consumer_contacted_company_state": (
+            "not_preserved_in_legacy_monthly_aggregate"
         ),
     }
 
@@ -305,13 +190,12 @@ def build_conduct_evidence() -> dict[str, Any]:
     base_identity = json.loads(BASE_IDENTITY_PATH.read_text(encoding="utf-8"))
     receita_payload = load_receita_identity_snapshot(DEFAULT_RECEITA_IDENTITY_SNAPSHOT)
 
-    months = [
+    months = sorted(
         str(month)
         for month in (base_identity.get("source") or {}).get("months") or []
-    ]
+    )
     if not months:
         raise RuntimeError("Consumer.gov identity artifact has no months")
-    months = sorted(months)
 
     eligible = _eligible_entities(eligibility)
     eligible_by_id = {str(entity["entity_id"]): entity for entity in eligible}
@@ -331,72 +215,80 @@ def build_conduct_evidence() -> dict[str, Any]:
     receita_hints = load_verified_receita_provider_hints()
     all_entities = list(eligibility.get("entities") or [])
 
-    raw_files = _ensure_raw_csvs(months)
+    def resolve(provider: str, month: str) -> dict[str, Any]:
+        return _resolve_provider(
+            provider,
+            month,
+            indexes,
+            registry,
+            temporal_brand_index,
+            full_universe_index,
+            fallback_indexes,
+            receita_payload,
+            receita_hints,
+            all_entities,
+        )
 
-    entity_month_raw: dict[str, dict[str, dict[str, Any]]] = {
-        entity_id: {month: new_month_evidence(month) for month in months}
+    entity_stats: dict[str, dict[str, dict[str, Any]]] = {
+        entity_id: {month: {} for month in months}
         for entity_id in eligible_by_id
     }
-    market_month_totals: Counter[str] = Counter()
     source_month_totals: Counter[str] = Counter()
+    market_month_totals: Counter[str] = Counter()
     resolution_counts: Counter[str] = Counter()
     resolution_methods: Counter[str] = Counter()
-    taxonomy_catalog: dict[str, Counter[str]] = {
-        key: Counter() for key in TAXONOMY_COLUMNS
-    }
-    source_columns: set[str] = set()
-    provider_cache: dict[tuple[str, str], dict[str, Any]] = {}
-    unresolved_names: Counter[str] = Counter()
-    ambiguous_names: Counter[str] = Counter()
     outside_names: Counter[str] = Counter()
-
-    target_segment = normalize_text(TARGET_SEGMENT)
+    ambiguous_names: Counter[str] = Counter()
+    unresolved_names: Counter[str] = Counter()
+    core_resources: dict[str, Any] = {}
+    provider_cache: dict[tuple[str, str], dict[str, Any]] = {}
 
     for month in months:
-        path = raw_files[month]["path"]
-        for row in _iter_rows(path):
-            source_columns.update(str(key) for key in row)
-            if normalize_text(row.get("Segmento de Mercado")) != target_segment:
-                continue
+        root, entries, path = load_monthly_entries(month)
+        meta = root.get("meta") if isinstance(root.get("meta"), dict) else {}
+        core_resources[month] = {
+            "path": str(path),
+            "source_file": meta.get("source_file"),
+            "resource_url": meta.get("resource_url"),
+            "companies": meta.get("companies"),
+            "lines_kept": meta.get("lines_kept"),
+        }
 
-            situation = normalize_text(row.get("Situação"))
-            if "cancelada" in situation:
-                continue
-
-            provider = _provider_name(row)
+        for raw_key, raw_entry in entries.items():
+            entry = raw_entry if isinstance(raw_entry, dict) else {}
+            provider = _provider_name(entry, str(raw_key))
             if not provider:
                 continue
+            stats = (
+                entry.get("statistics")
+                if isinstance(entry.get("statistics"), dict)
+                else {}
+            )
+            complaints = int(
+                stats.get("complaintsCount") or stats.get("total_claims") or 0
+            )
+            if complaints <= 0:
+                continue
 
-            source_month_totals[month] += 1
+            source_month_totals[month] += complaints
             cache_key = (month, normalize_name_key(provider))
             resolution = provider_cache.get(cache_key)
             if resolution is None:
-                resolution = _resolve_provider(
-                    provider,
-                    month,
-                    indexes,
-                    registry,
-                    temporal_brand_index,
-                    full_universe_index,
-                    fallback_indexes,
-                    receita_payload,
-                    receita_hints,
-                    all_entities,
-                )
+                resolution = resolve(provider, month)
                 provider_cache[cache_key] = resolution
 
-            state = str(resolution["resolution_state"])
-            method = str(resolution["match_method"])
-            resolution_counts[state] += 1
-            resolution_methods[method] += 1
+            state = str(resolution.get("resolution_state") or "unresolved")
+            method = str(resolution.get("match_method") or "unresolved")
+            resolution_counts[state] += complaints
+            resolution_methods[method] += complaints
 
             if state != "matched_current_insurer":
                 if state == "outside_157":
-                    outside_names[provider] += 1
+                    outside_names[provider] += complaints
                 elif state == "ambiguous":
-                    ambiguous_names[provider] += 1
+                    ambiguous_names[provider] += complaints
                 else:
-                    unresolved_names[provider] += 1
+                    unresolved_names[provider] += complaints
                 continue
 
             entity_id = str(resolution.get("entity_id") or "")
@@ -405,15 +297,22 @@ def build_conduct_evidence() -> dict[str, Any]:
                     "resolved Consumer.gov provider to non-eligible entity: "
                     f"{provider} -> {entity_id}"
                 )
+            market_month_totals[month] += complaints
+            added = add_entry_statistics(entity_stats[entity_id][month], entry)
+            if added != complaints:
+                raise RuntimeError(
+                    f"aggregate complaint count changed while merging {provider} {month}"
+                )
 
-            market_month_totals[month] += 1
-            month_evidence = entity_month_raw[entity_id][month]
-            accumulate_row(month_evidence, row)
-
-            for key, aliases in TAXONOMY_COLUMNS.items():
-                label = row_value(row, aliases)
-                if label:
-                    taxonomy_catalog[key][label] += 1
+    taxonomy_state, taxonomy_by_entity_month, taxonomy_catalog = (
+        build_cached_taxonomy_enrichment(
+            months,
+            list(eligible_by_id),
+            resolve,
+            core_source_month_totals=dict(source_month_totals),
+            core_market_month_totals=dict(market_month_totals),
+        )
+    )
 
     entities_out: list[dict[str, Any]] = []
     film_signals: Counter[str] = Counter()
@@ -424,25 +323,29 @@ def build_conduct_evidence() -> dict[str, Any]:
         eligible_by_id.items(),
         key=lambda item: str(item[1].get("legal_name") or item[0]),
     ):
-        monthly = [
-            finalize_month_evidence(
-                entity_month_raw[entity_id][month],
+        monthly: list[dict[str, Any]] = []
+        aggregate_taxonomy = {key: Counter() for key in TAXONOMY_COLUMNS}
+        for month in months:
+            month_payload = aggregate_entry_to_month(
+                month,
+                {"statistics": entity_stats[entity_id][month]},
                 matched_current_insurer_market_complaints=market_month_totals[month],
             )
-            for month in months
-        ]
+            month_taxonomy = taxonomy_by_entity_month[entity_id][month]
+            month_payload["taxonomy"] = {
+                key: _sorted_counter(month_taxonomy[key])
+                for key in TAXONOMY_COLUMNS
+            }
+            for key in TAXONOMY_COLUMNS:
+                aggregate_taxonomy[key].update(month_taxonomy[key])
+            monthly.append(month_payload)
+
         totals = _entity_totals(monthly)
         if totals["complaints"] > 0:
             observed_entities += 1
         film = build_conduct_film(monthly)
         film_signals[str(film["conduct_signal"])] += 1
         history_states[str(film["history_state"])] += 1
-
-        aggregate_taxonomy: dict[str, Counter[str]] = {
-            key: Counter() for key in TAXONOMY_COLUMNS
-        }
-        for month_payload in monthly:
-            _sum_taxonomy(aggregate_taxonomy, month_payload)
 
         entities_out.append(
             {
@@ -462,8 +365,11 @@ def build_conduct_evidence() -> dict[str, Any]:
         )
 
     matched_total = int(resolution_counts["matched_current_insurer"])
-    if sum(int(item["totals"]["complaints"]) for item in entities_out) != matched_total:
-        raise RuntimeError("matched complaint totals do not reconcile to entity evidence")
+    entity_total = sum(int(item["totals"]["complaints"]) for item in entities_out)
+    if entity_total != matched_total:
+        raise RuntimeError(
+            f"matched complaint totals do not reconcile: {entity_total} != {matched_total}"
+        )
 
     source_total = sum(source_month_totals.values())
     if sum(resolution_counts.values()) != source_total:
@@ -477,13 +383,22 @@ def build_conduct_evidence() -> dict[str, Any]:
         "scoring": "forbidden_in_this_artifact",
         "source": {
             "dataset": "reclamacoes-do-consumidor-gov-br",
-            "segment": TARGET_SEGMENT,
             "months": months,
-            "raw_resources": {
-                month: {key: value for key, value in metadata.items() if key != "path"}
-                for month, metadata in raw_files.items()
+            "core": {
+                "state": "available",
+                "role": "preserved_monthly_aggregate",
+                "required": True,
+                "resources": core_resources,
+                "preserved_metrics": [
+                    "complaints",
+                    "responded",
+                    "finalized",
+                    "consumer_resolved_count",
+                    "satisfaction_count",
+                    "satisfaction_sum",
+                ],
             },
-            "source_columns_seen": sorted(source_columns),
+            "taxonomy_evidence": taxonomy_state,
             "taxonomy_fields": list(TAXONOMY_COLUMNS),
         },
         "identity": {
@@ -507,16 +422,18 @@ def build_conduct_evidence() -> dict[str, Any]:
                 "customers, premiums or insured exposure and therefore is diagnostic only."
             ),
             "consumer_resolved": (
-                "Consumer-provided evaluation of whether the complaint was resolved, among "
-                "complaints that received that evaluation."
+                "The preserved aggregate contains the count marked resolved, but not an "
+                "independently preserved exact denominator of evaluated complaints. The "
+                "resolution rate and its trend therefore remain unavailable in conduct_core."
             ),
             "satisfaction": (
-                "Consumer score from 1 to 5 among complaints with a recorded score; sample "
-                "size is always preserved and small samples are not treated as strong evidence."
+                "Consumer score from 1 to 5 preserved through scoreSum and "
+                "satisfactionCount; sample size remains explicit."
             ),
             "taxonomy": (
-                "Official Consumer.gov classification preserved as Área → Assunto → "
-                "Grupo Problema → Problema, plus acquisition/origin channel context."
+                "Optional enrichment from authentic Base Completa raw rows only. Missing raw "
+                "files do not block conduct_core; a present-but-invalid or population-mismatched "
+                "raw file fails closed. finalizadas_YYYY-MM is not an accepted substitute."
             ),
         },
         "universe": {
@@ -527,7 +444,9 @@ def build_conduct_evidence() -> dict[str, Any]:
         "resolution_summary": {
             "complaints_total": source_total,
             "matched_current_insurer_complaints": matched_total,
-            "matched_current_insurer_ratio": matched_total / source_total if source_total else None,
+            "matched_current_insurer_ratio": (
+                matched_total / source_total if source_total else None
+            ),
             "outside_157_complaints": int(resolution_counts["outside_157"]),
             "ambiguous_complaints": int(resolution_counts["ambiguous"]),
             "unresolved_complaints": int(resolution_counts["unresolved"]),
@@ -540,7 +459,9 @@ def build_conduct_evidence() -> dict[str, Any]:
         "market_months": [
             {
                 "month": month,
-                "segment_complaints_after_cancelled_exclusion": int(source_month_totals[month]),
+                "segment_complaints_after_cancelled_exclusion": int(
+                    source_month_totals[month]
+                ),
                 "matched_current_insurer_complaints": int(market_month_totals[month]),
                 "matched_ratio": (
                     market_month_totals[month] / source_month_totals[month]
@@ -557,6 +478,9 @@ def build_conduct_evidence() -> dict[str, Any]:
         "film_summary": {
             "history_states": dict(history_states),
             "conduct_signals": dict(film_signals),
+            "resolution_trend_state": (
+                "unavailable_from_preserved_core_without_exact_evaluated_denominator"
+            ),
         },
         "entities": entities_out,
     }
@@ -577,7 +501,7 @@ def main() -> None:
                 "artifact": payload["artifact"],
                 "source": {
                     "months": payload["source"]["months"],
-                    "taxonomy_fields": payload["source"]["taxonomy_fields"],
+                    "taxonomy_evidence": payload["source"]["taxonomy_evidence"],
                 },
                 "universe": payload["universe"],
                 "resolution_summary": payload["resolution_summary"],
