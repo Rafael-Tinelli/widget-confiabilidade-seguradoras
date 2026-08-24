@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections import Counter
+import collections
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -151,10 +151,10 @@ def add_entry_statistics(
 def empty_taxonomy_counters(
     entity_ids: list[str],
     months: list[str],
-) -> dict[str, dict[str, dict[str, Counter[str]]]]:
+) -> dict[str, dict[str, dict[str, collections.Counter[str]]]]:
     return {
         entity_id: {
-            month: {key: Counter() for key in TAXONOMY_COLUMNS}
+            month: {key: collections.Counter() for key in TAXONOMY_COLUMNS}
             for month in months
         }
         for entity_id in entity_ids
@@ -211,8 +211,8 @@ def build_cached_taxonomy_enrichment(
     min_month_bytes: int = CG_MIN_MONTH_BYTES,
 ) -> tuple[
     dict[str, Any],
-    dict[str, dict[str, dict[str, Counter[str]]]],
-    dict[str, Counter[str]],
+    dict[str, dict[str, dict[str, collections.Counter[str]]]],
+    dict[str, collections.Counter[str]],
 ]:
     state = taxonomy_cache_state(
         months,
@@ -220,15 +220,15 @@ def build_cached_taxonomy_enrichment(
         min_month_bytes=min_month_bytes,
     )
     counters = empty_taxonomy_counters(entity_ids, months)
-    catalog = {key: Counter() for key in TAXONOMY_COLUMNS}
+    catalog = {key: collections.Counter() for key in TAXONOMY_COLUMNS}
     if state["state"] == "source_unavailable":
         state.pop("files", None)
         return state, counters, catalog
 
     source_columns: set[str] = set()
     raw_resources: dict[str, Any] = {}
-    raw_source_totals: Counter[str] = Counter()
-    raw_market_totals: Counter[str] = Counter()
+    raw_source_totals: collections.Counter[str] = collections.Counter()
+    raw_market_totals: collections.Counter[str] = collections.Counter()
     target_segment = normalize_text(TARGET_SEGMENT)
 
     for month in months:
