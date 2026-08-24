@@ -1,14 +1,18 @@
-name: V2 Consumer.gov 157 Experiment
+name: V2 Consumer.gov 157 Experiment (legacy)
 
+# Legacy exploratory workflow kept for reproducibility only.
+# The current PR gate for Consumer.gov conduct evidence is
+# v2-consumer-gov-conduct-evidence.yml. Keeping this workflow off the
+# pull_request path avoids false-red checks caused by transient SUSEP
+# availability while preserving the original experiment for manual runs.
 on:
-  pull_request:
-    branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: v2-consumer-gov-157-${{ github.event.pull_request.number }}
+  group: v2-consumer-gov-157-${{ github.run_id }}
   cancel-in-progress: true
 
 jobs:
