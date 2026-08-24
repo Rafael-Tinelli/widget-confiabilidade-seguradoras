@@ -6,6 +6,7 @@ on:
     branches: [main]
     paths:
       - "api/v2/consumer_gov_conduct.py"
+      - "api/v2/consumer_gov_conduct_core.py"
       - "api/v2/build_consumer_gov_conduct_evidence.py"
       - "api/v2/build_consumer_gov_identity_experiment.py"
       - "api/v2/consumer_gov_identity.py"
@@ -14,8 +15,6 @@ on:
       - "api/v2/consumer_gov_receita_resolution.py"
       - "api/v2/build_consumer_gov_receita_identity.py"
       - "api/v2/build_consumer_gov_receita_resolution_experiment.py"
-      - "api/v2/acquire_consumer_gov_raw.py"
-      - "api/v2/compare_consumer_gov_sources.py"
       - "api/sources/consumer_gov_direct.py"
       - "api/sources/receita_cnpj_identity.py"
       - "api/build_consumidor_gov.py"
@@ -55,8 +54,6 @@ jobs:
       CG_CONNECT_TIMEOUT: "20"
       CG_READ_TIMEOUT: "120"
       CG_DOWNLOAD_READ_TIMEOUT: "300"
-      CG_HEADLESS_TIMEOUT: "120"
-      CG_HEADLESS_MAX_PAGES: "100"
 
     steps:
       - name: Checkout
@@ -77,32 +74,13 @@ jobs:
           python -m pip install -r requirements.txt
           python -m pip install -r requirements-dev.txt
 
-      - name: Verify headless fallback runtime
-        run: |
-          set -euo pipefail
-          python - <<'PY'
-          import shutil
-
-          chrome = (
-              shutil.which("google-chrome")
-              or shutil.which("chromium")
-              or shutil.which("chromium-browser")
-          )
-          if not chrome:
-              raise SystemExit("Chrome/Chromium is required for the DOM fallback")
-          print(f"headless fallback browser: {chrome}")
-          PY
-
       - name: Lint conduct modules
         run: |
           set -euo pipefail
           ruff check \
-            api/sources/consumer_gov_direct.py \
-            api/v2/acquire_consumer_gov_raw.py \
-            api/v2/compare_consumer_gov_sources.py \
             api/v2/consumer_gov_conduct.py \
+            api/v2/consumer_gov_conduct_core.py \
             api/v2/build_consumer_gov_conduct_evidence.py \
-            tests/test_consumer_gov_direct.py \
             tests/test_v2_consumer_gov_conduct.py
 
       - name: Restore validated SES source cache
@@ -113,7 +91,7 @@ jobs:
           restore-keys: |
             ses-source-${{ runner.os }}-
 
-      - name: Restore Consumer.gov raw cache
+      - name: Restore optional Consumer.gov raw taxonomy cache
         uses: actions/cache/restore@v4
         with:
           path: data/raw/consumidor_gov
@@ -139,27 +117,16 @@ jobs:
       - name: Compile conduct modules
         run: |
           set -euo pipefail
-          python -m py_compile api/sources/consumer_gov_direct.py
-          python -m py_compile api/v2/acquire_consumer_gov_raw.py
-          python -m py_compile api/v2/compare_consumer_gov_sources.py
           python -m py_compile api/v2/consumer_gov_conduct.py
+          python -m py_compile api/v2/consumer_gov_conduct_core.py
           python -m py_compile api/v2/build_consumer_gov_conduct_evidence.py
 
-      - name: Test conduct and raw-source contracts
+      - name: Test conduct core and optional taxonomy contracts
         run: |
           set -euo pipefail
-          python -m pytest -q \
-            tests/test_consumer_gov_direct.py \
-            tests/test_v2_consumer_gov_conduct.py
+          python -m pytest -q tests/test_v2_consumer_gov_conduct.py
 
-      - name: Validate direct Consumer.gov source compatibility
-        run: |
-          set -euo pipefail
-          python -m api.v2.compare_consumer_gov_sources \
-            --month 2026-03 \
-            --expected-rows 342527
-
-      - name: Refresh 12-month Consumer.gov source window
+      - name: Refresh Consumer.gov preserved aggregate when possible
         run: |
           set -euo pipefail
           python -m api.build_consumidor_gov
@@ -184,11 +151,6 @@ jobs:
           set -euo pipefail
           python -m api.v2.build_consumer_gov_identity_experiment
 
-      - name: Acquire validated Consumer.gov raw source window
-        run: |
-          set -euo pipefail
-          python -m api.v2.acquire_consumer_gov_raw
-
       - name: Build filtered Receita identity snapshot
         run: |
           set -euo pipefail
@@ -199,17 +161,10 @@ jobs:
           set -euo pipefail
           python -m api.v2.build_consumer_gov_receita_resolution_experiment
 
-      - name: Build Consumer.gov conduct evidence
+      - name: Build Consumer.gov conduct core with optional taxonomy enrichment
         run: |
           set -euo pipefail
           python -m api.v2.build_consumer_gov_conduct_evidence
-
-      - name: Save Consumer.gov raw cache after conduct acquisition
-        if: always()
-        uses: actions/cache/save@v4
-        with:
-          path: data/raw/consumidor_gov
-          key: v2-conduct-consumer-raw-${{ runner.os }}-${{ github.run_id }}
 
       - name: Validate conduct evidence boundaries
         run: |
@@ -234,6 +189,20 @@ jobs:
           if conduct.get("scoring") != "forbidden_in_this_artifact":
               raise SystemExit("conduct evidence must explicitly forbid scoring")
 
+          source = conduct["source"]
+          if source["core"].get("state") != "available":
+              raise SystemExit("preserved conduct core must be available")
+          if source["core"].get("required") is not True:
+              raise SystemExit("preserved conduct core must remain mandatory")
+
+          taxonomy = source["taxonomy_evidence"]
+          if taxonomy.get("state") not in {"available", "source_unavailable"}:
+              raise SystemExit(f"unexpected taxonomy state: {taxonomy}")
+          if taxonomy.get("required_for_conduct_core") is not False:
+              raise SystemExit("taxonomy must not block conduct core")
+          if taxonomy.get("required_for_scoring") is not False:
+              raise SystemExit("taxonomy must not be used for scoring")
+
           forbidden = {
               "overall_score",
               "assessment_eligible",
@@ -254,14 +223,17 @@ jobs:
 
           walk(conduct)
 
-          months = conduct["source"]["months"]
+          months = source["months"]
           if len(months) != 12:
               raise SystemExit(f"expected 12 conduct months, got {len(months)}")
 
-          taxonomy = conduct["taxonomy_catalog"]
-          for key in ("area", "assunto", "grupo_problema", "problema"):
-              if not taxonomy.get(key):
-                  raise SystemExit(f"taxonomy is empty: {key}")
+          if taxonomy["state"] == "available":
+              catalog = conduct["taxonomy_catalog"]
+              for key in ("area", "assunto", "grupo_problema", "problema"):
+                  if not catalog.get(key):
+                      raise SystemExit(f"available taxonomy is empty: {key}")
+          elif any(conduct["taxonomy_catalog"].get(key) for key in conduct["taxonomy_catalog"]):
+              raise SystemExit("unavailable taxonomy must not leak partial classifications")
 
           summary = conduct["resolution_summary"]
           post = resolved["post_receita"]
@@ -300,29 +272,36 @@ jobs:
                   raise SystemExit(
                       f"monthly reconciliation failed for {entity['entity_id']}"
                   )
+              for item in entity["monthly"]:
+                  if item.get("consumer_resolved_rate_among_evaluated") is not None:
+                      raise SystemExit(
+                          "preserved core must not invent evaluated denominator"
+                      )
 
           print(
               json.dumps(
                   {
                       "source": {
                           "months": months,
-                          "taxonomy_fields": conduct["source"]["taxonomy_fields"],
+                          "core": source["core"]["state"],
+                          "taxonomy": taxonomy,
                       },
                       "universe": conduct["universe"],
                       "resolution_summary": summary,
                       "film_summary": conduct["film_summary"],
-                      "top_problem_groups": list(
-                          conduct["taxonomy_catalog"]["grupo_problema"].items()
-                      )[:15],
-                      "top_problems": list(
-                          conduct["taxonomy_catalog"]["problema"].items()
-                      )[:20],
                   },
                   ensure_ascii=False,
                   indent=2,
               )
           )
           PY
+
+      - name: Save optional Consumer.gov raw taxonomy cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: data/raw/consumidor_gov
+          key: v2-conduct-consumer-raw-${{ runner.os }}-${{ github.run_id }}
 
       - name: Upload conduct artifacts
         if: always()
@@ -332,7 +311,6 @@ jobs:
           retention-days: 14
           if-no-files-found: warn
           path: |
-            data/derived/v2/consumer_gov_source_compatibility.json
             data/derived/v2/consumer_gov_conduct_evidence.json
             data/derived/v2/consumer_gov_identity_experiment.json
             data/derived/v2/consumer_gov_receita_resolution_experiment.json
