@@ -40,10 +40,15 @@ def test_insurance_exposure_does_not_require_pension_or_capitalization_files(
         "private_pension",
         "capitalization",
     ]
-    assert "pension" not in str(payload).lower()
-    assert "capitalization_amount" not in str(payload).lower()
+    assert "pension_component_file" not in payload["source"]
+    assert "capitalization_component_file" not in payload["source"]
 
     jan = payload["entities"]["000001"]["months"][202601]
+    assert set(jan) == {
+        "insurance_premium_direct",
+        "insurance_premium_earned",
+        "insurance_branches",
+    }
     assert jan["insurance_premium_direct"] == pytest.approx(150.0)
     assert jan["insurance_premium_earned"] == pytest.approx(135.0)
 
