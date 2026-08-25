@@ -18,6 +18,17 @@ def test_bb_seguro_auto_is_canonical_risk_carrier_relationship():
     assert relation["evidence"]["authority"] == "BB Seguros"
 
 
+def test_loovi_is_canonical_sandbox_risk_carrier_relationship():
+    brand = _brands_by_id()["brand:loovi"]
+    assert brand["name"] == "Loovi"
+    assert "Loovi Seguros" in brand["aliases"]
+    relation = brand["relationships"][0]
+    assert relation["relationship_type"] == "risk_carrier"
+    assert relation["target_cnpj"] == "47006254000180"
+    assert relation["status"] == "current"
+    assert relation["evidence"]["authority"] == "Loovi"
+
+
 def test_caixa_residencial_is_canonical_brand_relationship():
     brand = _brands_by_id()["brand:caixa-residencial"]
     assert "XS3 Seguros" in brand["aliases"]
