@@ -4,7 +4,49 @@ import math
 from statistics import median
 from typing import Any
 
-COMPARATIVE_VERSION = "2.0-draft-conduct-comparative-1"
+COMPARATIVE_VERSION = "2.0-draft-conduct-comparative-2"
+
+
+def exposure_comparability_state(
+    observed_complaints: float,
+    company_exposure: float | None,
+) -> dict[str, Any]:
+    """Classify whether an exposure denominator can support complaint pressure.
+
+    Complaints with no positive comparable exposure are an evidence conflict,
+    not an adverse conduct signal. They must never be converted into an
+    infinite or extreme pressure ratio.
+    """
+    if observed_complaints < 0:
+        return {
+            "state": "invalid_complaint_count",
+            "pressure_eligible": False,
+            "reason_code": "negative_observed_complaints",
+        }
+    if company_exposure is None or not math.isfinite(float(company_exposure)):
+        return {
+            "state": "exposure_unavailable",
+            "pressure_eligible": False,
+            "reason_code": "comparable_exposure_unavailable",
+        }
+    exposure = float(company_exposure)
+    if exposure <= 0:
+        if observed_complaints > 0:
+            return {
+                "state": "complaints_without_comparable_exposure",
+                "pressure_eligible": False,
+                "reason_code": "complaint_exposure_mismatch_requires_investigation",
+            }
+        return {
+            "state": "no_comparable_exposure",
+            "pressure_eligible": False,
+            "reason_code": "no_positive_exposure_in_comparison_window",
+        }
+    return {
+        "state": "comparable",
+        "pressure_eligible": True,
+        "reason_code": None,
+    }
 
 
 def expected_complaints(
@@ -24,8 +66,11 @@ def pressure_ratio(
     market_exposure: float,
 ) -> float | None:
     """Observed/expected complaint pressure; 1.0 means proportional to exposure."""
+    comparability = exposure_comparability_state(observed_complaints, company_exposure)
+    if not comparability["pressure_eligible"]:
+        return None
     expected = expected_complaints(company_exposure, market_complaints, market_exposure)
-    if expected is None or expected <= 0 or observed_complaints < 0:
+    if expected is None or expected <= 0:
         return None
     ratio = observed_complaints / expected
     return float(ratio) if math.isfinite(ratio) else None
@@ -79,7 +124,11 @@ def branch_mix_distance(
 
 
 def persistence_diagnostics(monthly_ratios: list[float | None]) -> dict[str, Any]:
-    valid = [float(value) for value in monthly_ratios if value is not None and math.isfinite(float(value))]
+    valid = [
+        float(value)
+        for value in monthly_ratios
+        if value is not None and math.isfinite(float(value))
+    ]
     if not valid:
         return {
             "state": "insufficient_history",
