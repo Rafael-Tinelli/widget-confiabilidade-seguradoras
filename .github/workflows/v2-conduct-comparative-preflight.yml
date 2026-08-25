@@ -172,15 +172,18 @@ jobs:
           periods = month_window(reference, 12)
 
           rows = []
+          insurance_branch_codes = set()
+          pension_product_codes = set()
           for fip in fips:
               months = payload["entities"][fip]["months"]
               direct = 0.0
               earned = 0.0
               pension = 0.0
-              direct_months = 0
-              earned_months = 0
-              pension_months = 0
+              direct_positive_months = 0
+              earned_positive_months = 0
+              pension_positive_months = 0
               branches = set()
+              pension_products = set()
               for period in periods:
                   item = months.get(period) or {}
                   d = float(item.get("insurance_premium_direct") or 0.0)
@@ -189,31 +192,58 @@ jobs:
                   direct += d
                   earned += e
                   pension += p
-                  direct_months += int(d != 0.0)
-                  earned_months += int(e != 0.0)
-                  pension_months += int(p != 0.0)
+                  direct_positive_months += int(d > 0.0)
+                  earned_positive_months += int(e > 0.0)
+                  pension_positive_months += int(p > 0.0)
                   for branch, values in (item.get("insurance_branches") or {}).items():
                       if float((values or {}).get("premium_direct") or 0.0) != 0.0:
-                          branches.add(str(branch))
+                          code = str(branch)
+                          branches.add(code)
+                          insurance_branch_codes.add(code)
+                  for product, values in (item.get("pension_products") or {}).items():
+                      if float((values or {}).get("contributions") or 0.0) != 0.0:
+                          code = str(product)
+                          pension_products.add(code)
+                          pension_product_codes.add(code)
               rows.append({
                   "fip": fip,
                   "direct": direct,
                   "earned": earned,
                   "pension": pension,
-                  "direct_months": direct_months,
-                  "earned_months": earned_months,
-                  "pension_months": pension_months,
+                  "direct_plus_pension": direct + pension,
+                  "earned_plus_pension": earned + pension,
+                  "direct_positive_months": direct_positive_months,
+                  "earned_positive_months": earned_positive_months,
+                  "pension_positive_months": pension_positive_months,
                   "branches": len(branches),
+                  "pension_products": len(pension_products),
               })
 
           positive_direct = [row for row in rows if row["direct"] > 0]
           positive_earned = [row for row in rows if row["earned"] > 0]
           positive_pension = [row for row in rows if row["pension"] > 0]
+          positive_direct_plus_pension = [
+              row for row in rows if row["direct_plus_pension"] > 0
+          ]
+          positive_earned_plus_pension = [
+              row for row in rows if row["earned_plus_pension"] > 0
+          ]
           any_exposure = [
               row for row in rows
               if row["direct"] != 0.0 or row["earned"] != 0.0 or row["pension"] != 0.0
           ]
           paired = [row for row in rows if row["direct"] > 0 and row["earned"] > 0]
+          direct_pension_overlap = [
+              row for row in rows if row["direct"] > 0 and row["pension"] > 0
+          ]
+          earned_pension_overlap = [
+              row for row in rows if row["earned"] > 0 and row["pension"] > 0
+          ]
+          combined_paired = [
+              row for row in rows
+              if row["direct_plus_pension"] > 0 and row["earned_plus_pension"] > 0
+          ]
+
           corr = None
           if len(paired) >= 3:
               value = float(spearmanr(
@@ -222,11 +252,18 @@ jobs:
               ).statistic)
               corr = value if math.isfinite(value) else None
 
+          combined_corr = None
+          if len(combined_paired) >= 3:
+              value = float(spearmanr(
+                  [row["direct_plus_pension"] for row in combined_paired],
+                  [row["earned_plus_pension"] for row in combined_paired],
+              ).statistic)
+              combined_corr = value if math.isfinite(value) else None
+
           earned_direct_ratios = [row["earned"] / row["direct"] for row in paired]
           pension_direct_ratios = [
               row["pension"] / row["direct"]
-              for row in rows
-              if row["pension"] > 0 and row["direct"] > 0
+              for row in direct_pension_overlap
           ]
 
           diagnostics = {
@@ -242,12 +279,23 @@ jobs:
                   "positive_direct_12m": len(positive_direct),
                   "positive_earned_12m": len(positive_earned),
                   "positive_pension_12m": len(positive_pension),
+                  "positive_direct_plus_pension_12m": len(positive_direct_plus_pension),
+                  "positive_earned_plus_pension_12m": len(positive_earned_plus_pension),
                   "positive_direct_with_branch_mix": sum(
                       row["branches"] > 0 for row in positive_direct
                   ),
-                  "direct_full_12m": sum(row["direct_months"] == 12 for row in rows),
-                  "earned_full_12m": sum(row["earned_months"] == 12 for row in rows),
-                  "pension_full_12m": sum(row["pension_months"] == 12 for row in rows),
+                  "direct_positive_all_12_months": sum(
+                      row["direct_positive_months"] == 12 for row in rows
+                  ),
+                  "earned_positive_all_12_months": sum(
+                      row["earned_positive_months"] == 12 for row in rows
+                  ),
+                  "pension_positive_all_12_months": sum(
+                      row["pension_positive_months"] == 12 for row in rows
+                  ),
+                  "negative_direct_12m": sum(row["direct"] < 0 for row in rows),
+                  "negative_earned_12m": sum(row["earned"] < 0 for row in rows),
+                  "negative_pension_12m": sum(row["pension"] < 0 for row in rows),
               },
               "candidate_relationships": {
                   "direct_earned_paired": len(paired),
@@ -264,11 +312,18 @@ jobs:
                       float(np.percentile(earned_direct_ratios, 90))
                       if earned_direct_ratios else None
                   ),
-                  "pension_direct_paired": len(pension_direct_ratios),
+                  "direct_pension_overlap": len(direct_pension_overlap),
+                  "earned_pension_overlap": len(earned_pension_overlap),
                   "pension_over_direct_median": (
                       float(np.median(pension_direct_ratios))
                       if pension_direct_ratios else None
                   ),
+                  "combined_direct_earned_paired": len(combined_paired),
+                  "combined_direct_earned_spearman": combined_corr,
+              },
+              "candidate_component_codes": {
+                  "insurance_branches": sorted(insurance_branch_codes),
+                  "pension_products": sorted(pension_product_codes),
               },
               "zero_or_missing_exposure_fips": [
                   row["fip"] for row in rows
@@ -280,6 +335,8 @@ jobs:
               raise SystemExit("full-universe exposure diagnostics lost eligible FIPs")
           if diagnostics["universe"]["positive_direct_with_branch_mix"] != len(positive_direct):
               raise SystemExit("positive direct-premium exposure lacks branch-mix evidence")
+          if payload["source"]["denominator_selected"] is not None:
+              raise SystemExit("diagnostics must not select an exposure denominator")
 
           output = Path("data/derived/v2/conduct_exposure_preflight.json")
           output.parent.mkdir(parents=True, exist_ok=True)
