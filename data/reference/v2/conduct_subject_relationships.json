@@ -1,0 +1,87 @@
+{
+  "schema_version": "1.0",
+  "note": "Source-backed Conduct reconciliation facts. These relationships preserve the consumer-facing complaint subject separately from the insurance risk carrier or portfolio holder. They provide context and recovery routes only: they never transfer Consumer.gov complaints, create exposure, or authorize a pressure ratio by themselves.",
+  "relationships": [
+    {
+      "relationship_id": "conduct:youse-to-caixa-seguradora",
+      "relationship_type": "consumer_subject_single_risk_carrier",
+      "subject_cnpj": "24856160000103",
+      "target_cnpjs": ["34020354000110"],
+      "effective_from": null,
+      "pressure_policy": "brand_specific_exposure_required",
+      "reconciliation_state": "consumer_subject_single_carrier_exposure_not_brand_specific",
+      "evidence": [
+        {
+          "authority": "Youse",
+          "url": "https://cdn.youse.com.br/docs/v2/condicoes-gerais-plano-auto.pdf",
+          "fact": "As condições gerais identificam a Caixa Seguradora S.A., CNPJ 34.020.354/0001-10, como garantidora do plano de seguro comercializado pela Youse."
+        },
+        {
+          "authority": "Youse Ouvidoria",
+          "url": "https://ouvidoria.youse.com.br/",
+          "fact": "A página institucional informa que os produtos comercializados pela plataforma Youse são garantidos pela Caixa Seguradora S.A."
+        }
+      ]
+    },
+    {
+      "relationship_id": "conduct:zurich-brasil-transfer-zurich-minas",
+      "relationship_type": "insurance_portfolio_transfer",
+      "subject_cnpj": "96348677000194",
+      "target_cnpjs": ["17197385000121"],
+      "effective_from": "2026-04-01",
+      "pressure_policy": "temporal_reconciliation_required",
+      "reconciliation_state": "portfolio_transfer_requires_temporal_reconciliation",
+      "evidence": [
+        {
+          "authority": "Zurich Brasil",
+          "url": "https://www.zurich.com.br/a-zurich/imprensa-e-noticias/press-releases/2026/comunicado-aos-segurados",
+          "fact": "Com efeito em 01/04/2026, a integralidade da carteira de seguros, direitos, dados, PPNG, ativos garantidores e prêmios recebíveis da Zurich Brasil Companhia de Seguros foi transferida à Zurich Minas Brasil Seguros S.A., que assumiu os direitos e obrigações das apólices transferidas."
+        }
+      ]
+    },
+    {
+      "relationship_id": "conduct:bradesco-seguros-portfolio-split",
+      "relationship_type": "insurance_portfolio_split",
+      "subject_cnpj": "33055146000193",
+      "target_cnpjs": [
+        "92682038000100",
+        "51990695000137"
+      ],
+      "effective_from": "2024-05-31",
+      "pressure_policy": "product_split_required",
+      "reconciliation_state": "multi_carrier_subject_requires_product_split",
+      "target_scopes": {
+        "92682038000100": "ramos_elementares",
+        "51990695000137": "vida"
+      },
+      "evidence": [
+        {
+          "authority": "Bradesco Seguros",
+          "url": "https://www.bradescoseguros.com.br/wcm/connect/b52de57c-3eec-4f66-a168-b951dfcdfcf2/001-BRADESCO%2BSEGUROS_2024_Jornal.pdf?CACHEID=ROOTWORKSPACE-b52de57c-3eec-4f66-a168-b951dfcdfcf2-pl3NXRl&CONVERT_TO=url&MOD=AJPERES",
+          "fact": "As demonstrações de 2024 registram a transferência, em maio de 2024, da carteira de ramos elementares da Bradesco Seguros para Bradesco Auto/RE e da carteira de vida para Bradesco Vida e Previdência."
+        },
+        {
+          "authority": "Bradesco Auto/RE",
+          "url": "https://www.bradescoseguros.com.br/wcm/connect/861caaee-fbd3-4be9-9a8e-8744301e8884/005-BRADESCO%2BAUTO-RE_2024%2BJORNAL.pdf?MOD=AJPERES",
+          "fact": "As demonstrações da Bradesco Auto/RE registram a absorção da carteira de Ramos Elementares da Bradesco Seguros em 31/05/2024."
+        }
+      ]
+    },
+    {
+      "relationship_id": "conduct:lider-dpvat-runoff",
+      "relationship_type": "runoff",
+      "subject_cnpj": "09248608000104",
+      "target_cnpjs": [],
+      "effective_from": null,
+      "pressure_policy": "current_premium_pressure_not_applicable",
+      "reconciliation_state": "runoff_pressure_not_applicable",
+      "evidence": [
+        {
+          "authority": "SUSEP",
+          "url": "https://www.gov.br/susep/pt-br/arquivos/arquivos-dos-documentos-e-publicacoes/arquivos-reunioes-do-conselho-diretor/atas/ata-reuniao-ordinaria-cd-28-01-2026-assinada.pdf/%40%40display-file/file",
+          "fact": "Ata do Conselho Diretor de 2026 registra que a Seguradora Líder do Consórcio DPVAT se encontra em run-off devido à extinção do DPVAT."
+        }
+      ]
+    }
+  ]
+}
