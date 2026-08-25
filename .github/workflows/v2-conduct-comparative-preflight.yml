@@ -15,12 +15,19 @@ on:
 
 permissions:
   contents: read
+  actions: read
+
+concurrency:
+  group: v2-conduct-comparative-preflight-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
 
 jobs:
   conduct-preflight:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:
+      GH_TOKEN: ${{ github.token }}
+      V2_ELIGIBILITY_INPUT: data/derived/v2/entity_eligibility_inventory.json
       SES_CACHE_DIR: "data/raw/ses"
 
     steps:
@@ -48,6 +55,36 @@ jobs:
           restore-keys: |
             ses-source-${{ runner.os }}-
 
+      - name: Restore latest validated eligibility artifact
+        run: |
+          set -euo pipefail
+          branch="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
+          run_id="$(gh run list \
+            --repo "$GITHUB_REPOSITORY" \
+            --workflow "V2 Eligibility Validation" \
+            --branch "$branch" \
+            --status success \
+            --limit 20 \
+            --json databaseId \
+            --jq '.[0].databaseId')"
+          if [[ -z "$run_id" || "$run_id" == "null" ]]; then
+            echo "No successful upstream eligibility artifact found." >&2
+            exit 1
+          fi
+          rm -rf "$RUNNER_TEMP/eligibility-upstream"
+          mkdir -p "$RUNNER_TEMP/eligibility-upstream"
+          gh run download "$run_id" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name "v2-eligibility-$run_id" \
+            --dir "$RUNNER_TEMP/eligibility-upstream"
+          source_file="$(find "$RUNNER_TEMP/eligibility-upstream" -type f -name entity_eligibility_inventory.json | head -n 1)"
+          if [[ -z "$source_file" ]]; then
+            echo "Upstream artifact does not contain entity_eligibility_inventory.json" >&2
+            exit 1
+          fi
+          mkdir -p "$(dirname "$V2_ELIGIBILITY_INPUT")"
+          cp "$source_file" "$V2_ELIGIBILITY_INPUT"
+
       - name: Lint conduct preflight modules
         run: |
           set -euo pipefail
@@ -67,94 +104,195 @@ jobs:
             tests/test_v2_conduct_comparative.py \
             tests/test_susep_conduct_exposure.py
 
-      - name: Validate real SES insurance and pension exposure
+      - name: Validate real SES exposure for full regulatory universe
         run: |
           set -euo pipefail
           python - <<'PY'
+          import json
+          import math
           import zipfile
           from pathlib import Path
 
-          import pandas as pd
+          import numpy as np
+          from scipy.stats import spearmanr
 
           from api.sources.susep_conduct_exposure import (
               load_susep_conduct_exposure,
               probe_susep_conduct_exposure,
           )
 
-          path = Path("data/raw/ses/BaseCompleta.zip")
-          if not path.exists() or not zipfile.is_zipfile(path):
+          ses_path = Path("data/raw/ses/BaseCompleta.zip")
+          eligibility_path = Path("data/derived/v2/entity_eligibility_inventory.json")
+          if not ses_path.exists() or not zipfile.is_zipfile(ses_path):
               raise SystemExit("validated SES BaseCompleta.zip cache is required")
+          if not eligibility_path.exists():
+              raise SystemExit("validated eligibility artifact is required")
 
-          probe = probe_susep_conduct_exposure(path)
+          eligibility = json.loads(eligibility_path.read_text(encoding="utf-8"))
+          eligible = [
+              entity for entity in eligibility.get("entities", [])
+              if (entity.get("eligibility") or {}).get("regulatory_universe_eligible")
+          ]
+          fips = sorted({
+              str(entity.get("fip_code") or "").zfill(6)
+              for entity in eligible
+              if entity.get("fip_code")
+          })
+          if len(fips) != len(eligible) or not fips:
+              raise SystemExit(
+                  f"eligible FIP reconciliation failed: entities={len(eligible)} fips={len(fips)}"
+              )
+
+          probe = probe_susep_conduct_exposure(ses_path)
           if probe.get("state") != "available":
               raise SystemExit(f"SES conduct exposure preflight failed: {probe}")
 
-          sample_fips = []
-          with zipfile.ZipFile(path) as z:
-              for basename in ("ses_seguros.csv", "ses_contrib_benef.csv"):
-                  member = next(
-                      name for name in z.namelist()
-                      if name.lower().endswith(basename)
-                  )
-                  with z.open(member) as handle:
-                      sample = pd.read_csv(
-                          handle,
-                          sep=";",
-                          encoding="latin1",
-                          dtype=str,
-                          usecols=lambda col: str(col).strip().lower() == "coenti",
-                          nrows=50_000,
-                      )
-                  sample_fips.extend(
-                      str(value)
-                      for value in sample.iloc[:, 0].dropna().drop_duplicates().head(8)
-                  )
-
-          fips = list(dict.fromkeys(sample_fips))
-          if not fips:
-              raise SystemExit("SES sample did not expose any FIP codes")
-
-          payload = load_susep_conduct_exposure(fips, path)
-          observed = [
-              entity
-              for entity in payload["entities"].values()
-              if entity["months"]
-          ]
-          pension_observed = [
-              entity
-              for entity in observed
-              if any(
-                  float(month.get("pension_contributions") or 0.0) != 0.0
-                  for month in entity["months"].values()
-              )
-          ]
-          insurance_observed = [
-              entity
-              for entity in observed
-              if any(
-                  float(month.get("insurance_premium_direct") or 0.0) != 0.0
-                  or float(month.get("insurance_premium_earned") or 0.0) != 0.0
-                  for month in entity["months"].values()
-              )
-          ]
-          refs = payload["reference_periods"]
-          if not observed or refs["insurance"] is None or refs["pension"] is None:
-              raise SystemExit("SES exposure reader returned incomplete real monthly evidence")
-          if not insurance_observed:
-              raise SystemExit("real SES sample did not preserve insurance exposure")
-          if not pension_observed:
-              raise SystemExit("real SES sample did not preserve pension exposure")
+          payload = load_susep_conduct_exposure(fips, ses_path)
+          if set(payload["entities"]) != set(fips):
+              raise SystemExit("SES exposure reader did not preserve the full requested universe")
           if payload["source"]["denominator_selected"] is not None:
               raise SystemExit("preflight must not select the final exposure denominator")
           if payload["source"]["combination_policy"] != "not_calibrated":
               raise SystemExit("preflight must not combine heterogeneous exposure components")
 
-          print({
-              "probe": probe,
-              "sample_fips": fips,
-              "reference_periods": refs,
-              "observed_entities": len(observed),
-              "insurance_observed_entities": len(insurance_observed),
-              "pension_observed_entities": len(pension_observed),
-          })
+          def month_window(reference, months=12):
+              year, month = divmod(int(reference), 100)
+              out = []
+              for _ in range(months):
+                  out.append(year * 100 + month)
+                  month -= 1
+                  if month == 0:
+                      month = 12
+                      year -= 1
+              return list(reversed(out))
+
+          reference = payload["reference_periods"].get("insurance")
+          if reference is None:
+              raise SystemExit("insurance exposure has no reference period")
+          periods = month_window(reference, 12)
+
+          rows = []
+          for fip in fips:
+              months = payload["entities"][fip]["months"]
+              direct = 0.0
+              earned = 0.0
+              pension = 0.0
+              direct_months = 0
+              earned_months = 0
+              pension_months = 0
+              branches = set()
+              for period in periods:
+                  item = months.get(period) or {}
+                  d = float(item.get("insurance_premium_direct") or 0.0)
+                  e = float(item.get("insurance_premium_earned") or 0.0)
+                  p = float(item.get("pension_contributions") or 0.0)
+                  direct += d
+                  earned += e
+                  pension += p
+                  direct_months += int(d != 0.0)
+                  earned_months += int(e != 0.0)
+                  pension_months += int(p != 0.0)
+                  for branch, values in (item.get("insurance_branches") or {}).items():
+                      if float((values or {}).get("premium_direct") or 0.0) != 0.0:
+                          branches.add(str(branch))
+              rows.append({
+                  "fip": fip,
+                  "direct": direct,
+                  "earned": earned,
+                  "pension": pension,
+                  "direct_months": direct_months,
+                  "earned_months": earned_months,
+                  "pension_months": pension_months,
+                  "branches": len(branches),
+              })
+
+          positive_direct = [row for row in rows if row["direct"] > 0]
+          positive_earned = [row for row in rows if row["earned"] > 0]
+          positive_pension = [row for row in rows if row["pension"] > 0]
+          any_exposure = [
+              row for row in rows
+              if row["direct"] != 0.0 or row["earned"] != 0.0 or row["pension"] != 0.0
+          ]
+          paired = [row for row in rows if row["direct"] > 0 and row["earned"] > 0]
+          corr = None
+          if len(paired) >= 3:
+              value = float(spearmanr(
+                  [row["direct"] for row in paired],
+                  [row["earned"] for row in paired],
+              ).statistic)
+              corr = value if math.isfinite(value) else None
+
+          earned_direct_ratios = [row["earned"] / row["direct"] for row in paired]
+          pension_direct_ratios = [
+              row["pension"] / row["direct"]
+              for row in rows
+              if row["pension"] > 0 and row["direct"] > 0
+          ]
+
+          diagnostics = {
+              "status": "experimental_preflight",
+              "scoring": "forbidden",
+              "denominator_selected": None,
+              "periods": periods,
+              "reference_periods": payload["reference_periods"],
+              "universe": {
+                  "eligible_entities": len(eligible),
+                  "eligible_fips": len(fips),
+                  "any_exposure_12m": len(any_exposure),
+                  "positive_direct_12m": len(positive_direct),
+                  "positive_earned_12m": len(positive_earned),
+                  "positive_pension_12m": len(positive_pension),
+                  "positive_direct_with_branch_mix": sum(
+                      row["branches"] > 0 for row in positive_direct
+                  ),
+                  "direct_full_12m": sum(row["direct_months"] == 12 for row in rows),
+                  "earned_full_12m": sum(row["earned_months"] == 12 for row in rows),
+                  "pension_full_12m": sum(row["pension_months"] == 12 for row in rows),
+              },
+              "candidate_relationships": {
+                  "direct_earned_paired": len(paired),
+                  "direct_earned_spearman": corr,
+                  "earned_over_direct_median": (
+                      float(np.median(earned_direct_ratios))
+                      if earned_direct_ratios else None
+                  ),
+                  "earned_over_direct_p10": (
+                      float(np.percentile(earned_direct_ratios, 10))
+                      if earned_direct_ratios else None
+                  ),
+                  "earned_over_direct_p90": (
+                      float(np.percentile(earned_direct_ratios, 90))
+                      if earned_direct_ratios else None
+                  ),
+                  "pension_direct_paired": len(pension_direct_ratios),
+                  "pension_over_direct_median": (
+                      float(np.median(pension_direct_ratios))
+                      if pension_direct_ratios else None
+                  ),
+              },
+              "zero_or_missing_exposure_fips": [
+                  row["fip"] for row in rows
+                  if row["direct"] == 0.0 and row["earned"] == 0.0 and row["pension"] == 0.0
+              ],
+          }
+
+          if diagnostics["universe"]["eligible_fips"] != len(fips):
+              raise SystemExit("full-universe exposure diagnostics lost eligible FIPs")
+          if diagnostics["universe"]["positive_direct_with_branch_mix"] != len(positive_direct):
+              raise SystemExit("positive direct-premium exposure lacks branch-mix evidence")
+
+          output = Path("data/derived/v2/conduct_exposure_preflight.json")
+          output.parent.mkdir(parents=True, exist_ok=True)
+          output.write_text(
+              json.dumps(diagnostics, ensure_ascii=False, indent=2),
+              encoding="utf-8",
+          )
+          print(json.dumps(diagnostics, ensure_ascii=False, indent=2))
           PY
+
+      - name: Upload conduct exposure preflight
+        uses: actions/upload-artifact@v4
+        with:
+          name: v2-conduct-exposure-preflight-${{ github.run_id }}
+          retention-days: 14
+          path: data/derived/v2/conduct_exposure_preflight.json
