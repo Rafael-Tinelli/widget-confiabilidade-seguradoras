@@ -163,3 +163,58 @@ def test_successor_chain_routes_through_intermediate_historical_entity():
     assert context["successor_entity_id"] == "fip:000003"
     assert context["successor_chain"] == ["fip:000002", "fip:000003"]
     assert context["lifecycle_evidence"] == "corporate_relationship"
+
+
+def test_loovi_brand_materializes_to_sandbox_carrier_without_score_inheritance():
+    classification = {
+        "meta": {"inventory_count": 1},
+        "unresolved": {"sandbox": []},
+        "entities": [
+            {
+                "entity_id": "sandbox:lti",
+                "fip_code": None,
+                "cnpj": "47006254000180",
+                "legal_entity_id": "cnpj:47006254000180",
+                "legal_name": "LTI SEGUROS S.A.",
+                "display_name": "LTI Seguros",
+                "entity_type": "sandbox_participant",
+                "regulatory_regime": "sandbox",
+                "regulatory_status": "sandbox_authorized",
+                "activities": {},
+                "evidence": {},
+            }
+        ],
+    }
+    registry = {
+        "corporate_relationships": [],
+        "brands": [
+            {
+                "brand_id": "brand:loovi",
+                "name": "Loovi",
+                "aliases": ["Loovi Seguros", "Loovi Technology"],
+                "relationships": [
+                    {
+                        "relationship_type": "risk_carrier",
+                        "target_cnpj": "47006254000180",
+                        "status": "current",
+                        "evidence": {"authority": "Loovi"},
+                    }
+                ],
+            }
+        ],
+    }
+
+    payload = build_lifecycle_relationship_inventory(classification, [], registry, [])
+
+    brand = payload["brands"][0]
+    assert brand["brand_id"] == "brand:loovi"
+    assert "Loovi Seguros" in brand["aliases"]
+    assert brand["relationships"][0]["target_entity_id"] == "sandbox:lti"
+    assert "score" not in brand
+
+    carrier = payload["entities"][0]
+    assert carrier["query_context"]["entity_state"] == "sandbox_experimental_participant"
+    assert carrier["query_context"]["filter_bucket"] == "sandbox"
+    assert carrier["query_context"]["score_behavior"] == (
+        "never_compare_with_ordinary_insurers"
+    )
