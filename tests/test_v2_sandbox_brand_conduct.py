@@ -2,9 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 import api.v2.build_sandbox_brand_conduct_evidence as sandbox_conduct
+import pytest
 from api.v2.consumer_gov_identity import load_provider_resolution_registry
 
 
