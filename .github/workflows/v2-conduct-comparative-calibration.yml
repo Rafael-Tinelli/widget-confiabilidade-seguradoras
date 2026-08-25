@@ -1,0 +1,238 @@
+name: V2 Conduct Comparative Calibration
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths:
+      - "api/v2/build_conduct_comparative_calibration.py"
+      - "api/v2/conduct_comparative.py"
+      - "api/sources/susep_conduct_exposure.py"
+      - "tests/test_v2_conduct_comparative.py"
+      - "tests/test_v2_conduct_comparative_calibration.py"
+      - "tests/test_susep_conduct_exposure.py"
+      - ".github/workflows/v2-conduct-comparative-calibration.yml"
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: v2-conduct-comparative-calibration-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  conduct-calibration:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SES_CACHE_DIR: "data/raw/ses"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install -r requirements-dev.txt
+
+      - name: Restore validated SES source cache
+        uses: actions/cache/restore@v4
+        with:
+          path: data/raw/ses
+          key: v2-conduct-calibration-ses-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: |
+            ses-source-${{ runner.os }}-
+
+      - name: Restore latest successful conduct evidence artifact
+        run: |
+          set -euo pipefail
+          branch="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
+          run_id="$(gh run list \
+            --repo "$GITHUB_REPOSITORY" \
+            --workflow "V2 Consumer.gov Conduct Evidence" \
+            --branch "$branch" \
+            --status success \
+            --limit 30 \
+            --json databaseId \
+            --jq '.[0].databaseId')"
+          if [[ -z "$run_id" || "$run_id" == "null" ]]; then
+            echo "No successful upstream Consumer.gov conduct artifact found." >&2
+            exit 1
+          fi
+          rm -rf "$RUNNER_TEMP/conduct-upstream"
+          mkdir -p "$RUNNER_TEMP/conduct-upstream"
+          gh run download "$run_id" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name "v2-consumer-gov-conduct-$run_id" \
+            --dir "$RUNNER_TEMP/conduct-upstream"
+          source_file="$(find "$RUNNER_TEMP/conduct-upstream" -type f -name consumer_gov_conduct_evidence.json | head -n 1)"
+          if [[ -z "$source_file" ]]; then
+            echo "Upstream artifact does not contain consumer_gov_conduct_evidence.json" >&2
+            exit 1
+          fi
+          mkdir -p data/derived/v2
+          cp "$source_file" data/derived/v2/consumer_gov_conduct_evidence.json
+          echo "Restored conduct evidence from run $run_id"
+
+      - name: Verify cached SES source
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import zipfile
+          from pathlib import Path
+
+          path = Path("data/raw/ses/BaseCompleta.zip")
+          if not path.exists() or path.stat().st_size < 100_000_000:
+              raise SystemExit("validated SES BaseCompleta.zip cache is required")
+          if not zipfile.is_zipfile(path):
+              raise SystemExit("cached SES BaseCompleta.zip is not a valid ZIP")
+          print(f"SES cache OK: {path.stat().st_size} bytes")
+          PY
+
+      - name: Lint conduct calibration modules
+        run: |
+          set -euo pipefail
+          ruff check \
+            api/v2/build_conduct_comparative_calibration.py \
+            api/v2/conduct_comparative.py \
+            api/sources/susep_conduct_exposure.py \
+            tests/test_v2_conduct_comparative.py \
+            tests/test_v2_conduct_comparative_calibration.py \
+            tests/test_susep_conduct_exposure.py
+
+      - name: Run conduct calibration tests
+        run: |
+          set -euo pipefail
+          python -m pytest -q \
+            tests/test_v2_conduct_comparative.py \
+            tests/test_v2_conduct_comparative_calibration.py \
+            tests/test_susep_conduct_exposure.py
+
+      - name: Build real conduct comparative calibration
+        run: |
+          set -euo pipefail
+          python -m api.v2.build_conduct_comparative_calibration
+
+      - name: Validate calibration boundaries
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          path = Path("data/derived/v2/conduct_comparative_calibration.json")
+          payload = json.loads(path.read_text(encoding="utf-8"))
+
+          if payload.get("artifact") != "v2_conduct_comparative_calibration":
+              raise SystemExit("unexpected calibration artifact")
+          if payload.get("status") != "experimental":
+              raise SystemExit("conduct calibration must remain experimental")
+          if payload.get("scoring") != "forbidden_in_this_artifact":
+              raise SystemExit("conduct calibration must forbid scoring")
+          if payload.get("ranking") != "forbidden_in_this_artifact":
+              raise SystemExit("conduct calibration must forbid ranking")
+
+          denominator = payload["candidate_denominator"]
+          if denominator.get("id") != (
+              "insurance_premium_direct_plus_private_pension_contributions"
+          ):
+              raise SystemExit("unexpected candidate denominator")
+          if denominator.get("selected_for_scoring") is not False:
+              raise SystemExit("candidate denominator must not be selected for scoring")
+          pension_semantics = denominator["semantics"]["private_pension_contributions"]
+          for product in ("PGBL", "VGBL", "PrevTrad"):
+              if product not in pension_semantics:
+                  raise SystemExit(f"private-pension semantics omit {product}")
+
+          months = payload["source"]["months"]
+          if len(months) != 12:
+              raise SystemExit(f"expected 12 comparison months, got {len(months)}")
+          if payload["source"].get("population_policy") != (
+              "complaints_and_revenue_same_entities_only"
+          ):
+              raise SystemExit("comparison population is not aligned")
+
+          entities = payload["entities"]
+          baseline = payload["market_baseline"]
+          comparable = [
+              entity for entity in entities
+              if entity["comparability"]["pressure_eligible"]
+          ]
+          excluded = [
+              entity for entity in entities
+              if not entity["comparability"]["pressure_eligible"]
+          ]
+          if len(comparable) != int(baseline["comparable_entities"]):
+              raise SystemExit("comparable entity count does not reconcile")
+          if len(excluded) != int(baseline["excluded_entities"]):
+              raise SystemExit("excluded entity count does not reconcile")
+
+          market_complaints = sum(int(entity["complaints_12m"]) for entity in comparable)
+          market_revenue = sum(
+              float(entity["revenue_components_12m"]["combined_revenue_candidate"])
+              for entity in comparable
+          )
+          if market_complaints != int(baseline["market_complaints"]):
+              raise SystemExit("market complaint baseline does not reconcile")
+          if abs(market_revenue - float(baseline["market_combined_revenue_candidate"])) > 0.01:
+              raise SystemExit("market revenue baseline does not reconcile")
+
+          for entity in comparable:
+              if entity["pressure"]["state"] != "available":
+                  raise SystemExit(f"comparable entity lacks pressure: {entity['entity_id']}")
+              if entity["pressure"]["pressure_ratio"] is None:
+                  raise SystemExit(f"comparable entity lacks pressure ratio: {entity['entity_id']}")
+          for entity in excluded:
+              if entity["pressure"]["pressure_ratio"] is not None:
+                  raise SystemExit(f"excluded entity leaked pressure: {entity['entity_id']}")
+
+          forbidden = {
+              "overall_score",
+              "ranking_position",
+              "ranking_eligible",
+              "assessment_eligible",
+          }
+
+          def walk(value):
+              if isinstance(value, dict):
+                  overlap = forbidden & set(value)
+                  if overlap:
+                      raise SystemExit(f"forbidden decision fields: {sorted(overlap)}")
+                  for child in value.values():
+                      walk(child)
+              elif isinstance(value, list):
+                  for child in value:
+                      walk(child)
+
+          walk(payload)
+          print(
+              json.dumps(
+                  {
+                      "version": payload["version"],
+                      "months": months,
+                      "market_baseline": baseline,
+                      "diagnostics": payload["diagnostics"],
+                  },
+                  ensure_ascii=False,
+                  indent=2,
+              )
+          )
+          PY
+
+      - name: Upload conduct comparative calibration
+        uses: actions/upload-artifact@v4
+        with:
+          name: v2-conduct-comparative-calibration-${{ github.run_id }}
+          retention-days: 14
+          path: data/derived/v2/conduct_comparative_calibration.json
