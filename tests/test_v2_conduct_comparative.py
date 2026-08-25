@@ -4,6 +4,7 @@ import pytest
 
 from api.v2.conduct_comparative import (
     branch_mix_distance,
+    comparable_market_totals,
     expected_complaints,
     exposure_comparability_state,
     persistence_diagnostics,
@@ -70,3 +71,45 @@ def test_missing_exposure_is_distinct_from_zero_exposure() -> None:
     state = exposure_comparability_state(10, None)
     assert state["state"] == "exposure_unavailable"
     assert state["pressure_eligible"] is False
+
+
+def test_market_totals_exclude_complaints_when_matching_exposure_is_unavailable() -> None:
+    market = comparable_market_totals(
+        [
+            {"entity": "small", "complaints": 10, "exposure": 100},
+            {"entity": "large", "complaints": 40, "exposure": 400},
+            {"entity": "mismatch", "complaints": 1367, "exposure": 0},
+        ]
+    )
+    assert market["state"] == "available"
+    assert market["comparable_entities"] == 2
+    assert market["market_complaints"] == pytest.approx(50.0)
+    assert market["market_exposure"] == pytest.approx(500.0)
+    assert market["excluded_by_state"] == {
+        "complaints_without_comparable_exposure": 1
+    }
+    assert pressure_ratio(
+        10,
+        100,
+        market["market_complaints"],
+        market["market_exposure"],
+    ) == pytest.approx(1.0)
+    assert pressure_ratio(
+        40,
+        400,
+        market["market_complaints"],
+        market["market_exposure"],
+    ) == pytest.approx(1.0)
+
+
+def test_market_totals_exclude_zero_zero_entities_without_penalty() -> None:
+    market = comparable_market_totals(
+        [
+            {"complaints": 5, "exposure": 50},
+            {"complaints": 0, "exposure": 0},
+        ]
+    )
+    assert market["comparable_entities"] == 1
+    assert market["excluded_by_state"] == {"no_comparable_exposure": 1}
+    assert market["market_complaints"] == pytest.approx(5.0)
+    assert market["market_exposure"] == pytest.approx(50.0)
