@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import math
+from collections import Counter
 from statistics import median
 from typing import Any
 
-COMPARATIVE_VERSION = "2.0-draft-conduct-comparative-2"
+COMPARATIVE_VERSION = "2.0-draft-conduct-comparative-3"
 
 
 def exposure_comparability_state(
@@ -46,6 +47,60 @@ def exposure_comparability_state(
         "state": "comparable",
         "pressure_eligible": True,
         "reason_code": None,
+    }
+
+
+def comparable_market_totals(
+    observations: list[dict[str, Any]],
+    *,
+    complaint_key: str = "complaints",
+    exposure_key: str = "exposure",
+) -> dict[str, Any]:
+    """Build market totals from one aligned comparison population only.
+
+    An entity excluded for missing/non-positive exposure contributes neither
+    complaints nor exposure to the market baseline. This prevents numerator
+    evidence without a matching denominator from making every other insurer
+    appear artificially better.
+    """
+    complaints_total = 0.0
+    exposure_total = 0.0
+    comparable_entities = 0
+    excluded: Counter[str] = Counter()
+
+    for observation in observations:
+        raw_complaints = observation.get(complaint_key, 0.0)
+        raw_exposure = observation.get(exposure_key)
+        try:
+            complaints = float(raw_complaints)
+        except (TypeError, ValueError):
+            excluded["invalid_complaint_count"] += 1
+            continue
+        try:
+            exposure = None if raw_exposure is None else float(raw_exposure)
+        except (TypeError, ValueError):
+            exposure = None
+
+        state = exposure_comparability_state(complaints, exposure)
+        if not state["pressure_eligible"]:
+            excluded[str(state["state"])] += 1
+            continue
+
+        complaints_total += complaints
+        assert exposure is not None
+        exposure_total += exposure
+        comparable_entities += 1
+
+    return {
+        "state": "available" if comparable_entities and exposure_total > 0 else "unavailable",
+        "comparable_entities": comparable_entities,
+        "market_complaints": float(complaints_total),
+        "market_exposure": float(exposure_total),
+        "excluded_entities": int(sum(excluded.values())),
+        "excluded_by_state": dict(sorted(excluded.items())),
+        "population_policy": "complaints_and_exposure_same_entities_only",
+        "scoring": "forbidden_in_diagnostic",
+        "version": COMPARATIVE_VERSION,
     }
 
 
