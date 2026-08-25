@@ -273,6 +273,24 @@
           }
         }
       ]
+    },
+    {
+      "brand_id": "brand:loovi",
+      "name": "Loovi",
+      "aliases": ["Loovi Seguros", "Loovi Technology"],
+      "relationships": [
+        {
+          "relationship_type": "risk_carrier",
+          "target_cnpj": "47006254000180",
+          "status": "current",
+          "scope": "seguro automotivo comercializado pela Loovi e garantido pela LTI Seguros S.A.",
+          "evidence": {
+            "authority": "Loovi",
+            "url": "https://www.loovi.com.br/faq",
+            "fact": "A Loovi declara ser representante da LTI Seguros S.A. e comercializar seguro automotivo por meio da seguradora Sandbox."
+          }
+        }
+      ]
     }
   ]
 }
