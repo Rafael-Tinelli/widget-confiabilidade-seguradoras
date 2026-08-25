@@ -14,8 +14,8 @@ from api.sources.susep_conduct_exposure import (
     load_susep_conduct_exposure,
 )
 from api.v2.conduct_comparative import (
-    exposure_comparability_state,
     expected_complaints,
+    exposure_comparability_state,
     pressure_ratio,
 )
 
