@@ -1,0 +1,242 @@
+name: V2 Conduct Coverage Reconciliation
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths:
+      - "api/sources/susep_insurance_exposure.py"
+      - "api/v2/build_conduct_coverage_reconciliation.py"
+      - "data/reference/v2/conduct_subject_relationships.json"
+      - "tests/test_susep_insurance_exposure.py"
+      - "tests/test_v2_conduct_coverage_reconciliation.py"
+      - ".github/workflows/v2-conduct-coverage-reconciliation.yml"
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: v2-conduct-coverage-reconciliation-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  conduct-coverage-reconciliation:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SES_CACHE_DIR: "data/raw/ses"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install -r requirements-dev.txt
+
+      - name: Restore validated SES source cache
+        uses: actions/cache/restore@v4
+        with:
+          path: data/raw/ses
+          key: v2-conduct-reconciliation-ses-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: |
+            ses-source-${{ runner.os }}-
+
+      - name: Restore latest validated eligibility artifact
+        run: |
+          set -euo pipefail
+          branch="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
+          run_id="$(gh run list \
+            --repo "$GITHUB_REPOSITORY" \
+            --workflow "V2 Eligibility Validation" \
+            --branch "$branch" \
+            --status success \
+            --limit 30 \
+            --json databaseId \
+            --jq '.[0].databaseId')"
+          if [[ -z "$run_id" || "$run_id" == "null" ]]; then
+            echo "No successful eligibility artifact found." >&2
+            exit 1
+          fi
+          rm -rf "$RUNNER_TEMP/eligibility-upstream"
+          mkdir -p "$RUNNER_TEMP/eligibility-upstream"
+          gh run download "$run_id" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name "v2-eligibility-$run_id" \
+            --dir "$RUNNER_TEMP/eligibility-upstream"
+          source_file="$(find "$RUNNER_TEMP/eligibility-upstream" -type f -name entity_eligibility_inventory.json | head -n 1)"
+          if [[ -z "$source_file" ]]; then
+            echo "Eligibility artifact does not contain entity_eligibility_inventory.json" >&2
+            exit 1
+          fi
+          mkdir -p data/derived/v2
+          cp "$source_file" data/derived/v2/entity_eligibility_inventory.json
+          echo "Restored eligibility from run $run_id"
+
+      - name: Restore latest successful Consumer.gov Conduct evidence
+        run: |
+          set -euo pipefail
+          branch="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
+          run_id="$(gh run list \
+            --repo "$GITHUB_REPOSITORY" \
+            --workflow "V2 Consumer.gov Conduct Evidence" \
+            --branch "$branch" \
+            --status success \
+            --limit 30 \
+            --json databaseId \
+            --jq '.[0].databaseId')"
+          if [[ -z "$run_id" || "$run_id" == "null" ]]; then
+            echo "No successful Consumer.gov Conduct artifact found." >&2
+            exit 1
+          fi
+          rm -rf "$RUNNER_TEMP/conduct-upstream"
+          mkdir -p "$RUNNER_TEMP/conduct-upstream"
+          gh run download "$run_id" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name "v2-consumer-gov-conduct-$run_id" \
+            --dir "$RUNNER_TEMP/conduct-upstream"
+          source_file="$(find "$RUNNER_TEMP/conduct-upstream" -type f -name consumer_gov_conduct_evidence.json | head -n 1)"
+          if [[ -z "$source_file" ]]; then
+            echo "Conduct artifact does not contain consumer_gov_conduct_evidence.json" >&2
+            exit 1
+          fi
+          mkdir -p data/derived/v2
+          cp "$source_file" data/derived/v2/consumer_gov_conduct_evidence.json
+          echo "Restored Conduct evidence from run $run_id"
+
+      - name: Verify SES cache
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import zipfile
+          from pathlib import Path
+          path = Path("data/raw/ses/BaseCompleta.zip")
+          if not path.exists() or path.stat().st_size < 100_000_000:
+              raise SystemExit("validated SES BaseCompleta.zip cache is required")
+          if not zipfile.is_zipfile(path):
+              raise SystemExit("cached SES BaseCompleta.zip is not a valid ZIP")
+          print(f"SES cache OK: {path.stat().st_size} bytes")
+          PY
+
+      - name: Lint reconciliation modules
+        run: |
+          set -euo pipefail
+          ruff check \
+            api/sources/susep_insurance_exposure.py \
+            api/v2/build_conduct_coverage_reconciliation.py \
+            tests/test_susep_insurance_exposure.py \
+            tests/test_v2_conduct_coverage_reconciliation.py
+
+      - name: Run reconciliation tests
+        run: |
+          set -euo pipefail
+          python -m pytest -q \
+            tests/test_susep_insurance_exposure.py \
+            tests/test_v2_conduct_coverage_reconciliation.py
+
+      - name: Build real Conduct coverage reconciliation
+        run: |
+          set -euo pipefail
+          python -m api.v2.build_conduct_coverage_reconciliation
+
+      - name: Validate audit boundaries
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          audit = json.loads(
+              Path("data/derived/v2/conduct_coverage_reconciliation.json").read_text(
+                  encoding="utf-8"
+              )
+          )
+          eligibility = json.loads(
+              Path("data/derived/v2/entity_eligibility_inventory.json").read_text(
+                  encoding="utf-8"
+              )
+          )
+          expected = sum(
+              bool((entity.get("eligibility") or {}).get("regulatory_universe_eligible"))
+              for entity in eligibility.get("entities") or []
+          )
+          entities = audit.get("entities") or []
+          if len(entities) != expected:
+              raise SystemExit(f"audit lost eligible entities: {len(entities)} != {expected}")
+          if audit.get("scoring") != "forbidden_in_this_artifact":
+              raise SystemExit("reconciliation audit must forbid scoring")
+          if audit.get("ranking") != "forbidden_in_this_artifact":
+              raise SystemExit("reconciliation audit must forbid ranking")
+          if audit["source"].get("insurance_exposure_component_file") != "Ses_seguros.csv":
+              raise SystemExit("insurance exposure must come only from Ses_seguros.csv")
+          if set(audit["source"].get("noninsurance_amount_files_not_used") or []) != {
+              "Ses_Contrib_Benef.csv",
+              "Ses_Dados_Cap.csv",
+          }:
+              raise SystemExit("non-insurance source exclusion contract changed")
+
+          by_cnpj = {entity.get("cnpj"): entity for entity in entities}
+          expected_special = {
+              "24856160000103": "consumer_subject_single_carrier_exposure_not_brand_specific",
+              "34020354000110": "shared_exposure_with_external_consumer_subject",
+              "96348677000194": "portfolio_transfer_requires_temporal_reconciliation",
+              "17197385000121": "portfolio_transfer_counterparty_requires_temporal_reconciliation",
+              "33055146000193": "multi_carrier_subject_requires_product_split",
+              "09248608000104": "runoff_pressure_not_applicable",
+          }
+          for cnpj, state in expected_special.items():
+              entity = by_cnpj.get(cnpj)
+              if not entity:
+                  raise SystemExit(f"expected reconciliation entity missing: {cnpj}")
+              actual = entity["pressure_comparability"]["state"]
+              if actual != state:
+                  raise SystemExit(f"unexpected state for {cnpj}: {actual} != {state}")
+              if entity["pressure_comparability"]["pressure_eligible_candidate"]:
+                  raise SystemExit(f"special reconciliation leaked pressure eligibility: {cnpj}")
+
+          def walk(value):
+              if isinstance(value, dict):
+                  forbidden = {
+                      "overall_score",
+                      "ranking_position",
+                      "pressure_ratio",
+                      "assessment_eligible",
+                      "ranking_eligible",
+                  }
+                  overlap = forbidden & set(value)
+                  if overlap:
+                      raise SystemExit(f"forbidden decision fields in audit: {sorted(overlap)}")
+                  for child in value.values():
+                      walk(child)
+              elif isinstance(value, list):
+                  for child in value:
+                      walk(child)
+
+          walk(audit)
+          print(json.dumps(audit["summary"], ensure_ascii=False, indent=2))
+          print(
+              json.dumps(
+                  audit["pressure_unavailable_by_complaints_desc"][:20],
+                  ensure_ascii=False,
+                  indent=2,
+              )
+          )
+          PY
+
+      - name: Upload Conduct coverage reconciliation
+        uses: actions/upload-artifact@v4
+        with:
+          name: v2-conduct-coverage-reconciliation-${{ github.run_id }}
+          retention-days: 14
+          path: data/derived/v2/conduct_coverage_reconciliation.json
