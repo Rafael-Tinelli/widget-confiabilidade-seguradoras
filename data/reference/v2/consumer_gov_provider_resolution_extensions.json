@@ -1,0 +1,45 @@
+{
+  "schema_version": "1.0",
+  "note": "Source-backed guardrails for generic consumer-facing brands and channels that must not be resolved to an insurer by core-name similarity alone. These entries are additive to consumer_gov_provider_resolutions.json and never transfer complaints to a risk carrier.",
+  "resolutions": [
+    {
+      "provider_name": "Sicoob",
+      "resolution_state": "outside_157",
+      "resolution_kind": "cooperative_financial_system_brand",
+      "reason_code": "generic_sicoob_brand_not_specific_insurer",
+      "evidence": [
+        {
+          "authority": "Sicoob",
+          "url": "https://www.sicoob.com.br/web/sicoobnosso/sistema-sicoob",
+          "fact": "O Sicoob se identifica como Sistema de Cooperativas Financeiras do Brasil; o rótulo genérico Sicoob não identifica a pessoa jurídica Sicoob Seguradora de Vida e Previdência S.A."
+        }
+      ]
+    },
+    {
+      "provider_name": "Crefisa",
+      "resolution_state": "outside_157",
+      "resolution_kind": "financial_institution_brand",
+      "reason_code": "generic_crefisa_brand_not_specific_insurer",
+      "evidence": [
+        {
+          "authority": "Crefisa",
+          "url": "https://www.crefisa.com.br/canais-de-atendimento-oficiais/",
+          "fact": "A marca Crefisa identifica Crefisa S.A. Crédito Financiamento e Investimentos, CNPJ 60.779.196/0001-96, e Banco Crefisa S.A., CNPJ 61.033.106/0001-86; o rótulo genérico Crefisa não identifica Crefisa Seguros S.A."
+        }
+      ]
+    },
+    {
+      "provider_name": "Loovi",
+      "resolution_state": "outside_157",
+      "resolution_kind": "insurance_representative_brand",
+      "reason_code": "representative_brand_not_risk_carrier_do_not_transfer_complaints",
+      "evidence": [
+        {
+          "authority": "Loovi",
+          "url": "https://www.loovi.com.br/faq",
+          "fact": "A Loovi se identifica como representante da LTI Seguros S.A.; reclamações registradas diretamente sob o rótulo Loovi não devem ser transferidas automaticamente para a LTI."
+        }
+      ]
+    }
+  ]
+}
