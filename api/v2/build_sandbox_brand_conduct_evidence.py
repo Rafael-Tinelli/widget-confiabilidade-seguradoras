@@ -66,11 +66,11 @@ def _load_brand_registry(path: Path = BRAND_REGISTRY_PATH) -> dict[str, Any]:
     payload = json.loads(path.read_text(encoding="utf-8"))
     brands = payload.get("brands") or []
     if not isinstance(brands, list):
-        raise RuntimeError("sandbox brand registry brands must be a list")
+        raise TypeError("sandbox brand registry brands must be a list")
     seen: set[str] = set()
     for brand in brands:
         if not isinstance(brand, dict):
-            raise RuntimeError("sandbox brand registry row must be an object")
+            raise TypeError("sandbox brand registry row must be an object")
         brand_id = str(brand.get("brand_id") or "").strip()
         carrier = normalize_cnpj_v2(brand.get("risk_carrier_cnpj"))
         if not brand_id or brand_id in seen:
@@ -89,13 +89,17 @@ def build_sandbox_brand_conduct_evidence(
     *,
     brand_registry: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    months = sorted(str(month) for month in (identity.get("source") or {}).get("months") or [])
+    months = sorted(
+        str(month) for month in (identity.get("source") or {}).get("months") or []
+    )
     if len(months) != 12:
         raise RuntimeError(f"expected 12 Consumer.gov months, got {len(months)}")
 
     sandbox_by_id = _sandbox_entities(eligibility)
     sandbox_ids = set(sandbox_by_id)
-    full_index = build_full_universe_provider_index(list(eligibility.get("entities") or []))
+    full_index = build_full_universe_provider_index(
+        list(eligibility.get("entities") or [])
+    )
 
     stats_by_entity: dict[str, dict[str, dict[str, Any]]] = {
         entity_id: {month: {} for month in months} for entity_id in sandbox_ids
@@ -112,11 +116,21 @@ def build_sandbox_brand_conduct_evidence(
             provider = _provider_name(entry, str(raw_key))
             if not provider:
                 continue
-            statistics = entry.get("statistics") if isinstance(entry.get("statistics"), dict) else {}
-            complaints = int(statistics.get("complaintsCount") or statistics.get("total_claims") or 0)
+            statistics = (
+                entry.get("statistics")
+                if isinstance(entry.get("statistics"), dict)
+                else {}
+            )
+            complaints = int(
+                statistics.get("complaintsCount")
+                or statistics.get("total_claims")
+                or 0
+            )
             if complaints <= 0:
                 continue
-            entity_id = _resolve_sandbox_provider(provider, entry, full_index, sandbox_ids)
+            entity_id = _resolve_sandbox_provider(
+                provider, entry, full_index, sandbox_ids
+            )
             if entity_id is None:
                 continue
             added = add_entry_statistics(stats_by_entity[entity_id][month], entry)
@@ -175,28 +189,34 @@ def build_sandbox_brand_conduct_evidence(
         carrier = carrier_by_cnpj.get(carrier_cnpj or "")
         if carrier is None:
             raise RuntimeError(
-                f"sandbox brand carrier not found in classified Sandbox universe: {carrier_cnpj}"
+                "sandbox brand carrier not found in classified Sandbox universe: "
+                f"{carrier_cnpj}"
             )
         brands_out.append(
             {
                 "brand_id": raw_brand["brand_id"],
                 "name": raw_brand.get("name"),
                 "aliases": list(raw_brand.get("aliases") or []),
-                "representative_cnpj": normalize_cnpj_v2(raw_brand.get("representative_cnpj")),
+                "representative_cnpj": normalize_cnpj_v2(
+                    raw_brand.get("representative_cnpj")
+                ),
                 "risk_carrier_entity_id": carrier["entity_id"],
                 "risk_carrier_cnpj": carrier_cnpj,
-                "risk_carrier_name": raw_brand.get("risk_carrier_name") or carrier.get("legal_name"),
+                "risk_carrier_name": raw_brand.get("risk_carrier_name")
+                or carrier.get("legal_name"),
                 "regulatory_scope": "sandbox",
                 "product_scope": raw_brand.get("product_scope"),
-                "conduct_scope": "carrier_level_context_for_verified_brand_relationship",
+                "conduct_scope": (
+                    "carrier_level_context_for_verified_brand_relationship"
+                ),
                 "conduct_context_policy": raw_brand.get("conduct_context_policy"),
                 "ordinary_ranking_effect": "none",
                 "ordinary_market_baseline_effect": "none",
                 "attribution_note": (
-                    "Consumer.gov statistics shown here are registered against the verified "
-                    "Sandbox risk carrier. They are contextual evidence for the brand relationship "
-                    "and must not be described as brand-exclusive complaints unless the source "
-                    "provider label itself identifies the brand."
+                    "Consumer.gov statistics shown here are registered against the "
+                    "verified Sandbox risk carrier. They are contextual evidence for "
+                    "the brand relationship and must not be described as brand-exclusive "
+                    "complaints unless the source provider label itself identifies the brand."
                 ),
                 "carrier_conduct_summary": {
                     "complaints": carrier["totals"]["complaints"],
@@ -207,7 +227,9 @@ def build_sandbox_brand_conduct_evidence(
                     "satisfaction_count": carrier["totals"]["satisfaction_count"],
                     "average_satisfaction": carrier["totals"]["average_satisfaction"],
                     "film": carrier["film"],
-                    "provider_labels": carrier["consumer_gov_provider_labels_observed"],
+                    "provider_labels": carrier[
+                        "consumer_gov_provider_labels_observed"
+                    ],
                 },
                 "evidence": list(raw_brand.get("evidence") or []),
             }
@@ -226,7 +248,8 @@ def build_sandbox_brand_conduct_evidence(
             "dataset": "reclamacoes-do-consumidor-gov-br",
             "months": months,
             "complaint_semantics": (
-                "Observed consumer friction/allegation in Consumer.gov; not an adjudicated finding."
+                "Observed consumer friction/allegation in Consumer.gov; "
+                "not an adjudicated finding."
             ),
         },
         "policy": {
@@ -253,9 +276,14 @@ def main() -> None:
     payload = build_sandbox_brand_conduct_evidence(eligibility, identity)
     OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
     temp = OUTPUT_PATH.with_suffix(OUTPUT_PATH.suffix + ".tmp")
-    temp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    temp.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
     temp.replace(OUTPUT_PATH)
-    loovi = next((brand for brand in payload["brands"] if brand["brand_id"] == "brand:loovi"), None)
+    loovi = next(
+        (brand for brand in payload["brands"] if brand["brand_id"] == "brand:loovi"),
+        None,
+    )
     print(
         json.dumps(
             {
