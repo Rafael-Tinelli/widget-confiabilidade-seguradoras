@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from api.v2 import build_sandbox_brand_conduct_evidence as sandbox_conduct
+import api.v2.build_sandbox_brand_conduct_evidence as sandbox_conduct
 from api.v2.consumer_gov_identity import load_provider_resolution_registry
 
 
