@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from api.v2.build_sandbox_brand_conduct_evidence import (
     build_sandbox_brand_conduct_evidence,
 )
@@ -76,10 +74,7 @@ def _entry(complaints: int) -> dict:
     }
 
 
-def _patch_monthly_loader(
-    monkeypatch: pytest.MonkeyPatch,
-    by_month: dict[str, dict],
-) -> None:
+def _patch_monthly_loader(monkeypatch, by_month: dict[str, dict]) -> None:
     def fake_load(month: str):
         return {}, by_month[month], Path(f"{month}.json.gz")
 
@@ -90,7 +85,7 @@ def _patch_monthly_loader(
 
 
 def test_loovi_gets_lti_carrier_context_without_entering_ordinary_ranking(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch,
 ) -> None:
     by_month = {
         month: {"lti": _entry(100 if index == 0 else 0)}
@@ -113,9 +108,7 @@ def test_loovi_gets_lti_carrier_context_without_entering_ordinary_ranking(
     assert "not brand-exclusive" in brand["attribution_note"]
 
 
-def test_generic_loovi_provider_label_is_not_transferred_to_lti(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_generic_loovi_provider_label_is_not_transferred_to_lti(monkeypatch) -> None:
     by_month = {
         month: {
             "loovi": {
