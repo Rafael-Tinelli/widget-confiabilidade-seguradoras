@@ -104,7 +104,9 @@ def test_loovi_gets_lti_carrier_context_without_entering_ordinary_ranking(
     assert brand["risk_carrier_entity_id"] == "sandbox:lti"
     assert brand["carrier_conduct_summary"]["complaints"] == 100
     assert brand["ordinary_ranking_effect"] == "none"
-    assert "not brand-exclusive" in brand["attribution_note"]
+    note = brand["attribution_note"]
+    assert "registered against the verified Sandbox risk carrier" in note
+    assert "must not be described as brand-exclusive complaints" in note
 
 
 def test_generic_loovi_provider_label_is_not_transferred_to_lti(monkeypatch) -> None:
