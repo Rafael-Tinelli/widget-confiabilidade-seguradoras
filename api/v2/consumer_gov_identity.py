@@ -11,6 +11,9 @@ from api.utils.name_cleaner import normalize_name_key
 DEFAULT_PROVIDER_RESOLUTIONS_PATH = Path(
     "data/reference/v2/consumer_gov_provider_resolutions.json"
 )
+DEFAULT_PROVIDER_RESOLUTION_EXTENSIONS_PATH = Path(
+    "data/reference/v2/consumer_gov_provider_resolution_extensions.json"
+)
 
 ALLOWED_STATES = {"matched_current_insurer", "outside_157", "ambiguous"}
 
@@ -29,64 +32,80 @@ class ProviderResolution:
     evidence: tuple[dict[str, Any], ...]
 
 
-def load_provider_resolution_registry(
-    path: Path = DEFAULT_PROVIDER_RESOLUTIONS_PATH,
-) -> dict[str, ProviderResolution]:
+def _resolution_rows(path: Path) -> list[dict[str, Any]]:
     payload = json.loads(path.read_text(encoding="utf-8"))
     rows = payload.get("resolutions") or []
     if not isinstance(rows, list):
-        raise ConsumerGovIdentityError("resolutions must be a list")
+        raise ConsumerGovIdentityError(f"resolutions must be a list: {path}")
+    if not all(isinstance(row, dict) for row in rows):
+        raise ConsumerGovIdentityError(f"resolution row must be an object: {path}")
+    return rows
+
+
+def load_provider_resolution_registry(
+    path: Path = DEFAULT_PROVIDER_RESOLUTIONS_PATH,
+    *,
+    extension_path: Path | None = None,
+) -> dict[str, ProviderResolution]:
+    paths = [path]
+    if extension_path is not None:
+        paths.append(extension_path)
+    elif path == DEFAULT_PROVIDER_RESOLUTIONS_PATH and (
+        DEFAULT_PROVIDER_RESOLUTION_EXTENSIONS_PATH.exists()
+    ):
+        paths.append(DEFAULT_PROVIDER_RESOLUTION_EXTENSIONS_PATH)
 
     registry: dict[str, ProviderResolution] = {}
-    for raw in rows:
-        if not isinstance(raw, dict):
-            raise ConsumerGovIdentityError("resolution row must be an object")
-        provider_name = str(raw.get("provider_name") or "").strip()
-        key = normalize_name_key(provider_name)
-        state = str(raw.get("resolution_state") or "").strip()
-        kind = str(raw.get("resolution_kind") or "").strip()
-        if not provider_name or not key:
-            raise ConsumerGovIdentityError("provider_name is required")
-        if key in registry:
-            raise ConsumerGovIdentityError(f"duplicate provider resolution: {provider_name}")
-        if state not in ALLOWED_STATES:
-            raise ConsumerGovIdentityError(
-                f"unsupported resolution_state for {provider_name}: {state}"
-            )
-        if not kind:
-            raise ConsumerGovIdentityError(
-                f"resolution_kind is required for {provider_name}"
-            )
+    for source_path in paths:
+        for raw in _resolution_rows(source_path):
+            provider_name = str(raw.get("provider_name") or "").strip()
+            key = normalize_name_key(provider_name)
+            state = str(raw.get("resolution_state") or "").strip()
+            kind = str(raw.get("resolution_kind") or "").strip()
+            if not provider_name or not key:
+                raise ConsumerGovIdentityError("provider_name is required")
+            if key in registry:
+                raise ConsumerGovIdentityError(
+                    f"duplicate provider resolution: {provider_name}"
+                )
+            if state not in ALLOWED_STATES:
+                raise ConsumerGovIdentityError(
+                    f"unsupported resolution_state for {provider_name}: {state}"
+                )
+            if not kind:
+                raise ConsumerGovIdentityError(
+                    f"resolution_kind is required for {provider_name}"
+                )
 
-        target_cnpj = normalize_cnpj_v2(raw.get("target_cnpj"))
-        if state == "matched_current_insurer" and not target_cnpj:
-            raise ConsumerGovIdentityError(
-                f"matched current insurer requires target_cnpj: {provider_name}"
-            )
-        if state != "matched_current_insurer" and target_cnpj:
-            raise ConsumerGovIdentityError(
-                f"non-matched resolution must not assign target_cnpj: {provider_name}"
-            )
+            target_cnpj = normalize_cnpj_v2(raw.get("target_cnpj"))
+            if state == "matched_current_insurer" and not target_cnpj:
+                raise ConsumerGovIdentityError(
+                    f"matched current insurer requires target_cnpj: {provider_name}"
+                )
+            if state != "matched_current_insurer" and target_cnpj:
+                raise ConsumerGovIdentityError(
+                    f"non-matched resolution must not assign target_cnpj: {provider_name}"
+                )
 
-        evidence_raw = raw.get("evidence") or []
-        if not isinstance(evidence_raw, list) or not evidence_raw:
-            raise ConsumerGovIdentityError(
-                f"source-backed evidence is required for {provider_name}"
-            )
-        evidence = tuple(item for item in evidence_raw if isinstance(item, dict))
-        if len(evidence) != len(evidence_raw):
-            raise ConsumerGovIdentityError(
-                f"invalid evidence entry for {provider_name}"
-            )
+            evidence_raw = raw.get("evidence") or []
+            if not isinstance(evidence_raw, list) or not evidence_raw:
+                raise ConsumerGovIdentityError(
+                    f"source-backed evidence is required for {provider_name}"
+                )
+            evidence = tuple(item for item in evidence_raw if isinstance(item, dict))
+            if len(evidence) != len(evidence_raw):
+                raise ConsumerGovIdentityError(
+                    f"invalid evidence entry for {provider_name}"
+                )
 
-        registry[key] = ProviderResolution(
-            provider_name=provider_name,
-            resolution_state=state,
-            resolution_kind=kind,
-            target_cnpj=target_cnpj,
-            reason_code=(str(raw.get("reason_code") or "").strip() or None),
-            evidence=evidence,
-        )
+            registry[key] = ProviderResolution(
+                provider_name=provider_name,
+                resolution_state=state,
+                resolution_kind=kind,
+                target_cnpj=target_cnpj,
+                reason_code=(str(raw.get("reason_code") or "").strip() or None),
+                evidence=evidence,
+            )
     return registry
 
 
