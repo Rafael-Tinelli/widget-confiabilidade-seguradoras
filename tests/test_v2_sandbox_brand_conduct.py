@@ -4,7 +4,9 @@ from pathlib import Path
 
 import pytest
 
-import api.v2.build_sandbox_brand_conduct_evidence as sandbox_conduct
+from api.v2.build_sandbox_brand_conduct_evidence import (
+    build_sandbox_brand_conduct_evidence,
+)
 from api.v2.consumer_gov_identity import load_provider_resolution_registry
 
 
@@ -74,6 +76,19 @@ def _entry(complaints: int) -> dict:
     }
 
 
+def _patch_monthly_loader(
+    monkeypatch: pytest.MonkeyPatch,
+    by_month: dict[str, dict],
+) -> None:
+    def fake_load(month: str):
+        return {}, by_month[month], Path(f"{month}.json.gz")
+
+    monkeypatch.setattr(
+        "api.v2.build_sandbox_brand_conduct_evidence.load_monthly_entries",
+        fake_load,
+    )
+
+
 def test_loovi_gets_lti_carrier_context_without_entering_ordinary_ranking(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -81,12 +96,8 @@ def test_loovi_gets_lti_carrier_context_without_entering_ordinary_ranking(
         month: {"lti": _entry(100 if index == 0 else 0)}
         for index, month in enumerate(MONTHS)
     }
-
-    def fake_load(month: str):
-        return {}, by_month[month], Path(f"{month}.json.gz")
-
-    monkeypatch.setattr(sandbox_conduct, "load_monthly_entries", fake_load)
-    payload = sandbox_conduct.build_sandbox_brand_conduct_evidence(
+    _patch_monthly_loader(monkeypatch, by_month)
+    payload = build_sandbox_brand_conduct_evidence(
         _eligibility(),
         _identity(),
         brand_registry=_brand_registry(),
@@ -114,12 +125,8 @@ def test_generic_loovi_provider_label_is_not_transferred_to_lti(
         }
         for month in MONTHS
     }
-
-    def fake_load(month: str):
-        return {}, by_month[month], Path(f"{month}.json.gz")
-
-    monkeypatch.setattr(sandbox_conduct, "load_monthly_entries", fake_load)
-    payload = sandbox_conduct.build_sandbox_brand_conduct_evidence(
+    _patch_monthly_loader(monkeypatch, by_month)
+    payload = build_sandbox_brand_conduct_evidence(
         _eligibility(),
         _identity(),
         brand_registry=_brand_registry(),
