@@ -5,6 +5,7 @@ import pytest
 from api.v2.conduct_comparative import (
     branch_mix_distance,
     expected_complaints,
+    exposure_comparability_state,
     persistence_diagnostics,
     pressure_ratio,
     shrunken_pressure_ratio,
@@ -47,3 +48,25 @@ def test_persistence_separates_level_from_direction() -> None:
 def test_invalid_exposure_never_generates_pressure() -> None:
     assert pressure_ratio(10, 0, 100, 1000) is None
     assert pressure_ratio(10, 100, 100, 0) is None
+
+
+def test_complaints_without_exposure_are_evidence_conflict_not_adverse_signal() -> None:
+    state = exposure_comparability_state(1367, 0)
+    assert state == {
+        "state": "complaints_without_comparable_exposure",
+        "pressure_eligible": False,
+        "reason_code": "complaint_exposure_mismatch_requires_investigation",
+    }
+    assert pressure_ratio(1367, 0, 82423, 1_000_000) is None
+
+
+def test_no_complaints_and_no_exposure_is_not_a_bad_conduct_signal() -> None:
+    state = exposure_comparability_state(0, 0)
+    assert state["state"] == "no_comparable_exposure"
+    assert state["pressure_eligible"] is False
+
+
+def test_missing_exposure_is_distinct_from_zero_exposure() -> None:
+    state = exposure_comparability_state(10, None)
+    assert state["state"] == "exposure_unavailable"
+    assert state["pressure_eligible"] is False
