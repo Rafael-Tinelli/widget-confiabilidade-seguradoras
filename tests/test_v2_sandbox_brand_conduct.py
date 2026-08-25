@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from api.v2.build_sandbox_brand_conduct_evidence import build_sandbox_brand_conduct_evidence
+from api.v2.build_sandbox_brand_conduct_evidence import (
+    build_sandbox_brand_conduct_evidence,
+)
 from api.v2.consumer_gov_identity import load_provider_resolution_registry
-
 
 MONTHS = [f"2025-{month:02d}" for month in range(7, 13)] + [
     f"2026-{month:02d}" for month in range(1, 7)
