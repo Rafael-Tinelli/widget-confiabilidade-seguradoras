@@ -2,9 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from api.v2.build_sandbox_brand_conduct_evidence import (
-    build_sandbox_brand_conduct_evidence,
-)
+from api.v2.build_sandbox_brand_conduct_evidence import build_sandbox_brand_conduct_evidence
 from api.v2.consumer_gov_identity import load_provider_resolution_registry
 
 
