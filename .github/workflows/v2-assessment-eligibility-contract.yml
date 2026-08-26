@@ -1,0 +1,227 @@
+name: V2 Assessment Eligibility Contract
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "api/v2/build_assessment_eligibility_contract.py"
+      - "tests/test_v2_assessment_eligibility_contract.py"
+      - "docs/assessment-eligibility-contract.md"
+      - ".github/workflows/v2-assessment-eligibility-contract.yml"
+      - "api/v2/eligibility.py"
+      - "api/v2/build_eligibility_inventory.py"
+      - "api/v2/build_cross_pillar_assessment_semantic_contract.py"
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: v2-assessment-eligibility-contract-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  assessment-eligibility-contract:
+    runs-on: ubuntu-24.04
+    env:
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install -r requirements-dev.txt
+
+      - name: Restore latest successful regulatory eligibility
+        run: |
+          set -euo pipefail
+          branch="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
+          run_id="$(gh run list \
+            --repo "$GITHUB_REPOSITORY" \
+            --workflow "V2 Eligibility Validation" \
+            --branch "$branch" \
+            --status success \
+            --limit 30 \
+            --json databaseId \
+            --jq '.[0].databaseId')"
+          test -n "$run_id"
+          rm -rf "$RUNNER_TEMP/regulatory"
+          mkdir -p "$RUNNER_TEMP/regulatory"
+          gh run download "$run_id" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name "v2-eligibility-$run_id" \
+            --dir "$RUNNER_TEMP/regulatory"
+          source_file="$(find "$RUNNER_TEMP/regulatory" -type f -name entity_eligibility_inventory.json | head -n 1)"
+          test -n "$source_file"
+          mkdir -p data/derived/v2
+          cp "$source_file" data/derived/v2/entity_eligibility_inventory.json
+          echo "Restored regulatory eligibility from run $run_id"
+
+      - name: Restore latest successful semantic assessment contract
+        run: |
+          set -euo pipefail
+          branch="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
+          run_id="$(gh run list \
+            --repo "$GITHUB_REPOSITORY" \
+            --workflow "V2 Cross-Pillar Assessment Semantic Contract" \
+            --branch "$branch" \
+            --status success \
+            --limit 30 \
+            --json databaseId \
+            --jq '.[0].databaseId')"
+          test -n "$run_id"
+          rm -rf "$RUNNER_TEMP/semantic"
+          mkdir -p "$RUNNER_TEMP/semantic"
+          gh run download "$run_id" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name "v2-cross-pillar-assessment-semantic-contract-$run_id" \
+            --dir "$RUNNER_TEMP/semantic"
+          source_file="$(find "$RUNNER_TEMP/semantic" -type f -name cross_pillar_assessment_semantic_contract.json | head -n 1)"
+          test -n "$source_file"
+          mkdir -p data/derived/v2
+          cp "$source_file" data/derived/v2/cross_pillar_assessment_semantic_contract.json
+          echo "Restored semantic contract from run $run_id"
+
+      - name: Lint assessment eligibility contract
+        run: |
+          set -euo pipefail
+          ruff check \
+            api/v2/build_assessment_eligibility_contract.py \
+            tests/test_v2_assessment_eligibility_contract.py
+
+      - name: Run assessment eligibility tests
+        run: |
+          set -euo pipefail
+          python -m pytest -q tests/test_v2_assessment_eligibility_contract.py
+
+      - name: Build real assessment eligibility contract
+        run: |
+          set -euo pipefail
+          python -m api.v2.build_assessment_eligibility_contract
+
+      - name: Validate assessment eligibility boundaries
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          path = Path("data/derived/v2/assessment_eligibility_contract.json")
+          payload = json.loads(path.read_text(encoding="utf-8"))
+
+          if payload.get("status") != "assessment_eligibility_contract_closed":
+              raise SystemExit("unexpected assessment eligibility status")
+          if payload.get("scoring") != "forbidden_in_this_artifact":
+              raise SystemExit("assessment eligibility contract must forbid scoring")
+          if payload.get("ranking") != "forbidden_in_this_artifact":
+              raise SystemExit("assessment eligibility contract must forbid ranking")
+
+          population = payload.get("population") or {}
+          expected = {
+              "regulatory_universe": 157,
+              "semantic_public_assessment_supported": 85,
+              "assessment_eligible": 85,
+              "assessment_not_eligible": 72,
+              "ranking_eligible": 0,
+          }
+          if population != expected:
+              raise SystemExit(
+                  f"unexpected assessment eligibility population: {population}"
+              )
+
+          gate = payload.get("gate_contract") or {}
+          if gate.get("performance_result_used_for_eligibility") is not False:
+              raise SystemExit("performance cannot decide assessment eligibility")
+          if gate.get("adverse_result_blocks_assessment") is not False:
+              raise SystemExit("adverse result cannot block assessment eligibility")
+          if gate.get("limited_financial_history_blocks_assessment") is not False:
+              raise SystemExit("limited history cannot automatically block assessment")
+          if gate.get("missingness_treated_as_neutral") is not False:
+              raise SystemExit("missingness cannot become neutral")
+          if gate.get("ranking_gate_independent") is not True:
+              raise SystemExit("ranking gate must remain independent")
+
+          diagnostics = payload.get("diagnostics") or {}
+          if diagnostics.get("eligible_public_class_counts") != {
+              "attention": 30,
+              "favorable_reading": 46,
+              "prudential_warning": 9,
+          }:
+              raise SystemExit(
+                  "eligible public-class distribution changed unexpectedly"
+              )
+
+          rows = payload.get("entities") or []
+          if len(rows) != 157:
+              raise SystemExit("assessment gate must preserve regulatory universe")
+
+          eligible = [row for row in rows if row.get("assessment_eligible")]
+          if len(eligible) != 85:
+              raise SystemExit("expected 85 assessment-eligible entities")
+          if any(row.get("ranking_eligible") for row in rows):
+              raise SystemExit("ranking eligibility must remain zero")
+          if any(
+              (row.get("semantic_assessment") or {}).get("public_class")
+              == "evidence_incomplete"
+              for row in eligible
+          ):
+              raise SystemExit("incomplete semantic assessment became eligible")
+          if any(
+              row.get("performance_used_to_decide_eligibility") is not False
+              for row in rows
+          ):
+              raise SystemExit("performance leaked into eligibility gate")
+
+          forbidden = {
+              "overall_score",
+              "financial_score",
+              "conduct_score",
+              "ranking_position",
+          }
+
+          def walk(value):
+              if isinstance(value, dict):
+                  overlap = forbidden & set(value)
+                  if overlap:
+                      raise SystemExit(
+                          f"forbidden scoring/ranking fields: {sorted(overlap)}"
+                      )
+                  for child in value.values():
+                      walk(child)
+              elif isinstance(value, list):
+                  for child in value:
+                      walk(child)
+
+          walk(payload)
+
+          print(
+              json.dumps(
+                  {
+                      "population": population,
+                      "gate_contract": gate,
+                      "diagnostics": diagnostics,
+                      "closure_decision": payload.get("closure_decision"),
+                  },
+                  ensure_ascii=False,
+                  indent=2,
+              )
+          )
+          PY
+
+      - name: Upload assessment eligibility contract
+        uses: actions/upload-artifact@v4
+        with:
+          name: v2-assessment-eligibility-contract-${{ github.run_id }}
+          path: data/derived/v2/assessment_eligibility_contract.json
+          retention-days: 14
