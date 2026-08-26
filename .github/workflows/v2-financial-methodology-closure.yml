@@ -1,0 +1,161 @@
+name: V2 Financial Methodology Closure
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "api/v2/build_financial_methodology_closure.py"
+      - "tests/test_v2_financial_methodology_closure.py"
+      - "docs/financial-methodology-closure.md"
+      - ".github/workflows/v2-financial-methodology-closure.yml"
+      - "api/v2/financial_evidence.py"
+      - "api/v2/financial_periods.py"
+      - "api/v2/liquidity_experiment.py"
+      - "api/v2/operating_experiment.py"
+      - "api/v2/operating_states.py"
+
+concurrency:
+  group: v2-financial-methodology-closure-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  financial-methodology-closure:
+    runs-on: ubuntu-24.04
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install -r requirements-dev.txt
+
+      - name: Restore latest successful Financial Evidence
+        run: |
+          set -euo pipefail
+          branch="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
+          run_id="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow "V2 Financial Evidence Validation" --branch "$branch" --status success --limit 30 --json databaseId --jq '.[0].databaseId')"
+          test -n "$run_id"
+          rm -rf "$RUNNER_TEMP/financial-upstream"
+          mkdir -p "$RUNNER_TEMP/financial-upstream"
+          gh run download "$run_id" --repo "$GITHUB_REPOSITORY" --name "v2-financial-evidence-$run_id" --dir "$RUNNER_TEMP/financial-upstream"
+          source_file="$(find "$RUNNER_TEMP/financial-upstream" -type f -name entity_financial_evidence_inventory.json | head -n 1)"
+          test -n "$source_file"
+          mkdir -p data/derived/v2
+          cp "$source_file" data/derived/v2/entity_financial_evidence_inventory.json
+          echo "Restored Financial Evidence from run $run_id"
+
+      - name: Restore latest successful Liquidity Experiment
+        run: |
+          set -euo pipefail
+          branch="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
+          run_id="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow "V2 Liquidity Experiment" --branch "$branch" --status success --limit 30 --json databaseId --jq '.[0].databaseId')"
+          test -n "$run_id"
+          rm -rf "$RUNNER_TEMP/liquidity-upstream"
+          mkdir -p "$RUNNER_TEMP/liquidity-upstream"
+          gh run download "$run_id" --repo "$GITHUB_REPOSITORY" --name "v2-liquidity-experiment-$run_id" --dir "$RUNNER_TEMP/liquidity-upstream"
+          source_file="$(find "$RUNNER_TEMP/liquidity-upstream" -type f -name liquidity_experiment.json | head -n 1)"
+          test -n "$source_file"
+          mkdir -p data/derived/v2
+          cp "$source_file" data/derived/v2/liquidity_experiment.json
+          echo "Restored Liquidity Experiment from run $run_id"
+
+      - name: Restore latest successful Operating Experiment
+        run: |
+          set -euo pipefail
+          branch="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
+          run_id="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow "V2 Operating Experiment" --branch "$branch" --status success --limit 30 --json databaseId --jq '.[0].databaseId')"
+          test -n "$run_id"
+          rm -rf "$RUNNER_TEMP/operating-upstream"
+          mkdir -p "$RUNNER_TEMP/operating-upstream"
+          gh run download "$run_id" --repo "$GITHUB_REPOSITORY" --name "v2-operating-experiment-$run_id" --dir "$RUNNER_TEMP/operating-upstream"
+          source_file="$(find "$RUNNER_TEMP/operating-upstream" -type f -name operating_experiment.json | head -n 1)"
+          test -n "$source_file"
+          mkdir -p data/derived/v2
+          cp "$source_file" data/derived/v2/operating_experiment.json
+          echo "Restored Operating Experiment from run $run_id"
+
+      - name: Lint financial closure
+        run: |
+          set -euo pipefail
+          ruff check api/v2/build_financial_methodology_closure.py tests/test_v2_financial_methodology_closure.py
+
+      - name: Run financial closure tests
+        run: |
+          set -euo pipefail
+          python -m pytest -q tests/test_v2_financial_methodology_closure.py
+
+      - name: Build real financial methodology closure
+        run: |
+          set -euo pipefail
+          python -m api.v2.build_financial_methodology_closure
+
+      - name: Validate closure boundaries
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          path = Path("data/derived/v2/financial_methodology_closure.json")
+          payload = json.loads(path.read_text(encoding="utf-8"))
+
+          if payload.get("scoring") != "forbidden_in_this_artifact":
+              raise SystemExit("Financial closure must forbid scoring")
+          if payload.get("ranking") != "forbidden_in_this_artifact":
+              raise SystemExit("Financial closure must forbid ranking")
+          if payload.get("status") != "financial_methodology_closed_for_signal_design":
+              raise SystemExit("Unexpected financial closure status")
+          if payload.get("population", {}).get("regulatory_universe") != 157:
+              raise SystemExit("Financial closure must preserve 157 insurers")
+
+          decisions = payload.get("methodology_decisions") or {}
+          if decisions.get("capital", {}).get("primary_metric") != "PLA_CMR":
+              raise SystemExit("PLA/CMR must remain the capital metric")
+          if decisions.get("liquidity", {}).get("primary_metric") != "ILT":
+              raise SystemExit("ILT must remain the primary liquidity metric")
+          if decisions.get("liquidity", {}).get("supporting_metric") != "ILC":
+              raise SystemExit("ILC must remain supporting only")
+          if decisions.get("combination", {}).get("weighted_average_selected") is not False:
+              raise SystemExit("Internal weighted average cannot be selected in this closure")
+          if decisions.get("combination", {}).get("numeric_internal_score_selected") is not False:
+              raise SystemExit("Internal financial score cannot be selected in this closure")
+          if decisions.get("profitability", {}).get("independent_component_selected") is not False:
+              raise SystemExit("ILPL cannot return as an independent component")
+
+          forbidden = {"overall_score", "financial_score", "ranking_position", "ranking_eligible"}
+          def walk(value):
+              if isinstance(value, dict):
+                  overlap = forbidden & set(value)
+                  if overlap:
+                      raise SystemExit(f"forbidden decision fields: {sorted(overlap)}")
+                  for child in value.values():
+                      walk(child)
+              elif isinstance(value, list):
+                  for child in value:
+                      walk(child)
+          walk(payload)
+
+          print(json.dumps({
+              "population": payload["population"],
+              "diagnostics": payload["diagnostics"],
+              "closure": payload["closure"],
+          }, ensure_ascii=False, indent=2))
+          PY
+
+      - name: Upload financial methodology closure
+        uses: actions/upload-artifact@v4
+        with:
+          name: v2-financial-methodology-closure-${{ github.run_id }}
+          path: data/derived/v2/financial_methodology_closure.json
+          retention-days: 14
