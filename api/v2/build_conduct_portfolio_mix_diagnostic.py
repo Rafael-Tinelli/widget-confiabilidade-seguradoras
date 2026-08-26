@@ -97,6 +97,20 @@ def _local_pressure(
     entity: dict[str, Any],
     peers: list[dict[str, Any]],
 ) -> dict[str, Any]:
+    if not peers:
+        return {
+            "state": "unavailable_no_peers_within_distance",
+            "group_entity_count": 1,
+            "peer_count": 0,
+            "group_complaints": int(entity.get("complaints_12m") or 0),
+            "group_premium_direct": _finite(
+                entity.get("premium_direct_12m") or 0.0,
+                field="premium_direct_12m",
+            ),
+            "expected_complaints": None,
+            "ratio": None,
+        }
+
     group = [entity, *peers]
     complaints = sum(int(row.get("complaints_12m") or 0) for row in group)
     premium = sum(
@@ -134,22 +148,18 @@ def build_portfolio_mix_diagnostic(
     calibration: dict[str, Any],
     credibility: dict[str, Any],
 ) -> dict[str, Any]:
-    if calibration.get("scoring") != "forbidden_in_this_artifact":
-        raise ConductPortfolioMixDiagnosticError(
-            "upstream calibration must explicitly forbid scoring"
-        )
-    if calibration.get("ranking") != "forbidden_in_this_artifact":
-        raise ConductPortfolioMixDiagnosticError(
-            "upstream calibration must explicitly forbid ranking"
-        )
-    if credibility.get("scoring") != "forbidden_in_this_artifact":
-        raise ConductPortfolioMixDiagnosticError(
-            "upstream credibility diagnostic must explicitly forbid scoring"
-        )
-    if credibility.get("ranking") != "forbidden_in_this_artifact":
-        raise ConductPortfolioMixDiagnosticError(
-            "upstream credibility diagnostic must explicitly forbid ranking"
-        )
+    for name, upstream in (
+        ("calibration", calibration),
+        ("credibility", credibility),
+    ):
+        if upstream.get("scoring") != "forbidden_in_this_artifact":
+            raise ConductPortfolioMixDiagnosticError(
+                f"upstream {name} artifact must explicitly forbid scoring"
+            )
+        if upstream.get("ranking") != "forbidden_in_this_artifact":
+            raise ConductPortfolioMixDiagnosticError(
+                f"upstream {name} artifact must explicitly forbid ranking"
+            )
 
     entities = list(calibration.get("entities") or [])
     if not entities:
@@ -159,22 +169,22 @@ def build_portfolio_mix_diagnostic(
         str(row.get("entity_id") or ""): row
         for row in credibility.get("entities") or []
     }
-    calibration_ids = {str(row.get("entity_id") or "") for row in entities}
-    if set(credibility_by_id) != calibration_ids:
+    by_id = {str(row.get("entity_id") or ""): row for row in entities}
+    if set(credibility_by_id) != set(by_id):
         raise ConductPortfolioMixDiagnosticError(
             "calibration and credibility populations are not identical"
         )
 
-    by_id = {str(row.get("entity_id") or ""): row for row in entities}
     mix_by_id: dict[str, dict[str, float]] = {}
     for entity_id, entity in by_id.items():
-        mix = {
-            str(branch): _finite(value, field="positive_branch_mix")
-            for branch, value in (
-                (entity.get("portfolio_12m") or {}).get("positive_branch_mix") or {}
-            ).items()
-            if _finite(value, field="positive_branch_mix") > 0
-        }
+        raw_mix = (
+            (entity.get("portfolio_12m") or {}).get("positive_branch_mix") or {}
+        )
+        mix: dict[str, float] = {}
+        for branch, raw_value in raw_mix.items():
+            value = _finite(raw_value, field="positive_branch_mix")
+            if value > 0:
+                mix[str(branch)] = value
         total = sum(mix.values())
         if total <= 0:
             raise ConductPortfolioMixDiagnosticError(
@@ -190,22 +200,20 @@ def build_portfolio_mix_diagnostic(
     for index, left_id in enumerate(ids):
         left = by_id[left_id]
         left_expected = _finite(
-            left.get("pressure_12m", {}).get("expected_complaints") or 0.0,
+            (left.get("pressure_12m") or {}).get("expected_complaints") or 0.0,
             field="expected_complaints",
         )
         left_log = _stabilized_log_pressure(
-            int(left.get("complaints_12m") or 0),
-            left_expected,
+            int(left.get("complaints_12m") or 0), left_expected
         )
         for right_id in ids[index + 1 :]:
             right = by_id[right_id]
             right_expected = _finite(
-                right.get("pressure_12m", {}).get("expected_complaints") or 0.0,
+                (right.get("pressure_12m") or {}).get("expected_complaints") or 0.0,
                 field="expected_complaints",
             )
             right_log = _stabilized_log_pressure(
-                int(right.get("complaints_12m") or 0),
-                right_expected,
+                int(right.get("complaints_12m") or 0), right_expected
             )
             distance = _tvd(mix_by_id[left_id], mix_by_id[right_id])
             pair_distance[(left_id, right_id)] = distance
@@ -225,12 +233,6 @@ def build_portfolio_mix_diagnostic(
                 }
             )
 
-    all_pair_distance = [float(row["distance"]) for row in pair_rows]
-    all_pair_pressure_difference = [
-        float(row["absolute_stabilized_log_pressure_difference"]) for row in pair_rows
-    ]
-    high_volume_pairs = [row for row in pair_rows if row["both_100_plus_complaints"]]
-
     rows: list[dict[str, Any]] = []
     for entity_id in ids:
         entity = by_id[entity_id]
@@ -249,23 +251,25 @@ def build_portfolio_mix_diagnostic(
                 "legal_name": by_id[other_id].get("legal_name"),
                 "distance": float(distance),
                 "complaints_12m": int(by_id[other_id].get("complaints_12m") or 0),
-                "global_pressure_ratio": by_id[other_id]
-                .get("pressure_12m", {})
-                .get("ratio"),
-                "credibility_state": credibility_by_id[other_id]
-                .get("direct_candidate", {})
-                .get("familywise_exact_interval", {})
-                .get("state"),
+                "global_pressure_ratio": (by_id[other_id].get("pressure_12m") or {}).get(
+                    "ratio"
+                ),
+                "credibility_state": (
+                    credibility_by_id[other_id]
+                    .get("direct_candidate", {})
+                    .get("familywise_exact_interval", {})
+                    .get("state")
+                ),
             }
             for other_id, distance in distances[:5]
         ]
-
-        global_ratio_raw = entity.get("pressure_12m", {}).get("ratio")
+        raw_global_ratio = (entity.get("pressure_12m") or {}).get("ratio")
         global_ratio = (
-            _finite(global_ratio_raw, field="pressure_12m.ratio")
-            if global_ratio_raw is not None
+            _finite(raw_global_ratio, field="pressure_12m.ratio")
+            if raw_global_ratio is not None
             else None
         )
+
         curve = []
         for threshold in DISTANCE_GRID:
             peer_ids = [
@@ -274,8 +278,7 @@ def build_portfolio_mix_diagnostic(
                 if distance <= threshold
             ]
             local = _local_pressure(
-                entity,
-                [by_id[peer_id] for peer_id in peer_ids],
+                entity, [by_id[peer_id] for peer_id in peer_ids]
             )
             local_ratio = local.get("ratio")
             curve.append(
@@ -301,10 +304,10 @@ def build_portfolio_mix_diagnostic(
             )
 
         temporal_direct = (
-            credibility_row.get("temporal_overlap", {})
-            .get("premium_direct", {})
+            credibility_row.get("temporal_overlap", {}).get("premium_direct", {})
         )
         sensitivity = credibility_row.get("denominator_sensitivity", {})
+        portfolio = entity.get("portfolio_12m") or {}
         rows.append(
             {
                 "entity_id": entity_id,
@@ -318,16 +321,12 @@ def build_portfolio_mix_diagnostic(
                 ),
                 "global_pressure_ratio": global_ratio,
                 "portfolio": {
-                    "positive_branch_count": (entity.get("portfolio_12m") or {}).get(
-                        "positive_branch_count"
+                    "positive_branch_count": portfolio.get("positive_branch_count"),
+                    "hhi": portfolio.get("hhi"),
+                    "top_branch_share": portfolio.get("top_branch_share"),
+                    "distance_from_market_mix": portfolio.get(
+                        "distance_from_market_mix"
                     ),
-                    "hhi": (entity.get("portfolio_12m") or {}).get("hhi"),
-                    "top_branch_share": (entity.get("portfolio_12m") or {}).get(
-                        "top_branch_share"
-                    ),
-                    "distance_from_market_mix": (
-                        entity.get("portfolio_12m") or {}
-                    ).get("distance_from_market_mix"),
                     "nearest_observations_not_approved_peers": nearest,
                     "nearest_distance": float(distances[0][1]) if distances else None,
                     "fifth_nearest_distance": (
@@ -336,10 +335,11 @@ def build_portfolio_mix_diagnostic(
                 },
                 "peer_distance_curve": curve,
                 "prior_guard_context": {
-                    "statistical_credibility_state": credibility_row
-                    .get("direct_candidate", {})
-                    .get("familywise_exact_interval", {})
-                    .get("state"),
+                    "statistical_credibility_state": (
+                        credibility_row.get("direct_candidate", {})
+                        .get("familywise_exact_interval", {})
+                        .get("state")
+                    ),
                     "complaints_in_non_positive_direct_premium_months": (
                         temporal_direct.get(
                             "complaints_in_non_positive_premium_months"
@@ -361,14 +361,13 @@ def build_portfolio_mix_diagnostic(
         )
 
     coverage_curve = []
-    local_side_changes_by_threshold: dict[str, int] = {}
-    local_multiplier_quantiles_by_threshold: dict[str, dict[str, float | None]] = {}
+    side_changes_by_distance: dict[str, int] = {}
+    multiplier_quantiles_by_distance: dict[str, dict[str, float | None]] = {}
     for threshold in DISTANCE_GRID:
-        key = f"{threshold:.2f}"
         peer_counts = []
-        side_changes = 0
-        multipliers = []
         available_local = 0
+        side_changes = 0
+        multipliers: list[float] = []
         for row in rows:
             point = next(
                 item
@@ -376,8 +375,7 @@ def build_portfolio_mix_diagnostic(
                 if item["max_total_variation_distance"] == threshold
             )
             peer_counts.append(int(point["peer_count"]))
-            local = point["local_aligned_pressure"]
-            if local.get("ratio") is not None:
+            if point["local_aligned_pressure"].get("ratio") is not None:
                 available_local += 1
             if point["global_to_local_side_consistency"] == "changes_side":
                 side_changes += 1
@@ -395,9 +393,20 @@ def build_portfolio_mix_diagnostic(
                 "entities_with_local_aligned_pressure": available_local,
             }
         )
-        local_side_changes_by_threshold[key] = side_changes
-        local_multiplier_quantiles_by_threshold[key] = _quantiles(multipliers)
+        key = f"{threshold:.2f}"
+        side_changes_by_distance[key] = side_changes
+        multiplier_quantiles_by_distance[key] = _quantiles(multipliers)
 
+    all_pair_distance = [float(row["distance"]) for row in pair_rows]
+    all_pair_pressure_difference = [
+        float(row["absolute_stabilized_log_pressure_difference"]) for row in pair_rows
+    ]
+    high_volume_pairs = [row for row in pair_rows if row["both_100_plus_complaints"]]
+    high_volume_distance = [float(row["distance"]) for row in high_volume_pairs]
+    high_volume_pressure_difference = [
+        float(row["absolute_stabilized_log_pressure_difference"])
+        for row in high_volume_pairs
+    ]
     nearest_distances = [
         float(row["portfolio"]["nearest_distance"])
         for row in rows
@@ -407,12 +416,6 @@ def build_portfolio_mix_diagnostic(
         float(row["portfolio"]["fifth_nearest_distance"])
         for row in rows
         if row["portfolio"]["fifth_nearest_distance"] is not None
-    ]
-
-    high_volume_distance = [float(row["distance"]) for row in high_volume_pairs]
-    high_volume_pressure_difference = [
-        float(row["absolute_stabilized_log_pressure_difference"])
-        for row in high_volume_pairs
     ]
 
     return {
@@ -463,6 +466,7 @@ def build_portfolio_mix_diagnostic(
                 "reason": "pairwise_observations_are_not_independent",
             },
             "guardrails": [
+                "no_peer_means_no_local_conclusion_not_neutrality",
                 "nearest_entity_is_not_automatically_an_adequate_peer",
                 "five_nearest_entities_are_not_automatically_a_cohort",
                 "distance_grid_is_exploratory_not_policy",
@@ -488,21 +492,19 @@ def build_portfolio_mix_diagnostic(
             "peer_coverage_curve": coverage_curve,
             "portfolio_distance_vs_pressure_difference": {
                 "all_pairs_spearman": _safe_spearman(
-                    all_pair_distance,
-                    all_pair_pressure_difference,
+                    all_pair_distance, all_pair_pressure_difference
                 ),
                 "high_volume_100_plus_pairs_spearman": _safe_spearman(
-                    high_volume_distance,
-                    high_volume_pressure_difference,
+                    high_volume_distance, high_volume_pressure_difference
                 ),
                 "interpretation_guard": (
                     "positive_association_would_support_mix_relevance_but_not_a_causal_or_adjustment_model"
                 ),
             },
             "local_pressure_sensitivity": {
-                "global_to_local_side_changes_by_distance": local_side_changes_by_threshold,
+                "global_to_local_side_changes_by_distance": side_changes_by_distance,
                 "local_to_global_ratio_multiplier_quantiles_by_distance": (
-                    local_multiplier_quantiles_by_threshold
+                    multiplier_quantiles_by_distance
                 ),
             },
         },
@@ -523,8 +525,7 @@ def main() -> None:
     payload = build_from_files()
     OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
     OUTPUT_PATH.write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2),
-        encoding="utf-8",
+        json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
     )
     print(
         json.dumps(
