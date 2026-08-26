@@ -1,0 +1,213 @@
+name: V2 Conduct Methodology Closure
+
+on:
+  pull_request:
+    paths:
+      - "api/v2/build_conduct_methodology_closure.py"
+      - "tests/test_v2_conduct_methodology_closure.py"
+      - ".github/workflows/v2-conduct-methodology-closure.yml"
+      - "api/v2/build_conduct_comparative_calibration_v2.py"
+      - "api/v2/build_conduct_credibility_diagnostic.py"
+      - "api/v2/build_conduct_portfolio_mix_diagnostic.py"
+      - "data/curated/v2/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  conduct-methodology-closure:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install -r requirements-dev.txt
+
+      - name: Restore latest successful Conduct comparative calibration v2
+        run: |
+          set -euo pipefail
+          branch="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
+          run_id="$(gh run list \
+            --repo "$GITHUB_REPOSITORY" \
+            --workflow "V2 Conduct Comparative Calibration v2" \
+            --branch "$branch" \
+            --status success \
+            --limit 30 \
+            --json databaseId \
+            --jq '.[0].databaseId')"
+          if [[ -z "$run_id" || "$run_id" == "null" ]]; then
+            echo "No successful Conduct comparative calibration v2 artifact found." >&2
+            exit 1
+          fi
+          rm -rf "$RUNNER_TEMP/calibration-upstream"
+          mkdir -p "$RUNNER_TEMP/calibration-upstream"
+          gh run download "$run_id" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name "v2-conduct-comparative-calibration-v2-$run_id" \
+            --dir "$RUNNER_TEMP/calibration-upstream"
+          source_file="$(find "$RUNNER_TEMP/calibration-upstream" -type f -name conduct_comparative_calibration_v2.json | head -n 1)"
+          test -n "$source_file"
+          mkdir -p data/derived/v2
+          cp "$source_file" data/derived/v2/conduct_comparative_calibration_v2.json
+          echo "Restored calibration from run $run_id"
+
+      - name: Restore latest successful Conduct coverage reconciliation
+        run: |
+          set -euo pipefail
+          branch="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
+          run_id="$(gh run list \
+            --repo "$GITHUB_REPOSITORY" \
+            --workflow "V2 Conduct Coverage Reconciliation" \
+            --branch "$branch" \
+            --status success \
+            --limit 30 \
+            --json databaseId \
+            --jq '.[0].databaseId')"
+          if [[ -z "$run_id" || "$run_id" == "null" ]]; then
+            echo "No successful Conduct coverage reconciliation artifact found." >&2
+            exit 1
+          fi
+          rm -rf "$RUNNER_TEMP/reconciliation-upstream"
+          mkdir -p "$RUNNER_TEMP/reconciliation-upstream"
+          gh run download "$run_id" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name "v2-conduct-coverage-reconciliation-$run_id" \
+            --dir "$RUNNER_TEMP/reconciliation-upstream"
+          source_file="$(find "$RUNNER_TEMP/reconciliation-upstream" -type f -name conduct_coverage_reconciliation.json | head -n 1)"
+          test -n "$source_file"
+          mkdir -p data/derived/v2
+          cp "$source_file" data/derived/v2/conduct_coverage_reconciliation.json
+          echo "Restored reconciliation from run $run_id"
+
+      - name: Restore latest successful Conduct portfolio mix diagnostic
+        run: |
+          set -euo pipefail
+          branch="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
+          run_id="$(gh run list \
+            --repo "$GITHUB_REPOSITORY" \
+            --workflow "V2 Conduct Portfolio Mix Diagnostic" \
+            --branch "$branch" \
+            --status success \
+            --limit 30 \
+            --json databaseId \
+            --jq '.[0].databaseId')"
+          if [[ -z "$run_id" || "$run_id" == "null" ]]; then
+            echo "No successful Conduct portfolio mix diagnostic artifact found." >&2
+            exit 1
+          fi
+          rm -rf "$RUNNER_TEMP/portfolio-upstream"
+          mkdir -p "$RUNNER_TEMP/portfolio-upstream"
+          gh run download "$run_id" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name "v2-conduct-portfolio-mix-diagnostic-$run_id" \
+            --dir "$RUNNER_TEMP/portfolio-upstream"
+          source_file="$(find "$RUNNER_TEMP/portfolio-upstream" -type f -name conduct_portfolio_mix_diagnostic.json | head -n 1)"
+          test -n "$source_file"
+          mkdir -p data/derived/v2
+          cp "$source_file" data/derived/v2/conduct_portfolio_mix_diagnostic.json
+          echo "Restored portfolio diagnostic from run $run_id"
+
+      - name: Lint Conduct closure
+        run: |
+          set -euo pipefail
+          ruff check \
+            api/v2/build_conduct_methodology_closure.py \
+            tests/test_v2_conduct_methodology_closure.py
+
+      - name: Run Conduct closure tests
+        run: |
+          set -euo pipefail
+          python -m pytest -q tests/test_v2_conduct_methodology_closure.py
+
+      - name: Build real Conduct methodology closure
+        run: |
+          set -euo pipefail
+          python -m api.v2.build_conduct_methodology_closure
+
+      - name: Validate closure boundaries
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          path = Path("data/derived/v2/conduct_methodology_closure.json")
+          payload = json.loads(path.read_text(encoding="utf-8"))
+
+          if payload.get("scoring") != "forbidden_in_this_artifact":
+              raise SystemExit("Conduct closure must forbid scoring")
+          if payload.get("ranking") != "forbidden_in_this_artifact":
+              raise SystemExit("Conduct closure must forbid ranking")
+          if payload.get("status") != "conduct_methodology_closed_for_signal_design":
+              raise SystemExit("unexpected closure status")
+
+          population = payload.get("population") or {}
+          if population.get("regulatory_universe") != 157:
+              raise SystemExit("Conduct closure must preserve 157 insurers")
+          if population.get("pressure_candidates") != 103:
+              raise SystemExit("Conduct closure must preserve 103 pressure candidates")
+          if population.get("pressure_unavailable_not_comparable") != 54:
+              raise SystemExit("Conduct closure must preserve 54 non-comparable entities")
+
+          decisions = payload.get("methodology_decisions") or {}
+          denominator = decisions.get("approved_operational_denominator") or {}
+          if denominator.get("field") != "insurance_premium_direct":
+              raise SystemExit("unexpected Conduct denominator")
+          if denominator.get("scope") != "direct_one_to_one_candidate_only":
+              raise SystemExit("Conduct denominator scope widened unexpectedly")
+          if denominator.get("approved_for_conduct_pressure") is not True:
+              raise SystemExit("Conduct denominator was not explicitly approved")
+          if decisions.get("portfolio_mix", {}).get("adjustment_selected") is not False:
+              raise SystemExit("portfolio adjustment cannot be silently selected")
+          if decisions.get("uncertainty", {}).get("shrinkage_selected") is not False:
+              raise SystemExit("shrinkage cannot be silently selected")
+          if decisions.get("remediation", {}).get("selected") is not False:
+              raise SystemExit("remediation cannot be inferred from current P3")
+
+          forbidden = {
+              "overall_score",
+              "ranking_position",
+              "assessment_eligible",
+              "ranking_eligible",
+          }
+          def walk(value):
+              if isinstance(value, dict):
+                  overlap = forbidden & set(value)
+                  if overlap:
+                      raise SystemExit(f"forbidden decision fields: {sorted(overlap)}")
+                  for child in value.values():
+                      walk(child)
+              elif isinstance(value, list):
+                  for child in value:
+                      walk(child)
+          walk(payload)
+
+          print(json.dumps({
+              "population": population,
+              "diagnostics": payload.get("diagnostics"),
+              "closure": payload.get("closure"),
+          }, ensure_ascii=False, indent=2))
+          PY
+
+      - name: Upload Conduct methodology closure
+        uses: actions/upload-artifact@v4
+        with:
+          name: v2-conduct-methodology-closure-${{ github.run_id }}
+          path: data/derived/v2/conduct_methodology_closure.json
+          retention-days: 14
