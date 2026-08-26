@@ -5,7 +5,6 @@ import math
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
-from statistics import median
 from typing import Any
 
 import numpy as np
@@ -63,7 +62,15 @@ def _finite(value: Any, *, field: str) -> float:
 def _quantiles(values: list[float]) -> dict[str, float | None]:
     finite = [float(value) for value in values if math.isfinite(float(value))]
     if not finite:
-        return {"min": None, "p10": None, "p25": None, "p50": None, "p75": None, "p90": None, "max": None}
+        return {
+            "min": None,
+            "p10": None,
+            "p25": None,
+            "p50": None,
+            "p75": None,
+            "p90": None,
+            "max": None,
+        }
     return {
         "min": float(min(finite)),
         "p10": float(np.percentile(finite, 10)),
@@ -75,13 +82,17 @@ def _quantiles(values: list[float]) -> dict[str, float | None]:
     }
 
 
-def _candidate_rows(reconciliation: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+def _candidate_rows(
+    reconciliation: dict[str, Any],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     candidates: list[dict[str, Any]] = []
     excluded: list[dict[str, Any]] = []
     for row in reconciliation.get("entities") or []:
         pressure = row.get("pressure_comparability") or {}
         state = str(pressure.get("state") or "")
-        if state == CANDIDATE_STATE and bool(pressure.get("pressure_eligible_candidate")):
+        if state == CANDIDATE_STATE and bool(
+            pressure.get("pressure_eligible_candidate")
+        ):
             candidates.append(row)
         else:
             excluded.append(
@@ -96,7 +107,9 @@ def _candidate_rows(reconciliation: dict[str, Any]) -> tuple[list[dict[str, Any]
                 }
             )
     if not candidates:
-        raise ConductComparativeCalibrationV2Error("reconciliation has no direct one-to-one candidates")
+        raise ConductComparativeCalibrationV2Error(
+            "reconciliation has no direct one-to-one candidates"
+        )
     return candidates, excluded
 
 
@@ -108,7 +121,9 @@ def _conduct_index(conduct: dict[str, Any]) -> dict[str, dict[str, Any]]:
     }
 
 
-def _monthly_conduct(entity: dict[str, Any], months: list[str]) -> dict[str, dict[str, Any]]:
+def _monthly_conduct(
+    entity: dict[str, Any], months: list[str]
+) -> dict[str, dict[str, Any]]:
     by_month = {
         str(row.get("month") or ""): row
         for row in entity.get("monthly") or []
@@ -130,17 +145,24 @@ def _ses_month(entity: dict[str, Any], period: int) -> dict[str, Any]:
     return month or {}
 
 
-def _branch_totals(ses_entity: dict[str, Any], periods: list[int]) -> dict[str, float]:
+def _branch_totals(
+    ses_entity: dict[str, Any], periods: list[int]
+) -> dict[str, float]:
     totals: Counter[str] = Counter()
     for period in periods:
         month = _ses_month(ses_entity, period)
         for branch, values in (month.get("insurance_branches") or {}).items():
-            amount = _finite((values or {}).get("premium_direct") or 0.0, field="premium_direct")
+            amount = _finite(
+                (values or {}).get("premium_direct") or 0.0,
+                field="premium_direct",
+            )
             totals[str(branch)] += amount
     return {key: float(value) for key, value in sorted(totals.items())}
 
 
-def _portfolio_diagnostics(branches: dict[str, float], market_branches: dict[str, float]) -> dict[str, Any]:
+def _portfolio_diagnostics(
+    branches: dict[str, float], market_branches: dict[str, float]
+) -> dict[str, Any]:
     mix = branch_mix(branches)
     concentration = sum(value * value for value in mix.values()) if mix else None
     top_share = max(mix.values()) if mix else None
@@ -150,7 +172,9 @@ def _portfolio_diagnostics(branches: dict[str, float], market_branches: dict[str
         "hhi": float(concentration) if concentration is not None else None,
         "top_branch_share": float(top_share) if top_share is not None else None,
         "distance_from_market_mix": branch_mix_distance(branches, market_branches),
-        "negative_branch_total_count": sum(1 for value in branches.values() if value < 0),
+        "negative_branch_total_count": sum(
+            1 for value in branches.values() if value < 0
+        ),
         "zero_branch_total_count": sum(1 for value in branches.values() if value == 0),
     }
 
@@ -177,15 +201,22 @@ def _small_sample_bucket(observed: int) -> str:
 
 
 def _small_sample_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
-    buckets: dict[str, list[dict[str, Any]]] = {key: [] for key in ("0_4", "5_19", "20_99", "100_plus")}
+    buckets: dict[str, list[dict[str, Any]]] = {
+        key: [] for key in ("0_4", "5_19", "20_99", "100_plus")
+    }
     for row in rows:
         buckets[_small_sample_bucket(int(row["complaints_12m"]))].append(row)
     return {
         key: {
             "entities": len(items),
-            "complaints_total": sum(int(item["complaints_12m"]) for item in items),
+            "complaints_total": sum(
+                int(item["complaints_12m"]) for item in items
+            ),
             "expected_complaints_quantiles": _quantiles(
-                [float(item["pressure_12m"]["expected_complaints"]) for item in items]
+                [
+                    float(item["pressure_12m"]["expected_complaints"])
+                    for item in items
+                ]
             ),
             "raw_pressure_ratio_quantiles": _quantiles(
                 [float(item["pressure_12m"]["ratio"]) for item in items]
@@ -203,7 +234,10 @@ def _nearest_mix_peers(rows: list[dict[str, Any]], count: int = 5) -> None:
         for other_id, other in by_id.items():
             if other_id == entity_id:
                 continue
-            distance = branch_mix_distance(left, other["portfolio_12m"]["branch_premium_direct"])
+            distance = branch_mix_distance(
+                left,
+                other["portfolio_12m"]["branch_premium_direct"],
+            )
             if distance is not None:
                 distances.append((float(distance), other_id))
         distances.sort(key=lambda item: (item[0], item[1]))
@@ -222,9 +256,13 @@ def build_calibration_v2(
     reconciliation: dict[str, Any],
     ses: dict[str, Any],
 ) -> dict[str, Any]:
-    months = [str(value) for value in (conduct.get("source") or {}).get("months") or []]
+    months = [
+        str(value) for value in (conduct.get("source") or {}).get("months") or []
+    ]
     if not months or len(months) != len(set(months)):
-        raise ConductComparativeCalibrationV2Error("Conduct comparison months are missing or duplicated")
+        raise ConductComparativeCalibrationV2Error(
+            "Conduct comparison months are missing or duplicated"
+        )
     periods = [_period(month) for month in months]
     ses_periods = {int(value) for value in ses.get("periods") or []}
     missing_periods = [period for period in periods if period not in ses_periods]
@@ -248,10 +286,14 @@ def build_calibration_v2(
         fip = str(candidate.get("fip_code") or "").strip()
         conduct_entity = conduct_by_id.get(entity_id)
         if conduct_entity is None:
-            raise ConductComparativeCalibrationV2Error(f"candidate lacks Conduct evidence: {entity_id}")
+            raise ConductComparativeCalibrationV2Error(
+                f"candidate lacks Conduct evidence: {entity_id}"
+            )
         ses_entity = ses_entities.get(fip) or ses_entities.get(fip.zfill(6))
         if ses_entity is None:
-            raise ConductComparativeCalibrationV2Error(f"candidate lacks SES exposure: {entity_id}")
+            raise ConductComparativeCalibrationV2Error(
+                f"candidate lacks SES exposure: {entity_id}"
+            )
 
         conduct_months = _monthly_conduct(conduct_entity, months)
         branch_totals = _branch_totals(ses_entity, periods)
@@ -262,8 +304,14 @@ def build_calibration_v2(
 
         for month, period in zip(months, periods, strict=True):
             ses_month = _ses_month(ses_entity, period)
-            direct = _finite(ses_month.get("insurance_premium_direct") or 0.0, field="premium_direct")
-            earned = _finite(ses_month.get("insurance_premium_earned") or 0.0, field="premium_earned")
+            direct = _finite(
+                ses_month.get("insurance_premium_direct") or 0.0,
+                field="premium_direct",
+            )
+            earned = _finite(
+                ses_month.get("insurance_premium_earned") or 0.0,
+                field="premium_earned",
+            )
             complaints = int(conduct_months[month].get("complaints") or 0)
             premium_direct += direct
             premium_earned += earned
@@ -304,21 +352,31 @@ def build_calibration_v2(
         )
 
     if annual_market_premium <= 0:
-        raise ConductComparativeCalibrationV2Error("aligned annual market premium is non-positive")
+        raise ConductComparativeCalibrationV2Error(
+            "aligned annual market premium is non-positive"
+        )
 
     monthly_market: list[dict[str, Any]] = []
     monthly_baselines: dict[str, tuple[int, float]] = {}
     for month in months:
         comparable = [
-            row for row in raw_rows
-            if next(item for item in row["monthly_raw"] if item["month"] == month)["premium_direct"] > 0
+            row
+            for row in raw_rows
+            if next(
+                item for item in row["monthly_raw"] if item["month"] == month
+            )["premium_direct"]
+            > 0
         ]
         market_complaints = sum(
-            next(item for item in row["monthly_raw"] if item["month"] == month)["complaints"]
+            next(item for item in row["monthly_raw"] if item["month"] == month)[
+                "complaints"
+            ]
             for row in comparable
         )
         market_premium = sum(
-            next(item for item in row["monthly_raw"] if item["month"] == month)["premium_direct"]
+            next(item for item in row["monthly_raw"] if item["month"] == month)[
+                "premium_direct"
+            ]
             for row in comparable
         )
         monthly_baselines[month] = (market_complaints, market_premium)
@@ -326,14 +384,17 @@ def build_calibration_v2(
             {
                 "month": month,
                 "comparable_entities": len(comparable),
-                "excluded_non_positive_premium_entities": len(raw_rows) - len(comparable),
+                "excluded_non_positive_premium_entities": len(raw_rows)
+                - len(comparable),
                 "market_complaints": market_complaints,
                 "market_premium_direct": float(market_premium),
                 "population_policy": "complaints_and_exposure_same_entities_only",
             }
         )
 
-    market_branch_dict = {key: float(value) for key, value in sorted(market_branches.items())}
+    market_branch_dict = {
+        key: float(value) for key, value in sorted(market_branches.items())
+    }
     for raw in raw_rows:
         expected = expected_complaints(
             raw["premium_direct_12m"],
@@ -347,7 +408,9 @@ def build_calibration_v2(
             annual_market_premium,
         )
         if expected is None or ratio is None:
-            raise ConductComparativeCalibrationV2Error(f"annual pressure unavailable: {raw['entity_id']}")
+            raise ConductComparativeCalibrationV2Error(
+                f"annual pressure unavailable: {raw['entity_id']}"
+            )
 
         monthly: list[dict[str, Any]] = []
         monthly_ratios: list[float | None] = []
@@ -367,7 +430,9 @@ def build_calibration_v2(
                 )
                 monthly_ratios.append(None)
                 continue
-            monthly_expected = expected_complaints(direct, market_complaints, market_premium)
+            monthly_expected = expected_complaints(
+                direct, market_complaints, market_premium
+            )
             monthly_ratio = pressure_ratio(
                 complaints,
                 direct,
@@ -397,7 +462,9 @@ def build_calibration_v2(
                 "display_name": raw["display_name"],
                 "complaints_12m": raw["complaints_12m"],
                 "premium_direct_12m": raw["premium_direct_12m"],
-                "premium_earned_12m_diagnostic": raw["premium_earned_12m_diagnostic"],
+                "premium_earned_12m_diagnostic": raw[
+                    "premium_earned_12m_diagnostic"
+                ],
                 "pressure_12m": {
                     "observed_complaints": raw["complaints_12m"],
                     "expected_complaints": float(expected),
@@ -407,13 +474,16 @@ def build_calibration_v2(
                         if annual_market_complaints > 0
                         else None
                     ),
-                    "premium_share": raw["premium_direct_12m"] / annual_market_premium,
+                    "premium_share": raw["premium_direct_12m"]
+                    / annual_market_premium,
                 },
                 "monthly": monthly,
                 "persistence": persistence_diagnostics(monthly_ratios),
                 "satisfaction": raw["satisfaction"],
                 "portfolio_12m": portfolio,
-                "small_sample_bucket": _small_sample_bucket(raw["complaints_12m"]),
+                "small_sample_bucket": _small_sample_bucket(
+                    raw["complaints_12m"]
+                ),
             }
         )
 
@@ -431,8 +501,14 @@ def build_calibration_v2(
     )
     extreme_count = min(10, len(diagnostic_sorted))
 
-    excluded_counts = Counter(str(row.get("state") or "unknown") for row in excluded)
-    taxonomy_state = ((conduct.get("source") or {}).get("taxonomy_evidence") or {}).get("state")
+    excluded_counts = Counter(
+        str(row.get("state") or "unknown") for row in excluded
+    )
+    taxonomy_state = (
+        ((conduct.get("source") or {}).get("taxonomy_evidence") or {}).get(
+            "state"
+        )
+    )
     core_state = ((conduct.get("source") or {}).get("core") or {}).get("state")
 
     return {
@@ -493,7 +569,9 @@ def build_calibration_v2(
                     "entity_id": row["entity_id"],
                     "legal_name": row.get("legal_name"),
                     "complaints_12m": row["complaints_12m"],
-                    "expected_complaints": row["pressure_12m"]["expected_complaints"],
+                    "expected_complaints": row["pressure_12m"][
+                        "expected_complaints"
+                    ],
                     "pressure_ratio": row["pressure_12m"]["ratio"],
                     "premium_direct_12m": row["premium_direct_12m"],
                 }
@@ -504,7 +582,9 @@ def build_calibration_v2(
                     "entity_id": row["entity_id"],
                     "legal_name": row.get("legal_name"),
                     "complaints_12m": row["complaints_12m"],
-                    "expected_complaints": row["pressure_12m"]["expected_complaints"],
+                    "expected_complaints": row["pressure_12m"][
+                        "expected_complaints"
+                    ],
                     "pressure_ratio": row["pressure_12m"]["ratio"],
                     "premium_direct_12m": row["premium_direct_12m"],
                 }
@@ -519,7 +599,10 @@ def build_calibration_v2(
                 str(row.get("entity_id") or ""),
             ),
         ),
-        "entities": sorted(rows, key=lambda row: str(row.get("entity_id") or "")),
+        "entities": sorted(
+            rows,
+            key=lambda row: str(row.get("entity_id") or ""),
+        ),
     }
 
 
@@ -530,9 +613,15 @@ def build_from_files(
     ses_path: Path = DEFAULT_SES_ZIP,
 ) -> dict[str, Any]:
     conduct = json.loads(conduct_path.read_text(encoding="utf-8"))
-    reconciliation = json.loads(reconciliation_path.read_text(encoding="utf-8"))
+    reconciliation = json.loads(
+        reconciliation_path.read_text(encoding="utf-8")
+    )
     candidates, _ = _candidate_rows(reconciliation)
-    fips = [str(row.get("fip_code") or "") for row in candidates if str(row.get("fip_code") or "")]
+    fips = [
+        str(row.get("fip_code") or "")
+        for row in candidates
+        if str(row.get("fip_code") or "")
+    ]
     ses = load_susep_insurance_exposure(fips, ses_path)
     return build_calibration_v2(conduct, reconciliation, ses)
 
@@ -540,7 +629,10 @@ def build_from_files(
 def main() -> None:
     payload = build_from_files()
     OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
-    OUTPUT_PATH.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    OUTPUT_PATH.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
     print(
         json.dumps(
             {
@@ -551,9 +643,13 @@ def main() -> None:
                     "complaints": payload["market_12m"]["complaints"],
                     "premium_direct": payload["market_12m"]["premium_direct"],
                 },
-                "pressure_ratio_quantiles": payload["diagnostics"]["pressure_ratio_quantiles"],
+                "pressure_ratio_quantiles": payload["diagnostics"][
+                    "pressure_ratio_quantiles"
+                ],
                 "small_sample": payload["diagnostics"]["small_sample"],
-                "highest_pressure_observations": payload["diagnostics"]["highest_pressure_observations"],
+                "highest_pressure_observations": payload["diagnostics"][
+                    "highest_pressure_observations"
+                ],
             },
             ensure_ascii=False,
             indent=2,
