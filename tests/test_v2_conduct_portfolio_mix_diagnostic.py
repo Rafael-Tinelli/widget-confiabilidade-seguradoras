@@ -121,10 +121,13 @@ def test_nearest_observation_does_not_become_approved_peer_group() -> None:
     assert all(
         point["peer_count"] == 0 for point in first["peer_distance_curve"]
     )
+    assert all(
+        point["local_aligned_pressure"]["ratio"] is None
+        for point in first["peer_distance_curve"]
+    )
     assert payload["diagnostics"]["peer_coverage_curve"][-1][
         "entities_with_at_least_1_peer"
     ] == 0
-    assert (
-        payload["methodology"]["guardrails"][0]
-        == "nearest_entity_is_not_automatically_an_adequate_peer"
-    )
+    guardrails = set(payload["methodology"]["guardrails"])
+    assert "no_peer_means_no_local_conclusion_not_neutrality" in guardrails
+    assert "nearest_entity_is_not_automatically_an_adequate_peer" in guardrails
