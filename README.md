@@ -3,10 +3,15 @@
 > **Status do projeto:** refatoração metodológica e arquitetural em andamento.  
 > **Branch de trabalho:** `refactor/v2-data-foundation`.  
 > **PR:** #1 permanece **Draft**.  
-> **Marco atual (2026-08-26):** identidade, classificação regulatória, lifecycle jurídico, relationships, elegibilidade formal, evidência financeira, liquidez, filme operacional e a fundação de Conduta estão implementados em draft. O foco atual é calibrar **Conduta comparativa** sem score, usando somente exposição de seguros e preservando todos os casos em que marca, fornecedor reclamado e risk carrier não coincidem de forma simples.  
-> **Regra de segurança:** nada nesta branch deve ser tratado como score, ranking ou metodologia final enquanto os gates de calibração não forem concluídos.
+> **Marco atual (2026-08-26):** identidade, classificação regulatória, lifecycle jurídico, relationships, elegibilidade formal, evidência financeira e de Conduta estão implementados em draft. Os contratos de sinal **Financeiro** e **Conduta** estão fechados sem score. A próxima etapa metodológica é a calibração entre pilares.  
+> **Regra de segurança:** nada nesta branch deve ser tratado como score ou ranking final enquanto a calibração entre pilares e os gates finais de avaliação não forem concluídos.
 
-Este README é o **contrato de projeto**, o guia de implementação da v2 e o registro das decisões metodológicas já tomadas. Regras marcadas como **EM CALIBRAÇÃO**, **EXPERIMENTAL** ou **PENDENTE** não podem ser convertidas silenciosamente em scoring.
+Este README é o **contrato de projeto**, o guia de implementação da v2 e o registro das decisões metodológicas já tomadas. Os fechamentos específicos estão documentados em:
+
+- `docs/financial-methodology-closure.md`;
+- `docs/conduct-methodology-closure.md`.
+
+Regras marcadas como **EM CALIBRAÇÃO**, **EXPERIMENTAL** ou **PENDENTE** não podem ser convertidas silenciosamente em scoring.
 
 ---
 
@@ -17,7 +22,7 @@ O projeto mantém a camada de dados e inteligência da ferramenta pública da Sa
 A ferramenta deve ajudar o consumidor a responder perguntas como:
 
 - **Esta seguradora é confiável?**
-- **Ela apresenta sinais financeiros saudáveis?**
+- **Ela apresenta sinais financeiros compatíveis com sustentar seus compromissos?**
 - **Há atrito com consumidores acima do que seria esperado para seu porte e perfil de operação?**
 - **Os problemas parecem episódicos ou persistentes?**
 - **O nome pesquisado é realmente uma seguradora?**
@@ -300,17 +305,17 @@ A pergunta é:
 
 > **A seguradora apresenta sinais financeiros e operacionais compatíveis com a capacidade de honrar compromissos e sustentar sua atividade?**
 
-A arquitetura conceitual foi encerrada quanto à busca de novos eixos independentes.
+A arquitetura conceitual e o contrato do sinal estão fechados quanto aos eixos internos.
 
 | Dimensão | Referência | Papel |
 |---|---|---|
 | Capital regulatório | PLA/CMR | eixo principal |
 | Liquidez | ILT | eixo principal |
 | Liquidez corrente | ILC | diagnóstico complementar |
-| Operação | ICA/IC | filme longitudinal |
+| Operação | ICA/IC | filme longitudinal contextual |
 | Rentabilidade | ILPL | diagnóstico apenas |
 
-Ainda estão **EM CALIBRAÇÃO** transformações, pesos e linguagem final.
+Não foi selecionada transformação numérica nem média ponderada interna. O fechamento específico está em `docs/financial-methodology-closure.md`.
 
 ---
 
@@ -324,7 +329,7 @@ A v2 distingue:
 última competência financeira madura
 ```
 
-Diagnóstico real de PLA/CMR derivável:
+Diagnóstico real recente de PLA/CMR derivável:
 
 ```text
 202601  148
@@ -332,10 +337,10 @@ Diagnóstico real de PLA/CMR derivável:
 202603  153
 202604  155
 202605  155  ← competência madura
-202606  130  ← observada, porém imatura
+202606  132  ← observada, porém imatura no snapshot mais recente
 ```
 
-A competência selecionada foi `2026-05`.
+A competência selecionada permanece `2026-05`.
 
 No período maduro:
 
@@ -351,20 +356,20 @@ CMR zero, ausência ou evidência inutilizável não viram desempenho zero.
 
 ## 12. Capital regulatório — PLA/CMR
 
-Decisões:
+Decisões fechadas para o sinal:
 
-- não usar escala linear;
-- magnitude maior não significa benefício proporcionalmente maior;
+- PLA/CMR é o eixo principal de capital;
+- `1,0` é a fronteira material entre PLA abaixo do CMR e PLA que atende/supera o CMR;
+- `PLA/CMR < 1` produz `capital_below_cmr`;
+- `PLA/CMR >= 1` produz `capital_meets_or_exceeds_cmr`;
+- ausência produz `capital_signal_unavailable`;
+- não há escala linear;
+- não há faixas positivas arbitrárias acima de `1,0`;
+- magnitude maior não gera mérito ilimitado;
 - histórico curto afeta confiança, não desempenho;
-- porte absoluto não gera pontos;
-- saturação e estabilidade deverão ser consideradas.
+- porte absoluto não gera pontos.
 
-Ainda faltam:
-
-- função de transformação;
-- zonas semânticas;
-- peso frente à liquidez;
-- integração com confiança da evidência.
+O valor bruto permanece disponível para transparência e futura calibração entre pilares, mas o contrato do sinal não transforma excesso de capital em bônus crescente.
 
 ---
 
@@ -377,17 +382,38 @@ A investigação selecionou:
 
 ILT mostrou estabilidade temporal superior e informação parcialmente distinta de PLA/CMR.
 
-Valores extremos confirmaram que recompensa linear é inadequada.
+Estados fechados do sinal:
 
-Não existe threshold regulatório SUSEP aprovado neste projeto simplesmente porque o índice cruza `1,0`; esse ponto é referência aritmética, não selo prudencial.
+```text
+ilt_below_arithmetic_parity
+ilt_at_or_above_arithmetic_parity
+ilt_signal_unavailable
+```
+
+O ponto `1,0` é referência aritmética do ILT, **não threshold prudencial oficial da SUSEP**. Não há transformação contínua selecionada nem tiers positivos acima da paridade. Valores extremos não recebem recompensa linear.
 
 ---
 
-## 14. Filme operacional
+## 14. Combinação financeira e filme operacional
 
-A operação é observada longitudinalmente.
+Capital e liquidez não são combinados por média ponderada nesta camada.
 
-Estados experimentais:
+```text
+capital_requirement_shortfall_observed
+capital_requirement_met_with_liquidity_pressure
+core_indicators_without_current_shortfall
+capital_requirement_met_liquidity_unavailable
+core_financial_signal_unavailable
+```
+
+Regras:
+
+- insuficiência de capital não é apagada por liquidez alta;
+- excesso de capital não apaga pressão de liquidez;
+- ausência não é imputada;
+- `core_indicators_without_current_shortfall` não significa selo de solvência ou segurança financeira.
+
+A operação é observada longitudinalmente:
 
 ```text
 balanced_persistent
@@ -397,9 +423,7 @@ persistent_pressure
 indeterminate
 ```
 
-ICA é referência principal; IC e componentes explicam a formação do resultado.
-
-O filme operacional **não é um terceiro score financeiro bruto**.
+ICA é referência principal; IC e componentes explicam a formação do resultado. O filme operacional é contexto longitudinal e **não sobrescreve capital ou liquidez**.
 
 ---
 
@@ -415,32 +439,71 @@ Pode permanecer como diagnóstico de geração de resultado.
 
 A busca por novos eixos financeiros independentes está encerrada nesta etapa.
 
+### 15.1. Resultado real do fechamento financeiro
+
+Competência madura `2026-05`, universo de 157 seguradoras:
+
+```text
+capital_meets_or_exceeds_cmr  141
+capital_below_cmr              14
+capital_signal_unavailable      2
+
+ilt_at_or_above_arithmetic_parity 127
+ilt_below_arithmetic_parity        29
+ilt_signal_unavailable              1
+
+core_indicators_without_current_shortfall              120
+capital_requirement_met_with_liquidity_pressure         21
+capital_requirement_shortfall_observed                  14
+core_financial_signal_unavailable                        2
+```
+
+Confiança do núcleo:
+
+```text
+established_core_history    143
+limited_core_history         12
+insufficient_core_evidence    2
+```
+
+Filme operacional:
+
+```text
+balanced_persistent 90
+improved            13
+recent_pressure      7
+persistent_pressure 14
+indeterminate       33
+```
+
+Esses estados são contratos de evidência e linguagem, não score nem ranking.
+
 ---
 
 # PILAR DE CONDUTA
 
-## 16. Pergunta central
+## 16. Pergunta central e fechamento
 
-Conduta não deve responder:
+Conduta não responde:
 
 > “Qual empresa tem mais reclamações?”
 
 A pergunta correta é:
 
-> **Esta seguradora apresenta atrito com consumidores acima do que seria esperado para o tamanho e o perfil de sua operação? E, quando isso acontece, há evidência de correção ao longo do tempo ou o problema persiste?**
+> **Esta seguradora apresenta atrito com consumidores acima do que seria esperado para o tamanho e o perfil de sua operação? E esse sinal é robusto e persistente?**
 
-Arquitetura conceitual atual:
+O contrato de sinal de Conduta está fechado em `docs/conduct-methodology-closure.md`, sem score numérico.
 
-```text
-Conduta
-= pressão ajustada de reclamações
-+ persistência
-+ tratamento/remediação
-```
+A lógica responde em camadas:
 
-Quando a fonte permitir, natureza/taxonomia do problema entra como camada explicativa adicional.
+1. há reclamações demais para o tamanho da operação?;
+2. há evidência suficiente para confiar na diferença?;
+3. o sinal é persistente ou episódico?;
+4. há melhora, deterioração ou nenhuma mudança clara?;
+5. o mix de carteira exige cautela?;
+6. a satisfação possui amostra suficiente para interpretação?
 
-Nada disso possui score aprovado.
+Remediação **não é inferida** com o P3 atual, porque resposta/finalização não provam solução e o denominador avaliado não está preservado com robustez suficiente.
 
 ---
 
@@ -552,14 +615,15 @@ Regras:
 
 A branch preserva filme longitudinal de 12 meses sem score.
 
-Sinais possíveis:
+Sinais disponíveis no contrato de Conduta incluem:
 
-- histórico estabelecido ou limitado;
-- satisfação estável, melhorando ou piorando;
-- recorrência;
+- cobertura temporal;
+- pressão anual normalizada;
+- credibilidade estatística;
+- persistência;
 - tendência;
-- futura pressão ajustada;
-- futura remediação.
+- satisfação sample-aware;
+- contexto de mix de carteira.
 
 Alta taxa de resposta ou finalização **não equivale automaticamente a boa resolução**.
 
@@ -596,7 +660,7 @@ Ele não pode ser usado para:
 
 ---
 
-## 22. Exposição econômica de seguros — regra atual
+## 22. Exposição econômica de seguros — regra fechada
 
 O reader atual é:
 
@@ -620,9 +684,11 @@ Contrato:
 
 ```text
 exposure_domain = insurance_only
-primary_candidate = insurance_premium_direct
-diagnostic_only = insurance_premium_earned
+approved_operational_denominator = insurance_premium_direct
+diagnostic_companion = insurance_premium_earned
 ```
+
+A aprovação de `premio_direto` é restrita a `direct_one_to_one_candidate`. Se a conclusão muda materialmente quando `premio_ganho` é usado como lente diagnóstica, a conclusão direcional fica bloqueada.
 
 Explicitamente excluídos:
 
@@ -631,14 +697,7 @@ Ses_Contrib_Benef.csv  → previdência privada
 Ses_Dados_Cap.csv      → capitalização
 ```
 
-Portanto:
-
-```text
-private_pension_amount_used = false
-capitalization_amount_used = false
-```
-
-`prêmio direto` é o candidato atual de exposição para Conduta, ainda **não um denominador final aprovado**.
+Prêmio não é número de clientes ou de apólices.
 
 ---
 
@@ -737,8 +796,6 @@ Estado:
 ```text
 hybrid_insurance_pension_requires_product_numerator
 ```
-
-Isso afeta players relevantes.
 
 A solução não é somar contribuições de previdência ao denominador. A solução é recuperar, quando possível, **numerador separado por produto**.
 
@@ -953,7 +1010,7 @@ Nome genérico sozinho não pode virar carrier por similaridade textual.
 
 O SusepCon utiliza a ideia de reclamações ponderadas pela arrecadação.
 
-Isso sustenta estudar:
+Isso sustenta:
 
 ```text
 observed complaints / expected complaints
@@ -967,142 +1024,137 @@ complaint share / premium share
 
 Mas isso é **pressão relativa de reclamações**, não percentual de clientes que reclamam.
 
-Prêmio não é número de clientes nem número de apólices.
-
 ---
 
-## 35. Population alignment
+## 35. Population alignment e alinhamento temporal
 
-Quando uma entidade não possui exposição comparável, suas reclamações também não podem permanecer no numerador do mercado usado para calcular o esperado das demais.
+A população de reclamações e exposição deve ser idêntica em cada baseline comparável.
 
-Regra implementada nos diagnósticos comparativos:
+Regra:
 
 ```text
 complaints_and_exposure_same_entities_only
 ```
 
-Isso evita que um subject com reclamações mas sem exposição comparável faça todas as outras seguradoras parecerem artificialmente melhores.
-
----
-
-## 36. Pequenas amostras
-
-Razão bruta não é suficiente.
-
-Exemplo:
+Além disso, o esperado anual é soma dos esperados mensais:
 
 ```text
-2,0× com 4 reclamações
-!=
-2,0× com 800 reclamações
+expected_m = reclamações_mercado_m × prêmio_entidade_m / prêmio_mercado_m
+expected_12m = Σ expected_m
+observed_12m = Σ reclamações apenas nos meses comparáveis
 ```
 
-A próxima calibração deverá estudar:
-
-- incerteza;
-- credibilidade;
-- shrinkage;
-- eventual Empirical Bayes;
-- estabilidade temporal.
-
-Nenhum modelo sofisticado deve ser escolhido antes de observar as distribuições reais.
+Reclamações de meses sem exposição comparável permanecem como evidência, mas não são forçadas para a razão normalizada daquele mês.
 
 ---
 
-## 37. Mix de carteira
+## 36. Pequenas amostras e credibilidade — decisão fechada
 
-R$ 1 bilhão em prêmio de um negócio massificado não é necessariamente comparável a R$ 1 bilhão em riscos especializados.
+Razão bruta não é conclusão.
+
+A pressão `observed / expected` usa intervalo exato e proteção contra múltiplas comparações no universo comparável.
+
+Decisão atual:
+
+```text
+shrinkage = não selecionado
+Empirical Bayes = não selecionado
+```
+
+A função desta camada é bloquear afirmações frágeis, não produzir uma magnitude suavizada para score.
+
+---
+
+## 37. Mix de carteira — investigação encerrada nesta etapa
 
 O SES preserva `coramo` e prêmio direto por ramo.
 
-A próxima calibração deve avaliar se a composição de carteira explica parte relevante da dispersão de reclamações.
+O diagnóstico real encontrou associação positiva fraca entre distância de carteira e diferença de pressão e mostrou que peers realmente próximos são escassos.
 
-Ordem preferida:
+Decisão:
 
 ```text
-vetor de composição
-→ concentração por ramo
-→ similaridade entre carteiras
-→ peers transparentes
-→ somente depois regressões mais sofisticadas, se necessárias
+portfolio_adjustment = false
+peer_groups_selected = false
+distance_threshold_selected = false
 ```
+
+`coramo` permanece contexto e diagnóstico de sensibilidade. Ausência de peer nunca significa neutralidade.
 
 ---
 
-## 38. Persistência e remediação
+## 38. Persistência, tendência, satisfação e remediação
 
-A metodologia futura deve separar:
+O contrato distingue:
 
-- pico episódico;
-- pressão recente;
 - pressão persistente;
-- melhora sustentada;
+- pressão episódica/esparsa;
+- melhora;
 - deterioração;
-- evidência insuficiente.
+- ausência de diferença clara;
+- evidência temporal insuficiente.
 
-Responder ou finalizar reclamações não prova remediação efetiva.
+Uma conclusão anual exige ao menos 9 meses comparáveis em 12. Persistência exige repetição da direção com evidência em pelo menos metade dos meses comparáveis. Tendência compara as duas metades da janela.
 
-Satisfação deve ser sample-aware.
+Satisfação é sample-aware e não corrige a incidência de reclamações.
 
-A metodologia não deve inferir intenção ou má-fé a partir de métricas indiretas.
+Remediação não é estabelecida pelo P3 atual.
 
 ---
 
 # PRÓXIMO GATE
 
-## 39. Próximo passo — Conduct Comparative Calibration v2
+## 39. Próximo passo — calibração entre pilares
 
-A primeira calibração foi invalidada. A próxima deve ser tratada como **nova calibração**, não continuação da antiga.
+Financeiro e Conduta possuem agora contratos de sinal fechados, sem nota numérica.
 
-Objetivo:
+O próximo gate é testar como transformar os estados semanticamente válidos dos dois pilares em avaliação geral sem destruir seus guardrails.
 
-> testar se o P3 atual consegue produzir uma medida de pressão de reclamações economicamente defensável para as entidades que realmente passam pelo gate de comparabilidade, sem apagar do widget as demais.
+Questões centrais:
 
-Primeiro universo de teste:
-
-```text
-direct_one_to_one_candidate
-```
-
-Hoje:
-
-```text
-103 entidades
-```
-
-Isso **não significa 103 seguradoras “aprovadas para ranking”**. Significa apenas 103 candidatas ao experimento de pressão 1:1 com prêmio direto.
+- é necessário score contínuo ou estados compostos são suficientes?;
+- como impedir compensação indevida de sinal material?;
+- como tratar pilar indisponível sem redistribuir peso silenciosamente?;
+- como separar desempenho de `assessment_confidence`?;
+- quais entidades podem tornar-se `assessment_eligible` e, só depois, `ranking_eligible`?;
+- se houver score, qual transformação possui interpretação pública defensável?
 
 ---
 
-## 40. Entregáveis da próxima calibração
+## 40. Contratos fechados antes da calibração conjunta
 
-Sem score, o artifact deve calcular e preservar:
+### Financeiro
 
-1. janela de 12 meses comum Consumer.gov + SES;
-2. `premio_direto` mensal;
-3. composição mensal por `coramo`;
-4. reclamações mensais;
-5. market totals com população alinhada;
-6. reclamações esperadas;
-7. razão observada/esperada;
-8. distribuição e extremos;
-9. séries mensais de pressão;
-10. persistência;
-11. tendência;
-12. satisfação e tamanho de amostra;
-13. diagnóstico de pequenas amostras;
-14. diagnóstico de shrinkage, se justificado;
-15. análise de mix de carteira;
-16. lista separada das entidades não comparáveis e motivo;
-17. `scoring = forbidden`.
+```text
+PLA/CMR → capital
+ILT     → liquidez principal
+ILC     → diagnóstico
+ICA/IC  → filme operacional contextual
+ILPL    → diagnóstico apenas
+```
+
+Sem média ponderada interna e sem `financial_score`.
+
+### Conduta
+
+```text
+pressão normalizada por exposição
++ credibilidade
++ persistência
++ tendência
++ satisfação sample-aware
++ contexto de mix
+```
+
+Sem `conduct_score`.
+
+Os 54 casos sem pressão comparável permanecem preservados com `pressure = null` e motivo explícito.
 
 ---
 
 ## 41. Rotas paralelas de recuperação dos 54 casos
 
-A calibração dos 103 não encerra o problema de cobertura.
-
-Os 54 casos atuais devem continuar com rota própria:
+O fechamento de Conduta não encerra as rotas de recuperação.
 
 - híbridas seguros/previdência → recuperar numerador por produto;
 - Zurich → reconciliação temporal;
@@ -1128,7 +1180,7 @@ assessment_eligible = 0
 ranking_eligible = 0
 ```
 
-Nenhum artifact experimental de Conduta pode abrir esses gates.
+Os fechamentos de Financeiro e Conduta não abrem automaticamente esses gates.
 
 A futura avaliação geral depende de:
 
@@ -1233,10 +1285,15 @@ A branch possui, entre outros:
 - `V2 Financial Evidence Validation`;
 - `V2 Liquidity Experiment`;
 - `V2 Operating Experiment`;
+- `V2 Financial Methodology Closure`;
 - `V2 Consumer.gov Conduct Evidence`;
 - `V2 Receita Consumer.gov Identity Experiment`;
 - `V2 Conduct Comparative Preflight`;
 - `V2 Conduct Coverage Reconciliation`;
+- `V2 Conduct Comparative Calibration v2`;
+- `V2 Conduct Credibility Diagnostic`;
+- `V2 Conduct Portfolio Mix Diagnostic`;
+- `V2 Conduct Methodology Closure`;
 - `V2 Sandbox Brand Conduct Evidence`.
 
 O antigo:
@@ -1249,37 +1306,33 @@ O antigo:
 
 ## 48. Estado de validação alcançado
 
-No fechamento da etapa Loovi/LTI:
+Os dois contratos de sinal possuem workflows próprios e execução real verde.
 
-- CI geral: verde;
-- Foundation: verde;
-- Classification: verde após rerun de timeout externo;
-- Lifecycle/Relationships: verde;
-- Eligibility: verde;
-- Financial Evidence: verde;
-- Liquidity: verde;
-- Operating: verde;
-- Conduct Comparative Preflight: verde;
-- Conduct Coverage Reconciliation: verde;
-- Sandbox Brand Conduct Evidence: verde.
-
-A validação específica Sandbox confirmou:
+### Financial Methodology Closure
 
 ```text
-lint              ok
-testes             4/4
-build real          ok
-boundaries          ok
-artifact upload     ok
-```
-
-A reconciliação de cobertura passou:
-
-```text
-testes direcionados  11/11
+Ruff                 ok
+testes direcionados  3/3
 build real            ok
-audit boundaries      ok
+157 entidades         preservadas
+boundaries            ok
+artifact upload       ok
 ```
+
+### Conduct Methodology Closure
+
+```text
+Ruff                 ok
+testes direcionados  3/3
+build real            ok
+157 entidades         preservadas
+103 comparáveis       preservadas
+54 não comparáveis    preservadas
+boundaries            ok
+artifact upload       ok
+```
+
+Esses workflows validam contratos de sinal, não score ou ranking.
 
 ---
 
@@ -1366,37 +1419,43 @@ O pipeline deve falhar em situações como:
 - marcas;
 - elegibilidade regulatória.
 
-### Financeiro — ARQUITETURA FECHADA / CALIBRAÇÃO PENDENTE
+### Financeiro — CONTRATO DE SINAL FECHADO
 
 - financial evidence;
 - maturidade de competência;
 - PLA/CMR;
 - ILT/ILC;
 - filme operacional;
-- ILPL rejeitado como eixo.
+- ILPL rejeitado como eixo;
+- combinação não compensatória capital/liquidez;
+- confiança separada de desempenho;
+- linguagem permitida/proibida;
+- score numérico ainda proibido.
 
-### Conduta — FUNDAÇÃO IMPLEMENTADA / CALIBRAÇÃO PENDENTE
+### Conduta — CONTRATO DE SINAL FECHADO
 
 - identidade Consumer.gov;
 - core mensal;
 - source cascade;
-- filme longitudinal;
 - exposure reader insurance-only;
 - reconciliation audit;
 - marca/subject/carrier;
 - Sandbox Conduct;
-- Loovi/LTI;
-- population alignment;
-- small-sample diagnostics básicos;
-- scoring proibido.
+- population alignment mensal;
+- credibilidade;
+- persistência e tendência;
+- mix como contexto;
+- satisfação sample-aware;
+- remediação não inferida;
+- score numérico ainda proibido.
 
-### Score geral — PENDENTE
+### Calibração entre pilares — PRÓXIMA ETAPA
 
-Só começa depois de Conduta passar pelos gates de comparabilidade, credibilidade, persistência e interpretação.
+Financeiro e Conduta serão combinados apenas depois de estudar compatibilidade semântica, regras de não compensação e `assessment_confidence`.
 
 ### Schema/publicação/frontend — PENDENTES
 
-Nenhuma regra v2 deve ser migrada ao frontend antes da metodologia.
+Nenhuma regra v2 deve ser migrada ao frontend antes da avaliação composta.
 
 ---
 
@@ -1404,8 +1463,8 @@ Nenhuma regra v2 deve ser migrada ao frontend antes da metodologia.
 
 Não:
 
-- criar score de Conduta;
-- definir pesos;
+- criar `financial_score` ou `conduct_score` por conveniência;
+- definir pesos entre pilares antes da calibração conjunta;
 - produzir ranking 1–157;
 - usar reclamações brutas como nota;
 - usar prêmio como número de clientes;
@@ -1419,18 +1478,21 @@ Não:
 - dar score à Loovi;
 - reabrir ILPL;
 - adicionar novos eixos financeiros sem nova justificativa;
+- transformar PLA/CMR ou ILT em bônus linear;
+- permitir que capital alto apague pressão de liquidez;
+- permitir que liquidez alta apague insuficiência de capital;
 - aplicar fuzzy matching decisório;
 - implementar scoring no PHP/JS;
 - alterar `main`.
 
 ---
 
-## 54. Critério para considerar Conduta calibrável
+## 54. Critério alcançado para o fechamento de Conduta
 
-Só avançar para scoring se os testes demonstrarem que é possível:
+O contrato de Conduta demonstrou ser possível:
 
-1. normalizar reclamações pela escala operacional;
-2. controlar diferenças relevantes de mix de carteira;
+1. normalizar reclamações pela escala operacional nas entidades comparáveis;
+2. estudar mix de carteira sem forçar coortes artificiais;
 3. controlar pequenas amostras;
 4. separar evento episódico de persistência;
 5. medir tendência;
@@ -1439,11 +1501,7 @@ Só avançar para scoring se os testes demonstrarem que é possível:
 8. preservar os players importantes mesmo sem pressão comparável;
 9. explicar a métrica ao consumidor sem extrapolar a evidência.
 
-Se esses critérios não forem atendidos:
-
-```text
-conduct_score = null
-```
+Quando esses requisitos falham em uma entidade específica, a conclusão correspondente permanece `null`/indisponível em vez de ser inventada.
 
 ---
 
@@ -1460,7 +1518,8 @@ A refatoração será considerada bem-sucedida quando:
 - ausência de dado não vire punição;
 - pressão de reclamações seja ajustada por exposição de forma defensável;
 - pequenas amostras não dominem o resultado;
-- persistência e remediação sejam distinguidas;
+- persistência e trajetória sejam distinguidas;
+- os sinais financeiros centrais não permitam compensação silenciosa de insuficiências;
 - o processo seja auditável;
 - o frontend não corrija nem invente lógica;
 - atualização editorial rotineira seja mínima;
@@ -1494,15 +1553,18 @@ E substituir o que era conceitualmente frágil:
 A próxima etapa é:
 
 ```text
-Conduct Comparative Calibration v2
-→ pressão relativa insurance-only
-→ mix de carteira
-→ small-sample credibility
-→ persistência
-→ remediação
-→ calibração comparativa
-→ somente então discutir score
+Financial Signal Contract  ─┐
+                            ├→ calibração entre pilares
+Conduct Signal Contract   ──┘
+                              ↓
+                        avaliação composta
+                              ↓
+                  assessment confidence final
+                              ↓
+                      elegibilidade/ranking
 ```
+
+Somente a calibração conjunta poderá decidir se uma nota numérica é necessária e, se for, qual transformação e quais pesos são defensáveis.
 
 ---
 
