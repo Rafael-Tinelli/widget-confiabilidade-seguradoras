@@ -61,6 +61,7 @@ def test_credibility_guard_distinguishes_extreme_ratio_from_denominator_sensitiv
     payload = build_credibility_diagnostic(calibration)
     by_id = {row["entity_id"]: row for row in payload["entities"]}
     small = by_id["fip:000001"]
+    complement = by_id["fip:000002"]
 
     assert payload["scoring"] == "forbidden_in_this_artifact"
     assert payload["ranking"] == "forbidden_in_this_artifact"
@@ -78,6 +79,10 @@ def test_credibility_guard_distinguishes_extreme_ratio_from_denominator_sensitiv
         == "crosses_neutral"
     )
     assert (
+        complement["denominator_sensitivity"]["raw_neutral_side_consistency"]
+        == "crosses_neutral"
+    )
+    assert (
         small["temporal_overlap"]["premium_direct"]["state"]
         == "all_observed_complaints_outside_positive_premium_months"
     )
@@ -92,7 +97,7 @@ def test_credibility_guard_distinguishes_extreme_ratio_from_denominator_sensitiv
     ] == 1
     assert payload["diagnostics"]["denominator_sensitivity"][
         "raw_neutral_side_changes"
-    ] == 1
+    ] == 2
 
 
 def test_earned_diagnostic_uses_its_own_aligned_population() -> None:
