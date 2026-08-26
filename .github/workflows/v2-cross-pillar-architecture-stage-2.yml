@@ -1,0 +1,188 @@
+name: V2 Cross-Pillar Architecture Stage 2
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "api/v2/build_cross_pillar_architecture_experiment.py"
+      - "tests/test_v2_cross_pillar_architecture_experiment.py"
+      - "docs/cross-pillar-calibration-stage-1.md"
+      - ".github/workflows/v2-cross-pillar-architecture-stage-2.yml"
+      - "api/v2/build_cross_pillar_calibration_diagnostic.py"
+      - "api/v2/build_cross_pillar_coverage_audit.py"
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: v2-cross-pillar-architecture-stage-2-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  cross-pillar-architecture-stage-2:
+    runs-on: ubuntu-24.04
+    env:
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install -r requirements-dev.txt
+
+      - name: Restore latest successful Cross-Pillar Calibration Stage 1
+        run: |
+          set -euo pipefail
+          branch="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
+          run_id="$(gh run list \
+            --repo "$GITHUB_REPOSITORY" \
+            --workflow "V2 Cross-Pillar Calibration Stage 1" \
+            --branch "$branch" \
+            --status success \
+            --limit 30 \
+            --json databaseId \
+            --jq '.[0].databaseId')"
+          test -n "$run_id"
+          rm -rf "$RUNNER_TEMP/stage1"
+          mkdir -p "$RUNNER_TEMP/stage1"
+          gh run download "$run_id" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name "v2-cross-pillar-calibration-stage-1-$run_id" \
+            --dir "$RUNNER_TEMP/stage1"
+          source_file="$(find "$RUNNER_TEMP/stage1" -type f -name cross_pillar_calibration_diagnostic.json | head -n 1)"
+          test -n "$source_file"
+          mkdir -p data/derived/v2
+          cp "$source_file" data/derived/v2/cross_pillar_calibration_diagnostic.json
+          echo "Restored Stage 1 from run $run_id"
+
+      - name: Restore latest successful Cross-Pillar Coverage Audit
+        run: |
+          set -euo pipefail
+          branch="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
+          run_id="$(gh run list \
+            --repo "$GITHUB_REPOSITORY" \
+            --workflow "V2 Cross-Pillar Coverage Audit" \
+            --branch "$branch" \
+            --status success \
+            --limit 30 \
+            --json databaseId \
+            --jq '.[0].databaseId')"
+          test -n "$run_id"
+          rm -rf "$RUNNER_TEMP/coverage"
+          mkdir -p "$RUNNER_TEMP/coverage"
+          gh run download "$run_id" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name "v2-cross-pillar-coverage-audit-$run_id" \
+            --dir "$RUNNER_TEMP/coverage"
+          source_file="$(find "$RUNNER_TEMP/coverage" -type f -name cross_pillar_coverage_audit.json | head -n 1)"
+          test -n "$source_file"
+          mkdir -p data/derived/v2
+          cp "$source_file" data/derived/v2/cross_pillar_coverage_audit.json
+          echo "Restored coverage audit from run $run_id"
+
+      - name: Lint architecture experiment
+        run: |
+          set -euo pipefail
+          ruff check \
+            api/v2/build_cross_pillar_architecture_experiment.py \
+            tests/test_v2_cross_pillar_architecture_experiment.py
+
+      - name: Run architecture experiment tests
+        run: |
+          set -euo pipefail
+          python -m pytest -q tests/test_v2_cross_pillar_architecture_experiment.py
+
+      - name: Build real architecture experiment
+        run: |
+          set -euo pipefail
+          python -m api.v2.build_cross_pillar_architecture_experiment
+
+      - name: Validate Stage 2 boundaries
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          path = Path("data/derived/v2/cross_pillar_architecture_experiment.json")
+          payload = json.loads(path.read_text(encoding="utf-8"))
+
+          if payload.get("status") != "cross_pillar_architecture_stage_2_experiment":
+              raise SystemExit("unexpected Stage 2 status")
+          if payload.get("scoring") != "forbidden_in_this_artifact":
+              raise SystemExit("Stage 2 must forbid scoring")
+          if payload.get("ranking") != "forbidden_in_this_artifact":
+              raise SystemExit("Stage 2 must forbid ranking")
+          if len(payload.get("entities") or []) != 157:
+              raise SystemExit("Stage 2 must preserve 157 entities")
+
+          decision = payload.get("architecture_decision") or {}
+          if decision.get("continuous_weighted_score_selected") is not False:
+              raise SystemExit("weighted score cannot be selected")
+          if decision.get("lexicographic_total_order_selected") is not False:
+              raise SystemExit("lexicographic total order cannot be selected")
+          if decision.get("pareto_front_number_selected_as_public_tier") is not False:
+              raise SystemExit("Pareto front cannot become public tier")
+          if decision.get("capital_gate_total_order_selected") is not False:
+              raise SystemExit("capital-gate total order cannot be selected yet")
+
+          matrix = payload.get("matrix_architecture") or {}
+          if matrix.get("status") != "leading_candidate_not_yet_formal_assessment_contract":
+              raise SystemExit("matrix must remain a leading candidate, not final contract")
+          if matrix.get("properties", {}).get("noncompensatory") is not True:
+              raise SystemExit("leading matrix candidate must be noncompensatory")
+
+          if payload.get("normative_tradeoffs", {}).get("tradeoff_entity_pairs") != 222:
+              raise SystemExit("expected 222 normative tradeoff entity pairs")
+          if payload.get("coverage_constraint", {}).get("full_market_ranking_supported") is not False:
+              raise SystemExit("full-market ranking must remain blocked")
+
+          forbidden = {
+              "overall_score",
+              "financial_score",
+              "conduct_score",
+              "ranking_position",
+              "assessment_eligible",
+              "ranking_eligible",
+          }
+          def walk(value):
+              if isinstance(value, dict):
+                  overlap = forbidden & set(value)
+                  if overlap:
+                      raise SystemExit(f"forbidden fields in Stage 2: {sorted(overlap)}")
+                  for child in value.values():
+                      walk(child)
+              elif isinstance(value, list):
+                  for child in value:
+                      walk(child)
+          walk(payload)
+
+          print(json.dumps({
+              "matrix_architecture": payload.get("matrix_architecture"),
+              "normative_tradeoffs": payload.get("normative_tradeoffs"),
+              "scenario_comparison": payload.get("scenario_comparison"),
+              "adverse_qualifier_diagnostic": payload.get("adverse_qualifier_diagnostic"),
+              "coverage_constraint": payload.get("coverage_constraint"),
+              "architecture_decision": payload.get("architecture_decision"),
+              "next_test": payload.get("next_test"),
+          }, ensure_ascii=False, indent=2))
+          PY
+
+      - name: Upload architecture experiment
+        uses: actions/upload-artifact@v4
+        with:
+          name: v2-cross-pillar-architecture-stage-2-${{ github.run_id }}
+          path: data/derived/v2/cross_pillar_architecture_experiment.json
+          retention-days: 14
