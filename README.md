@@ -476,6 +476,8 @@ persistent_pressure 14
 indeterminate       33
 ```
 
+Workflow `V2 Financial Methodology Closure`, run `33003042769`: Ruff verde, 3/3 testes, build real, fronteiras e artifact verdes (artifact `9619421688`).
+
 Esses estados são contratos de evidência e linguagem, não score nem ranking.
 
 ---
