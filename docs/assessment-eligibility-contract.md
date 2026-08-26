@@ -1,6 +1,6 @@
 # Assessment Eligibility Contract — v2
 
-Status: **implementado para validação; `assessment_eligible` pode ser aberto apenas por este gate. `ranking_eligible` permanece fechado.**
+Status: **fechado e validado; `assessment_eligible` está formalmente aberto para 85 seguradoras. `ranking_eligible` permanece fechado.**
 
 Este contrato sucede `docs/cross-pillar-assessment-semantic-contract.md`.
 
@@ -167,19 +167,19 @@ ranking_eligible = false
 
 Abrir avaliação não resolve os 222 trade-offs normativos nem a cobertura insuficiente para uma alegação de ranking integral do mercado.
 
-## 8. Snapshot esperado
+## 8. Snapshot validado
 
-Com os artifacts validados atualmente:
+Na execução real do contrato:
 
 ```text
 universo regulatório                         157
 suporte semântico para avaliação              85
-assessment_eligible esperado                  85
-assessment_not_eligible esperado              72
+assessment_eligible                           85
+assessment_not_eligible                       72
 ranking_eligible                               0
 ```
 
-Entre as 85 esperadas como elegíveis:
+Entre as 85 elegíveis:
 
 ```text
 Leitura central favorável   46
@@ -228,28 +228,53 @@ Workflow:
 V2 Assessment Eligibility Contract
 ```
 
-## 11. Fechamento esperado
+## 10.1. Precedência dos artifacts de elegibilidade
 
-Após execução real verde, o contrato poderá fechar como:
+`data/derived/v2/entity_eligibility_inventory.json` continua sendo o artifact **upstream do gate regulatório**. Ele deliberadamente não consome evidência Financeira/Conduta e, por isso, seus campos de avaliação representam o estado pendente naquela etapa do pipeline.
+
+Após o fechamento deste contrato, a fonte autoritativa para a elegibilidade de **avaliação** passa a ser:
+
+```text
+data/derived/v2/assessment_eligibility_contract.json
+```
+
+Assim:
+
+```text
+entity_eligibility_inventory
+→ responde ao gate regulatório
+
+assessment_eligibility_contract
+→ responde ao gate formal de avaliação
+```
+
+Não há conflito metodológico entre as camadas; há progressão de gates. O frontend/API final deverá consumir o estado downstream apropriado, e não inferir a elegibilidade final apenas do inventário regulatório.
+
+## 11. Fechamento validado
+
+Execução oficial:
+
+```text
+V2 Assessment Eligibility Contract
+run                     33025120193
+job                     98364518971
+Ruff                    verde
+testes                  6/6
+build real              verde
+boundaries              verdes
+artifact                9628104960
+SHA256 ZIP              7997da1c36999a99fdd6380f685b04c66cfb830737fcf4a12e678558db4efc12
+```
+
+O contrato fechou como:
 
 ```text
 status = assessment_eligibility_contract_closed
 assessment_eligibility_gate_opened = true
-ranking_eligibility_gate_opened = false
-```
-
-Nesse momento o snapshot poderá formalmente passar de:
-
-```text
-assessment_eligible = 0
-```
-
-para:
-
-```text
 assessment_eligible = 85
+
+ranking_eligibility_gate_opened = false
+ranking_eligible = 0
 ```
 
-sem alterar `ranking_eligible`.
-
-O próximo passo metodológico será um **preflight de elegibilidade para ranking**, que deverá tratar coorte, representatividade, natureza da alegação pública e os trade-offs que a matriz deliberadamente não totaliza.
+O próximo passo metodológico é um **preflight de elegibilidade para ranking**, que deverá tratar coorte, representatividade, natureza da alegação pública e os trade-offs que a matriz deliberadamente não totaliza. A abertura do gate de avaliação não autoriza ranking integral ou parcial por si só.
