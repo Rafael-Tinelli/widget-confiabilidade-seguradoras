@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from api.v2.build_cross_pillar_architecture_experiment import build_architecture_experiment
+from api.v2.build_cross_pillar_architecture_experiment import (
+    build_architecture_experiment,
+)
 
 
 def _stage1() -> dict:
