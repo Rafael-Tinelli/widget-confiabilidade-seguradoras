@@ -1,6 +1,6 @@
 # Contrato semântico de avaliação entre pilares — v2
 
-Status: **implementado para validação nas 157 seguradoras; score e ranking continuam proibidos**.
+Status: **fechado e validado nas 157 seguradoras; score e ranking continuam proibidos**.
 
 Este documento sucede `docs/cross-pillar-assessment-contract-preflight.md` e transforma o desenho de linguagem pública em um contrato executável.
 
@@ -307,7 +307,7 @@ tests/test_v2_cross_pillar_assessment_semantic_contract.py
 .github/workflows/v2-cross-pillar-assessment-semantic-contract.yml
 ```
 
-Artifact esperado:
+Artifact:
 
 ```text
 data/derived/v2/cross_pillar_assessment_semantic_contract.json
@@ -319,19 +319,56 @@ Workflow:
 V2 Cross-Pillar Assessment Semantic Contract
 ```
 
-## 13. Estado metodológico após este contrato
+## 13. Validação real
 
-Quando a execução real estiver verde, o estágio poderá ser considerado fechado como:
+Execução validada em `2026-08-26`:
+
+```text
+run                     33021494915
+job                     98352686525
+Ruff                    verde
+testes direcionados     4/4
+build real              verde
+universo                157/157
+semanticamente completas 85
+conjuntas incompletas    72
+boundaries              verdes
+artifact upload         verde
+artifact id             9626706193
+SHA256 artifact ZIP     1504ea96f132eff338bdcea3619884b397353cfa1cea43c42a594b347df6f514
+```
+
+A execução real confirmou:
+
+```text
+favorable_reading       46
+attention                30
+prudential_warning        9
+evidence_incomplete      72
+```
+
+Também confirmou que, entre as 72 avaliações conjuntas incompletas, permanecem obrigatoriamente visíveis:
+
+```text
+prudential_capital_warning  5
+liquidity_attention          5
+```
+
+O artifact preserva `scoring = forbidden`, `ranking = forbidden` e não abre os campos formais de elegibilidade.
+
+## 14. Estado metodológico após este contrato
+
+O estágio está fechado como:
 
 ```text
 cross_pillar_assessment_semantic_contract_closed
 ```
 
-Isso significará:
+Isso significa:
 
 > a metodologia sabe não apenas quais sinais existem, mas como descrevê-los publicamente, quais limites devem acompanhar cada frase e como preservar alertas mesmo diante de evidência conjunta incompleta.
 
-O próximo gate será:
+O próximo gate é:
 
 ```text
 assessment_eligibility_contract
