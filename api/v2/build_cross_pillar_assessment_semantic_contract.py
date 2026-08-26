@@ -386,12 +386,18 @@ def build_semantic_contract(
         ):
             raise ValueError(f"capital shortfall hidden from public alerts: {entity_id}")
 
-        if is_complete and matrix_state.startswith("capital_shortfall"):
-            if public["public_class"] != "prudential_warning":
-                raise ValueError(f"capital state without prudential warning class: {entity_id}")
-        if is_complete and matrix_state == "no_current_core_adverse_signal":
-            if public["public_class"] != "favorable_reading":
-                raise ValueError(f"favorable matrix state mislabeled: {entity_id}")
+        if (
+            is_complete
+            and matrix_state.startswith("capital_shortfall")
+            and public["public_class"] != "prudential_warning"
+        ):
+            raise ValueError(f"capital state without prudential warning class: {entity_id}")
+        if (
+            is_complete
+            and matrix_state == "no_current_core_adverse_signal"
+            and public["public_class"] != "favorable_reading"
+        ):
+            raise ValueError(f"favorable matrix state mislabeled: {entity_id}")
 
         rows.append(
             {
