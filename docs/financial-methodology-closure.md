@@ -291,7 +291,28 @@ Formulações não permitidas apenas com esta camada:
 - “Quanto maior o PLA/CMR ou ILT, melhor a seguradora sem limite.”
 - “Uma operação equilibrada compensa insuficiência de capital.”
 
-## 13. O que significa “Financeiro fechado”
+## 13. Validação
+
+Workflow:
+
+`V2 Financial Methodology Closure`
+
+Execução real validada em `2026-08-26`:
+
+```text
+run                    33003042769
+Ruff                   verde
+testes direcionados    3/3
+build real             verde
+universo               157/157
+fronteiras score/rank  verdes
+artifact upload        verde
+artifact id            9619421688
+```
+
+O artifact valida o contrato de sinal e proíbe explicitamente score e ranking nesta camada.
+
+## 14. O que significa “Financeiro fechado”
 
 A partir deste contrato estão encerrados:
 
