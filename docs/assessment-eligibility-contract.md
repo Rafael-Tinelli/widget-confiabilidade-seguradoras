@@ -4,6 +4,8 @@ Status: **implementado para validação; `assessment_eligible` pode ser aberto a
 
 Este contrato sucede `docs/cross-pillar-assessment-semantic-contract.md`.
 
+O gate é **fail-closed**: divergência de população, contrato semântico não fechado ou confiança central insuficiente impede a abertura da avaliação em vez de produzir fallback.
+
 A pergunta é:
 
 > **Temos base regulatória, comparabilidade e evidência suficientes para publicar uma avaliação conjunta desta seguradora?**
