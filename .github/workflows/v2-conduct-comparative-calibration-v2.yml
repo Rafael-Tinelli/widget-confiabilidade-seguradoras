@@ -1,0 +1,204 @@
+name: V2 Conduct Comparative Calibration v2
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths:
+      - "api/v2/build_conduct_comparative_calibration_v2.py"
+      - "tests/test_v2_conduct_comparative_calibration_v2.py"
+      - ".github/workflows/v2-conduct-comparative-calibration-v2.yml"
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: v2-conduct-comparative-calibration-v2-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  conduct-comparative-calibration-v2:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SES_CACHE_DIR: "data/raw/ses"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install -r requirements-dev.txt
+
+      - name: Restore validated SES source cache
+        uses: actions/cache/restore@v4
+        with:
+          path: data/raw/ses
+          key: v2-conduct-calibration-v2-ses-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: |
+            ses-source-${{ runner.os }}-
+
+      - name: Restore latest successful Consumer.gov Conduct evidence
+        run: |
+          set -euo pipefail
+          branch="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
+          run_id="$(gh run list \
+            --repo "$GITHUB_REPOSITORY" \
+            --workflow "V2 Consumer.gov Conduct Evidence" \
+            --branch "$branch" \
+            --status success \
+            --limit 30 \
+            --json databaseId \
+            --jq '.[0].databaseId')"
+          if [[ -z "$run_id" || "$run_id" == "null" ]]; then
+            echo "No successful Consumer.gov Conduct artifact found." >&2
+            exit 1
+          fi
+          rm -rf "$RUNNER_TEMP/conduct-upstream"
+          mkdir -p "$RUNNER_TEMP/conduct-upstream"
+          gh run download "$run_id" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name "v2-consumer-gov-conduct-$run_id" \
+            --dir "$RUNNER_TEMP/conduct-upstream"
+          source_file="$(find "$RUNNER_TEMP/conduct-upstream" -type f -name consumer_gov_conduct_evidence.json | head -n 1)"
+          if [[ -z "$source_file" ]]; then
+            echo "Conduct artifact does not contain consumer_gov_conduct_evidence.json" >&2
+            exit 1
+          fi
+          mkdir -p data/derived/v2
+          cp "$source_file" data/derived/v2/consumer_gov_conduct_evidence.json
+          echo "Restored Conduct evidence from run $run_id"
+
+      - name: Restore latest successful Conduct coverage reconciliation
+        run: |
+          set -euo pipefail
+          branch="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
+          run_id="$(gh run list \
+            --repo "$GITHUB_REPOSITORY" \
+            --workflow "V2 Conduct Coverage Reconciliation" \
+            --branch "$branch" \
+            --status success \
+            --limit 30 \
+            --json databaseId \
+            --jq '.[0].databaseId')"
+          if [[ -z "$run_id" || "$run_id" == "null" ]]; then
+            echo "No successful Conduct coverage reconciliation artifact found." >&2
+            exit 1
+          fi
+          rm -rf "$RUNNER_TEMP/reconciliation-upstream"
+          mkdir -p "$RUNNER_TEMP/reconciliation-upstream"
+          gh run download "$run_id" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name "v2-conduct-coverage-reconciliation-$run_id" \
+            --dir "$RUNNER_TEMP/reconciliation-upstream"
+          source_file="$(find "$RUNNER_TEMP/reconciliation-upstream" -type f -name conduct_coverage_reconciliation.json | head -n 1)"
+          if [[ -z "$source_file" ]]; then
+            echo "Reconciliation artifact does not contain conduct_coverage_reconciliation.json" >&2
+            exit 1
+          fi
+          mkdir -p data/derived/v2
+          cp "$source_file" data/derived/v2/conduct_coverage_reconciliation.json
+          echo "Restored Conduct reconciliation from run $run_id"
+
+      - name: Verify SES cache
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import zipfile
+          from pathlib import Path
+          path = Path("data/raw/ses/BaseCompleta.zip")
+          if not path.exists() or path.stat().st_size < 100_000_000:
+              raise SystemExit("validated SES BaseCompleta.zip cache is required")
+          if not zipfile.is_zipfile(path):
+              raise SystemExit("cached SES BaseCompleta.zip is not a valid ZIP")
+          print(f"SES cache OK: {path.stat().st_size} bytes")
+          PY
+
+      - name: Lint calibration v2
+        run: |
+          set -euo pipefail
+          ruff check \
+            api/v2/build_conduct_comparative_calibration_v2.py \
+            tests/test_v2_conduct_comparative_calibration_v2.py
+
+      - name: Run calibration v2 tests
+        run: |
+          set -euo pipefail
+          python -m pytest -q tests/test_v2_conduct_comparative_calibration_v2.py
+
+      - name: Build real Conduct comparative calibration v2
+        run: |
+          set -euo pipefail
+          python -m api.v2.build_conduct_comparative_calibration_v2
+
+      - name: Validate diagnostic boundaries
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          path = Path("data/derived/v2/conduct_comparative_calibration_v2.json")
+          payload = json.loads(path.read_text(encoding="utf-8"))
+          if payload.get("scoring") != "forbidden_in_this_artifact":
+              raise SystemExit("calibration v2 must forbid scoring")
+          if payload.get("ranking") != "forbidden_in_this_artifact":
+              raise SystemExit("calibration v2 must forbid ranking")
+          denominator = payload.get("denominator") or {}
+          if denominator.get("source_field") != "premio_direto":
+              raise SystemExit("calibration v2 must use premio_direto candidate")
+          if denominator.get("final_denominator_approved") is not False:
+              raise SystemExit("candidate denominator was promoted prematurely")
+          population = payload.get("population") or {}
+          if int(population.get("direct_one_to_one_candidates") or 0) <= 0:
+              raise SystemExit("calibration v2 has no direct one-to-one candidates")
+          if payload["diagnostics"].get("shrinkage_applied") is not False:
+              raise SystemExit("shrinkage must remain diagnostic/pending in this gate")
+
+          forbidden = {
+              "overall_score",
+              "ranking_position",
+              "assessment_eligible",
+              "ranking_eligible",
+          }
+          def walk(value):
+              if isinstance(value, dict):
+                  overlap = forbidden & set(value)
+                  if overlap:
+                      raise SystemExit(f"forbidden decision fields: {sorted(overlap)}")
+                  for child in value.values():
+                      walk(child)
+              elif isinstance(value, list):
+                  for child in value:
+                      walk(child)
+          walk(payload)
+          print(json.dumps({
+              "population": payload["population"],
+              "market_12m": {
+                  "complaints": payload["market_12m"]["complaints"],
+                  "premium_direct": payload["market_12m"]["premium_direct"],
+              },
+              "pressure_ratio_quantiles": payload["diagnostics"]["pressure_ratio_quantiles"],
+              "small_sample": payload["diagnostics"]["small_sample"],
+              "highest_pressure_observations": payload["diagnostics"]["highest_pressure_observations"],
+          }, ensure_ascii=False, indent=2))
+          PY
+
+      - name: Upload Conduct comparative calibration v2
+        uses: actions/upload-artifact@v4
+        with:
+          name: v2-conduct-comparative-calibration-v2-${{ github.run_id }}
+          retention-days: 14
+          path: data/derived/v2/conduct_comparative_calibration_v2.json
