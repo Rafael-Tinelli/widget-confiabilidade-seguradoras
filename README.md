@@ -3,14 +3,18 @@
 > **Status do projeto:** refatoração metodológica e arquitetural em andamento.  
 > **Branch de trabalho:** `refactor/v2-data-foundation`.  
 > **PR:** #1 permanece **Draft**.  
-> **Marco atual (2026-08-26):** identidade, classificação regulatória, lifecycle jurídico, relationships, elegibilidade formal, evidência financeira e de Conduta estão implementados em draft. Os contratos de sinal **Financeiro** e **Conduta** estão fechados sem score. A **calibração entre pilares foi iniciada**: o Stage 1 mediu ordenabilidade e representatividade sem pesos e mostrou que os contratos fechados sustentam uma matriz de estados, mas não determinam sozinhos um ranking total nem uma nota contínua.  
-> **Regra de segurança:** nada nesta branch deve ser tratado como score ou ranking final enquanto a arquitetura conjunta, a representatividade e os gates finais de avaliação não forem concluídos.
+> **Marco atual (2026-08-26):** identidade, classificação regulatória, lifecycle jurídico, relationships, elegibilidade formal, evidência financeira e de Conduta estão implementados em draft. Os contratos de sinal **Financeiro** e **Conduta** estão fechados sem score. A calibração entre pilares concluiu **Stage 1, auditoria de cobertura, Stage 2 e o contrato semântico de avaliação**. A matriz não compensatória está formalizada para linguagem pública: **85/157** seguradoras possuem suporte semântico para avaliação conjunta completa e **72/157** permanecem como avaliação conjunta incompleta, preservando os sinais disponíveis de cada pilar. Isso **não abre** `assessment_eligible` nem `ranking_eligible`; ambos continuam em `0`.  
+> **Próximo gate:** `assessment_eligibility_contract`. A ferramenta só poderá abrir elegibilidade formal de avaliação após separar, de maneira executável, completude semântica, confiança/evidência e condições de publicação. Ranking permanece bloqueado.  
+> **Regra de segurança:** nada nesta branch deve ser tratado como score ou ranking final enquanto os gates formais de avaliação, representatividade e ranking não forem concluídos.
 
 Este README é o **contrato de projeto**, o guia de implementação da v2 e o registro das decisões metodológicas já tomadas. Os fechamentos e calibrações específicas estão documentados em:
 
 - `docs/financial-methodology-closure.md`;
 - `docs/conduct-methodology-closure.md`;
-- `docs/cross-pillar-calibration-stage-1.md`.
+- `docs/cross-pillar-calibration-stage-1.md`;
+- `docs/cross-pillar-architecture-stage-2.md`;
+- `docs/cross-pillar-assessment-contract-preflight.md`;
+- `docs/cross-pillar-assessment-semantic-contract.md`.
 
 Regras marcadas como **EM CALIBRAÇÃO**, **EXPERIMENTAL** ou **PENDENTE** não podem ser convertidas silenciosamente em scoring.
 
@@ -1179,47 +1183,40 @@ Uma ordem total exigiria nova regra normativa de mérito ou prioridade entre pil
 
 ---
 
-## 42. Arquiteturas após o Stage 1
+## 42. Stage 2 — arquitetura de avaliação concluída
 
-### Score contínuo ponderado
+O Stage 2 comparou arquiteturas sem transformar preferência normativa em matemática.
 
-```text
-não sustentado apenas pelos contratos fechados
-```
-
-`50/50`, `60/40` ou outra ponderação exigiria antes criar escalas cardinais de mérito que os contratos deliberadamente não definem.
-
-### Matriz de estados não compensatória
+Candidato líder validado:
 
 ```text
-compatível com os contratos fechados
+noncompensatory_state_matrix_with_adverse_qualifiers
 ```
 
-É a principal arquitetura candidata para o Stage 2.
-
-### Pareto
+Estados atuais:
 
 ```text
-compatível como auditoria de consistência
+no_current_core_adverse_signal                 46
+conduct_pressure_only                          14
+liquidity_pressure_only                         8
+liquidity_and_conduct_pressure                  8
+capital_shortfall_without_conduct_pressure      5
+capital_shortfall_and_conduct_pressure          4
+evidence_incomplete_for_joint_assessment       72
 ```
 
-Não deve virar automaticamente faixas públicas de qualidade.
-
-### Ordem lexicográfica
+Decisões:
 
 ```text
-exige nova prioridade normativa
+continuous_weighted_score_selected          false
+lexicographic_total_order_selected           false
+pareto_front_number_selected_as_public_tier  false
+capital_gate_total_order_selected            false
 ```
 
-Os dados não determinam se Financeiro deve ser sempre anterior a Conduta ou vice-versa.
+O Stage 2 confirmou 222 pares de trade-off normativo. Portanto, uma ordem total não emerge automaticamente dos contratos fechados.
 
-### Gate + score
-
-```text
-possível investigação futura; ainda não selecionado
-```
-
-Um score dentro do gate ainda exigiria diferenciação positiva defensável.
+A matriz é não compensatória: identifica **onde** existe sinal adverso, sem criar taxa de câmbio entre capital, liquidez e Conduta.
 
 ---
 
@@ -1291,43 +1288,115 @@ Somente as dez maiores entidades sem conclusão conjunta concentram aproximadame
 
 ---
 
-## 45. Próximo gate — arquitetura de avaliação Stage 2
+## 45. Contrato semântico de avaliação — FECHADO
 
-O Stage 2 não começa escolhendo pesos.
+O preflight de linguagem pública foi transformado em contrato executável e validado contra as 157 seguradoras.
 
-Deve comparar:
+Artifact:
 
 ```text
-A. matriz de estados não compensatória
-B. gates materiais + diferenciação apenas quando houver evidência defensável
-C. Pareto como auditoria de coerência
+v2_cross_pillar_assessment_semantic_contract
 ```
 
-Perguntas:
+Workflow:
 
-1. insuficiência de capital cria gate material próprio?;
-2. pressão de liquidez e pressão de Conduta permanecem adversidades distintas ou podem compartilhar uma faixa?;
-3. persistência/tendência podem qualificar severidade adversa sem virar bônus positivo?;
-4. quais estados suportam uma avaliação pública e quais permanecem “evidência insuficiente”?;
-5. é possível criar faixas úteis sem fingir precisão 1–N?;
-6. que representatividade será exigida antes de abrir `ranking_eligible`?
+```text
+V2 Cross-Pillar Assessment Semantic Contract
+```
 
-Em paralelo, a recuperação de comparabilidade dos casos materialmente relevantes deve continuar.
+Pergunta humana:
+
+> **O que os sinais disponíveis permitem dizer ao consumidor sobre esta seguradora, em linguagem útil, sem transformar evidência parcial em garantia?**
+
+Ordem pública obrigatória:
+
+```text
+leitura geral
+→ sinais encontrados
+→ por que isso importa
+→ qualificadores
+→ números e metodologia
+→ limites da conclusão
+→ confiança e cobertura
+```
+
+Classes públicas atuais:
+
+```text
+Leitura central favorável      46
+Atenção                        30
+Alerta prudencial               9
+Avaliação conjunta incompleta  72
+TOTAL                          157
+```
+
+Para as 85 entidades com os dois núcleos conclusivos, existe **suporte semântico para avaliação pública individual conjunta**.
+
+Isso não equivale a elegibilidade formal:
+
+```text
+semantic_public_assessment_supported  85
+assessment_eligible                    0
+ranking_eligible                       0
+```
+
+A distinção é obrigatória.
+
+### 45.1. Avaliação incompleta não esconde sinal disponível
+
+Entre as 72 avaliações conjuntas incompletas, o contrato encontrou:
+
+```text
+5 com alerta prudencial de capital
+5 com atenção à liquidez
+```
+
+Logo:
+
+```text
+joint assessment incomplete != suppress available pillar evidence
+```
+
+A interface deve informar a incompletude conjunta **e** preservar qualquer sinal utilizável de Financeiro ou Conduta.
+
+### 45.2. Qualificadores de Conduta
+
+Persistência e tendência públicas só podem aparecer quando a conclusão anual final é:
+
+```text
+above_expected_with_sufficient_evidence
+```
+
+Se a pressão final não está acima do esperado:
+
+```text
+persistence qualifier = null
+trend qualifier       = null
+```
+
+Isso impede frases contraditórias como “sem pressão acima do esperado” acompanhada de chip “pressão piorando”.
+
+### 45.3. Detalhe sem bônus
+
+`below_expected` e `not_distinguishable` continuam juntos em `C0` para a matriz adversa, mas permanecem semanticamente distintos no cartão de Conduta.
+
+Menos reclamações que o esperado pode ser descrito como resultado favorável **para esse indicador**, sem virar bônus de qualidade ou score.
 
 ---
 
 # CONFIANÇA, SCORE E RANKING
 
-## 46. Score continua bloqueado
+## 46. Score e gates continuam bloqueados
 
 Atualmente:
 
 ```text
-assessment_eligible = 0
-ranking_eligible = 0
+semantic_public_assessment_supported = 85
+assessment_eligible                  = 0
+ranking_eligible                     = 0
 ```
 
-Nenhum artifact de calibração atual pode abrir esses gates.
+O contrato semântico **não** abre gates formais.
 
 A avaliação geral depende de:
 
@@ -1387,7 +1456,7 @@ e não:
 
 quando a segunda frase não puder ser sustentada.
 
-A população atual de 85 conclusivas **não** pode ser descrita como ranking integral do mercado.
+A população atual de 85 semanticamente completas **não** pode ser descrita como ranking integral do mercado.
 
 ---
 
@@ -1449,7 +1518,9 @@ A branch possui, entre outros:
 - `V2 Conduct Methodology Closure`;
 - `V2 Sandbox Brand Conduct Evidence`;
 - `V2 Cross-Pillar Calibration Stage 1`;
-- `V2 Cross-Pillar Coverage Audit`.
+- `V2 Cross-Pillar Coverage Audit`;
+- `V2 Cross-Pillar Architecture Stage 2`;
+- `V2 Cross-Pillar Assessment Semantic Contract`.
 
 O antigo:
 
@@ -1483,7 +1554,32 @@ boundaries           verdes
 artifact             9623805832
 ```
 
-Ambos preservam `scoring = forbidden` e `ranking = forbidden`.
+### Cross-Pillar Architecture Stage 2
+
+```text
+run                  33015231566
+Ruff                 verde
+testes               3/3
+build real           verde
+boundaries           verdes
+artifact             9624261105
+```
+
+### Cross-Pillar Assessment Semantic Contract
+
+```text
+run                  33021494915
+job                  98352686525
+Ruff                 verde
+testes               4/4
+build real           verde
+universo             157/157
+boundaries           verdes
+artifact             9626706193
+SHA256 ZIP           1504ea96f132eff338bdcea3619884b397353cfa1cea43c42a594b347df6f514
+```
+
+Todos preservam score/ranking bloqueados conforme o escopo de cada artifact.
 
 ---
 
@@ -1552,7 +1648,10 @@ O pipeline deve falhar em situações como:
 - alteração inesperada de schema;
 - score produzido por artifact que proíbe scoring;
 - pilar ausente tratado como neutralidade;
-- subset incompleto apresentado como ranking integral do mercado.
+- subset incompleto apresentado como ranking integral do mercado;
+- avaliação conjunta incompleta ocultando alerta disponível em um pilar;
+- qualificador adverso de Conduta exibido quando a conclusão anual não está acima do esperado;
+- suporte semântico confundido com `assessment_eligible` formal.
 
 ---
 
@@ -1600,23 +1699,32 @@ O pipeline deve falhar em situações como:
 - remediação não estabelecida;
 - score interno não definido.
 
-### Calibração entre pilares — STAGE 1 CONCLUÍDO / STAGE 2 PENDENTE
+### Calibração entre pilares — CONTRATO SEMÂNTICO FECHADO
 
-- matriz real Financeiro × Conduta;
-- ordenabilidade sem pesos;
-- Pareto diagnóstico;
-- empates/incomparabilidade;
-- auditoria de representatividade econômica;
+- Stage 1: matriz real, ordenabilidade e Pareto diagnóstico;
+- Coverage Audit: representatividade econômica e de reclamações;
+- Stage 2: arquitetura não compensatória selecionada como base da avaliação;
+- contrato semântico: linguagem pública e guardrails validados nas 157;
+- 85 com suporte semântico para avaliação conjunta;
+- 72 como avaliação conjunta incompleta, preservando sinais disponíveis;
 - full-market ranking bloqueado;
-- arquitetura de avaliação ainda não selecionada.
+- score e pesos não selecionados.
+
+### Elegibilidade formal de avaliação — PRÓXIMO GATE
+
+`assessment_eligibility_contract` deve decidir quando o suporte semântico se transforma em elegibilidade formal de avaliação.
 
 ### Score geral — BLOQUEADO
 
-Só pode ser discutido após o Stage 2 demonstrar que alguma transformação numérica agrega informação defensável além dos estados.
+Só pode ser discutido se uma transformação numérica demonstrar agregar informação defensável além dos estados e sem violar os contratos fechados.
+
+### Ranking — BLOQUEADO
+
+`ranking_eligible` permanece `0`; cobertura e ordenação ainda não sustentam ranking integral de mercado.
 
 ### Schema/publicação/frontend — PENDENTES
 
-Nenhuma regra v2 deve ser migrada ao frontend antes da metodologia.
+Nenhuma regra v2 deve ser migrada ao frontend antes dos gates formais correspondentes.
 
 ---
 
@@ -1632,8 +1740,9 @@ Não:
 - usar confiança como desempenho;
 - usar ICA/IC como bônus oculto;
 - tratar pilar indisponível como neutro;
-- abrir `assessment_eligible` ou `ranking_eligible`;
-- chamar as 85 conclusivas de ranking integral do mercado;
+- abrir `assessment_eligible` sem o contrato formal de elegibilidade;
+- abrir `ranking_eligible`;
+- chamar as 85 semanticamente completas de ranking integral do mercado;
 - produzir ranking 1–157;
 - usar reclamações brutas como nota;
 - usar prêmio como número de clientes;
@@ -1648,22 +1757,37 @@ Não:
 
 ---
 
-## 58. Critério para avançar da calibração conjunta
+## 58. Próximo gate — Assessment Eligibility Contract
 
-O Stage 2 deve demonstrar que uma arquitetura de avaliação:
+A próxima investigação deve transformar o suporte semântico já validado em uma política formal de elegibilidade, sem confundi-lo com ranking.
 
-1. preserva insuficiência de capital como sinal material;
-2. não permite compensação silenciosa de adversidades;
-3. mantém missingness separado de desempenho;
-4. separa confiança de resultado;
-5. produz linguagem útil ao consumidor;
-6. não inventa precisão maior que os dados;
-7. explicita a coorte e a cobertura;
-8. continua válida quando novos casos recuperados entram na população;
-9. permite auditoria da posição relativa;
-10. só usa score se o score acrescentar interpretação defensável além dos estados.
+O contrato deve responder:
 
-Se isso não puder ser demonstrado, a saída correta pode ser **avaliação por estados/faixas**, e não um ranking total.
+1. quais requisitos mínimos de identidade, atualidade, comparabilidade e confiança são obrigatórios para `assessment_eligible`?;
+2. `joint_core_complete` é condição necessária e suficiente ou ainda exige gates adicionais de evidência?;
+3. como tratar histórico financeiro limitado sem transformá-lo em desempenho ruim?;
+4. como publicar avaliação conjunta completa quando um qualificador contextual estiver indisponível?;
+5. quais falhas tornam a avaliação incompleta, e quais apenas reduzem confiança?;
+6. como garantir que alertas materiais continuem visíveis mesmo quando `assessment_eligible = false`?;
+7. como versionar elegibilidade quando a metodologia ou a fonte mudar?;
+8. como separar `assessment_eligible` de `ranking_eligible` de forma estrutural e testável?;
+9. qual disclosure de cobertura deve acompanhar comparações entre avaliadas?;
+10. quais condições precisam ser satisfeitas antes de qualquer discussão de ranking público?
+
+O contrato semântico atual já prova que:
+
+```text
+semantic_public_assessment_supported = 85
+```
+
+mas deliberadamente mantém:
+
+```text
+assessment_eligible = 0
+ranking_eligible    = 0
+```
+
+A próxima etapa deve decidir se e em quais condições o primeiro gate pode ser aberto **sem abrir o segundo**.
 
 ---
 
@@ -1717,14 +1841,13 @@ E substituir o que era conceitualmente frágil:
 A próxima etapa é:
 
 ```text
-Cross-Pillar Calibration Stage 2
-→ comparar arquiteturas de avaliação
-→ preservar gates materiais e não compensação
-→ tratar severidade adversa sem inventar bônus
-→ definir assessment completeness
-→ auditar representatividade
-→ recuperar comparabilidade dos maiores casos
-→ somente depois decidir se score/ranking acrescentam valor legítimo
+Assessment Eligibility Contract
+→ definir requisitos formais de avaliação
+→ separar completude, confiança e desempenho
+→ preservar alertas em casos inelegíveis
+→ abrir assessment_eligible somente quando sustentado
+→ manter ranking_eligible independente e bloqueado
+→ somente depois discutir coortes, comparação ordinal e eventual ranking
 ```
 
 ---
