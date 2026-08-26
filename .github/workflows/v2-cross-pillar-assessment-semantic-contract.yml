@@ -2,6 +2,17 @@ name: V2 Cross-Pillar Assessment Semantic Contract
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - "refactor/v2-data-foundation"
+    paths:
+      - "api/v2/build_cross_pillar_assessment_semantic_contract.py"
+      - "tests/test_v2_cross_pillar_assessment_semantic_contract.py"
+      - "docs/cross-pillar-assessment-contract-preflight.md"
+      - "docs/cross-pillar-assessment-semantic-contract.md"
+      - ".github/workflows/v2-cross-pillar-assessment-semantic-contract.yml"
+      - "api/v2/build_cross_pillar_calibration_diagnostic.py"
+      - "api/v2/build_cross_pillar_architecture_experiment.py"
   pull_request:
     paths:
       - "api/v2/build_cross_pillar_assessment_semantic_contract.py"
