@@ -108,11 +108,11 @@ def _rate_ratio_interval(
         beta.ppf(1.0 - alpha / 2.0, recent_observed + 1, early_observed)
     )
 
-    def convert(probability: float) -> float:
+    def convert(probability: float) -> float | None:
         if probability <= 0:
             return 0.0
         if probability >= 1:
-            return math.inf
+            return None
         return (
             probability
             / (1.0 - probability)
@@ -121,7 +121,7 @@ def _rate_ratio_interval(
         )
 
     if early_observed == 0:
-        point = math.inf if recent_observed > 0 else None
+        point = None
     else:
         point = (
             (recent_observed / recent_expected)
@@ -130,9 +130,9 @@ def _rate_ratio_interval(
 
     lower = convert(lower_p)
     upper = convert(upper_p)
-    if lower > 1.0:
+    if lower is not None and lower > 1.0:
         state = "deteriorating_pressure"
-    elif upper < 1.0:
+    elif upper is not None and upper < 1.0:
         state = "improving_pressure"
     else:
         state = "no_clear_change"
