@@ -4,6 +4,7 @@ on:
   workflow_dispatch:
   pull_request:
     paths:
+      - "README.md"
       - "api/v2/build_exploratory_leaderboards_contract.py"
       - "tests/test_v2_exploratory_leaderboards_contract.py"
       - "docs/exploratory-leaderboards-contract.md"
