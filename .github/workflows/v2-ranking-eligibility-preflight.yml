@@ -9,8 +9,8 @@ on:
       - "docs/ranking-eligibility-preflight.md"
       - ".github/workflows/v2-ranking-eligibility-preflight.yml"
       - "api/v2/build_assessment_eligibility_contract.py"
-      - "api/v2/build_cross_pillar_calibration.py"
-      - "api/v2/build_cross_pillar_architecture_stage_2.py"
+      - "api/v2/build_cross_pillar_calibration_diagnostic.py"
+      - "api/v2/build_cross_pillar_architecture_experiment.py"
       - "api/v2/build_cross_pillar_coverage_audit.py"
 
 permissions:
@@ -114,7 +114,7 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --name "v2-cross-pillar-architecture-stage-2-$run_id" \
             --dir "$RUNNER_TEMP/stage2"
-          source_file="$(find "$RUNNER_TEMP/stage2" -type f -name cross_pillar_architecture_stage_2.json | head -n 1)"
+          source_file="$(find "$RUNNER_TEMP/stage2" -type f -name cross_pillar_architecture_experiment.json | head -n 1)"
           test -n "$source_file"
           mkdir -p data/derived/v2
           cp "$source_file" data/derived/v2/cross_pillar_architecture_stage_2.json
