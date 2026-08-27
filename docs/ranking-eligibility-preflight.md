@@ -1,6 +1,6 @@
 # Ranking Eligibility Preflight — v2
 
-Status: **preflight fechado; o gate formal de ranking permanece bloqueado.**
+Status: **preflight fechado e validado; o gate formal de ranking permanece bloqueado.**
 
 Este preflight sucede `docs/assessment-eligibility-contract.md`.
 
@@ -298,9 +298,23 @@ Workflow:
 V2 Ranking Eligibility Preflight
 ```
 
-## 11. Decisão metodológica do preflight
+## 11. Fechamento validado
 
-O fechamento esperado é:
+Execução real:
+
+```text
+V2 Ranking Eligibility Preflight
+run                     33028938405
+job                     98376698450
+Ruff                    verde
+testes                  7/7
+build real              verde
+boundaries              verdes
+artifact                9629478349
+SHA256 ZIP              06f010b5bf4a5b0ea2b4f5ab98bed8e685d9f6f4c1023e0e4cb43702cd8d19c1
+```
+
+O artifact fechou como:
 
 ```text
 status = ranking_eligibility_preflight_closed_gate_remains_blocked
@@ -313,6 +327,16 @@ assessment_eligible_subset_total_ranking_supported = false
 semantic_comparison_of_assessment_eligible_subset_supported = true
 comparison_is_not_ranking = true
 ```
+
+A validação real também confirmou:
+
+```text
+ranking_preflight_candidates = 85
+ranking_position efetiva     = 0
+comparison_cohort selecionada = 0
+```
+
+Ou seja: o preflight mede quem chegou ao ponto de poder ser considerado por um futuro contrato de ranking, mas não produz posição nem coorte por conta própria.
 
 ## 12. Próxima decisão
 
