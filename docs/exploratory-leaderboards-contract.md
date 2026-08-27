@@ -449,6 +449,8 @@ SHA256 ZIP              ebedc4ea8d10959ab3dbb01000d923e4f57d1cb2db960dfbec7ff54a
 arquivos públicos       12
 ```
 
+A validação acima foi executada contra os artifacts reais da branch. Alterações posteriores apenas de governança/documentação não mudam os contratos nem os dados derivados; o workflow oficial inclui `README.md` e este documento em seus gatilhos de validação.
+
 ## 12. Próximo estágio de produto
 
 Com este contrato fechado, a próxima etapa deixa de ser escolha de score.
