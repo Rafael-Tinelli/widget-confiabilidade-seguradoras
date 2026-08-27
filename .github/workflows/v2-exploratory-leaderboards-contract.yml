@@ -1,0 +1,332 @@
+name: V2 Exploratory Leaderboards Contract
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "api/v2/build_exploratory_leaderboards_contract.py"
+      - "tests/test_v2_exploratory_leaderboards_contract.py"
+      - "docs/exploratory-leaderboards-contract.md"
+      - ".github/workflows/v2-exploratory-leaderboards-contract.yml"
+      - "api/v2/build_assessment_eligibility_contract.py"
+      - "api/v2/build_cross_pillar_assessment_semantic_contract.py"
+      - "api/v2/build_financial_methodology_closure.py"
+      - "api/v2/build_conduct_methodology_closure.py"
+      - "api/v2/build_conduct_coverage_reconciliation.py"
+      - "api/v2/build_ranking_eligibility_preflight.py"
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: v2-exploratory-leaderboards-contract-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  exploratory-leaderboards-contract:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install -r requirements-dev.txt
+
+      - name: Restore latest successful upstream contracts
+        run: |
+          set -euo pipefail
+          branch="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
+          mkdir -p data/derived/v2
+
+          restore_artifact() {
+            workflow="$1"
+            prefix="$2"
+            filename="$3"
+            destination="$4"
+            temp_dir="$RUNNER_TEMP/restore-${prefix}"
+            run_id="$(gh run list \
+              --repo "$GITHUB_REPOSITORY" \
+              --workflow "$workflow" \
+              --branch "$branch" \
+              --status success \
+              --limit 30 \
+              --json databaseId \
+              --jq '.[0].databaseId')"
+            test -n "$run_id"
+            rm -rf "$temp_dir"
+            mkdir -p "$temp_dir"
+            gh run download "$run_id" \
+              --repo "$GITHUB_REPOSITORY" \
+              --name "${prefix}-${run_id}" \
+              --dir "$temp_dir"
+            source_file="$(find "$temp_dir" -type f -name "$filename" | head -n 1)"
+            test -n "$source_file"
+            cp "$source_file" "$destination"
+            echo "Restored $workflow from run $run_id"
+          }
+
+          restore_artifact \
+            "V2 Assessment Eligibility Contract" \
+            "v2-assessment-eligibility-contract" \
+            "assessment_eligibility_contract.json" \
+            "data/derived/v2/assessment_eligibility_contract.json"
+
+          restore_artifact \
+            "V2 Cross-Pillar Assessment Semantic Contract" \
+            "v2-cross-pillar-assessment-semantic-contract" \
+            "cross_pillar_assessment_semantic_contract.json" \
+            "data/derived/v2/cross_pillar_assessment_semantic_contract.json"
+
+          restore_artifact \
+            "V2 Financial Methodology Closure" \
+            "v2-financial-methodology-closure" \
+            "financial_methodology_closure.json" \
+            "data/derived/v2/financial_methodology_closure.json"
+
+          restore_artifact \
+            "V2 Conduct Methodology Closure" \
+            "v2-conduct-methodology-closure" \
+            "conduct_methodology_closure.json" \
+            "data/derived/v2/conduct_methodology_closure.json"
+
+          restore_artifact \
+            "V2 Conduct Coverage Reconciliation" \
+            "v2-conduct-coverage-reconciliation" \
+            "conduct_coverage_reconciliation.json" \
+            "data/derived/v2/conduct_coverage_reconciliation.json"
+
+          restore_artifact \
+            "V2 Ranking Eligibility Preflight" \
+            "v2-ranking-eligibility-preflight" \
+            "ranking_eligibility_preflight.json" \
+            "data/derived/v2/ranking_eligibility_preflight.json"
+
+      - name: Lint exploratory leaderboards contract
+        run: |
+          set -euo pipefail
+          ruff check \
+            api/v2/build_exploratory_leaderboards_contract.py \
+            tests/test_v2_exploratory_leaderboards_contract.py
+
+      - name: Run exploratory leaderboards tests
+        run: |
+          set -euo pipefail
+          python -m pytest -q tests/test_v2_exploratory_leaderboards_contract.py
+
+      - name: Build real exploratory leaderboards package
+        run: |
+          set -euo pipefail
+          rm -rf data/derived/v2/public
+          python -m api.v2.build_exploratory_leaderboards_contract
+
+      - name: Validate public exploration boundaries
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          contract_path = Path("data/derived/v2/exploratory_leaderboards_contract.json")
+          payload = json.loads(contract_path.read_text(encoding="utf-8"))
+
+          if payload.get("status") != "exploratory_leaderboards_contract_closed":
+              raise SystemExit("unexpected exploratory leaderboards status")
+          if payload.get("general_scoring") != "forbidden":
+              raise SystemExit("general scoring must remain forbidden")
+          if payload.get("general_ranking") != "blocked":
+              raise SystemExit("general ranking must remain blocked")
+          if payload.get("ranking_eligible") != 0:
+              raise SystemExit("ranking_eligible must remain zero")
+
+          population = payload.get("population") or {}
+          expected_population = {
+              "regulatory_universe": 157,
+              "assessment_eligible": 85,
+              "assessment_not_eligible": 72,
+              "ranking_eligible": 0,
+          }
+          if population != expected_population:
+              raise SystemExit(f"unexpected population: {population}")
+
+          policy = payload.get("publication_policy") or {}
+          if policy.get("semantic_assessment_is_primary_product") is not True:
+              raise SystemExit("semantic assessment must be the primary product")
+          if policy.get("side_by_side_comparison_supported") is not True:
+              raise SystemExit("side-by-side comparison should be supported")
+          if policy.get("automatic_winner_label_supported") is not False:
+              raise SystemExit("automatic winner labels must remain blocked")
+          if policy.get("general_composite_ranking_supported") is not False:
+              raise SystemExit("general composite ranking must remain blocked")
+          if policy.get("php_may_recompute_methodology") is not False:
+              raise SystemExit("PHP must not recompute methodology")
+          if policy.get("missing_data_may_receive_bottom_position") is not False:
+              raise SystemExit("missingness cannot become a bottom position")
+
+          diagnostics = payload.get("diagnostics") or {}
+          expected_candidates = {
+              "largest_by_direct_premium": 132,
+              "highest_pla_cmr_ratio": 155,
+              "highest_ilt": 156,
+              "lowest_conduct_pressure_ratio": 41,
+              "highest_conduct_pressure_ratio": 26,
+          }
+          if diagnostics.get("leaderboard_candidate_counts") != expected_candidates:
+              raise SystemExit(
+                  f"unexpected leaderboard candidates: {diagnostics.get('leaderboard_candidate_counts')}"
+              )
+
+          expected_collections = {
+              "financial_core_without_current_adverse_signal": 120,
+              "favorable_joint_assessment": 46,
+              "favorable_with_below_expected_conduct": 33,
+              "conduct_improving_but_still_adverse": 4,
+              "conduct_persistent_above_expected": 20,
+          }
+          if diagnostics.get("collection_counts") != expected_collections:
+              raise SystemExit(
+                  f"unexpected collection counts: {diagnostics.get('collection_counts')}"
+              )
+
+          boards = {board["id"]: board for board in payload.get("leaderboards") or []}
+          expected_board_ids = set(expected_candidates)
+          if set(boards) != expected_board_ids:
+              raise SystemExit(f"unexpected board ids: {sorted(boards)}")
+          if any(board.get("is_general_ranking") for board in boards.values()):
+              raise SystemExit("metric leaderboard cannot become general ranking")
+          if any(
+              int(entry.get("leaderboard_rank") or 0) > 10
+              for board in boards.values()
+              for entry in board.get("entries") or []
+          ):
+              raise SystemExit("public leaderboard exceeded top 10 positions")
+
+          leaders = {
+              board_id: (board.get("entries") or [{}])[0].get("legal_name")
+              for board_id, board in boards.items()
+          }
+          expected_leaders = {
+              "largest_by_direct_premium": "PORTO SEGURO COMPANHIA DE SEGUROS GERAIS",
+              "highest_pla_cmr_ratio": "STG SEGUROS S.A.",
+              "highest_ilt": "PATER SEGUROS S.A.",
+              "highest_conduct_pressure_ratio": "AZUL COMPANHIA DE SEGUROS GERAIS",
+          }
+          for board_id, expected_name in expected_leaders.items():
+              if leaders.get(board_id) != expected_name:
+                  raise SystemExit(
+                      f"unexpected leader for {board_id}: {leaders.get(board_id)!r}"
+                  )
+
+          low_entries = boards["lowest_conduct_pressure_ratio"].get("entries") or []
+          if sum(entry.get("leaderboard_rank") == 1 for entry in low_entries) != 7:
+              raise SystemExit("expected seven tied zero-ratio leaders in low Conduct board")
+          if any(
+              entry.get("conduct_pressure_state")
+              != "below_expected_with_sufficient_evidence"
+              for entry in low_entries
+          ):
+              raise SystemExit("low Conduct board admitted non-conclusive states")
+          if any(
+              entry.get("conduct_pressure_state")
+              != "above_expected_with_sufficient_evidence"
+              for entry in boards["highest_conduct_pressure_ratio"].get("entries") or []
+          ):
+              raise SystemExit("high Conduct board admitted non-conclusive states")
+
+          concepts = payload.get("concept_registry") or {}
+          for concept in (
+              "mais_popular",
+              "emergente_promissora",
+              "consagrada_exemplar",
+              "ranking_geral",
+          ):
+              if (concepts.get(concept) or {}).get("classification") != "not_supported":
+                  raise SystemExit(f"unsupported concept became publishable: {concept}")
+          if (concepts.get("financeiro_mais_em_dia") or {}).get("classification") != "public_semantic_collection":
+              raise SystemExit("financially current concept must remain an unordered collection")
+
+          public_root = Path("data/derived/v2/public")
+          expected_files = [
+              public_root / "insurer_explorer.json",
+              public_root / "explore_index.json",
+              *[
+                  public_root / "leaderboards" / f"{board_id}.json"
+                  for board_id in expected_board_ids
+              ],
+              *[
+                  public_root / "collections" / f"{collection_id}.json"
+                  for collection_id in expected_collections
+              ],
+          ]
+          missing = [str(path) for path in expected_files if not path.exists()]
+          if missing:
+              raise SystemExit(f"missing public files: {missing}")
+
+          explorer = json.loads(
+              (public_root / "insurer_explorer.json").read_text(encoding="utf-8")
+          )
+          if len(explorer.get("entities") or []) != 157:
+              raise SystemExit("public explorer must preserve all 157 entities")
+
+          forbidden = {"overall_score", "financial_score", "conduct_score"}
+
+          def walk(value):
+              if isinstance(value, dict):
+                  overlap = forbidden & set(value)
+                  if overlap:
+                      raise SystemExit(f"forbidden score fields: {sorted(overlap)}")
+                  for child in value.values():
+                      walk(child)
+              elif isinstance(value, list):
+                  for child in value:
+                      walk(child)
+
+          walk(payload)
+          walk(explorer)
+
+          closure = payload.get("closure_decision") or {}
+          if closure.get("exploratory_leaderboards_gate_opened") is not True:
+              raise SystemExit("exploratory leaderboards gate should be open")
+          if closure.get("general_ranking_gate_opened") is not False:
+              raise SystemExit("general ranking gate must remain closed")
+          if closure.get("semantic_comparator_ready_for_data_contract") is not True:
+              raise SystemExit("semantic comparator package should be ready")
+
+          print(
+              json.dumps(
+                  {
+                      "population": population,
+                      "leaderboard_candidates": expected_candidates,
+                      "collection_counts": expected_collections,
+                      "leaders": leaders,
+                      "closure_decision": closure,
+                      "public_file_count": len(expected_files),
+                  },
+                  ensure_ascii=False,
+                  indent=2,
+              )
+          )
+          PY
+
+      - name: Upload exploratory leaderboards package
+        uses: actions/upload-artifact@v4
+        with:
+          name: v2-exploratory-leaderboards-contract-${{ github.run_id }}
+          path: |
+            data/derived/v2/exploratory_leaderboards_contract.json
+            data/derived/v2/public
+          retention-days: 14
