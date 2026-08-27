@@ -405,7 +405,7 @@ O builder e os testes impedem:
 - síntese automática de “popular”, “promissora”, “consagrada exemplar” ou “ranking geral”;
 - recálculo metodológico no PHP.
 
-## 11. Resultado esperado do snapshot atual
+## 11. Resultado validado do snapshot atual
 
 ```text
 universo regulatório              157
@@ -432,6 +432,21 @@ E mantém:
 general_ranking_gate_opened = false
 ranking_eligible = 0
 general_ranking_remains_blocked = true
+```
+
+### Validação real
+
+```text
+V2 Exploratory Leaderboards Contract
+run                     33040347388
+job                     98412282069
+Ruff                    verde
+testes                  7/7
+build real              verde
+boundaries              verdes
+artifact                9633622703
+SHA256 ZIP              ebedc4ea8d10959ab3dbb01000d923e4f57d1cb2db960dfbec7ff54a93598905
+arquivos públicos       12
 ```
 
 ## 12. Próximo estágio de produto
