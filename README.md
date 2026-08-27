@@ -3,8 +3,8 @@
 > **Status do projeto:** refatoração metodológica e arquitetural em andamento.  
 > **Branch de trabalho:** `refactor/v2-data-foundation`.  
 > **PR:** #1 permanece **Draft**.  
-> **Marco atual (2026-08-26):** identidade, classificação regulatória, lifecycle jurídico, relationships, elegibilidade formal, evidência financeira e de Conduta estão implementados em draft. Os contratos de sinal **Financeiro** e **Conduta** estão fechados sem score. A calibração entre pilares concluiu **Stage 1, auditoria de cobertura, Stage 2 e o contrato semântico de avaliação**. A matriz não compensatória está formalizada para linguagem pública: **85/157** seguradoras possuem suporte semântico para avaliação conjunta completa e **72/157** permanecem como avaliação conjunta incompleta, preservando os sinais disponíveis de cada pilar. Isso **não abre** `assessment_eligible` nem `ranking_eligible`; ambos continuam em `0`.  
-> **Próximo gate:** `assessment_eligibility_contract`. A ferramenta só poderá abrir elegibilidade formal de avaliação após separar, de maneira executável, completude semântica, confiança/evidência e condições de publicação. Ranking permanece bloqueado.  
+> **Marco atual (2026-08-27):** os contratos de sinal **Financeiro** e **Conduta**, a calibração entre pilares, o contrato semântico público, o **Assessment Eligibility Contract**, o **Ranking Eligibility Preflight** e o **Exploratory Leaderboards Contract** estão fechados. **85/157** seguradoras possuem avaliação conjunta elegível; **72/157** permanecem com avaliação conjunta incompleta, preservando os sinais disponíveis. A ferramenta é prioritariamente um **comparador/avaliação semântica**. Cinco leaderboards unidimensionais e cinco coleções semânticas estão autorizados como exploração secundária. `ranking_eligible` permanece **0** e o ranking geral continua bloqueado.  
+> **Próximo estágio de produto:** `public_api_json_packaging_and_frontend_php_integration`. O backend gera semântica, métricas, coleções e leaderboards; o PHP no HostGator somente renderiza os JSONs e não recompõe a metodologia.  
 > **Regra de segurança:** nada nesta branch deve ser tratado como score ou ranking final enquanto os gates formais de avaliação, representatividade e ranking não forem concluídos.
 
 Este README é o **contrato de projeto**, o guia de implementação da v2 e o registro das decisões metodológicas já tomadas. Os fechamentos e calibrações específicas estão documentados em:
@@ -14,7 +14,10 @@ Este README é o **contrato de projeto**, o guia de implementação da v2 e o re
 - `docs/cross-pillar-calibration-stage-1.md`;
 - `docs/cross-pillar-architecture-stage-2.md`;
 - `docs/cross-pillar-assessment-contract-preflight.md`;
-- `docs/cross-pillar-assessment-semantic-contract.md`.
+- `docs/cross-pillar-assessment-semantic-contract.md`;
+- `docs/assessment-eligibility-contract.md`;
+- `docs/ranking-eligibility-preflight.md`;
+- `docs/exploratory-leaderboards-contract.md`.
 
 Regras marcadas como **EM CALIBRAÇÃO**, **EXPERIMENTAL** ou **PENDENTE** não podem ser convertidas silenciosamente em scoring.
 
@@ -237,8 +240,13 @@ Snapshot atual da branch:
 identidades materializadas                 ~490
 seguradoras ordinárias atuais                157
 regulatory_universe_eligible                 157
-assessment_eligible                            0
+semantic_public_assessment_supported          85
+assessment_eligible                           85
+assessment_not_eligible                       72
+ranking_preflight_candidates                  85
 ranking_eligible                               0
+leaderboards unidimensionais públicos          5
+coleções semânticas públicas                   5
 Sandbox no universo ordinário                  0
 regimes especiais no universo ordinário        0
 ```
@@ -1332,15 +1340,16 @@ TOTAL                          157
 
 Para as 85 entidades com os dois núcleos conclusivos, existe **suporte semântico para avaliação pública individual conjunta**.
 
-Isso não equivale a elegibilidade formal:
+O suporte semântico antecede o gate formal. O `Assessment Eligibility Contract` já confirmou:
 
 ```text
 semantic_public_assessment_supported  85
-assessment_eligible                    0
+assessment_eligible                   85
+assessment_not_eligible               72
 ranking_eligible                       0
 ```
 
-A distinção é obrigatória.
+A distinção continua obrigatória: `assessment_eligible` autoriza publicar a avaliação conjunta; não é selo de qualidade e não abre ranking geral.
 
 ### 45.1. Avaliação incompleta não esconde sinal disponível
 
@@ -1386,17 +1395,19 @@ Menos reclamações que o esperado pode ser descrito como resultado favorável *
 
 # CONFIANÇA, SCORE E RANKING
 
-## 46. Score e gates continuam bloqueados
+## 46. Avaliação aberta; score e ranking geral continuam bloqueados
 
 Atualmente:
 
 ```text
 semantic_public_assessment_supported = 85
-assessment_eligible                  = 0
+assessment_eligible                  = 85
+assessment_not_eligible              = 72
+ranking_preflight_candidates         = 85
 ranking_eligible                     = 0
 ```
 
-O contrato semântico **não** abre gates formais.
+O contrato semântico não abriu gates sozinho. O `Assessment Eligibility Contract` abriu formalmente a avaliação para 85; o `Ranking Eligibility Preflight` manteve a ordem total bloqueada; o `Exploratory Leaderboards Contract` abriu somente rankings unidimensionais e coleções explicitamente estreitas.
 
 A avaliação geral depende de:
 
@@ -1456,7 +1467,107 @@ e não:
 
 quando a segunda frase não puder ser sustentada.
 
-A população atual de 85 semanticamente completas **não** pode ser descrita como ranking integral do mercado.
+A população atual de 85 avaliáveis **não** pode ser descrita como ranking integral do mercado nem como ordem total 1–85. O `Ranking Eligibility Preflight` encontrou 1.198 pares empatados e 222 incomparáveis entre 3.570 pares. Isso não impede leaderboards em que uma única métrica declarada define literalmente a ordem, desde que o título não seja convertido em ‘melhor seguradora’.
+
+---
+
+
+# EXPLORAÇÃO PÚBLICA E COMPARADOR
+
+## Produto principal: avaliação semântica + comparação lado a lado
+
+A direção pública prioritária da v2 é:
+
+```text
+busca por seguradora
+→ avaliação semântica individual
+→ comparação de 2–4 seguradoras nos mesmos eixos
+→ exploração por leaderboards e coleções específicas
+```
+
+A comparação lado a lado não cria vencedor automático e não calcula score composto.
+
+## Exploratory Leaderboards Contract — FECHADO
+
+Regra:
+
+> **um leaderboard numérico só existe quando a própria métrica define a ordem; conceitos compostos permanecem coleções semânticas ou não suportados.**
+
+Leaderboards públicos autorizados:
+
+```text
+largest_by_direct_premium            132 candidatas
+highest_pla_cmr_ratio                155 candidatas
+highest_ilt                          156 candidatas
+lowest_conduct_pressure_ratio         41 candidatas
+highest_conduct_pressure_ratio        26 candidatas
+```
+
+Todos usam `competition rank`. Empates permanecem empates; não existe desempate secundário de mérito.
+
+Coleções públicas autorizadas:
+
+```text
+financial_core_without_current_adverse_signal   120
+favorable_joint_assessment                       46
+favorable_with_below_expected_conduct             33
+conduct_improving_but_still_adverse                4
+conduct_persistent_above_expected                 20
+```
+
+Coleções são `ordered = false`.
+
+Conceitos atualmente bloqueados:
+
+```text
+mais_popular                not_supported
+emergente_promissora        not_supported
+consagrada_exemplar         not_supported
+crescimento_de_premio       not_supported
+ranking_geral               not_supported
+```
+
+`financeiro_mais_em_dia` é traduzido apenas como coleção semântica de ausência de sinal financeiro central adverso; não como Top 10.
+
+## JSONs públicos para o HostGator
+
+```text
+data/derived/v2/exploratory_leaderboards_contract.json
+data/derived/v2/public/insurer_explorer.json
+data/derived/v2/public/explore_index.json
+data/derived/v2/public/leaderboards/*.json
+data/derived/v2/public/collections/*.json
+```
+
+Regra de integração:
+
+```text
+php_may_recompute_methodology = false
+```
+
+O PHP carrega, busca, filtra e renderiza. Não recalcula indicadores, não inventa score, não converte coleção em ranking e não declara vencedor geral.
+
+Validação real:
+
+```text
+V2 Exploratory Leaderboards Contract
+run                     33040347388
+job                     98412282069
+Ruff                    verde
+testes                  7/7
+build real              verde
+boundaries              verdes
+artifact                9633622703
+SHA256 ZIP              ebedc4ea8d10959ab3dbb01000d923e4f57d1cb2db960dfbec7ff54a93598905
+arquivos públicos       12
+ranking_eligible         0
+```
+
+Próximo estágio:
+
+```text
+public_api_json_packaging_and_frontend_php_integration
+```
 
 ---
 
@@ -1520,7 +1631,10 @@ A branch possui, entre outros:
 - `V2 Cross-Pillar Calibration Stage 1`;
 - `V2 Cross-Pillar Coverage Audit`;
 - `V2 Cross-Pillar Architecture Stage 2`;
-- `V2 Cross-Pillar Assessment Semantic Contract`.
+- `V2 Cross-Pillar Assessment Semantic Contract`;
+- `V2 Assessment Eligibility Contract`;
+- `V2 Ranking Eligibility Preflight`;
+- `V2 Exploratory Leaderboards Contract`.
 
 O antigo:
 
