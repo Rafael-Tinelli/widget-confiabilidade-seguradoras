@@ -2,13 +2,7 @@
 
 Status: **fechado para integração do frontend público**.
 
-Este documento define o contrato que liga a fundação de identidade, lifecycle, relações,
-Sandbox/Conduta e avaliação v2 à página pública da Sanida.
-
-O objetivo é impedir que o frontend precise reconstruir decisões que pertencem ao backend
-e evitar a repetição dos erros observados nos protótipos de interface: ausência convertida
-em zero, marca confundida com pessoa jurídica, relações empresariais omitidas e jargão
-técnico exibido antes da resposta humana.
+Este documento define o contrato que liga identidade, lifecycle, relationships, Sandbox/Conduta e avaliação v2 à página pública da Sanida. O frontend não deve mais usar `insurer_explorer.json` como se ele fosse um perfil completo da empresa.
 
 ## 1. Pergunta de produto
 
@@ -17,7 +11,7 @@ A busca pública deve conseguir responder, nesta ordem:
 1. **Quem é o nome pesquisado?**
 2. **É seguradora, marca, Sandbox, empresa histórica ou outra entidade?**
 3. **Existe outra empresa por trás da marca ou do risco?**
-4. **Há sucessão, grupo econômico ou outra relação documentada que ajude a interpretar o caso?**
+4. **Há sucessão, grupo econômico ou outra relação documentada relevante?**
 5. **Que sinais atuais podem ser afirmados com segurança?**
 6. **Que parte ainda não pode ser comparada e por quê?**
 7. **Quais números e regras sustentam a resposta, se o leitor quiser aprofundar?**
@@ -34,10 +28,9 @@ resposta rápida
 
 PLA/CMR, ILT, observed/expected e códigos internos não são a porta de entrada do perfil.
 
-## 2. Fontes do contrato
+## 2. Fontes combinadas
 
-O builder `api/v2/build_public_search_profile_contract.py` combina quatro camadas já
-existentes, sem recalcular nenhuma delas:
+`api/v2/build_public_search_profile_contract.py` combina, sem recalcular metodologia:
 
 ```text
 v2_lifecycle_relationship_inventory
@@ -49,115 +42,71 @@ v2_sandbox_brand_conduct_evidence
 data/reference/v2/conduct_subject_relationships.json
 ```
 
-Funções:
+Papéis:
 
-- **lifecycle/relationships**: identidade, CNPJ, FIP, classificação, regime, status,
-  lifecycle jurídico, sucessão, grupos econômicos, marcas e aliases;
-- **insurer explorer**: avaliação semântica, Financeiro, Conduta e contexto econômico
-  das seguradoras ordinárias atuais;
-- **Sandbox Conduct**: evidência de Conduta de participantes Sandbox e contexto de
-  marcas verificadas, como Loovi ↔ LTI;
-- **Conduct subject relationships**: relações especiais entre o sujeito que recebe
-  reclamações e carriers/portfólios, como Youse ↔ Caixa, Zurich e Bradesco.
+- **lifecycle/relationships**: identidade, CNPJ, FIP, classificação, regime, status, lifecycle jurídico, sucessão, grupos econômicos, marcas e aliases;
+- **insurer explorer**: avaliação semântica, Financeiro, Conduta e contexto econômico das seguradoras ordinárias já cobertas pelo contrato de assessment;
+- **Sandbox Conduct**: evidência de Conduta de participantes Sandbox e contexto de marcas verificadas, como Loovi ↔ LTI;
+- **Conduct subject relationships**: relações especiais entre o sujeito que recebe reclamações e carriers/portfólios, como Youse ↔ Caixa, Zurich e Bradesco.
 
-O `insurer_explorer.json` continua válido para comparação e exploração das 157
-seguradoras ordinárias, mas **não é mais o contrato completo de identidade/perfil**.
+`insurer_explorer.json` permanece útil para comparação e exploração, mas não é mais o contrato completo de identidade/perfil.
 
-## 3. Escopo da busca
+## 3. Escopo real da busca
 
 A busca é deliberadamente mais ampla do que a avaliação ordinária.
 
-O índice público contém:
-
-- todas as entidades materializadas pelo inventário lifecycle/relationships;
-- todas as marcas verificadas;
-- aliases de marcas;
-- CNPJ e código FIP/SUSEP quando existirem;
-- classificação e bucket de desambiguação;
-- caminho determinístico para o perfil.
-
-No snapshot de fechamento:
+No build real que fechou este contrato em 28/08/2026:
 
 ```text
-entidades lifecycle                    490
-marcas                                  13
-perfis públicos                        503
-entradas de busca                      503
-seguradoras ordinárias atuais          157
-participantes Sandbox                   12
+entidades lifecycle                              492
+marcas verificadas                                13
+perfis públicos                                  505
+entradas do índice de busca                      505
+seguradoras ordinárias atuais no lifecycle       159
+com payload de assessment atual                  157
+ordinárias atuais ainda sem payload de assessment  2
+participantes Sandbox                             12
+Sandbox com contexto de Conduta                   12
 ```
 
-Essas quantidades são snapshot, não constantes metodológicas.
+Essas quantidades são **snapshot**, não constantes metodológicas. O gate correto é relacional: toda entidade lifecycle e toda marca verificada devem gerar perfil e entrada de busca. Uma nova seguradora pode aparecer no universo regulatório antes de acumular ou receber o payload de avaliação; nesse caso ela permanece pesquisável e o frontend não inventa avaliação.
 
 ### 3.1. Fuzzy matching
 
-O frontend pode usar busca aproximada **somente para ordenar candidatos**.
+O frontend pode usar busca aproximada somente para ordenar candidatos:
 
 ```text
 fuzzy search → localizar candidatos
 fuzzy search ≠ decidir identidade
 ```
 
-A escolha de qual perfil abrir deve sempre corresponder a uma entrada determinística do
-índice público.
+A abertura de um perfil deve corresponder a uma entrada determinística do índice público.
 
 ## 4. Tipos de perfil
 
-### 4.1. Seguradora ordinária atual
+### Seguradora ordinária atual
 
-Recebe:
+Pode receber identidade, situação regulatória, lifecycle, grupo econômico observado, relações corporativas verificadas, marcas relacionadas, relações especiais de Conduta e avaliação v2 quando o payload existir. Se a entidade for atual mas ainda estiver fora do snapshot de assessment, a busca continua funcionando sem imputar sinais.
 
-- identidade e situação regulatória;
-- lifecycle;
-- grupo econômico observado;
-- relações corporativas verificadas;
-- marcas relacionadas;
-- relações especiais de Conduta;
-- avaliação v2, quando completa;
-- sinais individuais quando a avaliação conjunta estiver incompleta;
-- métricas técnicas com semântica explícita de disponibilidade.
+### Participante Sandbox
 
-### 4.2. Participante Sandbox
+Recebe identidade/regime, explicação do Sandbox e evidência de Conduta quando disponível. Não recebe avaliação ou ranking ordinário e não recebe pressão proporcional inventada.
 
-Recebe:
+### Marca
 
-- identidade/regime;
-- explicação de que Sandbox não é o universo ordinário;
-- evidência de Conduta do artifact Sandbox quando existente;
-- contexto de marca verificada;
-- **nenhuma** avaliação/ranking ordinário;
-- **nenhuma** pressão proporcional inventada.
-
-### 4.3. Marca
-
-Marca é objeto de resolução, não entidade que herda avaliação.
-
-O perfil informa:
-
-- nome e aliases;
-- tipo de relação (`brand_of`, `risk_carrier` etc.);
-- entidade(s) alvo;
-- escopo;
-- evidência;
-- contexto de Conduta Sandbox quando o contrato específico autorizar.
-
-Regra:
+Marca é objeto de resolução, não pessoa jurídica que herda avaliação. O perfil informa aliases, relação (`brand_of`, `risk_carrier` etc.), entidade alvo, escopo e evidência.
 
 ```text
 brand_inherits_entity_assessment = false
 ```
 
-### 4.4. Entidade histórica
+### Entidade histórica
 
-O perfil preserva a identidade histórica e, quando documentado, aponta a cadeia de
-sucessores até a entidade atual conhecida.
+A identidade histórica é preservada e, quando documentado, o perfil aponta a cadeia de sucessores. Avaliação atual não é transferida retroativamente.
 
-Avaliação atual não é transferida retroativamente.
+### Previdência, capitalização, resseguro, regime especial e outros
 
-### 4.5. Previdência, capitalização, resseguro, regime especial e outros
-
-Permanecem pesquisáveis para evitar confusão de nomes, mas o perfil explica que estão
-fora da comparação ordinária.
+Permanecem pesquisáveis para evitar confusão de nomes, mas ficam fora da comparação ordinária quando o contrato assim determina.
 
 ## 5. Semântica obrigatória de ausência
 
@@ -167,7 +116,7 @@ Esta regra é contratual:
 null ≠ 0
 ```
 
-Cada métrica pública relevante usa um envelope:
+Métricas públicas relevantes usam envelope explícito:
 
 ```json
 {
@@ -179,182 +128,108 @@ Cada métrica pública relevante usa um envelope:
 }
 ```
 
-Quando o valor é realmente zero na fonte:
+Um zero realmente observado permanece zero e recebe semântica própria. O frontend não precisa — e não pode — inferir a diferença.
 
-```json
-{
-  "value": 0,
-  "availability": "available",
-  "public_use": "...",
-  "zero_semantics": "...",
-  "meaning": "..."
-}
-```
+### Prêmio direto e tamanho da operação
 
-O frontend não precisa inferir a diferença.
+Prêmio direto é contexto de volume econômico, nunca qualidade. Quando não existe relação 1:1 segura entre sujeito de reclamações e exposição, um zero bruto não pode virar “operação R$ 0”.
 
-### 5.1. Regra específica de prêmio direto
-
-Prêmio direto é contexto de volume econômico e nunca mede qualidade.
-
-Quando a entidade não possui relação 1:1 segura entre sujeito de reclamações e exposição,
-um zero bruto de prêmio **não pode** virar “operação R$ 0”.
-
-Exemplo: Youse.
-
-O contrato preserva o valor bruto, mas marca:
+Exemplo Youse:
 
 ```text
+value = 0.0
 public_use = do_not_render_as_operation_size
 zero_semantics = literal_source_zero_must_not_be_presented_as_zero_sized_business
 ```
 
-Assim, a interface deve explicar a limitação em vez de exibir uma falsa dimensão da
-operação.
+## 6. Caso Youse ↔ Caixa
 
-## 6. Youse ↔ Caixa
+O perfil público preserva simultaneamente:
 
-A relação já documentada é trazida para o perfil público.
+- 1.367 reclamações observadas no snapshot atual;
+- relação documentada Youse → Caixa Seguradora como risk carrier no contexto de Conduta;
+- `expected_complaints = null`;
+- `pressure_ratio = null`;
+- `comparable_months = null`;
+- prêmio bruto zero marcado como **não exibível como tamanho da operação**.
 
-A leitura permitida é:
+Não dividimos as reclamações da Youse pela produção total da Caixa e não chamamos o prêmio próprio zero de “operação zero”.
 
-- há reclamações registradas contra a Youse;
-- existe relação documentada com a Caixa Seguradora como risk carrier dos produtos
-  considerados;
-- não é válido dividir automaticamente as reclamações da Youse pela produção total da Caixa;
-- também não é válido tratar o prêmio próprio zero como “tamanho zero da operação”;
-- pressão proporcional permanece indisponível até existir exposição específica comparável.
+## 7. Caso Loovi ↔ LTI
 
-`expected_complaints`, `pressure_ratio` e `comparable_months` permanecem `null`.
-
-## 7. Loovi ↔ LTI
-
-O contrato preserva duas identidades:
+O contrato preserva identidades distintas:
 
 ```text
 brand:loovi
-entity:cnpj:47006254000180  → LTI Seguros S.A.
+entity:cnpj:47006254000180 → LTI Seguros S.A.
 ```
 
-A relação verificada é `risk_carrier`.
+A relação verificada é `risk_carrier`. O contexto de Sandbox Conduct preserva **1.329 reclamações** contra a LTI na janela atual. A linguagem pública deve atribuir a evidência à LTI e explicar sua relação com a Loovi; não afirmar automaticamente “a Loovi teve 1.329 reclamações”.
 
-O artifact de Sandbox Conduct pode fornecer contexto de reclamações da LTI ao perfil da
-Loovi, mas a atribuição pública deve preservar a origem:
+A marca não herda assessment da entidade.
 
-> O Consumer.gov registra a evidência contra a LTI Seguros, entidade Sandbox vinculada
-> aos seguros comercializados pela Loovi.
+## 8. Caso HDI Seguros × HDI Global
 
-Não dizer automaticamente:
-
-> “A Loovi teve X reclamações.”
-
-No snapshot de validação, o contexto LTI/Loovi preserva 1.329 reclamações na janela de
-12 meses.
-
-## 8. HDI Seguros × HDI Global
-
-O contrato não tenta resolver semelhança de nomes por heurística.
-
-No snapshot atual:
-
-- HDI Seguros S.A. e HDI Global Seguros S.A. são perfis regulatórios distintos;
-- possuem CNPJs e FIPs distintos;
-- aparecem no mesmo grupo econômico SUSEP `TALANX AG`;
-- o grupo é contexto, não prova automática de incorporação, joint venture ou sucessão.
-
-A busca pode mostrar ambos e usar a desambiguação do perfil.
-
-## 9. Linguagem pública do Financeiro
-
-### Capital
-
-Antes de `PLA/CMR`, usar uma das mensagens:
-
-- “Na competência analisada, o patrimônio ajustado alcança o capital mínimo exigido.”
-- “Na competência analisada, o patrimônio ajustado ficou abaixo do capital mínimo exigido.”
-- “Não há dado utilizável suficiente para concluir a situação de capital.”
-
-`PLA/CMR` aparece somente em `technical`.
-
-### Liquidez
-
-Antes de `ILT`, usar:
-
-- “O indicador de liquidez usado pela metodologia não mostrou pressão segundo sua
-  referência aritmética.”
-- “O indicador de liquidez ficou abaixo de sua referência aritmética e merece atenção.”
-- “Não há dado utilizável suficiente para concluir a leitura de liquidez.”
-
-A referência 1,0 do ILT continua explicitamente descrita como aritmética, não como limite
-prudencial oficial da SUSEP.
-
-## 10. Linguagem pública de Conduta
-
-O contrato reutiliza a semântica fechada:
-
-- acima do esperado com evidência;
-- abaixo do esperado com evidência;
-- sem diferença clara;
-- conclusão sensível ao denominador;
-- cobertura temporal insuficiente;
-- não comparável.
-
-Reclamações observadas podem ser zero. Isso continua sendo uma observação e **não vira
-automaticamente sinal favorável**.
-
-Resposta ou finalização no Consumer.gov não prova resolução.
-
-## 11. Relações e grupos
-
-O perfil pode trazer:
-
-- `incorporated_into`;
-- `successor_of`;
-- grupo econômico observado;
-- marcas;
-- `risk_carrier`;
-- relações especiais de sujeito/carrier/portfólio de Conduta.
-
-Guardrails:
+O contrato mantém HDI Seguros S.A. e HDI Global Seguros S.A. como perfis regulatórios distintos, com CNPJs/FIPs distintos. O snapshot SUSEP os coloca no mesmo grupo econômico `TALANX AG`.
 
 ```text
 same_group ≠ succession
 same_group ≠ acquisition
 same_group ≠ joint_venture
-brand ≠ legal_entity
-risk_carrier_relation ≠ complaint_transfer
 ```
 
-## 12. Arquivos públicos
+O grupo serve para contexto e desambiguação, não para fundir identidades.
+
+## 9. Linguagem pública antes do segurês
+
+### Capital
+
+Antes de `PLA/CMR`, o perfil fornece frases como:
+
+- “Na competência analisada, o patrimônio ajustado alcança o capital mínimo exigido.”
+- “Na competência analisada, o patrimônio ajustado ficou abaixo do capital mínimo exigido.”
+- “Não há dado utilizável suficiente para concluir a situação de capital.”
+
+`PLA/CMR` fica na camada técnica.
+
+### Liquidez
+
+Antes de `ILT`, o perfil explica se o indicador mostrou ou não pressão segundo a referência aritmética usada pela metodologia e deixa explícito que 1,0 não é limite prudencial oficial da SUSEP.
+
+### Conduta
+
+O contrato reutiliza a semântica fechada: acima do esperado com evidência, abaixo do esperado com evidência, sem diferença clara, sensibilidade ao denominador, cobertura temporal insuficiente e não comparável.
+
+Zero reclamações observadas não vira automaticamente sinal favorável. Responder ou finalizar reclamação não prova solução.
+
+## 10. Guardrails de relationships
+
+O perfil pode carregar sucessão, grupo observado, marcas, `risk_carrier` e relações especiais de sujeito/carrier/portfólio.
+
+```text
+brand ≠ legal_entity
+same_group ≠ succession
+risk_carrier_relation ≠ complaint_transfer
+fuzzy_match ≠ identity_decision
+```
+
+## 11. Arquivos públicos
 
 O builder publica:
 
 ```text
-public/search_index.json
-public/profile_manifest.json
-public/profiles/*.json
+data/derived/v2/public/search_index.json
+data/derived/v2/public/profile_manifest.json
+data/derived/v2/public/profiles/*.json
 ```
 
-`search_index.json` é o catálogo para busca/desambiguação.
+`search_index.json` é o catálogo de busca/desambiguação. `profile_manifest.json` relaciona `profile_id` ao arquivo. Cada JSON em `profiles/` contém uma entidade ou marca preparada para apresentação progressiva.
 
-`profile_manifest.json` relaciona `profile_id` → arquivo.
+Leaderboards e coleções continuam independentes no contrato exploratório existente.
 
-Cada arquivo em `public/profiles/` contém uma entidade ou marca já preparada para
-apresentação progressiva.
+## 12. Papel do frontend
 
-Os leaderboards e coleções continuam sendo publicados pelo contrato exploratório
-existente e permanecem independentes.
-
-## 13. Papel do frontend
-
-O frontend pode:
-
-- pesquisar;
-- ordenar candidatos por relevância textual;
-- abrir perfis;
-- formatar valores disponíveis;
-- escolher componentes visuais;
-- navegar por relações e perfis relacionados.
+O frontend pode pesquisar, ordenar candidatos por relevância textual, abrir perfis, formatar valores disponíveis e navegar pelas relações materializadas.
 
 O frontend não pode:
 
@@ -364,26 +239,37 @@ O frontend não pode:
 - calcular pressão;
 - reconstruir PLA/CMR ou ILT;
 - recalcular assessment;
-- criar score;
-- declarar vencedor;
-- inferir sucessão, grupo ou risk carrier.
+- criar score ou ranking geral;
+- inferir sucessão, grupo, joint venture ou risk carrier.
 
-## 14. Critério de fechamento
+## 13. Validação de fechamento
 
-O contrato é considerado fechado quando o workflow real confirma:
+Workflow:
 
-- todas as 490 entidades lifecycle materializadas;
-- 13 marcas;
-- 503 perfis/entradas de busca;
-- 157 seguradoras ordinárias com payload de assessment;
-- 12 participantes Sandbox;
-- Loovi resolve para LTI e preserva 1.329 reclamações no contexto correto;
-- Youse preserva reclamações, `expected/ratio/months = null` e não exibe prêmio zero como
-  tamanho da operação;
-- HDI Seguros e HDI Global permanecem perfis distintos, no mesmo grupo TALANX;
-- nenhuma marca herda assessment;
-- nenhuma ausência é convertida em zero;
-- score/ranking geral continuam fora deste contrato.
+`V2 Public Search Profile Contract`
+
+Run de fechamento:
+
+```text
+run                                    33147565359
+Ruff                                   verde
+testes direcionados                    4/4
+build real                              verde
+validação real de fronteiras            verde
+perfis públicos gerados                  505
+arquivos no artifact                     508
+artifact id                       9676392800
+```
+
+A validação real confirmou especificamente:
+
+```text
+Youse complaints                  1367
+Youse expected                    null
+Youse operation public_use        do_not_render_as_operation_size
+Loovi/LTI complaints              1329
+HDI economic group                TALANX AG
+```
 
 Com esses gates verdes, o próximo estágio de produto é:
 
