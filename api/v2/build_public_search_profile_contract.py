@@ -10,12 +10,11 @@ from typing import Any
 LIFECYCLE_PATH = Path("data/derived/v2/entity_lifecycle_relationship_inventory.json")
 EXPLORER_PATH = Path("data/derived/v2/public/insurer_explorer.json")
 SANDBOX_CONDUCT_PATH = Path("data/derived/v2/sandbox_brand_conduct_evidence.json")
-CONDUCT_RELATIONSHIPS_PATH = Path("data/reference/v2/conduct_subject_relationships.json")
-
+CONDUCT_RELATIONSHIPS_PATH = Path(
+    "data/reference/v2/conduct_subject_relationships.json"
+)
 OUTPUT_PATH = Path("data/derived/v2/public_search_profile_contract.json")
 PUBLIC_DIR = Path("data/derived/v2/public")
-PROFILE_DIR = PUBLIC_DIR / "profiles"
-
 VERSION = "2.0-public-search-profile-contract-1"
 
 
@@ -52,14 +51,14 @@ def _metric(
     public_use: str = "displayable",
     zero_semantics: str | None = None,
 ) -> dict[str, Any]:
-    resolved_availability = availability or ("unavailable" if value is None else "available")
-    if resolved_availability == "unavailable" and value is not None:
+    resolved = availability or ("unavailable" if value is None else "available")
+    if resolved == "unavailable" and value is not None:
         raise PublicSearchProfileContractError(
-            "unavailable metric cannot carry a numeric/string value"
+            "unavailable metric cannot carry a non-null value"
         )
     return {
         "value": value,
-        "availability": resolved_availability,
+        "availability": resolved,
         "public_use": public_use,
         "zero_semantics": zero_semantics,
         "meaning": meaning,
@@ -69,7 +68,12 @@ def _metric(
 def _entity_name(entity: dict[str, Any] | None) -> str:
     if not entity:
         return "Entidade"
-    return str(entity.get("display_name") or entity.get("legal_name") or entity["entity_id"])
+    return str(
+        entity.get("display_name")
+        or entity.get("legal_name")
+        or entity.get("entity_id")
+        or "Entidade"
+    )
 
 
 def _regulatory_label(entity: dict[str, Any]) -> str:
@@ -109,52 +113,44 @@ def _entity_intro(entity: dict[str, Any], by_id: dict[str, dict[str, Any]]) -> s
     regime = str(entity.get("regulatory_regime") or "unknown")
 
     if state == "historical_incorporated_entity":
-        successor_id = context.get("successor_entity_id")
-        successor = by_id.get(str(successor_id or ""))
+        successor = by_id.get(str(context.get("successor_entity_id") or ""))
         if successor:
             return (
-                f"{name} é uma pessoa jurídica histórica. O cadastro de relações verificadas "
-                f"aponta sucessão até {_entity_name(successor)}. A análise atual, quando "
-                "disponível, deve ser consultada na entidade sucessora e não transferida "
+                f"{name} é uma pessoa jurídica histórica. O cadastro de relações "
+                f"verificadas aponta sucessão até {_entity_name(successor)}. A análise "
+                "atual deve ser consultada na entidade sucessora e não transferida "
                 "retroativamente para esta empresa histórica."
             )
         return (
-            f"{name} é uma pessoa jurídica histórica incorporada. Não atribuímos a ela "
-            "uma avaliação atual."
+            f"{name} é uma pessoa jurídica histórica incorporada e não recebe uma "
+            "avaliação atual."
         )
-
     if state == "historical_closed_entity":
         return (
             f"{name} aparece como pessoa jurídica histórica/baixada no cadastro jurídico "
-            "utilizado pelo projeto. Isso não deve ser confundido com uma seguradora atual."
+            "do projeto e não deve ser confundida com uma seguradora atual."
         )
-
     if entity_type == "sandbox_participant" or regime == "sandbox":
         return (
-            f"{name} aparece no snapshot usado pelo projeto como participante do Sandbox "
+            f"{name} aparece no snapshot do projeto como participante do Sandbox "
             "regulatório da SUSEP. Sandbox é um regime experimental e não equivale ao "
-            "universo de seguradoras ordinárias usado nas comparações da metodologia v2."
+            "universo de seguradoras ordinárias usado nas comparações da v2."
         )
-
     if regime == "special":
         return (
-            f"{name} aparece em condição regulatória especial. Por isso, permanece "
-            "pesquisável, mas fora da comparação ordinária da metodologia v2."
+            f"{name} aparece em condição regulatória especial. Permanece pesquisável, "
+            "mas fora da comparação ordinária da metodologia v2."
         )
-
     if entity_type == "open_pension_entity":
         return (
-            f"{name} é identificada como entidade aberta de previdência. Ela permanece "
-            "pesquisável para evitar confusão de nomes, mas não é tratada como seguradora "
-            "ordinária nesta comparação."
+            f"{name} é identificada como entidade aberta de previdência. Permanece "
+            "pesquisável, mas não é tratada como seguradora ordinária nesta comparação."
         )
-
     if entity_type == "capitalization_company":
         return (
-            f"{name} é identificada como sociedade de capitalização. Ela permanece "
+            f"{name} é identificada como sociedade de capitalização. Permanece "
             "pesquisável, mas não entra no universo de seguradoras ordinárias."
         )
-
     if entity_type in {
         "local_reinsurer",
         "admitted_reinsurer",
@@ -162,17 +158,14 @@ def _entity_intro(entity: dict[str, Any], by_id: dict[str, dict[str, Any]]) -> s
         "reinsurance_broker",
     }:
         return (
-            f"{name} pertence ao mercado de resseguros. Esse papel é diferente do de uma "
-            "seguradora que vende diretamente os seguros considerados pelo comparador."
+            f"{name} pertence ao mercado de resseguros, papel diferente do de uma "
+            "seguradora considerada pelo comparador ordinário."
         )
-
     if entity_type == "insurer":
         return (
-            f"{name} é identificada como seguradora no cadastro regulatório usado pela v2. "
-            "A avaliação abaixo só é apresentada quando os contratos metodológicos "
-            "possuem evidência suficiente para o respectivo sinal."
+            f"{name} é identificada como seguradora no cadastro regulatório usado pela "
+            "v2. Cada sinal só é apresentado quando sua evidência sustenta a afirmação."
         )
-
     return (
         f"{name} foi identificada nas fontes do projeto, mas não é classificada como "
         "seguradora ordinária no universo comparável."
@@ -182,7 +175,16 @@ def _entity_intro(entity: dict[str, Any], by_id: dict[str, dict[str, Any]]) -> s
 def _capital_public(capital: dict[str, Any]) -> dict[str, Any]:
     state = str(capital.get("state") or "")
     value = capital.get("pla_cmr_ratio")
-
+    technical = {
+        "label": "PLA/CMR",
+        "ratio": _metric(
+            value if state != "capital_signal_unavailable" else None,
+            meaning=(
+                "Relação entre Patrimônio Líquido Ajustado e Capital Mínimo Requerido "
+                "na competência de referência."
+            ),
+        ),
+    }
     if state == "capital_meets_or_exceeds_cmr":
         return {
             "state": state,
@@ -191,39 +193,23 @@ def _capital_public(capital: dict[str, Any]) -> dict[str, Any]:
                 "Na competência analisada, o patrimônio ajustado alcança o capital "
                 "mínimo exigido."
             ),
-            "technical": {
-                "label": "PLA/CMR",
-                "ratio": _metric(
-                    value,
-                    meaning=(
-                        "Relação entre Patrimônio Líquido Ajustado e Capital Mínimo "
-                        "Requerido na competência de referência."
-                    ),
-                ),
-            },
+            "technical": technical,
         }
-
     if state == "capital_below_cmr":
         return {
             "state": state,
             "tone": "adverse",
             "plain_language": (
                 "Na competência analisada, o patrimônio ajustado ficou abaixo do capital "
-                "mínimo exigido. É um alerta prudencial relevante, mas não permite concluir "
-                "sozinho que a empresa seja insolvente."
+                "mínimo exigido. É um alerta prudencial relevante, mas não permite "
+                "concluir sozinho que a empresa seja insolvente."
             ),
-            "technical": {
-                "label": "PLA/CMR",
-                "ratio": _metric(
-                    value,
-                    meaning=(
-                        "Relação entre Patrimônio Líquido Ajustado e Capital Mínimo "
-                        "Requerido na competência de referência."
-                    ),
-                ),
-            },
+            "technical": technical,
         }
-
+    technical["ratio"] = _metric(
+        None,
+        meaning="Relação entre Patrimônio Líquido Ajustado e Capital Mínimo Requerido.",
+    )
     return {
         "state": state or "capital_signal_unavailable",
         "tone": "unknown",
@@ -231,22 +217,23 @@ def _capital_public(capital: dict[str, Any]) -> dict[str, Any]:
             "Não há dado utilizável suficiente para concluir a situação de capital "
             "nesta competência."
         ),
-        "technical": {
-            "label": "PLA/CMR",
-            "ratio": _metric(
-                None,
-                meaning=(
-                    "Relação entre Patrimônio Líquido Ajustado e Capital Mínimo Requerido."
-                ),
-            ),
-        },
+        "technical": technical,
     }
 
 
 def _liquidity_public(liquidity: dict[str, Any]) -> dict[str, Any]:
     state = str(liquidity.get("state") or "")
     value = liquidity.get("value")
-
+    technical = {
+        "label": "ILT",
+        "ratio": _metric(
+            value if state != "ilt_signal_unavailable" else None,
+            meaning=(
+                "Indicador de Liquidez Total. A referência 1,0 é paridade aritmética da "
+                "metodologia, não limite prudencial oficial da SUSEP."
+            ),
+        ),
+    }
     if state == "ilt_at_or_above_arithmetic_parity":
         return {
             "state": state,
@@ -255,18 +242,8 @@ def _liquidity_public(liquidity: dict[str, Any]) -> dict[str, Any]:
                 "O indicador de liquidez usado pela metodologia não mostrou pressão "
                 "segundo sua referência aritmética na competência analisada."
             ),
-            "technical": {
-                "label": "ILT",
-                "ratio": _metric(
-                    value,
-                    meaning=(
-                        "Indicador de Liquidez Total. A referência 1,0 é paridade "
-                        "aritmética da metodologia, não limite prudencial oficial da SUSEP."
-                    ),
-                ),
-            },
+            "technical": technical,
         }
-
     if state == "ilt_below_arithmetic_parity":
         return {
             "state": state,
@@ -276,18 +253,12 @@ def _liquidity_public(liquidity: dict[str, Any]) -> dict[str, Any]:
                 "referência aritmética e merece atenção. Essa referência não é um limite "
                 "prudencial oficial da SUSEP."
             ),
-            "technical": {
-                "label": "ILT",
-                "ratio": _metric(
-                    value,
-                    meaning=(
-                        "Indicador de Liquidez Total. A referência 1,0 é paridade "
-                        "aritmética da metodologia, não limite prudencial oficial da SUSEP."
-                    ),
-                ),
-            },
+            "technical": technical,
         }
-
+    technical["ratio"] = _metric(
+        None,
+        meaning="Indicador de Liquidez Total; dado indisponível para esta leitura.",
+    )
     return {
         "state": state or "ilt_signal_unavailable",
         "tone": "unknown",
@@ -295,31 +266,93 @@ def _liquidity_public(liquidity: dict[str, Any]) -> dict[str, Any]:
             "Não há dado utilizável suficiente para concluir a leitura de liquidez "
             "nesta competência."
         ),
-        "technical": {
-            "label": "ILT",
-            "ratio": _metric(
-                None,
-                meaning=(
-                    "Indicador de Liquidez Total; dado indisponível para esta leitura."
-                ),
-            ),
-        },
+        "technical": technical,
     }
+
+
+def _conduct_relationships(
+    entity: dict[str, Any],
+    registry: dict[str, Any],
+    *,
+    by_cnpj: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    cnpj = str(entity.get("cnpj") or "")
+    output: list[dict[str, Any]] = []
+    for relation in registry.get("relationships") or []:
+        subject_cnpj = str(relation.get("subject_cnpj") or "")
+        target_cnpjs = [str(value or "") for value in relation.get("target_cnpjs") or []]
+        if cnpj != subject_cnpj and cnpj not in target_cnpjs:
+            continue
+        subject = by_cnpj.get(subject_cnpj)
+        targets = [by_cnpj.get(value) for value in target_cnpjs]
+        output.append(
+            {
+                "relationship_id": relation.get("relationship_id"),
+                "relationship_type": relation.get("relationship_type"),
+                "role": "subject" if cnpj == subject_cnpj else "target",
+                "subject": (
+                    {
+                        "profile_id": f"entity:{subject['entity_id']}",
+                        "name": _entity_name(subject),
+                        "cnpj": subject.get("cnpj"),
+                    }
+                    if subject
+                    else {"profile_id": None, "name": None, "cnpj": subject_cnpj}
+                ),
+                "targets": [
+                    {
+                        "profile_id": f"entity:{target['entity_id']}",
+                        "name": _entity_name(target),
+                        "cnpj": target.get("cnpj"),
+                    }
+                    for target in targets
+                    if target
+                ],
+                "effective_from": relation.get("effective_from"),
+                "pressure_policy": relation.get("pressure_policy"),
+                "reconciliation_state": relation.get("reconciliation_state"),
+                "evidence": relation.get("evidence") or [],
+            }
+        )
+    return output
 
 
 def _conduct_public(
     conduct: dict[str, Any],
-    *,
     relationship_context: list[dict[str, Any]],
 ) -> dict[str, Any]:
     state = str(conduct.get("state") or "")
-    observed = conduct.get("observed_complaints_12m")
-    expected = conduct.get("expected_complaints_12m")
-    ratio = conduct.get("pressure_ratio")
-    comparable_months = conduct.get("comparable_months")
     reason = conduct.get("reason_code")
-
-    relationship_note = None
+    language = {
+        "above_expected_with_sufficient_evidence": (
+            "Há mais reclamações do que esperaríamos para o tamanho da operação nos "
+            "meses comparáveis, e a diferença é sustentada pela evidência disponível."
+        ),
+        "below_expected_with_sufficient_evidence": (
+            "Há menos reclamações do que esperaríamos para o tamanho da operação nos "
+            "meses comparáveis. Isso, isoladamente, não prova melhor atendimento ou "
+            "maior qualidade."
+        ),
+        "not_distinguishable_from_expected": (
+            "Os dados não mostram diferença suficientemente clara em relação ao esperado "
+            "para o tamanho da operação."
+        ),
+        "pressure_inconclusive_denominator_sensitivity": (
+            "A conclusão muda conforme a medida econômica usada para representar o "
+            "tamanho da operação; por isso, não apresentamos uma conclusão direcional."
+        ),
+        "pressure_unavailable_insufficient_temporal_coverage": (
+            "Ainda não há meses comparáveis suficientes para uma conclusão anual sobre "
+            "a pressão de reclamações."
+        ),
+        "pressure_unavailable_not_comparable": (
+            "Há dados de reclamações, mas não há numerador e denominador comparáveis "
+            "suficientes para calcular pressão sem inventar atribuições."
+        ),
+    }.get(
+        state,
+        "A evidência de reclamações não sustenta uma conclusão comparativa neste registro.",
+    )
     if reason == "brand_specific_exposure_required":
         relation = next(
             (
@@ -332,60 +365,22 @@ def _conduct_public(
             None,
         )
         if relation:
-            targets = ", ".join(
+            names = ", ".join(
                 str(item.get("name") or item.get("profile_id"))
                 for item in relation.get("targets") or []
             )
-            relationship_note = (
+            language = (
                 "Há reclamações registradas contra esta empresa, mas existe relação "
-                f"documentada com {targets or 'outra seguradora'} como responsável pelo "
+                f"documentada com {names or 'outra seguradora'} como responsável pelo "
                 "risco dos produtos considerados. Não usamos automaticamente toda a "
-                "produção da outra seguradora para dimensionar essas reclamações, pois isso "
-                "poderia distorcer a comparação."
+                "produção da outra seguradora para dimensionar essas reclamações, pois "
+                "isso poderia distorcer a comparação."
             )
-
-    language = {
-        "above_expected_with_sufficient_evidence": (
-            "Há mais reclamações do que esperaríamos para o tamanho da operação nos meses "
-            "comparáveis, e a diferença é sustentada pela evidência disponível."
-        ),
-        "below_expected_with_sufficient_evidence": (
-            "Há menos reclamações do que esperaríamos para o tamanho da operação nos meses "
-            "comparáveis. Isso, isoladamente, não prova melhor atendimento ou maior qualidade."
-        ),
-        "not_distinguishable_from_expected": (
-            "Os dados não mostram diferença suficientemente clara em relação ao esperado "
-            "para o tamanho da operação."
-        ),
-        "pressure_inconclusive_denominator_sensitivity": (
-            "A conclusão muda conforme a medida econômica usada para representar o tamanho "
-            "da operação; por isso, não apresentamos uma conclusão direcional."
-        ),
-        "pressure_unavailable_insufficient_temporal_coverage": (
-            "Ainda não há meses comparáveis suficientes para uma conclusão anual sobre a "
-            "pressão de reclamações."
-        ),
-        "pressure_unavailable_not_comparable": (
-            "Há dados de reclamações, mas não há numerador e denominador comparáveis "
-            "suficientes para calcular pressão sem inventar atribuições."
-        ),
-    }.get(
-        state,
-        "A evidência de reclamações não sustenta uma conclusão comparativa neste registro.",
-    )
-
-    if relationship_note:
-        language = relationship_note
-
     tone = {
         "above_expected_with_sufficient_evidence": "adverse",
         "below_expected_with_sufficient_evidence": "neutral",
         "not_distinguishable_from_expected": "neutral",
-        "pressure_inconclusive_denominator_sensitivity": "unknown",
-        "pressure_unavailable_insufficient_temporal_coverage": "unknown",
-        "pressure_unavailable_not_comparable": "unknown",
     }.get(state, "unknown")
-
     return {
         "state": state or None,
         "tone": tone,
@@ -394,29 +389,29 @@ def _conduct_public(
         "reason_code": reason,
         "technical": {
             "observed_complaints_12m": _metric(
-                observed,
+                conduct.get("observed_complaints_12m"),
                 meaning=(
-                    "Reclamações observadas no Consumer.gov na janela preservada. Zero, "
-                    "quando explicitamente observado, não é tratado como selo de boa Conduta."
+                    "Reclamações observadas no Consumer.gov na janela preservada. Zero "
+                    "observado não é tratado como selo de boa Conduta."
                 ),
                 zero_semantics="observed_zero_is_not_a_favorable_finding",
             ),
             "expected_complaints_12m": _metric(
-                expected,
+                conduct.get("expected_complaints_12m"),
                 meaning=(
                     "Referência estatística proporcional ao tamanho econômico nos meses "
                     "comparáveis; não é quantidade ideal de reclamações."
                 ),
             ),
             "observed_expected_ratio": _metric(
-                ratio,
+                conduct.get("pressure_ratio"),
                 meaning=(
-                    "Razão entre reclamações observadas e esperadas somente quando há "
-                    "população, exposição e período comparáveis."
+                    "Razão observadas/esperadas somente quando população, exposição e "
+                    "período são comparáveis."
                 ),
             ),
             "comparable_months": _metric(
-                comparable_months,
+                conduct.get("comparable_months"),
                 meaning="Quantidade de meses utilizáveis na comparação anual.",
             ),
             "persistence": conduct.get("persistence"),
@@ -430,7 +425,6 @@ def _assessment_headline(assessment: dict[str, Any], conduct: dict[str, Any]) ->
         if conduct.get("state") == "pressure_unavailable_not_comparable":
             return "Há informações úteis, mas a avaliação conjunta ainda é incompleta"
         return "A avaliação conjunta ainda é incompleta"
-
     public_class = str(assessment.get("public_class") or "")
     if public_class == "favorable_reading":
         return "Os sinais centrais avaliados não mostram alerta conjunto relevante"
@@ -443,26 +437,22 @@ def _assessment_headline(assessment: dict[str, Any], conduct: dict[str, Any]) ->
 
 def _ordinary_assessment(
     explorer: dict[str, Any],
-    *,
     relationship_context: list[dict[str, Any]],
 ) -> dict[str, Any]:
     assessment = explorer.get("assessment") or {}
     financial = explorer.get("financial") or {}
     conduct = explorer.get("conduct") or {}
     market = explorer.get("market_context") or {}
-
-    pressure_comparable = (
-        conduct.get("comparability_state") == "direct_one_to_one_candidate"
-    )
     premium = market.get("insurance_premium_direct_12m")
+    comparable = conduct.get("comparability_state") == "direct_one_to_one_candidate"
 
     if premium is None:
-        operation_metric = _metric(
+        operation = _metric(
             None,
             meaning="Prêmio direto de seguros na janela de 12 meses.",
         )
-    elif pressure_comparable and isinstance(premium, (int, float)) and premium > 0:
-        operation_metric = _metric(
+    elif comparable and isinstance(premium, (int, float)) and premium > 0:
+        operation = _metric(
             premium,
             meaning=(
                 "Prêmio direto de seguros na janela de 12 meses. Mede volume econômico, "
@@ -471,7 +461,7 @@ def _ordinary_assessment(
             zero_semantics="zero_would_not_be_a_quality_finding",
         )
     else:
-        operation_metric = _metric(
+        operation = _metric(
             premium,
             meaning=(
                 "Valor bruto de prêmio direto preservado da fonte. Neste perfil ele não "
@@ -498,75 +488,19 @@ def _ordinary_assessment(
             "operating_context": financial.get("operating_context"),
             "evidence_confidence": financial.get("evidence_confidence"),
         },
-        "conduct": _conduct_public(
-            conduct,
-            relationship_context=relationship_context,
-        ),
+        "conduct": _conduct_public(conduct, relationship_context),
         "operation_context": {
-            "insurance_premium_direct_12m": operation_metric,
+            "insurance_premium_direct_12m": operation,
             "public_note": (
                 "Prêmio direto só aparece como tamanho da operação quando a relação entre "
-                "a entidade que recebe reclamações e a exposição econômica é comparável."
+                "quem recebe reclamações e a exposição econômica é comparável."
             ),
         },
     }
 
 
-def _conduct_relationships(
-    entity: dict[str, Any],
-    registry: dict[str, Any],
-    *,
-    by_cnpj: dict[str, dict[str, Any]],
-) -> list[dict[str, Any]]:
-    cnpj = str(entity.get("cnpj") or "")
-    output: list[dict[str, Any]] = []
-
-    for relation in registry.get("relationships") or []:
-        subject_cnpj = str(relation.get("subject_cnpj") or "")
-        targets = [str(value or "") for value in relation.get("target_cnpjs") or []]
-        if cnpj != subject_cnpj and cnpj not in targets:
-            continue
-
-        role = "subject" if cnpj == subject_cnpj else "target"
-        subject = by_cnpj.get(subject_cnpj)
-        target_rows = [by_cnpj.get(target) for target in targets]
-        target_rows = [row for row in target_rows if row]
-
-        output.append(
-            {
-                "relationship_id": relation.get("relationship_id"),
-                "relationship_type": relation.get("relationship_type"),
-                "role": role,
-                "subject": (
-                    {
-                        "profile_id": f"entity:{subject['entity_id']}",
-                        "name": _entity_name(subject),
-                        "cnpj": subject.get("cnpj"),
-                    }
-                    if subject
-                    else {"profile_id": None, "name": None, "cnpj": subject_cnpj}
-                ),
-                "targets": [
-                    {
-                        "profile_id": f"entity:{target['entity_id']}",
-                        "name": _entity_name(target),
-                        "cnpj": target.get("cnpj"),
-                    }
-                    for target in target_rows
-                ],
-                "effective_from": relation.get("effective_from"),
-                "pressure_policy": relation.get("pressure_policy"),
-                "reconciliation_state": relation.get("reconciliation_state"),
-                "evidence": relation.get("evidence") or [],
-            }
-        )
-
-    return output
-
-
 def _same_group_context(
     entity: dict[str, Any],
-    *,
     by_id: dict[str, dict[str, Any]],
     group_by_id: dict[str, dict[str, Any]],
 ) -> dict[str, Any] | None:
@@ -574,25 +508,22 @@ def _same_group_context(
     group_id = str(group.get("group_id") or "")
     if not group_id:
         return None
-
     group_row = group_by_id.get(group_id) or {}
     peers = []
     for entity_id in group_row.get("member_entity_ids") or []:
         if entity_id == entity.get("entity_id"):
             continue
         peer = by_id.get(str(entity_id))
-        if not peer:
-            continue
-        peers.append(
-            {
-                "profile_id": f"entity:{peer['entity_id']}",
-                "entity_id": peer["entity_id"],
-                "name": _entity_name(peer),
-                "entity_type": peer.get("entity_type"),
-                "regulatory_regime": peer.get("regulatory_regime"),
-            }
-        )
-
+        if peer:
+            peers.append(
+                {
+                    "profile_id": f"entity:{peer['entity_id']}",
+                    "entity_id": peer["entity_id"],
+                    "name": _entity_name(peer),
+                    "entity_type": peer.get("entity_type"),
+                    "regulatory_regime": peer.get("regulatory_regime"),
+                }
+            )
     return {
         "group_id": group_id,
         "group_name": group.get("group_name"),
@@ -600,15 +531,15 @@ def _same_group_context(
         "source": group.get("source"),
         "related_entities": sorted(peers, key=lambda row: str(row["name"])),
         "public_note": (
-            "O grupo econômico é contexto observado na fonte SUSEP. A coincidência de grupo "
-            "não prova, sozinha, incorporação, sucessão, joint venture ou transferência de carteira."
+            "O grupo econômico é contexto observado na fonte SUSEP. A coincidência de "
+            "grupo não prova, sozinha, incorporação, sucessão, joint venture ou "
+            "transferência de carteira."
         ),
     }
 
 
-def _direct_relationship_context(
+def _direct_relationships(
     entity: dict[str, Any],
-    *,
     by_id: dict[str, dict[str, Any]],
 ) -> list[dict[str, Any]]:
     output = []
@@ -629,10 +560,7 @@ def _direct_relationship_context(
     return output
 
 
-def _incoming_brands(
-    entity_id: str,
-    brands: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
+def _incoming_brands(entity_id: str, brands: list[dict[str, Any]]) -> list[dict[str, Any]]:
     output = []
     for brand in brands:
         for relation in brand.get("relationships") or []:
@@ -653,7 +581,7 @@ def _incoming_brands(
     return sorted(output, key=lambda row: str(row.get("name") or ""))
 
 
-def _sandbox_film_public(film: dict[str, Any] | None) -> dict[str, Any] | None:
+def _sandbox_film(film: dict[str, Any] | None) -> dict[str, Any] | None:
     if not film:
         return None
     satisfaction = film.get("satisfaction_trend") or {}
@@ -672,7 +600,7 @@ def _sandbox_film_public(film: dict[str, Any] | None) -> dict[str, Any] | None:
             "direction": satisfaction.get("direction"),
             "early_half_average": _metric(
                 satisfaction.get("early_half_average"),
-                meaning="Média de satisfação na primeira metade da janela, quando disponível.",
+                meaning="Média de satisfação na primeira metade da janela.",
             ),
             "early_half_sample": _metric(
                 satisfaction.get("early_half_sample"),
@@ -681,7 +609,7 @@ def _sandbox_film_public(film: dict[str, Any] | None) -> dict[str, Any] | None:
             ),
             "recent_half_average": _metric(
                 satisfaction.get("recent_half_average"),
-                meaning="Média de satisfação na metade recente da janela, quando disponível.",
+                meaning="Média de satisfação na metade recente da janela.",
             ),
             "recent_half_sample": _metric(
                 satisfaction.get("recent_half_sample"),
@@ -692,6 +620,40 @@ def _sandbox_film_public(film: dict[str, Any] | None) -> dict[str, Any] | None:
         "public_limit": (
             "O filme Sandbox é contexto longitudinal experimental. Ele não produz score, "
             "ranking ou pressão proporcional."
+        ),
+    }
+
+
+def _sandbox_metrics(totals: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "complaints": _metric(
+            totals.get("complaints"),
+            meaning="Reclamações observadas contra a entidade Sandbox na janela preservada.",
+            zero_semantics="observed_zero_is_not_a_favorable_finding",
+        ),
+        "responded": _metric(
+            totals.get("responded"),
+            meaning="Reclamações com resposta registrada; resposta não prova solução.",
+        ),
+        "response_rate": _metric(
+            totals.get("response_rate"),
+            meaning="Taxa de resposta observada; não equivale a resolução.",
+        ),
+        "finalized": _metric(
+            totals.get("finalized"),
+            meaning="Reclamações finalizadas; finalização não prova solução.",
+        ),
+        "finalized_rate": _metric(
+            totals.get("finalized_rate"),
+            meaning="Taxa de finalização observada; não equivale a resolução.",
+        ),
+        "satisfaction_count": _metric(
+            totals.get("satisfaction_count"),
+            meaning="Quantidade de avaliações de satisfação preservadas.",
+        ),
+        "average_satisfaction": _metric(
+            totals.get("average_satisfaction"),
+            meaning="Média de satisfação entre quem avaliou, dependente da amostra.",
         ),
     }
 
@@ -713,58 +675,27 @@ def _sandbox_conduct_for_entity(
     )
     if carrier is None:
         return None
-
-    totals = carrier.get("totals") or {}
+    metrics = _sandbox_metrics(carrier.get("totals") or {})
+    metrics["relative_pressure"] = _metric(
+        None,
+        meaning=(
+            "A metodologia atual não calcula pressão proporcional para o Sandbox neste "
+            "artifact."
+        ),
+        availability="unavailable",
+        public_use="not_applicable_to_sandbox_artifact",
+    )
     return {
         "availability": "available",
         "source_role": "sandbox_carrier_conduct_context",
         "plain_language": (
-            "Há evidência de reclamações do Consumer.gov associada a esta entidade Sandbox. "
-            "Esses dados são contexto de Conduta e não recebem a mesma razão de pressão "
-            "usada para seguradoras ordinárias."
+            "Há evidência de reclamações do Consumer.gov associada a esta entidade "
+            "Sandbox. Esses dados são contexto de Conduta e não recebem a mesma razão de "
+            "pressão usada para seguradoras ordinárias."
         ),
         "provider_labels": carrier.get("consumer_gov_provider_labels_observed") or [],
-        "metrics": {
-            "complaints": _metric(
-                totals.get("complaints"),
-                meaning="Reclamações observadas contra a entidade Sandbox na janela preservada.",
-                zero_semantics="observed_zero_is_not_a_favorable_finding",
-            ),
-            "responded": _metric(
-                totals.get("responded"),
-                meaning="Reclamações com resposta registrada; resposta não prova solução.",
-            ),
-            "response_rate": _metric(
-                totals.get("response_rate"),
-                meaning="Taxa de resposta observada; não equivale a resolução.",
-            ),
-            "finalized": _metric(
-                totals.get("finalized"),
-                meaning="Reclamações finalizadas no sistema; finalização não prova solução.",
-            ),
-            "finalized_rate": _metric(
-                totals.get("finalized_rate"),
-                meaning="Taxa de finalização observada; não equivale a resolução.",
-            ),
-            "satisfaction_count": _metric(
-                totals.get("satisfaction_count"),
-                meaning="Quantidade de avaliações de satisfação preservadas.",
-            ),
-            "average_satisfaction": _metric(
-                totals.get("average_satisfaction"),
-                meaning="Média de satisfação entre quem avaliou, dependente do tamanho da amostra.",
-            ),
-            "relative_pressure": _metric(
-                None,
-                meaning=(
-                    "A metodologia atual não calcula pressão proporcional para o Sandbox "
-                    "neste artifact."
-                ),
-                availability="unavailable",
-                public_use="not_applicable_to_sandbox_artifact",
-            ),
-        },
-        "trajectory_context": _sandbox_film_public(carrier.get("film")),
+        "metrics": metrics,
+        "trajectory_context": _sandbox_film(carrier.get("film")),
     }
 
 
@@ -782,7 +713,6 @@ def _sandbox_brand_context(
     )
     if row is None:
         return None
-
     summary = row.get("carrier_conduct_summary") or {}
     return {
         "availability": "available",
@@ -794,45 +724,18 @@ def _sandbox_brand_context(
         "attribution_note": row.get("attribution_note"),
         "plain_language": (
             f"O Consumer.gov registra esta evidência contra "
-            f"{row.get('risk_carrier_name') or 'a seguradora Sandbox vinculada'}, "
-            "entidade regulada relacionada à marca. O dado é apresentado como contexto "
-            "da relação verificada e não como reclamação exclusiva da marca."
+            f"{row.get('risk_carrier_name') or 'a seguradora Sandbox vinculada'}, entidade "
+            "regulada relacionada à marca. O dado é contexto da relação verificada e não "
+            "reclamação exclusiva da marca."
         ),
-        "metrics": {
-            "complaints": _metric(
-                summary.get("complaints"),
-                meaning="Reclamações observadas contra o risk carrier Sandbox.",
-                zero_semantics="observed_zero_is_not_a_favorable_finding",
-            ),
-            "responded": _metric(
-                summary.get("responded"),
-                meaning="Respostas registradas; resposta não prova solução.",
-            ),
-            "response_rate": _metric(
-                summary.get("response_rate"),
-                meaning="Taxa de resposta; não equivale a resolução.",
-            ),
-            "finalized": _metric(
-                summary.get("finalized"),
-                meaning="Finalizações registradas; finalização não prova solução.",
-            ),
-            "satisfaction_count": _metric(
-                summary.get("satisfaction_count"),
-                meaning="Quantidade de avaliações de satisfação.",
-            ),
-            "average_satisfaction": _metric(
-                summary.get("average_satisfaction"),
-                meaning="Média de satisfação entre quem avaliou.",
-            ),
-        },
-        "trajectory_context": _sandbox_film_public(summary.get("film")),
+        "metrics": _sandbox_metrics(summary),
+        "trajectory_context": _sandbox_film(summary.get("film")),
         "evidence": row.get("evidence") or [],
     }
 
 
 def _brand_profile(
     brand: dict[str, Any],
-    *,
     by_id: dict[str, dict[str, Any]],
     sandbox_payload: dict[str, Any],
 ) -> dict[str, Any]:
@@ -854,8 +757,7 @@ def _brand_profile(
                 "evidence": relation.get("evidence") or {},
             }
         )
-
-    relationship_phrase = ", ".join(target_names) if target_names else "nenhuma entidade resolvida"
+    targets = ", ".join(target_names) if target_names else "nenhuma entidade resolvida"
     return {
         "profile_id": str(brand["brand_id"]),
         "profile_kind": "brand",
@@ -868,10 +770,10 @@ def _brand_profile(
         "public_summary": {
             "headline": f"{brand.get('name')}: marca identificada no cadastro de relações",
             "quick_answer": (
-                f"{brand.get('name')} é uma marca, não uma pessoa jurídica que herda nota "
-                f"ou avaliação. A relação documentada aponta para {relationship_phrase}. "
-                "A ferramenta mantém marca e entidade regulada separadas para não transferir "
-                "dados ou conclusões indevidamente."
+                f"{brand.get('name')} é uma marca, não uma pessoa jurídica que herda "
+                f"avaliação. A relação documentada aponta para {targets}. A ferramenta "
+                "mantém marca e entidade regulada separadas para não transferir dados ou "
+                "conclusões indevidamente."
             ),
         },
         "relationships": relationships,
@@ -883,7 +785,7 @@ def _brand_profile(
             str(brand["brand_id"]), sandbox_payload
         ),
         "limits": [
-            "A marca não herda score, ranking ou avaliação da entidade relacionada.",
+            "A marca não herda avaliação ou posição da entidade relacionada.",
             "Relação de marca/risk carrier não autoriza transferir reclamações sem política de atribuição.",
         ],
     }
@@ -902,17 +804,11 @@ def _entity_profile(
 ) -> dict[str, Any]:
     entity_id = str(entity["entity_id"])
     conduct_relationships = _conduct_relationships(
-        entity,
-        conduct_registry,
-        by_cnpj=by_cnpj,
+        entity, conduct_registry, by_cnpj=by_cnpj
     )
     explorer = explorer_by_id.get(entity_id)
     context = entity.get("query_context") or {}
-
-    lifecycle = entity.get("legal_lifecycle")
-    successor_id = context.get("successor_entity_id")
-    successor = by_id.get(str(successor_id or ""))
-
+    successor = by_id.get(str(context.get("successor_entity_id") or ""))
     return {
         "profile_id": f"entity:{entity_id}",
         "profile_kind": "entity",
@@ -933,7 +829,7 @@ def _entity_profile(
             "filter_bucket": context.get("filter_bucket"),
         },
         "lifecycle": {
-            "legal_lifecycle": lifecycle,
+            "legal_lifecycle": entity.get("legal_lifecycle"),
             "is_historical": context.get("filter_bucket") == "historical",
             "successor_profile_id": (
                 f"entity:{successor['entity_id']}" if successor else None
@@ -948,20 +844,13 @@ def _entity_profile(
             "quick_answer": _entity_intro(entity, by_id),
         },
         "relationship_context": {
-            "economic_group": _same_group_context(
-                entity,
-                by_id=by_id,
-                group_by_id=group_by_id,
-            ),
-            "direct_relationships": _direct_relationship_context(entity, by_id=by_id),
+            "economic_group": _same_group_context(entity, by_id, group_by_id),
+            "direct_relationships": _direct_relationships(entity, by_id),
             "brands": _incoming_brands(entity_id, brands),
             "conduct_reconciliation": conduct_relationships,
         },
         "assessment": (
-            _ordinary_assessment(
-                explorer,
-                relationship_context=conduct_relationships,
-            )
+            _ordinary_assessment(explorer, conduct_relationships)
             if explorer is not None
             else {
                 "availability": "not_applicable",
@@ -982,26 +871,6 @@ def _entity_profile(
     }
 
 
-def _search_disambiguation(profile: dict[str, Any]) -> str:
-    if profile["profile_kind"] == "brand":
-        relationships = profile.get("relationships") or []
-        targets = ", ".join(
-            str(item.get("target_name") or "")
-            for item in relationships
-            if item.get("target_name")
-        )
-        return f"Marca{f' · relacionada a {targets}' if targets else ''}"
-
-    identity = profile.get("identity") or {}
-    regulatory = profile.get("regulatory") or {}
-    pieces = [
-        regulatory.get("label"),
-        f"CNPJ {identity.get('cnpj')}" if identity.get("cnpj") else None,
-        f"SUSEP {identity.get('fip_code')}" if identity.get("fip_code") else None,
-    ]
-    return " · ".join(str(piece) for piece in pieces if piece)
-
-
 def _search_entry(profile: dict[str, Any]) -> dict[str, Any]:
     identity = profile.get("identity") or {}
     if profile["profile_kind"] == "brand":
@@ -1011,20 +880,31 @@ def _search_entry(profile: dict[str, Any]) -> dict[str, Any]:
         fip_code = None
         filter_bucket = "brands"
         entity_type = "brand"
+        targets = ", ".join(
+            str(item.get("target_name") or "")
+            for item in profile.get("relationships") or []
+            if item.get("target_name")
+        )
+        disambiguation = f"Marca{f' · relacionada a {targets}' if targets else ''}"
     else:
-        name = str(identity.get("display_name") or identity.get("legal_name") or profile["profile_id"])
+        name = str(
+            identity.get("display_name")
+            or identity.get("legal_name")
+            or profile["profile_id"]
+        )
         aliases = []
         cnpj = identity.get("cnpj")
         fip_code = identity.get("fip_code")
-        filter_bucket = (profile.get("regulatory") or {}).get("filter_bucket")
+        regulatory = profile.get("regulatory") or {}
+        filter_bucket = regulatory.get("filter_bucket")
         entity_type = identity.get("entity_type")
-
-    terms = [name, *aliases]
-    if cnpj:
-        terms.append(str(cnpj))
-    if fip_code:
-        terms.append(str(fip_code))
-
+        pieces = [
+            regulatory.get("label"),
+            f"CNPJ {cnpj}" if cnpj else None,
+            f"SUSEP {fip_code}" if fip_code else None,
+        ]
+        disambiguation = " · ".join(str(piece) for piece in pieces if piece)
+    terms = [name, *aliases, cnpj, fip_code]
     return {
         "search_id": f"search:{profile['profile_id']}",
         "profile_id": profile["profile_id"],
@@ -1036,18 +916,23 @@ def _search_entry(profile: dict[str, Any]) -> dict[str, Any]:
         "aliases": aliases,
         "cnpj": cnpj,
         "fip_code": fip_code,
-        "disambiguation": _search_disambiguation(profile),
-        "search_text": _normalize_search(" ".join(str(term) for term in terms if term)),
+        "disambiguation": disambiguation,
+        "search_text": _normalize_search(
+            " ".join(str(term) for term in terms if term)
+        ),
     }
 
 
 def _validate_null_semantics(value: Any, path: str = "$") -> None:
     if isinstance(value, dict):
-        if {"value", "availability", "public_use", "meaning"} <= set(value):
-            if value["availability"] == "unavailable" and value["value"] is not None:
-                raise PublicSearchProfileContractError(
-                    f"{path}: unavailable metric has non-null value"
-                )
+        if (
+            {"value", "availability", "public_use", "meaning"} <= set(value)
+            and value["availability"] == "unavailable"
+            and value["value"] is not None
+        ):
+            raise PublicSearchProfileContractError(
+                f"{path}: unavailable metric has non-null value"
+            )
         for key, child in value.items():
             _validate_null_semantics(child, f"{path}.{key}")
     elif isinstance(value, list):
@@ -1072,34 +957,20 @@ def build_public_search_profile_contract(
     brands = list(lifecycle.get("brands") or [])
     groups = list(lifecycle.get("groups") or [])
     explorer_entities = list(explorer.get("entities") or [])
-
     by_id = {str(row["entity_id"]): row for row in entities}
     if len(by_id) != len(entities):
         raise PublicSearchProfileContractError("duplicate lifecycle entity_id")
-
-    by_cnpj = {
-        str(row["cnpj"]): row
-        for row in entities
-        if row.get("cnpj")
-    }
+    by_cnpj = {str(row["cnpj"]): row for row in entities if row.get("cnpj")}
     if len(by_cnpj) != sum(bool(row.get("cnpj")) for row in entities):
         raise PublicSearchProfileContractError("lifecycle CNPJ is not unique")
-
     group_by_id = {
-        str(row["group_id"]): row
-        for row in groups
-        if row.get("group_id")
+        str(row["group_id"]): row for row in groups if row.get("group_id")
     }
-    explorer_by_id = {
-        str(row["entity_id"]): row
-        for row in explorer_entities
-    }
-
-    missing_explorer_entities = sorted(set(explorer_by_id) - set(by_id))
-    if missing_explorer_entities:
+    explorer_by_id = {str(row["entity_id"]): row for row in explorer_entities}
+    missing = sorted(set(explorer_by_id) - set(by_id))
+    if missing:
         raise PublicSearchProfileContractError(
-            "explorer contains entities absent from lifecycle: "
-            + ", ".join(missing_explorer_entities[:5])
+            "explorer contains entities absent from lifecycle: " + ", ".join(missing[:5])
         )
 
     profiles = [
@@ -1116,27 +987,19 @@ def build_public_search_profile_contract(
         for entity in entities
     ]
     profiles.extend(
-        _brand_profile(
-            brand,
-            by_id=by_id,
-            sandbox_payload=sandbox_conduct,
-        )
-        for brand in brands
+        _brand_profile(brand, by_id, sandbox_conduct) for brand in brands
     )
-
-    profile_by_id = {str(row["profile_id"]): row for row in profiles}
-    if len(profile_by_id) != len(profiles):
+    profile_ids = [str(row["profile_id"]) for row in profiles]
+    if len(set(profile_ids)) != len(profile_ids):
         raise PublicSearchProfileContractError("duplicate public profile_id")
-
+    file_keys = [_profile_file_key(profile_id) for profile_id in profile_ids]
+    if len(set(file_keys)) != len(file_keys):
+        raise PublicSearchProfileContractError("profile file key collision")
     for profile in profiles:
         _validate_null_semantics(profile)
 
     search_entries = [_search_entry(profile) for profile in profiles]
-    file_keys = [_profile_file_key(profile["profile_id"]) for profile in profiles]
-    if len(set(file_keys)) != len(file_keys):
-        raise PublicSearchProfileContractError("profile file key collision")
-
-    ordinary_profiles = [
+    ordinary = [
         profile
         for profile in profiles
         if profile["profile_kind"] == "entity"
@@ -1145,13 +1008,12 @@ def build_public_search_profile_contract(
         and (profile.get("regulatory") or {}).get("query_state")
         == "current_ordinary_insurer"
     ]
-    sandbox_profiles = [
+    sandbox = [
         profile
         for profile in profiles
         if profile["profile_kind"] == "entity"
         and (profile.get("regulatory") or {}).get("regime") == "sandbox"
     ]
-
     generated_at = _utc_now()
     return {
         "artifact": "v2_public_search_profile_contract",
@@ -1162,7 +1024,9 @@ def build_public_search_profile_contract(
             "identity_lifecycle_relationships": lifecycle.get("artifact"),
             "ordinary_assessment_explorer": explorer.get("artifact"),
             "sandbox_conduct": sandbox_conduct.get("artifact"),
-            "conduct_relationship_registry": "data/reference/v2/conduct_subject_relationships.json",
+            "conduct_relationship_registry": (
+                "data/reference/v2/conduct_subject_relationships.json"
+            ),
         },
         "publication_policy": {
             "search_is_broader_than_ordinary_assessment": True,
@@ -1188,16 +1052,15 @@ def build_public_search_profile_contract(
             "brands": len(brands),
             "profiles": len(profiles),
             "search_entries": len(search_entries),
-            "ordinary_current_insurer_profiles": len(ordinary_profiles),
+            "ordinary_current_insurer_profiles": len(ordinary),
             "ordinary_profiles_with_assessment_payload": sum(
                 (profile.get("assessment") or {}).get("availability")
                 in {"available", "incomplete"}
-                for profile in ordinary_profiles
+                for profile in ordinary
             ),
-            "sandbox_entity_profiles": len(sandbox_profiles),
+            "sandbox_entity_profiles": len(sandbox),
             "sandbox_profiles_with_conduct_context": sum(
-                profile.get("sandbox_conduct") is not None
-                for profile in sandbox_profiles
+                profile.get("sandbox_conduct") is not None for profile in sandbox
             ),
         },
         "public_output_contract": {
@@ -1216,10 +1079,7 @@ def build_public_search_profile_contract(
             search_entries,
             key=lambda row: (str(row["name"]).casefold(), row["profile_id"]),
         ),
-        "profiles": sorted(
-            profiles,
-            key=lambda row: row["profile_id"],
-        ),
+        "profiles": sorted(profiles, key=lambda row: row["profile_id"]),
     }
 
 
@@ -1231,7 +1091,6 @@ def write_public_outputs(
     root.mkdir(parents=True, exist_ok=True)
     profile_dir = root / "profiles"
     profile_dir.mkdir(parents=True, exist_ok=True)
-
     written: list[Path] = []
 
     search_payload = {
@@ -1252,7 +1111,8 @@ def write_public_outputs(
 
     manifest_entries = []
     for profile in payload["profiles"]:
-        path = profile_dir / f"{_profile_file_key(profile['profile_id'])}.json"
+        filename = f"{_profile_file_key(profile['profile_id'])}.json"
+        path = profile_dir / filename
         body = {
             "artifact": "v2_public_entity_or_brand_profile",
             "generated_at": payload["generated_at"],
@@ -1269,7 +1129,7 @@ def write_public_outputs(
             {
                 "profile_id": profile["profile_id"],
                 "profile_kind": profile["profile_kind"],
-                "path": f"profiles/{path.name}",
+                "path": f"profiles/{filename}",
             }
         )
 
@@ -1287,7 +1147,6 @@ def write_public_outputs(
         encoding="utf-8",
     )
     written.append(manifest_path)
-
     return written
 
 
@@ -1308,14 +1167,12 @@ def build_from_files(
 
 def main() -> None:
     payload = build_from_files()
-
     OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
     OUTPUT_PATH.write_text(
         json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
     written = write_public_outputs(payload)
-
     print(
         json.dumps(
             {
