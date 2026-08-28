@@ -1,0 +1,340 @@
+name: V2 Public Search Profile Contract
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "README.md"
+      - "api/v2/build_public_search_profile_contract.py"
+      - "api/v2/build_lifecycle_relationship_inventory.py"
+      - "api/v2/build_exploratory_leaderboards_contract.py"
+      - "api/v2/build_sandbox_brand_conduct_evidence.py"
+      - "tests/test_v2_public_search_profile_contract.py"
+      - "docs/public-search-profile-contract.md"
+      - "data/reference/v2/conduct_subject_relationships.json"
+      - "data/reference/v2/verified_relationships.json"
+      - "data/reference/v2/sandbox_brand_relationships.json"
+      - ".github/workflows/v2-public-search-profile-contract.yml"
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: v2-public-search-profile-contract-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  public-search-profile-contract:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install -r requirements-dev.txt
+
+      - name: Restore latest successful public-contract inputs
+        run: |
+          set -euo pipefail
+          branch="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
+          mkdir -p data/derived/v2/public
+
+          restore_artifact() {
+            workflow="$1"
+            prefix="$2"
+            filename="$3"
+            destination="$4"
+            temp_dir="$RUNNER_TEMP/restore-${prefix}"
+
+            run_id="$(gh run list \
+              --repo "$GITHUB_REPOSITORY" \
+              --workflow "$workflow" \
+              --branch "$branch" \
+              --status success \
+              --limit 30 \
+              --json databaseId \
+              --jq '.[0].databaseId')"
+
+            if [[ -z "$run_id" || "$run_id" == "null" ]]; then
+              echo "No successful artifact found for $workflow on $branch" >&2
+              exit 1
+            fi
+
+            rm -rf "$temp_dir"
+            mkdir -p "$temp_dir"
+
+            gh run download "$run_id" \
+              --repo "$GITHUB_REPOSITORY" \
+              --name "${prefix}-${run_id}" \
+              --dir "$temp_dir"
+
+            source_file="$(find "$temp_dir" -type f -name "$filename" | head -n 1)"
+            if [[ -z "$source_file" ]]; then
+              echo "$workflow artifact missing $filename" >&2
+              exit 1
+            fi
+
+            cp "$source_file" "$destination"
+            echo "Restored $workflow from run $run_id"
+          }
+
+          restore_artifact \
+            "V2 Lifecycle Relationships Validation" \
+            "v2-lifecycle-relationships" \
+            "entity_lifecycle_relationship_inventory.json" \
+            "data/derived/v2/entity_lifecycle_relationship_inventory.json"
+
+          restore_artifact \
+            "V2 Exploratory Leaderboards Contract" \
+            "v2-exploratory-leaderboards-contract" \
+            "insurer_explorer.json" \
+            "data/derived/v2/public/insurer_explorer.json"
+
+          restore_artifact \
+            "V2 Sandbox Brand Conduct Evidence" \
+            "v2-sandbox-brand-conduct" \
+            "sandbox_brand_conduct_evidence.json" \
+            "data/derived/v2/sandbox_brand_conduct_evidence.json"
+
+      - name: Lint public search/profile contract
+        run: |
+          set -euo pipefail
+          ruff check \
+            api/v2/build_public_search_profile_contract.py \
+            tests/test_v2_public_search_profile_contract.py
+
+      - name: Run public search/profile tests
+        run: |
+          set -euo pipefail
+          python -m pytest -q tests/test_v2_public_search_profile_contract.py
+
+      - name: Build real public search/profile package
+        run: |
+          set -euo pipefail
+          rm -rf data/derived/v2/public/profiles
+          rm -f \
+            data/derived/v2/public/search_index.json \
+            data/derived/v2/public/profile_manifest.json \
+            data/derived/v2/public_search_profile_contract.json
+          python -m api.v2.build_public_search_profile_contract
+
+      - name: Validate real public contract boundaries
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          contract_path = Path("data/derived/v2/public_search_profile_contract.json")
+          payload = json.loads(contract_path.read_text(encoding="utf-8"))
+
+          if payload.get("status") != "public_search_profile_contract_closed":
+              raise SystemExit("public search/profile contract did not close")
+
+          population = payload.get("population") or {}
+          expected = {
+              "lifecycle_entities": 490,
+              "brands": 13,
+              "profiles": 503,
+              "search_entries": 503,
+              "ordinary_current_insurer_profiles": 157,
+              "ordinary_profiles_with_assessment_payload": 157,
+              "sandbox_entity_profiles": 12,
+              "sandbox_profiles_with_conduct_context": 12,
+          }
+          if population != expected:
+              raise SystemExit(f"unexpected public profile population: {population}")
+
+          policy = payload.get("publication_policy") or {}
+          required_false = {
+              "frontend_may_use_fuzzy_search_to_decide_identity",
+              "brand_inherits_entity_assessment",
+              "group_membership_implies_succession_or_joint_venture",
+              "missing_value_may_be_coerced_to_zero",
+              "raw_zero_may_be_relabelled_as_missing",
+              "zero_complaints_is_automatically_favorable",
+              "sandbox_enters_ordinary_ranking",
+              "php_may_recompute_methodology",
+          }
+          for key in required_false:
+              if policy.get(key) is not False:
+                  raise SystemExit(f"public safety policy changed: {key}")
+
+          profiles = {
+              row["profile_id"]: row
+              for row in payload.get("profiles") or []
+          }
+
+          youse = profiles.get("entity:fip:001121")
+          if youse is None:
+              raise SystemExit("Youse public profile missing")
+          youse_conduct = ((youse.get("assessment") or {}).get("conduct") or {})
+          youse_technical = youse_conduct.get("technical") or {}
+          if (
+              (youse_technical.get("observed_complaints_12m") or {}).get("value")
+              != 1367
+          ):
+              raise SystemExit("Youse observed complaints changed unexpectedly")
+          for metric in (
+              "expected_complaints_12m",
+              "observed_expected_ratio",
+              "comparable_months",
+          ):
+              item = youse_technical.get(metric) or {}
+              if item.get("value") is not None:
+                  raise SystemExit(f"Youse missing {metric} was coerced to a value")
+              if item.get("availability") != "unavailable":
+                  raise SystemExit(f"Youse {metric} missingness semantics changed")
+
+          operation = (
+              (youse.get("assessment") or {})
+              .get("operation_context", {})
+              .get("insurance_premium_direct_12m", {})
+          )
+          if operation.get("value") != 0.0:
+              raise SystemExit("Youse raw premium snapshot unexpectedly changed")
+          if operation.get("public_use") != "do_not_render_as_operation_size":
+              raise SystemExit("Youse raw zero could be misrendered as operation size")
+
+          conduct_rel = (
+              (youse.get("relationship_context") or {})
+              .get("conduct_reconciliation")
+              or []
+          )
+          youse_caixa = next(
+              (
+                  row
+                  for row in conduct_rel
+                  if row.get("relationship_type")
+                  == "consumer_subject_single_risk_carrier"
+              ),
+              None,
+          )
+          if youse_caixa is None:
+              raise SystemExit("Youse -> Caixa Conduct relationship missing")
+          target_names = {row.get("name") for row in youse_caixa.get("targets") or []}
+          if "CAIXA SEGURADORA S.A." not in target_names:
+              raise SystemExit("Youse Conduct relationship did not resolve Caixa")
+
+          loovi = profiles.get("brand:loovi")
+          lti = profiles.get("entity:cnpj:47006254000180")
+          if loovi is None or lti is None:
+              raise SystemExit("Loovi/LTI public profiles missing")
+          if (loovi.get("assessment") or {}).get("availability") != "not_applicable":
+              raise SystemExit("brand inherited an entity assessment")
+          loovi_context = loovi.get("sandbox_conduct_context") or {}
+          if (
+              ((loovi_context.get("metrics") or {}).get("complaints") or {}).get("value")
+              != 1329
+          ):
+              raise SystemExit("Loovi/LTI Sandbox complaints not preserved")
+          if loovi_context.get("risk_carrier_profile_id") != (
+              "entity:cnpj:47006254000180"
+          ):
+              raise SystemExit("Loovi did not resolve to LTI")
+          if (
+              (((lti.get("sandbox_conduct") or {}).get("metrics") or {})
+              .get("complaints") or {})
+              .get("value")
+              != 1329
+          ):
+              raise SystemExit("LTI carrier complaints not preserved")
+
+          hdi = profiles.get("entity:fip:006572")
+          hdi_global = profiles.get("entity:fip:001571")
+          if hdi is None or hdi_global is None:
+              raise SystemExit("HDI ordinary profiles missing")
+          if hdi["identity"].get("cnpj") == hdi_global["identity"].get("cnpj"):
+              raise SystemExit("HDI and HDI Global identities collapsed")
+          hdi_group = (
+              (hdi.get("relationship_context") or {}).get("economic_group") or {}
+          )
+          if hdi_group.get("group_name") != "TALANX AG":
+              raise SystemExit("HDI TALANX group context missing")
+          related = {
+              row.get("profile_id")
+              for row in hdi_group.get("related_entities") or []
+          }
+          if "entity:fip:001571" not in related:
+              raise SystemExit("HDI Global missing from HDI group context")
+
+          forbidden = {"score", "overall_score", "ranking_position", "winner"}
+
+          def walk(value, path="$"):
+              if isinstance(value, dict):
+                  overlap = forbidden & set(value)
+                  if overlap:
+                      raise SystemExit(
+                          f"forbidden public decision fields at {path}: {sorted(overlap)}"
+                      )
+                  if {"value", "availability", "public_use", "meaning"} <= set(value):
+                      if value["availability"] == "unavailable" and value["value"] is not None:
+                          raise SystemExit(
+                              f"unavailable public metric carries value at {path}"
+                          )
+                  for key, child in value.items():
+                      walk(child, f"{path}.{key}")
+              elif isinstance(value, list):
+                  for index, child in enumerate(value):
+                      walk(child, f"{path}[{index}]")
+
+          walk(payload["profiles"])
+
+          search_path = Path("data/derived/v2/public/search_index.json")
+          manifest_path = Path("data/derived/v2/public/profile_manifest.json")
+          profile_dir = Path("data/derived/v2/public/profiles")
+          if not search_path.is_file() or not manifest_path.is_file():
+              raise SystemExit("public search index or profile manifest missing")
+          if len(list(profile_dir.glob("*.json"))) != 503:
+              raise SystemExit("unexpected number of public profile files")
+
+          print(
+              json.dumps(
+                  {
+                      "status": payload["status"],
+                      "population": population,
+                      "youse": {
+                          "complaints": (
+                              youse_technical["observed_complaints_12m"]["value"]
+                          ),
+                          "expected": (
+                              youse_technical["expected_complaints_12m"]["value"]
+                          ),
+                          "operation_public_use": operation["public_use"],
+                      },
+                      "loovi_lti_complaints": (
+                          loovi_context["metrics"]["complaints"]["value"]
+                      ),
+                      "hdi_group": hdi_group["group_name"],
+                  },
+                  ensure_ascii=False,
+                  indent=2,
+              )
+          )
+          PY
+
+      - name: Upload closed public search/profile contract
+        uses: actions/upload-artifact@v4
+        with:
+          name: v2-public-search-profile-contract-${{ github.run_id }}
+          retention-days: 14
+          path: |
+            data/derived/v2/public_search_profile_contract.json
+            data/derived/v2/public/search_index.json
+            data/derived/v2/public/profile_manifest.json
+            data/derived/v2/public/profiles/**
