@@ -1,61 +1,62 @@
 # Ranking de Seguradoras Sanida — Pipeline de Dados e Metodologia v2
 
-> **Status do projeto:** refatoração metodológica e arquitetural em andamento.  
+> **Status do projeto:** fundação metodológica concluída em Draft; início da fase de **consolidação, auditoria e operacionalização evergreen**.  
 > **Branch de trabalho:** `refactor/v2-data-foundation`.  
-> **PR:** #1 permanece **Draft**.  
-> **Marco atual (2026-08-27):** os contratos de sinal **Financeiro** e **Conduta**, a calibração entre pilares, o contrato semântico público, o **Assessment Eligibility Contract**, o **Ranking Eligibility Preflight** e o **Exploratory Leaderboards Contract** estão fechados. **85/157** seguradoras possuem avaliação conjunta elegível; **72/157** permanecem com avaliação conjunta incompleta, preservando os sinais disponíveis. A ferramenta é prioritariamente um **comparador/avaliação semântica**. Cinco leaderboards unidimensionais e cinco coleções semânticas estão autorizados como exploração secundária. `ranking_eligible` permanece **0** e o ranking geral continua bloqueado.  
-> **Próximo estágio de produto:** `public_api_json_packaging_and_frontend_php_integration`. O backend gera semântica, métricas, coleções e leaderboards; o PHP no HostGator somente renderiza os JSONs e não recompõe a metodologia.  
-> **Regra de segurança:** nada nesta branch deve ser tratado como score ou ranking final enquanto os gates formais de avaliação, representatividade e ranking não forem concluídos.
+> **PR:** #1 permanece **Draft**. Não fazer merge em `main` antes do fechamento da consolidação.  
+> **Produto principal:** consulta de identidade + avaliação semântica individual + comparação lado a lado; leaderboards unidimensionais e coleções semânticas são exploração secundária.  
+> **Ranking geral:** continua bloqueado (`ranking_eligible = 0`).  
+> **Frontend:** PHP/HTML/CSS/JS no HostGator consome contratos públicos prontos; **não recalcula metodologia**.  
+> **Marco crítico de 29/08/2026:** corrigido o numerador de `PLA/CMR`. O pipeline deve usar `NovoPla` (`new_pla`) como PLA prudencial final; `plajustado` (`pla_adjusted`) permanece somente como evidência intermediária da fonte. Artifacts gerados antes dessa correção não devem ser tratados como atuais para capital, assessment combinado ou leaderboards dependentes de capital.
 
-Este README é o **contrato de projeto**, o guia de implementação da v2 e o registro das decisões metodológicas já tomadas. Os fechamentos e calibrações específicas estão documentados em:
+Este README é o **contrato operacional do projeto**. A partir daqui, o objetivo deixa de ser abrir novas frentes metodológicas e passa a ser consolidar o que já foi construído, eliminar inconsistências, automatizar publicação e garantir que o frontend use corretamente os contratos existentes.
+
+Documentação principal:
 
 - `docs/financial-methodology-closure.md`;
 - `docs/conduct-methodology-closure.md`;
 - `docs/cross-pillar-calibration-stage-1.md`;
 - `docs/cross-pillar-architecture-stage-2.md`;
-- `docs/cross-pillar-assessment-contract-preflight.md`;
 - `docs/cross-pillar-assessment-semantic-contract.md`;
 - `docs/assessment-eligibility-contract.md`;
 - `docs/ranking-eligibility-preflight.md`;
-- `docs/exploratory-leaderboards-contract.md`.
+- `docs/exploratory-leaderboards-contract.md`;
+- `docs/public-search-profile-contract.md`.
 
-Regras marcadas como **EM CALIBRAÇÃO**, **EXPERIMENTAL** ou **PENDENTE** não podem ser convertidas silenciosamente em scoring.
+Regras marcadas como **EXPERIMENTAL**, **DIAGNÓSTICO**, **LEGACY**, **INVALIDATED** ou **PENDENTE** nunca podem vazar silenciosamente para o frontend público.
 
 ---
 
-## 1. Objetivo
+# 1. Objetivo do produto
 
-O projeto mantém a camada de dados e inteligência da ferramenta pública da Sanida para consulta de seguradoras, marcas, participantes do Sandbox e outras entidades relacionadas ao mercado de seguros.
+A ferramenta pública deve ajudar o consumidor a responder, em linguagem progressiva:
 
-A ferramenta deve ajudar o consumidor a responder perguntas como:
+1. **Quem é a empresa ou marca pesquisada?**
+2. **É seguradora autorizada, participante Sandbox, marca, entidade histórica ou outro tipo de empresa?**
+3. **Existe seguradora por trás da marca ou relação societária relevante?**
+4. **Os sinais financeiros disponíveis mostram algum alerta material?**
+5. **As reclamações parecem altas ou baixas em relação ao tamanho da operação quando essa comparação é realmente possível?**
+6. **Há limitações que impedem uma conclusão conjunta?**
+7. **Quais números, períodos, fontes e regras sustentam a resposta?**
 
-- **Esta seguradora é confiável?**
-- **Ela apresenta sinais financeiros compatíveis com sustentar seus compromissos?**
-- **Há atrito com consumidores acima do que seria esperado para seu porte e perfil de operação?**
-- **Os problemas parecem episódicos ou persistentes?**
-- **O nome pesquisado é realmente uma seguradora?**
-- **Qual é a entidade regulada por trás de determinada marca?**
-- **A empresa opera em regime ordinário, Sandbox ou outra condição regulatória?**
-
-A complexidade deve ficar no backend. A apresentação pública deve ser progressiva:
+A progressão pública obrigatória é:
 
 ```text
 resposta rápida
-    ↓
-justificativa resumida
-    ↓
-indicadores
-    ↓
-fontes e períodos
-    ↓
-metodologia completa
+→ sinais em português comum
+→ identidade e relações relevantes
+→ comparação visual
+→ números técnicos
+→ fontes, período e limites
+→ metodologia completa
 ```
+
+O consumidor não deve precisar conhecer `PLA/CMR`, `ILT`, `observed/expected`, `risk_carrier`, códigos internos ou nomes de estados do backend para entender a primeira resposta.
 
 ---
 
-## 2. Princípio central
+# 2. Princípio central
 
-A v2 segue esta ordem:
+A ordem metodológica permanece:
 
 ```text
 identidade correta
@@ -63,21 +64,22 @@ identidade correta
 → lifecycle e relationships
 → elegibilidade
 → evidência
+→ período correto
 → comparabilidade
 → calibração
 → avaliação
-→ ranking
+→ eventual ordenação permitida
 ```
 
-A ordem inversa — produzir nota primeiro e procurar justificativa depois — não é aceita.
-
-A regra de projeto permanece:
+Regra de projeto:
 
 > **identidade correta → dado correto → período correto → comparação correta → conclusão útil → explicação transparente.**
 
+É proibido produzir conclusão primeiro e procurar justificativa depois.
+
 ---
 
-## 3. Escopo do repositório
+# 3. Escopo do repositório
 
 O repositório é responsável por:
 
@@ -86,30 +88,41 @@ O repositório é responsável por:
 - identidade canônica;
 - classificação regulatória;
 - lifecycle jurídico;
-- relações de marca, sucessão e grupo;
+- relações de marca, sucessão, grupo e `risk_carrier`;
 - elegibilidade;
-- evidência financeira e de Conduta;
-- experimentos metodológicos;
-- auditoria;
+- evidência financeira;
+- evidência de Conduta;
+- reconciliação entre sujeito de reclamação e exposição;
+- comparabilidade;
+- contratos semânticos;
+- auditoria e invariantes;
 - testes;
-- artifacts/JSONs derivados;
-- futura publicação da API v2.
+- geração dos JSONs públicos;
+- workflows e artifacts.
 
-O frontend público não pertence à arquitetura-alvo do repositório. A página da Sanida será construída em PHP/HTML/CSS/JavaScript e deverá receber dados semanticamente prontos.
+O frontend público fica fora da metodologia. Sua função é pesquisar, navegar, formatar e renderizar contratos já fechados.
 
-O frontend **não pode reconstruir**:
+```text
+php_may_recompute_methodology = false
+js_may_recompute_methodology  = false
+```
 
-- score;
-- ranking;
-- matching;
-- classificação regulatória;
-- elegibilidade;
-- regras de relacionamento;
-- fórmulas metodológicas.
+PHP/JS não podem:
+
+- recalcular PLA/CMR ou ILT;
+- recalcular `observed/expected`;
+- transferir reclamações entre marca, subject e carrier;
+- decidir identidade por fuzzy matching;
+- criar score;
+- criar ranking geral;
+- inferir sucessão ou aquisição;
+- transformar `null` em `0`;
+- decidir missingness;
+- inventar desempate.
 
 ---
 
-## 4. Arquitetura-alvo
+# 4. Arquitetura-alvo
 
 ```text
 FONTES OFICIAIS / PÚBLICAS
@@ -118,9 +131,9 @@ FONTES OFICIAIS / PÚBLICAS
     ├── SUSEP — licenciadas
     ├── SUSEP — regimes especiais
     ├── SUSEP — Sandbox
-    ├── Receita Federal — CNPJ
-    ├── BDR / SusepCon
-    └── Consumidor.gov
+    ├── Receita Federal — lifecycle/CNPJ
+    ├── BDR / SusepCon quando publicamente consumível
+    └── Consumer.gov
     │
     ▼
 COLETA + CACHE + VALIDAÇÃO
@@ -129,253 +142,243 @@ COLETA + CACHE + VALIDAÇÃO
 IDENTIDADE / CLASSIFICAÇÃO / LIFECYCLE
     │
     ▼
-RELATIONSHIPS E MARCAS
+RELATIONSHIPS / MARCAS / RISK CARRIERS
     │
     ▼
-ELEGIBILIDADE
+ELEGIBILIDADE REGULATÓRIA
     │
     ▼
-EVIDÊNCIA FINANCEIRA + EVIDÊNCIA DE CONDUTA
+EVIDÊNCIA FINANCEIRA + CONDUTA
     │
     ▼
-COMPARABILIDADE
+COMPARABILIDADE / RECONCILIAÇÃO
     │
     ▼
-CALIBRAÇÃO
+CONTRATOS SEMÂNTICOS
     │
     ▼
-AVALIAÇÃO
+JSONs PÚBLICOS
     │
     ▼
-RANKING
-    │
-    ▼
-JSONs PÚBLICOS v2
+PHP + CSS + JS
 ```
 
 ---
 
-## 5. Princípios metodológicos aprovados
+# 5. Identidade, busca e relações
 
-### 5.1. Identidade vem antes da nota
+## 5.1. Identidade antes da avaliação
 
-Nome comercial não é chave primária.
-
-Para registros regulatórios SUSEP/SES:
+Para registros SUSEP/SES:
 
 ```text
 entity_id = fip:XXXXXX
 ```
 
-O CNPJ identifica a pessoa jurídica:
+Pessoa jurídica:
 
 ```text
 legal_entity_id = cnpj:<CNPJ>
 ```
 
-A Receita Federal funciona como dimensão jurídica/cadastral separada e não sobrescreve o status regulatório da SUSEP.
+A Receita Federal complementa lifecycle cadastral; não concede licença nem substitui a SUSEP.
 
-### 5.2. A busca é ampla; o ranking é restrito
+## 5.2. Busca mais ampla que assessment
 
-A busca pode localizar:
+A busca pública pode localizar:
 
-- seguradora ordinária;
+- seguradora autorizada;
 - participante Sandbox;
 - marca;
 - plataforma;
 - corretora;
-- ressegurador;
 - previdência;
 - capitalização;
+- ressegurador;
 - entidade histórica;
 - entidade em regime especial;
-- outras entidades identificáveis.
+- outras identidades materializadas.
 
-Isso não significa que todas possam receber nota ou disputar o ranking ordinário.
+Ser pesquisável não significa ser elegível para assessment ordinário.
 
-### 5.3. Dado ausente nunca vale zero
-
-```text
-ausência de dado ≠ desempenho ruim
-```
-
-### 5.4. Marcas não herdam score
-
-Uma marca pode resolver para um risk carrier, mas a marca não se transforma na pessoa jurídica avaliada.
-
-### 5.5. Fuzzy matching não decide identidade
-
-Fuzzy matching e heurísticas podem localizar candidatos. A decisão final exige evidência determinística ou documental.
-
-### 5.6. Porte não gera mérito por si só
-
-Prêmio, patrimônio, market share e tamanho de grupo podem contextualizar a empresa, mas não geram pontos automaticamente.
-
-### 5.7. Ranking é consequência
+## 5.3. Fuzzy matching
 
 ```text
-indicadores
-→ avaliação
-→ elegibilidade
-→ coorte
-→ ordenação
-→ posição
+fuzzy search → ordenar candidatos
+fuzzy search ≠ decidir identidade
 ```
+
+## 5.4. Relações
+
+O backend pode preservar:
+
+- `incorporated_into`;
+- sucessores;
+- grupo econômico observado;
+- marca;
+- `brand_of`;
+- `risk_carrier`;
+- relações especiais de subject/carrier/portfólio.
+
+Guardrails:
+
+```text
+brand ≠ legal_entity
+same_group ≠ succession
+same_group ≠ acquisition
+same_group ≠ joint_venture
+risk_carrier_relation ≠ complaint_transfer
+```
+
+Casos públicos importantes já materializados:
+
+- Youse ↔ Caixa Seguradora;
+- Loovi ↔ LTI Seguros;
+- HDI Seguros × HDI Global no grupo TALANX, mantendo identidades distintas;
+- Zurich com necessidade de reconciliação temporal;
+- Bradesco Seguros com divisão de carteira;
+- entidades históricas com sucessão explícita quando documentada.
 
 ---
 
-## 6. Universo regulatório e elegibilidade
+# 6. Contrato público de busca e perfil
 
-A v2 separa três gates:
+Contrato canônico:
 
-```text
-regulatory_universe_eligible
-→ assessment_eligible
-→ ranking_eligible
-```
+`docs/public-search-profile-contract.md`
 
-Snapshot atual da branch:
+Arquivos:
 
 ```text
-identidades materializadas                 ~490
-seguradoras ordinárias atuais                157
-regulatory_universe_eligible                 157
-semantic_public_assessment_supported          85
-assessment_eligible                           85
-assessment_not_eligible                       72
-ranking_preflight_candidates                  85
-ranking_eligible                               0
-leaderboards unidimensionais públicos          5
-coleções semânticas públicas                   5
-Sandbox no universo ordinário                  0
-regimes especiais no universo ordinário        0
+data/derived/v2/public/search_index.json
+data/derived/v2/public/profile_manifest.json
+data/derived/v2/public/profiles/*.json
 ```
 
-**157 não é constante metodológica.** É o snapshot atual derivado das fontes. Uma nova seguradora licenciada pode entrar no universo regulatório antes de possuir histórico suficiente; nesse caso, os gates posteriores permanecem fechados.
-
----
-
-## 7. Classificação regulatória
-
-A fonte corrente de licenciadas é o serviço oficial SUSEP.
-
-A classificação distingue, entre outros:
-
-- `insurer`;
-- `open_pension_entity`;
-- `capitalization_company`;
-- resseguradores;
-- Sandbox;
-- regimes especiais.
-
-`LISTAEMPRESAS.csv` funciona como ponte auxiliar entre FIP, CNPJ e nome. Não define sozinho o universo atual.
-
-Presença em fluxo SES significa presença de dado/atividade, não necessariamente licença atual.
-
----
-
-## 8. Lifecycle jurídico — Receita Federal
-
-A Receita é usada para cross-check cadastral da pessoa jurídica.
-
-Regra:
+No build que fechou esse contrato em 28/08/2026:
 
 ```text
-SUSEP  → licença, tipo, regime e status regulatório
-Receita → situação cadastral/lifecycle jurídico
+entidades lifecycle                               492
+marcas verificadas                                 13
+perfis públicos                                   505
+entradas de busca                                 505
+seguradoras ordinárias atuais no lifecycle        159
+com payload de assessment daquele snapshot        157
+participantes Sandbox                              12
 ```
 
-Contradições materiais devem interromper o pipeline para investigação.
+Esses números são snapshot, não constantes metodológicas.
 
-A validação bulk já resolveu integralmente o conjunto-alvo utilizado na fundação da v2. O snapshot filtrado evita armazenar o cadastro nacional inteiro.
+`search_index.json` resolve busca e desambiguação. `profile_manifest.json` resolve perfil → arquivo. Cada arquivo de `profiles/` contém identidade, relações, sinais disponíveis, semântica de ausência e contexto suficiente para o frontend não inventar lógica.
 
----
+### Semântica obrigatória
 
-## 9. Relationships, grupos e marcas
+```text
+null ≠ 0
+```
 
-`incorporated_into` só é materializado com evidência explícita.
+Exemplo Youse:
 
-Grupo econômico ou semelhança de nome **não prova sucessão**.
+- reclamações podem existir;
+- `expected_complaints` pode ser `null`;
+- `pressure_ratio` pode ser `null`;
+- prêmio bruto zero pode existir na fonte;
+- esse zero pode ser explicitamente marcado como **não exibível como tamanho da operação**.
 
-O backend preserva:
-
-- sucessões verificadas;
-- cadeia de sucessores;
-- grupos econômicos observados;
-- marcas;
-- relações `risk_carrier`;
-- contextos de consulta.
-
-Buckets genéricos de grupo como `INDEPENDENTE` ou `OUTROS GRUPOS` não criam falsa relação societária.
+O frontend deve respeitar `availability`, `public_use`, `zero_semantics` e `meaning`.
 
 ---
 
-# PILAR ECONÔMICO-FINANCEIRO
+# 7. Pilar econômico-financeiro
 
-## 10. Arquitetura financeira
-
-A pergunta é:
-
-> **A seguradora apresenta sinais financeiros e operacionais compatíveis com a capacidade de honrar compromissos e sustentar sua atividade?**
-
-O contrato de sinal Financeiro está fechado em `docs/financial-methodology-closure.md`.
+## 7.1. Arquitetura
 
 | Dimensão | Referência | Papel |
 |---|---|---|
 | Capital regulatório | PLA/CMR | eixo principal |
 | Liquidez | ILT | eixo principal |
 | Liquidez corrente | ILC | diagnóstico complementar |
-| Operação | ICA/IC | filme longitudinal |
+| Operação | ICA/IC | contexto longitudinal |
 | Rentabilidade | ILPL | diagnóstico apenas |
 
-Não há score interno, média ponderada ou bônus crescente por magnitude.
+Não há score financeiro numérico.
 
----
+## 7.2. Correção crítica de PLA/CMR — 29/08/2026
 
-## 11. Competência financeira madura
+Foi identificado um erro de interpretação de campo no pipeline de capital.
 
-A v2 distingue:
-
-```text
-última competência observada
-!=
-última competência financeira madura
-```
-
-Diagnóstico real de PLA/CMR derivável:
+A fonte `Ses_pl_margem.csv` preserva, entre outros:
 
 ```text
-202601  148
-202602  151
-202603  153
-202604  155
-202605  155  ← competência madura
-202606  130  ← observada, porém imatura
+plajustado  → normalizado como pla_adjusted
+NovoPla     → normalizado como new_pla
+CMR         → cmr
 ```
 
-A competência selecionada foi `2026-05`.
-
-No período maduro:
+O pipeline antigo calculava:
 
 ```text
-PLA/CMR derivável   155/157
-ILC derivável       156/157
-ILT derivável       156/157
+pla_adjusted / CMR
 ```
 
-CMR zero, ausência ou evidência inutilizável não viram desempenho zero.
+Isso utilizava um valor intermediário e gerava falsos alertas prudenciais em casos materiais, inclusive Porto Seguro.
 
----
+A regra corrigida é:
 
-## 12. Capital regulatório — PLA/CMR
+```text
+PLA/CMR = new_pla / cmr
+```
 
-Decisões fechadas:
+Contrato atual no código:
 
-- PLA/CMR < 1 significa insuficiência de capital observada frente ao CMR na competência de referência;
-- PLA/CMR >= 1 atende ao requisito observado;
-- magnitude acima de 1 não gera mérito linear ou tiers positivos arbitrários;
-- histórico curto afeta confiança, não desempenho;
-- porte absoluto não gera pontos.
+```text
+CAPITAL_PLA_SOURCE_FIELD = "new_pla"
+CAPITAL_PLA_RAW_INTERMEDIATE_FIELD = "pla_adjusted"
+```
+
+Consequências obrigatórias:
+
+- `new_pla` é o numerador prudencial do PLA/CMR;
+- `pla_adjusted` continua preservado como evidência intermediária/bruta;
+- **não existe fallback silencioso** de `new_pla` para `pla_adjusted`;
+- se `new_pla` estiver ausente, a métrica fica indisponível;
+- CMR zero continua sendo evidência inutilizável, não desempenho zero;
+- a seleção da competência financeira madura deve usar a mesma semântica de derivabilidade de `new_pla / CMR`.
+
+Versões após a correção:
+
+```text
+FINANCIAL_EVIDENCE_VERSION = 2.0-draft-evidence-profile-3
+MATURITY_POLICY_VERSION     = 2.0-draft-financial-period-maturity-2
+```
+
+Testes regressivos foram adicionados para impedir retorno ao numerador antigo.
+
+### Regra de invalidação
+
+Artifacts anteriores a essa correção que contenham:
+
+- sinal de capital;
+- assessment conjunto dependente de capital;
+- coleções financeiras;
+- leaderboard `highest_pla_cmr_ratio`;
+- semântica pública derivada do capital;
+
+**devem ser regenerados antes de qualquer publicação considerada atual.**
+
+Contagens históricas como “14 seguradoras abaixo do CMR” pertencem ao build anterior e ficam **invalidada(s) para uso corrente** até rebuild integral da cadeia.
+
+## 7.3. Competência financeira madura
+
+```text
+última competência observada ≠ última competência madura
+```
+
+A política escolhe a competência comum mais recente com cobertura suficiente de capital derivável e alinhamento com as demais fontes financeiras.
+
+A maturidade não pode usar semântica diferente da métrica final: após a correção, derivabilidade de capital significa `new_pla` disponível + `CMR > 0`.
+
+## 7.4. Capital
 
 Estados:
 
@@ -385,22 +388,19 @@ capital_meets_or_exceeds_cmr
 capital_signal_unavailable
 ```
 
-Não afirmar insolvência automaticamente a partir de PLA/CMR < 1.
+Regras:
 
----
+- `PLA/CMR < 1`: insuficiência observada frente ao CMR na competência analisada;
+- `PLA/CMR >= 1`: requisito observado atendido;
+- não afirmar insolvência automaticamente;
+- excesso de capital não gera recompensa linear;
+- histórico curto altera confiança, não desempenho.
 
-## 13. Liquidez — ILT e ILC
+## 7.5. Liquidez
 
-A investigação selecionou:
+ILT é o indicador principal. ILC é diagnóstico complementar.
 
-- **ILT** como principal referência de liquidez;
-- **ILC** como diagnóstico complementar.
-
-ILT mostrou estabilidade temporal superior e informação parcialmente distinta de PLA/CMR.
-
-A referência `1,0` do ILT é paridade aritmética, não threshold prudencial oficial da SUSEP.
-
-Estados:
+A referência `1,0` do ILT é paridade aritmética, **não threshold prudencial oficial da SUSEP**.
 
 ```text
 ilt_below_arithmetic_parity
@@ -408,24 +408,11 @@ ilt_at_or_above_arithmetic_parity
 ilt_signal_unavailable
 ```
 
-Valores extremos não recebem recompensa crescente.
+Capital e liquidez são não compensatórios: um não apaga materialmente o outro.
 
----
+## 7.6. Operação
 
-## 14. Combinação Financeira e filme operacional
-
-Capital e liquidez usam lógica não compensatória:
-
-```text
-capital_requirement_shortfall_observed
-capital_requirement_met_with_liquidity_pressure
-core_indicators_without_current_shortfall
-core_financial_signal_unavailable
-```
-
-Capital excedente não apaga pressão de liquidez; liquidez alta não apaga insuficiência de capital.
-
-ICA/IC permanecem filme longitudinal:
+ICA/IC permanecem contexto longitudinal:
 
 ```text
 balanced_persistent
@@ -435,77 +422,19 @@ persistent_pressure
 indeterminate
 ```
 
-O filme operacional **não é um terceiro score financeiro bruto** e não sobrescreve capital/liquidez.
+Não formam terceiro score financeiro.
 
 ---
 
-## 15. Resultado do fechamento Financeiro
+# 8. Pilar de Conduta
 
-```text
-core_indicators_without_current_shortfall              120
-capital_requirement_met_with_liquidity_pressure         21
-capital_requirement_shortfall_observed                  14
-core_financial_signal_unavailable                        2
-```
+Pergunta central:
 
-Confiança:
+> **Há reclamações acima do que seria esperado para o tamanho comparável da operação, e esse sinal é suficientemente robusto e persistente?**
 
-```text
-established_core_history    143
-limited_core_history         12
-insufficient_core_evidence    2
-```
+O contrato de Conduta não responde simplesmente “quem tem mais reclamações”.
 
-Filme operacional:
-
-```text
-balanced_persistent 90
-improved            13
-recent_pressure      7
-persistent_pressure 14
-indeterminate       33
-```
-
-Workflow `V2 Financial Methodology Closure`, run `33003042769`: Ruff verde, 3/3 testes, build real, fronteiras e artifact verdes (artifact `9619421688`).
-
-Esses estados são contratos de evidência e linguagem, não score nem ranking.
-
----
-
-# PILAR DE CONDUTA
-
-## 16. Pergunta central e fechamento
-
-Conduta não responde:
-
-> “Qual empresa tem mais reclamações?”
-
-A pergunta correta é:
-
-> **Esta seguradora apresenta atrito com consumidores acima do que seria esperado para o tamanho e o perfil de sua operação? E esse sinal é robusto e persistente?**
-
-O contrato de sinal de Conduta está fechado em `docs/conduct-methodology-closure.md`, sem score numérico.
-
-A lógica responde em camadas:
-
-1. há reclamações demais para o tamanho da operação?;
-2. há evidência suficiente para confiar na diferença?;
-3. o sinal é persistente ou episódico?;
-4. há melhora, deterioração ou nenhuma mudança clara?;
-5. o mix de carteira exige cautela?;
-6. a satisfação possui amostra suficiente para interpretação?
-
-Remediação **não é inferida** com o P3 atual, porque resposta/finalização não provam solução e o denominador avaliado não está preservado com robustez suficiente.
-
----
-
-## 17. Cascata de fontes de Conduta
-
-Implementado em:
-
-`api/v2/conduct_source_cascade.py`
-
-Prioridade:
+## 8.1. Cascata de fontes
 
 ```text
 P1  BDR / SusepCon atual e publicamente consumível
@@ -514,1101 +443,332 @@ P2  Consumer.gov Base Completa autêntica + SES
  ↓
 P3  Consumer.gov core preservado + SES
  ↓
-P0  evidência de Conduta indisponível
+P0  evidência indisponível
 ```
 
-Uma fonte só passa pelo gate se for:
-
-- atual;
-- pública;
-- estruturada;
-- consumível;
-- com cobertura suficiente.
-
-Regra obrigatória:
+Regra:
 
 ```text
 series_policy = no_cross_source_stitching
 ```
 
-Séries de fontes diferentes não podem ser costuradas como se fossem uma única série longitudinal.
+Fontes diferentes não são costuradas em uma falsa série longitudinal.
 
----
+## 8.2. Exposição
 
-## 18. Estado real das fontes de Conduta
-
-### 18.1. P1 — BDR / SusepCon
-
-BDR existe e recebe dados em 2026, mas isso não prova disponibilidade pública dos bytes brutos para análise automatizada.
-
-O SusepCon público observado permanece congelado no 4º trimestre de 2025.
-
-Enquanto a fonte não for atual, pública, estruturada e consumível, P1 não pode assumir o pipeline.
-
-### 18.2. P2 — Consumer.gov Base Completa
-
-A Base Completa foi processada historicamente e é mais rica que os arquivos de reclamações finalizadas.
-
-O host antigo ficou indisponível.
-
-Arquivos `finalizadas_YYYY-MM.zip` **não podem substituir silenciosamente a Base Completa**, pois representam população diferente.
-
-Logo P2 permanece indisponível enquanto os bytes autênticos da Base Completa não forem recuperáveis.
-
-### 18.3. P3 — Consumer.gov core preservado + SES
-
-É a estratégia prática atual.
-
-O período preservado usado na investigação é:
+A exposição econômica aprovada para seguros é:
 
 ```text
-2025-07 → 2026-06
+source                         Ses_seguros.csv
+approved denominator           premio_direto
+diagnostic companion           premio_ganho
 ```
 
-O core conserva por mês:
+Previdência e capitalização não entram no denominador de seguros.
 
-- reclamações;
-- respondidas;
-- finalizadas;
-- campos de resolução que realmente existam no agregado;
-- quantidade de avaliações de satisfação;
-- soma das notas.
-
-Ele não inventa denominadores ausentes.
-
----
-
-## 19. Identidade Consumer.gov
-
-A fundação de identidade já foi levada a alto nível de resolução sem fuzzy decisório.
-
-Experimento de referência sobre 90.332 reclamações:
+## 8.3. Evidência observada não é pressão comparável
 
 ```text
-matched_current_insurer   82.423
-outside_current_universe   5.872
-ambiguous                  1.995
-unresolved                    42
+conduct_evidence_state ≠ pressure_comparability_state
 ```
 
-Os 42 registros não resolvidos permanecem sem atribuição.
+Uma empresa pode ter reclamações observadas e ainda não permitir cálculo proporcional seguro.
 
-Regras:
-
-- CNPJ e evidência determinística têm prioridade;
-- Receita pode sustentar exclusão inequívoca de não-seguradora;
-- Receita não concede licença;
-- corretora, plataforma, varejista ou canal não transfere reclamações automaticamente para uma seguradora;
-- wrappers multiempresa e homônimos permanecem ambíguos quando necessário.
-
----
-
-## 20. Filme Consumer.gov
-
-A branch preserva filme longitudinal de 12 meses sem score.
-
-Sinais disponíveis no contrato de Conduta incluem:
-
-- cobertura temporal;
-- pressão anual normalizada;
-- credibilidade estatística;
-- persistência;
-- tendência;
-- satisfação sample-aware;
-- contexto de mix de carteira.
-
-Alta taxa de resposta ou finalização **não equivale automaticamente a boa resolução**.
-
-A interpretação deve evitar inferências de intenção.
-
----
-
-## 21. Erro metodológico identificado e invalidado
-
-A primeira tentativa de `Conduct Comparative Calibration` combinou:
-
-```text
-prêmio direto de seguros
-+
-contribuições de previdência privada
-```
-
-Esse desenho foi **invalidado**.
-
-PGBL, VGBL e Previdência Tradicional são tratados neste projeto como **previdência privada**, não como produção de seguros para o ranking de seguradoras.
-
-Capitalização também permanece fora do denominador de seguros.
-
-O workflow antigo foi preservado somente para reprodutibilidade histórica:
-
-`V2 Conduct Comparative Calibration (legacy invalidated)`
-
-Ele não pode ser usado para:
-
-- score;
-- ranking;
-- elegibilidade;
-- calibração atual.
-
----
-
-## 22. Exposição econômica de seguros — regra fechada
-
-O reader atual é:
-
-`api/sources/susep_insurance_exposure.py`
-
-Ele lê **somente**:
-
-`Ses_seguros.csv`
-
-Campos mínimos:
-
-```text
-damesano
-coenti
-coramo
-premio_direto
-premio_ganho
-```
-
-Contrato:
-
-```text
-exposure_domain = insurance_only
-approved_operational_denominator = insurance_premium_direct
-diagnostic_companion = insurance_premium_earned
-```
-
-A aprovação de `premio_direto` é restrita a `direct_one_to_one_candidate`. Se a conclusão muda materialmente quando `premio_ganho` é usado como lente diagnóstica, a conclusão direcional fica bloqueada.
-
-Explicitamente excluídos:
-
-```text
-Ses_Contrib_Benef.csv  → previdência privada
-Ses_Dados_Cap.csv      → capitalização
-```
-
-Prêmio não é número de clientes ou de apólices.
-
----
-
-## 23. Conduta observada ≠ pressão comparável
-
-Uma mudança arquitetural importante foi separar:
-
-```text
-conduct_evidence_state
-```
-
-de:
-
-```text
-pressure_comparability_state
-```
-
-Uma empresa pode continuar pesquisável e ter evidência de Conduta mesmo quando não é possível normalizar suas reclamações por uma exposição comparável.
-
-Isso evita que grandes marcas desapareçam do widget apenas porque marca, provider Consumer.gov e risk carrier não coincidem 1:1.
-
----
-
-## 24. Reconciliation audit — resultado real
-
-Artifact:
-
-`v2_conduct_coverage_reconciliation`
-
-Workflow:
-
-`V2 Conduct Coverage Reconciliation`
-
-Resultado real:
-
-```text
-universo regulatório                              157
-
-Conduta observada                                 127
-sem reclamações observadas                         30
-
-candidatas a pressão 1:1 por prêmio direto        103
-pressão indisponível por enquanto                  54
-```
-
-Estados de cobertura do widget:
-
-```text
-conduct_observed_pressure_candidate                83
-conduct_observed_pressure_unavailable              44
-no_observed_complaints_pressure_candidate          20
-identity_financial_context_pressure_unavailable    10
-```
-
-Os 157 permanecem materializados. A indisponibilidade da pressão não apaga a entidade do produto.
-
----
-
-## 25. Principais motivos de pressão indisponível
-
-Diagnóstico real:
-
-```text
-hybrid_insurance_pension_requires_product_numerator          26
-no_current_insurance_activity_observed                       11
-no_current_insurance_activity_observed_pension_activity       5
-negative_direct_premium_requires_accounting_review             3
-shared_consumer_subject_requires_product_split                 2
-consumer_subject_single_carrier_exposure_not_brand_specific    1
-multi_carrier_subject_requires_product_split                   1
-portfolio_transfer_requires_temporal_reconciliation            1
-portfolio_transfer_counterparty_requires_temporal_reconciliation 1
-shared_exposure_with_external_consumer_subject                 1
-runoff_pressure_not_applicable                                 1
-no_positive_insurance_premium_observed                         1
-```
-
-Esses estados não são “exclusões do widget”. São **rotas de reconciliação**.
-
----
-
-## 26. Seguradoras híbridas seguros + previdência
-
-No P3 atual, o provider Consumer.gov pode trazer reclamações da pessoa jurídica sem taxonomia de produto suficiente.
-
-Se a entidade opera simultaneamente:
-
-```text
-seguros + previdência
-```
-
-não é metodologicamente válido dividir todas as reclamações apenas pelo prêmio de seguros.
-
-Estado:
-
-```text
-hybrid_insurance_pension_requires_product_numerator
-```
-
-Isso afeta players relevantes.
-
-A solução não é somar contribuições de previdência ao denominador. A solução é recuperar, quando possível, **numerador separado por produto**.
-
----
-
-## 27. Consumer-facing subject e risk carrier
-
-A unidade de análise deixou de pressupor que:
-
-```text
-provider Consumer.gov
-=
-pessoa jurídica pesquisada
-=
-risk carrier
-=
-entidade que recebe a produção
-```
-
-Quando necessário, o projeto separa:
+## 8.4. Subject, marca e carrier
 
 ```text
 consumer-facing subject
-↔ relacionamento documentado
+↔ relação documentada
 ↔ risk carrier(s)
 ```
 
-Essas relações fornecem contexto e rotas de recuperação; **não transferem reclamações nem criam exposição automaticamente**.
+Relações fornecem contexto; não transferem automaticamente reclamações ou produção.
 
-Registro:
+### Youse
 
-`data/reference/v2/conduct_subject_relationships.json`
+A relação Youse → Caixa é documentada, mas a produção total da Caixa não pode ser usada automaticamente como denominador das reclamações da Youse.
 
----
+### Loovi / LTI
 
-## 28. Casos especiais documentados
+A evidência Consumer.gov é atribuída à LTI Seguros. O perfil da marca Loovi pode apresentar esse contexto explicando a relação, sem transformar a marca em pessoa jurídica avaliada.
 
-### 28.1. Youse → Caixa Seguradora
+## 8.5. Estatística e tempo
 
-A Youse possui relação documentada com Caixa Seguradora como risk carrier.
+O contrato distingue:
 
-Política atual:
+- acima do esperado;
+- abaixo do esperado;
+- sem diferença clara;
+- conclusão sensível ao denominador;
+- histórico temporal insuficiente;
+- pressão não comparável;
+- persistência;
+- tendência;
+- satisfação sample-aware.
 
-```text
-brand_specific_exposure_required
-```
-
-As reclamações da Youse não são divididas automaticamente pelo prêmio total da Caixa.
-
-A Caixa também não pode parecer artificialmente melhor se parte das reclamações do negócio estiver registrada no subject Youse.
-
-### 28.2. Zurich Brasil → Zurich Minas
-
-A transferência integral de carteira teve efeito em `2026-04-01`.
-
-Estado:
-
-```text
-temporal_reconciliation_required
-```
-
-Reclamações e produção precisam ser reconciliadas temporalmente antes de qualquer pressão comparativa.
-
-### 28.3. Bradesco Seguros → Auto/RE + Vida
-
-A carteira da Bradesco Seguros foi dividida entre Bradesco Auto/RE e Bradesco Vida e Previdência.
-
-Reclamações genéricas de Bradesco Seguros não podem ser rateadas sem separação de produto.
-
-### 28.4. Seguradora Líder / DPVAT
-
-O caso é tratado como `runoff`.
-
-Pressão corrente por prêmio não é aplicável da mesma forma que em uma seguradora ordinária em produção normal.
+Resposta/finalização no Consumer.gov não prova resolução.
 
 ---
 
-# SANDBOX E MARCAS
+# 9. Sandbox
 
-## 29. Sandbox permanece fora do ranking ordinário
-
-Participantes Sandbox podem ser pesquisados e ter contexto regulatório e de Conduta.
-
-Eles não entram:
-
-- nas 157 seguradoras ordinárias;
-- no baseline ordinário;
-- no score ordinário;
-- no ranking ordinário.
-
-Regra:
+Sandbox continua fora do benchmark ordinário.
 
 ```text
 ordinary_ranking_effect = none
 ```
 
----
+Participantes Sandbox podem ser pesquisados e receber contexto próprio de identidade e Conduta.
 
-## 30. Conduta Sandbox
+Loovi ↔ LTI é o caso público mais desenvolvido no contrato atual.
 
-Workflow:
-
-`V2 Sandbox Brand Conduct Evidence`
-
-A camada preserva Conduta de participantes Sandbox que apareçam no Consumer.gov, sem transferir seus dados para seguradoras ordinárias.
-
-Execução real:
-
-```text
-participantes Sandbox materializados             12
-com reclamações observadas                        6
-reclamações Sandbox resolvidas no artifact     1.510
-contextos de marca verificados                     1
-```
-
-Nada desse artifact pode produzir score ou `pressure_ratio`.
+Sandbox não herda assessment ordinário e não contamina baseline ordinário.
 
 ---
 
-## 31. Loovi ↔ LTI Seguros
+# 10. Avaliação entre pilares
 
-Caso implementado:
-
-```text
-brand:loovi
-→ risk_carrier
-→ LTI Seguros S.A.
-```
-
-LTI:
-
-```text
-CNPJ 47.006.254/0001-80
-regime = sandbox
-```
-
-A marca Loovi existe tanto no registro específico Sandbox quanto no registro canônico de marcas da v2.
-
-Aliases verificados incluem:
-
-- Loovi Seguros;
-- Loovi Technology.
-
-A relação não transforma Loovi em seguradora nem transfere score.
-
----
-
-## 32. Evidência real LTI / contexto Loovi
-
-Período:
-
-```text
-2025-07 → 2026-06
-```
-
-Consumer.gov preservado para LTI:
-
-```text
-reclamações                   1.329
-respondidas                   1.286
-taxa de resposta             96,76%
-finalizadas                   1.329
-taxa de finalização          100,0%
-avaliações de satisfação       619
-satisfação média             ~2,645/5
-meses com reclamações         12/12
-```
-
-Satisfação:
-
-```text
-primeira metade   ~2,664  (n=292)
-segunda metade    ~2,627  (n=327)
-direção           stable
-```
-
-O provider original é:
-
-```text
-LTI Seguros
-```
-
-Portanto a linguagem pública deve preservar a atribuição:
-
-> O Consumer.gov registra reclamações contra a LTI Seguros, seguradora Sandbox vinculada aos seguros comercializados pela Loovi.
-
-Não afirmar automaticamente:
-
-> “A Loovi teve 1.329 reclamações.”
-
----
-
-## 33. Guardrails de marca
-
-O resolvedor deve distinguir marca genérica da entidade securitária específica.
-
-Exemplos:
-
-```text
-Sicoob  ≠ Sicoob Seguradora de Vida e Previdência S.A.
-Crefisa ≠ Crefisa Seguros S.A.
-Loovi   ≠ LTI Seguros S.A.
-```
-
-Nome genérico sozinho não pode virar carrier por similaridade textual.
-
----
-
-# COMPARABILIDADE DE CONDUTA
-
-## 34. RppA como precedente conceitual
-
-O SusepCon utiliza a ideia de reclamações ponderadas pela arrecadação.
-
-Isso sustenta:
-
-```text
-observed complaints / expected complaints
-```
-
-ou, de forma equivalente:
-
-```text
-complaint share / premium share
-```
-
-Mas isso é **pressão relativa de reclamações**, não percentual de clientes que reclamam.
-
----
-
-## 35. Population alignment e alinhamento temporal
-
-A população de reclamações e exposição deve ser idêntica em cada baseline comparável.
-
-Regra:
-
-```text
-complaints_and_exposure_same_entities_only
-```
-
-Além disso, o esperado anual é soma dos esperados mensais:
-
-```text
-expected_m = reclamações_mercado_m × prêmio_entidade_m / prêmio_mercado_m
-expected_12m = Σ expected_m
-observed_12m = Σ reclamações apenas nos meses comparáveis
-```
-
-Reclamações de meses sem exposição comparável permanecem como evidência, mas não são forçadas para a razão normalizada daquele mês.
-
----
-
-## 36. Pequenas amostras e credibilidade — decisão fechada
-
-Razão bruta não é conclusão.
-
-A pressão `observed / expected` usa intervalo exato e proteção contra múltiplas comparações no universo comparável.
-
-Decisão atual:
-
-```text
-shrinkage = não selecionado
-Empirical Bayes = não selecionado
-```
-
-A função desta camada é bloquear afirmações frágeis, não produzir uma magnitude suavizada para score.
-
----
-
-## 37. Mix de carteira — investigação encerrada nesta etapa
-
-O SES preserva `coramo` e prêmio direto por ramo.
-
-O diagnóstico real encontrou associação positiva fraca entre distância de carteira e diferença de pressão e mostrou que peers realmente próximos são escassos.
-
-Decisão:
-
-```text
-portfolio_adjustment = false
-peer_groups_selected = false
-distance_threshold_selected = false
-```
-
-`coramo` permanece contexto e diagnóstico de sensibilidade. Ausência de peer nunca significa neutralidade.
-
----
-
-## 38. Persistência, tendência, satisfação e remediação
-
-O contrato distingue:
-
-- pressão persistente;
-- pressão episódica/esparsa;
-- melhora;
-- deterioração;
-- ausência de diferença clara;
-- evidência temporal insuficiente.
-
-Uma conclusão anual exige ao menos 9 meses comparáveis em 12. Persistência exige repetição da direção com evidência em pelo menos metade dos meses comparáveis. Tendência compara as duas metades da janela.
-
-Satisfação é sample-aware e não corrige a incidência de reclamações.
-
-Remediação não é estabelecida pelo P3 atual.
-
----
-
-# CALIBRAÇÃO ENTRE PILARES
-
-## 39. Stage 1 — medir ordem antes de escolher pesos
-
-Financeiro e Conduta possuem contratos fechados, mas não scores internos.
-
-O Stage 1 responde:
-
-> **O que os dois pilares conseguem afirmar juntos sem permitir que um sinal forte esconda um problema material ou que ausência de evidência vire neutralidade?**
-
-Artifact:
-
-`v2_cross_pillar_calibration_diagnostic`
-
-Workflow:
-
-`V2 Cross-Pillar Calibration Stage 1`
-
-Contrato completo:
-
-`docs/cross-pillar-calibration-stage-1.md`
-
-Resultado de cobertura conjunta:
-
-```text
-universo regulatório                    157
-conclusão central nos dois pilares       85
-conclusão conjunta ainda indisponível    72
-```
-
-Os 72 não são tratados como neutros nem recebem imputação.
-
----
-
-## 40. Coordenadas ordinais — diagnóstico apenas
-
-Para estudar ordenabilidade sem fabricar score:
-
-```text
-Financeiro
-F0 = sem insuficiência central atual
-F1 = capital atendido + pressão de liquidez
-F2 = insuficiência de capital observada
-
-Conduta
-C0 = abaixo do esperado OU sem diferença clara
-C1 = acima do esperado com evidência suficiente
-```
-
-`below_expected` e `not_distinguishable` permanecem juntos em `C0` porque menos reclamações que o esperado não prova atendimento superior.
-
-Entre as 85 conclusivas:
-
-```text
-F0|C0   46
-F0|C1   14
-F1|C0    8
-F1|C1    8
-F2|C0    5
-F2|C1    4
-```
-
-Todos os seis grupos possuem empates.
-
----
-
-## 41. Ordenabilidade e Pareto
-
-Pareto é usado como auditoria de dominância, não como ranking público.
-
-```text
-fronteira 1   46
-fronteira 2   22
-fronteira 3   13
-fronteira 4    4
-```
-
-A primeira fronteira contém 54,1% das 85 empresas conclusivas.
-
-Entre 3.570 pares:
-
-```text
-estritamente ordenáveis    60,22%
-empatados                   33,56%
-incomparáveis                6,22%
-```
-
-Conclusão:
-
-> **os contratos fechados não determinam uma ordem total 1–85.**
-
-Uma ordem total exigiria nova regra normativa de mérito ou prioridade entre pilares.
-
----
-
-## 42. Stage 2 — arquitetura de avaliação concluída
-
-O Stage 2 comparou arquiteturas sem transformar preferência normativa em matemática.
-
-Candidato líder validado:
+A arquitetura combinada é:
 
 ```text
 noncompensatory_state_matrix_with_adverse_qualifiers
 ```
 
-Estados atuais:
+Não existe média ponderada entre Financeiro e Conduta.
+
+A avaliação conjunta deve dizer **onde** existe sinal adverso e onde a evidência está incompleta, sem criar uma taxa de câmbio artificial entre capital, liquidez e reclamações.
+
+Estados públicos podem incluir:
 
 ```text
-no_current_core_adverse_signal                 46
-conduct_pressure_only                          14
-liquidity_pressure_only                         8
-liquidity_and_conduct_pressure                  8
-capital_shortfall_without_conduct_pressure      5
-capital_shortfall_and_conduct_pressure          4
-evidence_incomplete_for_joint_assessment       72
+no_current_core_adverse_signal
+conduct_pressure_only
+liquidity_pressure_only
+liquidity_and_conduct_pressure
+capital_shortfall_without_conduct_pressure
+capital_shortfall_and_conduct_pressure
+evidence_incomplete_for_joint_assessment
 ```
 
-Decisões:
+### Atenção após correção do PLA
 
-```text
-continuous_weighted_score_selected          false
-lexicographic_total_order_selected           false
-pareto_front_number_selected_as_public_tier  false
-capital_gate_total_order_selected            false
-```
+As **categorias de capital e as contagens de estados combinados precisam ser regeneradas** com `new_pla / CMR` antes de serem tratadas como snapshot atual.
 
-O Stage 2 confirmou 222 pares de trade-off normativo. Portanto, uma ordem total não emerge automaticamente dos contratos fechados.
-
-A matriz é não compensatória: identifica **onde** existe sinal adverso, sem criar taxa de câmbio entre capital, liquidez e Conduta.
+O desenho semântico continua válido; as contagens concretas anteriores podem mudar.
 
 ---
 
-## 43. Auditoria de representatividade
+# 11. Assessment e ranking
 
-Workflow:
-
-`V2 Cross-Pillar Coverage Audit`
-
-Universo 12m:
+Os gates permanecem separados:
 
 ```text
-prêmio direto positivo   R$ 210,502 bilhões
-reclamações mapeadas            82.423
+regulatory_universe_eligible
+→ assessment_eligible
+→ ranking_eligible
 ```
 
-As 85 com conclusão conjunta representam:
+`assessment_eligible` significa que há evidência suficiente e comparável para publicar a avaliação conjunta daquela versão. Não é selo de qualidade.
+
+`ranking_eligible` permanece `0` para ranking geral.
+
+A existência de leaderboards unidimensionais não abre ranking composto.
+
+Regra dos leaderboards:
+
+> **a própria métrica deve definir a ordem.**
+
+Exemplos autorizados pelo contrato exploratório:
 
 ```text
-69,94% do prêmio direto positivo
-54,40% das reclamações
+largest_by_direct_premium
+highest_pla_cmr_ratio
+highest_ilt
+lowest_conduct_pressure_ratio
+highest_conduct_pressure_ratio
 ```
 
-As 72 sem conclusão conjunta representam:
+O leaderboard de PLA/CMR deve ser reconstruído após a correção de `new_pla`.
+
+Coleções semânticas permanecem `ordered = false`.
+
+Não suportados:
 
 ```text
-30,06% do prêmio direto positivo
-45,60% das reclamações
-```
-
-Portanto:
-
-> **a população atual de 85 não pode ser chamada de ranking integral do mercado.**
-
-O principal gargalo é a não comparabilidade estrutural de Conduta.
-
-Os 54 casos não comparáveis concentram:
-
-```text
-28,37% do prêmio positivo
-44,37% das reclamações
-```
-
-As 12 empresas com cobertura temporal insuficiente representam apenas cerca de 0,04% do prêmio positivo e as cinco sensíveis ao denominador cerca de 1,65%.
-
----
-
-## 44. Prioridade de recuperação de cobertura
-
-Rotas de maior materialidade atual:
-
-```text
-híbridas seguros + previdência
-26 entidades → 16,14% do prêmio / 28,55% das reclamações
-
-shared Consumer subject / product split
-2 entidades → 6,92% do prêmio / 10,09% das reclamações
-
-transferência Zurich
-contraparte → ~3,92% do prêmio
-
-shared exposure com subject externo
-~1,40% do prêmio
-```
-
-Resolver esses casos não garante conclusão de pressão; apenas recupera comparabilidade potencial para que os gates estatísticos possam então ser aplicados corretamente.
-
-Somente as dez maiores entidades sem conclusão conjunta concentram aproximadamente 25,92% de todo o prêmio positivo do universo.
-
----
-
-## 45. Contrato semântico de avaliação — FECHADO
-
-O preflight de linguagem pública foi transformado em contrato executável e validado contra as 157 seguradoras.
-
-Artifact:
-
-```text
-v2_cross_pillar_assessment_semantic_contract
-```
-
-Workflow:
-
-```text
-V2 Cross-Pillar Assessment Semantic Contract
-```
-
-Pergunta humana:
-
-> **O que os sinais disponíveis permitem dizer ao consumidor sobre esta seguradora, em linguagem útil, sem transformar evidência parcial em garantia?**
-
-Ordem pública obrigatória:
-
-```text
-leitura geral
-→ sinais encontrados
-→ por que isso importa
-→ qualificadores
-→ números e metodologia
-→ limites da conclusão
-→ confiança e cobertura
-```
-
-Classes públicas atuais:
-
-```text
-Leitura central favorável      46
-Atenção                        30
-Alerta prudencial               9
-Avaliação conjunta incompleta  72
-TOTAL                          157
-```
-
-Para as 85 entidades com os dois núcleos conclusivos, existe **suporte semântico para avaliação pública individual conjunta**.
-
-O suporte semântico antecede o gate formal. O `Assessment Eligibility Contract` já confirmou:
-
-```text
-semantic_public_assessment_supported  85
-assessment_eligible                   85
-assessment_not_eligible               72
-ranking_eligible                       0
-```
-
-A distinção continua obrigatória: `assessment_eligible` autoriza publicar a avaliação conjunta; não é selo de qualidade e não abre ranking geral.
-
-### 45.1. Avaliação incompleta não esconde sinal disponível
-
-Entre as 72 avaliações conjuntas incompletas, o contrato encontrou:
-
-```text
-5 com alerta prudencial de capital
-5 com atenção à liquidez
-```
-
-Logo:
-
-```text
-joint assessment incomplete != suppress available pillar evidence
-```
-
-A interface deve informar a incompletude conjunta **e** preservar qualquer sinal utilizável de Financeiro ou Conduta.
-
-### 45.2. Qualificadores de Conduta
-
-Persistência e tendência públicas só podem aparecer quando a conclusão anual final é:
-
-```text
-above_expected_with_sufficient_evidence
-```
-
-Se a pressão final não está acima do esperado:
-
-```text
-persistence qualifier = null
-trend qualifier       = null
-```
-
-Isso impede frases contraditórias como “sem pressão acima do esperado” acompanhada de chip “pressão piorando”.
-
-### 45.3. Detalhe sem bônus
-
-`below_expected` e `not_distinguishable` continuam juntos em `C0` para a matriz adversa, mas permanecem semanticamente distintos no cartão de Conduta.
-
-Menos reclamações que o esperado pode ser descrito como resultado favorável **para esse indicador**, sem virar bônus de qualidade ou score.
-
----
-
-# CONFIANÇA, SCORE E RANKING
-
-## 46. Avaliação aberta; score e ranking geral continuam bloqueados
-
-Atualmente:
-
-```text
-semantic_public_assessment_supported = 85
-assessment_eligible                  = 85
-assessment_not_eligible              = 72
-ranking_preflight_candidates         = 85
-ranking_eligible                     = 0
-```
-
-O contrato semântico não abriu gates sozinho. O `Assessment Eligibility Contract` abriu formalmente a avaliação para 85; o `Ranking Eligibility Preflight` manteve a ordem total bloqueada; o `Exploratory Leaderboards Contract` abriu somente rankings unidimensionais e coleções explicitamente estreitas.
-
-A avaliação geral depende de:
-
-```text
-Financeiro
-+
-Conduta
-+
-qualidade/confiança da evidência
-+
-comparabilidade
-+
-representatividade suficiente para a alegação pública feita
-```
-
-Não haverá redistribuição silenciosa de peso quando um pilar estiver indisponível.
-
----
-
-## 47. Confiança da avaliação
-
-`score` e `assessment_confidence` são conceitos diferentes.
-
-Confiança deve considerar, entre outros:
-
-- identidade;
-- atualidade;
-- cobertura;
-- histórico;
-- consistência;
-- amostra;
-- comparabilidade;
-- qualidade do relacionamento entre subject e carrier.
-
-Confiança não deve ser usada como desempenho nem para maquiar ausência de metodologia.
-
----
-
-## 48. Ranking
-
-O ranking final, se a calibração demonstrar que ele é defensável, deve conter apenas entidades:
-
-- corretamente identificadas;
-- do universo definido;
-- com avaliação completa;
-- comparáveis dentro da coorte;
-- avaliadas pela mesma versão metodológica;
-- acompanhadas de disclosure de cobertura coerente com a alegação pública.
-
-Preferir linguagem como:
-
-> 8ª entre 41 seguradoras elegíveis nesta comparação
-
-e não:
-
-> 8ª melhor seguradora do Brasil
-
-quando a segunda frase não puder ser sustentada.
-
-A população atual de 85 avaliáveis **não** pode ser descrita como ranking integral do mercado nem como ordem total 1–85. O `Ranking Eligibility Preflight` encontrou 1.198 pares empatados e 222 incomparáveis entre 3.570 pares. Isso não impede leaderboards em que uma única métrica declarada define literalmente a ordem, desde que o título não seja convertido em ‘melhor seguradora’.
-
----
-
-
-# EXPLORAÇÃO PÚBLICA E COMPARADOR
-
-## Produto principal: avaliação semântica + comparação lado a lado
-
-A direção pública prioritária da v2 é:
-
-```text
-busca por seguradora
-→ avaliação semântica individual
-→ comparação de 2–4 seguradoras nos mesmos eixos
-→ exploração por leaderboards e coleções específicas
-```
-
-A comparação lado a lado não cria vencedor automático e não calcula score composto.
-
-## Exploratory Leaderboards Contract — FECHADO
-
-Regra:
-
-> **um leaderboard numérico só existe quando a própria métrica define a ordem; conceitos compostos permanecem coleções semânticas ou não suportados.**
-
-Leaderboards públicos autorizados:
-
-```text
-largest_by_direct_premium            132 candidatas
-highest_pla_cmr_ratio                155 candidatas
-highest_ilt                          156 candidatas
-lowest_conduct_pressure_ratio         41 candidatas
-highest_conduct_pressure_ratio        26 candidatas
-```
-
-Todos usam `competition rank`. Empates permanecem empates; não existe desempate secundário de mérito.
-
-Coleções públicas autorizadas:
-
-```text
-financial_core_without_current_adverse_signal   120
-favorable_joint_assessment                       46
-favorable_with_below_expected_conduct             33
-conduct_improving_but_still_adverse                4
-conduct_persistent_above_expected                 20
-```
-
-Coleções são `ordered = false`.
-
-Conceitos atualmente bloqueados:
-
-```text
-mais_popular                not_supported
-emergente_promissora        not_supported
-consagrada_exemplar         not_supported
-crescimento_de_premio       not_supported
-ranking_geral               not_supported
-```
-
-`financeiro_mais_em_dia` é traduzido apenas como coleção semântica de ausência de sinal financeiro central adverso; não como Top 10.
-
-## JSONs públicos para o HostGator
-
-```text
-data/derived/v2/exploratory_leaderboards_contract.json
-data/derived/v2/public/insurer_explorer.json
-data/derived/v2/public/explore_index.json
-data/derived/v2/public/leaderboards/*.json
-data/derived/v2/public/collections/*.json
-```
-
-Regra de integração:
-
-```text
-php_may_recompute_methodology = false
-```
-
-O PHP carrega, busca, filtra e renderiza. Não recalcula indicadores, não inventa score, não converte coleção em ranking e não declara vencedor geral.
-
-Validação real:
-
-```text
-V2 Exploratory Leaderboards Contract
-run                     33040347388
-job                     98412282069
-Ruff                    verde
-testes                  7/7
-build real              verde
-boundaries              verdes
-artifact                9633622703
-SHA256 ZIP              ebedc4ea8d10959ab3dbb01000d923e4f57d1cb2db960dfbec7ff54a93598905
-arquivos públicos       12
-ranking_eligible         0
-```
-
-Próximo estágio:
-
-```text
-public_api_json_packaging_and_frontend_php_integration
+ranking_geral
+mais_popular
+emergente_promissora
+consagrada_exemplar
+crescimento_de_premio
 ```
 
 ---
 
-# FONTES
+# 12. JSONs públicos
 
-## 49. Hierarquia de autoridade
+Existem duas famílias complementares.
+
+## 12.1. Busca/perfil
 
 ```text
-FIP / licença / tipo / regime atual       → SUSEP
-atividade / produção / financeiro         → SUSEP / SES
-CNPJ e situação cadastral                 → Receita Federal
-grupo econômico                           → SUSEP / SES
-sucessão                                  → relação explicitamente verificada
-marca / risk carrier                      → relação verificável
-provider Consumer.gov                     → resolução determinística/documentada
-Conduta comparativa                       → cascata de fontes + metodologia calibrada
-avaliação conjunta                        → contratos fechados + calibração entre pilares
+public/search_index.json
+public/profile_manifest.json
+public/profiles/*.json
+```
+
+## 12.2. Exploração/comparação
+
+```text
+public/insurer_explorer.json
+public/explore_index.json
+public/leaderboards/*.json
+public/collections/*.json
+```
+
+No servidor da Sanida, o frontend deve consumir a estrutura consolidada em:
+
+```text
+/ranking-seguradoras/data/v2/public/
+```
+
+A fase de consolidação deve eliminar o processo manual de baixar e mesclar artifacts sempre que possível.
+
+---
+
+# 13. Frontend público
+
+A direção atual da página é:
+
+```text
+Consulta e comparação de seguradoras
+```
+
+Fluxo principal:
+
+```text
+buscar nome conhecido pelo usuário
+→ confirmar identidade
+→ resposta rápida
+→ relações importantes
+→ sinais centrais em bom português
+→ comparar 2–4 seguradoras
+→ explorar lista/rankings por critério
+→ metodologia sob demanda
+```
+
+Princípios de UX:
+
+- usuário deve manter sensação de controle;
+- busca deve ser fácil de refazer;
+- navegação não pode sobrepor header global;
+- elementos internos não devem usar tags genéricas que colidam com CSS global (`header`, `footer`, `article`) quando classes neutras resolvem melhor;
+- nenhuma bandeja/sticky deve competir com o menu da Sanida sem necessidade funcional inequívoca;
+- desktop e mobile devem possuir composições próprias quando a comparação em matriz não couber;
+- complexidade técnica entra progressivamente;
+- cor deve comunicar função e semântica, não ornamentação.
+
+### Semântica visual
+
+Direção:
+
+```text
+azul   → navegação/informação neutra
+verde  → sinal favorável naquele critério
+vermelho → alerta material naquele critério
+âmbar   → cautela/atenção
+cinza   → ausência, inconclusão ou neutralidade
+```
+
+### Comparador
+
+Desktop: critérios na coluna esquerda e seguradoras nas colunas seguintes.
+
+Leitura visual permitida:
+
+```text
+✓  sem alerta naquele critério
+✕  alerta
+!  atenção/cautela
+≈  sem diferença clara
+—  sem conclusão segura
+```
+
+Mobile: reorganizar por seguradora, sem esmagar matriz horizontal.
+
+---
+
+# 14. SEO e linguagem pública
+
+SEO orienta a arquitetura sem sacrificar a experiência.
+
+Território semântico prioritário da página:
+
+- consulta e comparação de seguradoras;
+- seguradoras autorizadas pela SUSEP;
+- lista de seguradoras;
+- seguradoras confiáveis;
+- maiores seguradoras do Brasil;
+- rankings por critérios objetivos;
+- consulta de identidade/regulação.
+
+Evitar disputar intencionalmente termos específicos de ramos de seguro quando existirem páginas próprias, reduzindo risco de canibalização.
+
+Headings públicos devem permanecer naturais, por exemplo:
+
+```text
+Consulta e comparação de seguradoras
+Lista de seguradoras autorizadas pela SUSEP
+Maiores seguradoras do Brasil e outros rankings por critérios objetivos
+Como saber se uma seguradora é confiável?
+```
+
+Termos de bastidor como `v2`, `active_licensed`, `ordinary`, `snapshot`, `lifecycle` e nomes internos de states não devem aparecer ao consumidor sem necessidade explicativa.
+
+---
+
+# 15. Evergreen e zero manutenção
+
+A meta operacional é **zero manutenção editorial/técnica recorrente, ou o mais próximo possível disso**.
+
+Princípios:
+
+1. fonte oficial/pública sempre que possível;
+2. cache validado;
+3. fallback sem mudança de semântica;
+4. workflow reproduzível;
+5. artifacts públicos versionados;
+6. publicação automática ou sincronização automática para o HostGator;
+7. validação antes de promoção;
+8. rollback simples;
+9. nenhuma curadoria periódica de números que possa ser derivada automaticamente;
+10. curadoria apenas para fatos relacionais realmente não automatizáveis, como algumas marcas/sucessões documentadas.
+
+A fase de consolidação deve transformar a atualização em algo semelhante a:
+
+```text
+fonte muda
+→ workflow coleta/cacheia
+→ valida schemas/invariantes
+→ reconstrói contratos
+→ valida regressões
+→ publica artifact público aprovado
+→ HostGator sincroniza
+→ troca atômica da versão ativa
+→ frontend consome
+```
+
+Nunca:
+
+```text
+workflow parcial
+→ JSON incompleto sobrescreve produção
 ```
 
 ---
 
-## 50. Regras de contingência
+# 16. Workflows e dependências
 
-Cache e fallback existem para disponibilidade operacional, não para mudar a semântica da fonte.
-
-Exemplos:
-
-- timeout isolado da SUSEP não justifica novo substituto metodológico;
-- `finalizadas` não substitui Base Completa;
-- fonte mais antiga não se torna “atual” só porque está em cache;
-- fontes P1/P2/P3 não são costuradas longitudinalmente.
-
-Um timeout transitório do workflow de Classification foi resolvido por rerun sem alteração de metodologia.
-
----
-
-# WORKFLOWS
-
-## 51. Validações relevantes da v2
-
-A branch possui, entre outros:
+Workflows relevantes incluem:
 
 - `CI`;
 - `V2 Foundation Validation`;
@@ -1634,334 +794,259 @@ A branch possui, entre outros:
 - `V2 Cross-Pillar Assessment Semantic Contract`;
 - `V2 Assessment Eligibility Contract`;
 - `V2 Ranking Eligibility Preflight`;
-- `V2 Exploratory Leaderboards Contract`.
+- `V2 Exploratory Leaderboards Contract`;
+- `V2 Public Search Profile Contract`.
 
-O antigo:
+A consolidação deve revisar dependências e gatilhos para evitar dezenas de workflows redundantes executando por qualquer alteração de documentação ou frontend.
 
-`V2 Conduct Comparative Calibration (legacy invalidated)`
+Também deve separar claramente:
 
-é somente manual e histórico.
+```text
+produção necessária
+vs
+diagnóstico permanente
+vs
+experimento histórico/manual
+```
 
 ---
 
-## 52. Validação específica da calibração conjunta
+# 17. Validações obrigatórias
 
-### Cross-Pillar Calibration Stage 1
-
-```text
-run                  33013794644
-Ruff                 verde
-testes               3/3
-build real           verde
-boundaries           verdes
-artifact             9623644844
-```
-
-### Cross-Pillar Coverage Audit
-
-```text
-run                  33014199915
-Ruff                 verde
-testes               3/3
-build real           verde
-boundaries           verdes
-artifact             9623805832
-```
-
-### Cross-Pillar Architecture Stage 2
-
-```text
-run                  33015231566
-Ruff                 verde
-testes               3/3
-build real           verde
-boundaries           verdes
-artifact             9624261105
-```
-
-### Cross-Pillar Assessment Semantic Contract
-
-```text
-run                  33021494915
-job                  98352686525
-Ruff                 verde
-testes               4/4
-build real           verde
-universo             157/157
-boundaries           verdes
-artifact             9626706193
-SHA256 ZIP           1504ea96f132eff338bdcea3619884b397353cfa1cea43c42a594b347df6f514
-```
-
-Todos preservam score/ranking bloqueados conforme o escopo de cada artifact.
-
----
-
-# API v2 E PUBLICAÇÃO
-
-## 53. API pública — direção
-
-Contratos públicos candidatos:
-
-```text
-/api/v2/meta.json
-/api/v2/entities.json
-/api/v2/brands.json
-/api/v2/rankings.json
-```
-
-O schema final ainda não está congelado.
-
-A API pública deve ser enxuta; artifacts de pesquisa e auditoria permanecem internos.
-
----
-
-## 54. Proveniência
-
-O backend deve preservar:
-
-```text
-automatic
-derived
-curated
-unsupported
-```
-
-Tudo que altera score, elegibilidade ou situação regulatória deve ser automático ou derivado de fonte sustentável.
-
-Curadoria pode:
-
-- resolver marcas;
-- registrar aliases;
-- documentar sucessões;
-- registrar relationships verificáveis.
-
-Curadoria não pode:
-
-- fabricar licença;
-- transferir reclamações sem evidência;
-- alterar números financeiros;
-- atribuir pressão sem denominador comparável.
-
----
-
-## 55. Validações obrigatórias
-
-O pipeline deve falhar em situações como:
+O pipeline deve falhar diante de situações como:
 
 - `entity_id` duplicado;
 - CNPJ incompatível duplicado;
 - marca apontando para entidade inexistente;
-- Sandbox vazando para ranking ordinário;
-- pressão calculada para entidade que falhou no gate;
+- Sandbox vazando para benchmark ordinário;
 - previdência/capitalização vazando para exposição de seguros;
-- reclamações de subject transferidas silenciosamente para carrier;
+- reclamações transferidas silenciosamente de subject para carrier;
+- pressão calculada sem denominador comparável;
 - fonte sem período;
 - valores não finitos;
 - queda anormal de cobertura;
 - alteração inesperada de schema;
+- `null` convertido em zero;
+- zero bruto exibido com semântica errada;
 - score produzido por artifact que proíbe scoring;
 - pilar ausente tratado como neutralidade;
-- subset incompleto apresentado como ranking integral do mercado;
-- avaliação conjunta incompleta ocultando alerta disponível em um pilar;
-- qualificador adverso de Conduta exibido quando a conclusão anual não está acima do esperado;
-- suporte semântico confundido com `assessment_eligible` formal.
+- subset incompleto apresentado como ranking integral;
+- avaliação incompleta escondendo alerta disponível;
+- frontend reconstruindo lógica de backend;
+- `PLA/CMR` calculado com campo diferente de `new_pla`;
+- fallback silencioso de `new_pla` para `pla_adjusted`;
+- competência madura calculada com regra de capital diferente da usada no assessment;
+- artifact público dependente de capital gerado com versão anterior do Financial Evidence.
 
 ---
 
-# SEQUÊNCIA DE IMPLEMENTAÇÃO
+# 18. Correção de capital — arquivos alterados
 
-## 56. Estado das fases
+A correção de 29/08/2026 foi aplicada somente no branch de trabalho e manteve `main` intacta.
 
-### Fundação regulatória — IMPLEMENTADA EM DRAFT
+Arquivos centrais:
 
-- identidade FIP/CNPJ;
-- classificação oficial;
-- regimes especiais;
-- Sandbox;
-- lifecycle Receita;
+```text
+api/v2/financial_evidence.py
+api/v2/financial_periods.py
+tests/test_v2_financial_evidence.py
+tests/test_v2_financial_evidence_inventory.py
+tests/test_v2_financial_periods.py
+tests/test_v2_susep_financial_evidence.py
+```
+
+O conjunto de testes inclui regressão onde `plajustado` indicaria falsamente razão abaixo de 1 enquanto `NovoPla` mostra requisito atendido. A regra correta deve vencer.
+
+---
+
+# 19. Fase atual — CONSOLIDAÇÃO DO WIDGET
+
+A próxima fase oficial do projeto é:
+
+```text
+consolidation_audit_evergreen_publication_and_frontend_polish
+```
+
+Objetivos obrigatórios:
+
+## 19.1. Auditoria geral de metodologia e dados
+
+- revisar fórmulas desde a fonte até o JSON público;
+- confrontar amostras relevantes com dados brutos;
+- testar casos intuitivamente suspeitos;
+- procurar erros de unidade, campo, sinal, período, denominador e missingness;
+- verificar consistência entre documentação, código, testes e artifacts;
+- adicionar regressões para todo bug real encontrado.
+
+A descoberta `plajustado` × `NovoPla` é o precedente: aparência de plausibilidade não substitui auditoria da semântica da fonte.
+
+## 19.2. Auditoria do potencial informacional do frontend
+
+Verificar se a página efetivamente usa:
+
+- identidade;
+- aliases;
+- lifecycle;
+- sucessões;
 - grupos;
-- relationships;
 - marcas;
-- elegibilidade regulatória.
+- risk carriers;
+- relações de Conduta;
+- Sandbox Conduct;
+- sinais financeiros;
+- sinais de reclamações;
+- períodos;
+- comparabilidade;
+- confiança;
+- limites;
+- leaderboards;
+- coleções.
 
-### Financeiro — CONTRATO DE SINAL FECHADO
+Nenhuma informação útil deve ficar presa no repo por falta de contrato público; se faltar payload, ampliar o backend em vez de reconstruir lógica no JS.
 
-- financial evidence;
-- maturidade de competência;
-- PLA/CMR;
-- ILT/ILC;
-- filme operacional;
-- ILPL rejeitado como eixo;
-- combinação interna não compensatória;
-- score interno não definido.
+## 19.3. Evergreen / zero manutenção
 
-### Conduta — CONTRATO DE SINAL FECHADO
+- revisar fontes e caches;
+- definir dependências reais entre workflows;
+- eliminar necessidade de download manual de artifacts;
+- criar publicação/sincronização segura para o HostGator;
+- manter staging/versão anterior para rollback;
+- documentar recuperação quando fonte oficial estiver temporariamente fora do ar.
 
-- identidade Consumer.gov;
-- core mensal;
-- source cascade;
-- exposure reader insurance-only;
-- reconciliation audit;
-- marca/subject/carrier;
-- population alignment;
-- incerteza;
-- persistência;
-- tendência;
-- mix de carteira contextual;
-- satisfação sample-aware;
-- remediação não estabelecida;
-- score interno não definido.
+## 19.4. Cron jobs e publicação
 
-### Calibração entre pilares — CONTRATO SEMÂNTICO FECHADO
+Definir mecanismo para que `/ranking-seguradoras/data/v2/public/` receba em sincronia somente um **pacote público validado**.
 
-- Stage 1: matriz real, ordenabilidade e Pareto diagnóstico;
-- Coverage Audit: representatividade econômica e de reclamações;
-- Stage 2: arquitetura não compensatória selecionada como base da avaliação;
-- contrato semântico: linguagem pública e guardrails validados nas 157;
-- 85 com suporte semântico para avaliação conjunta;
-- 72 como avaliação conjunta incompleta, preservando sinais disponíveis;
-- full-market ranking bloqueado;
-- score e pesos não selecionados.
+O cron não deve tentar adivinhar que dois artifacts independentes terminaram ao mesmo tempo. A consolidação deve preferir um pacote de distribuição único ou um manifest/versionamento que permita atualização atômica.
 
-### Elegibilidade formal de avaliação — PRÓXIMO GATE
+## 19.5. Limpeza do repositório
 
-`assessment_eligibility_contract` deve decidir quando o suporte semântico se transforma em elegibilidade formal de avaliação.
+Classificar arquivos como:
 
-### Score geral — BLOQUEADO
+```text
+KEEP — produção/fundação atual
+DIAGNOSTIC — auditoria ainda útil
+LEGACY — histórico reprodutível
+DELETE — redundante/obsoleto/temporário
+```
 
-Só pode ser discutido se uma transformação numérica demonstrar agregar informação defensável além dos estados e sem violar os contratos fechados.
+Revisar especialmente:
 
-### Ranking — BLOQUEADO
+- workflows temporários;
+- scripts de sincronização antigos;
+- artifacts experimentais;
+- código v1 que não é mais referência;
+- helpers duplicados;
+- documentação contraditória;
+- builders substituídos;
+- testes de experimentos invalidados.
 
-`ranking_eligible` permanece `0`; cobertura e ordenação ainda não sustentam ranking integral de mercado.
+Excluir somente depois de confirmar que nenhuma dependência atual os usa.
 
-### Schema/publicação/frontend — PENDENTES
+## 19.6. Revisão do frontend e SEO
 
-Nenhuma regra v2 deve ser migrada ao frontend antes dos gates formais correspondentes.
+Comparar o frontend atual com o widget anterior para recuperar somente o que era realmente positivo em:
+
+- busca;
+- clareza;
+- feedback de interação;
+- densidade de informação;
+- navegação;
+- capacidade de descoberta;
+- semântica SEO.
+
+Não restaurar:
+
+- score antigo;
+- ranking geral antigo;
+- lógica metodológica em React/JS;
+- linguagem enganosa;
+- excesso visual.
+
+A prioridade é experiência do usuário; SEO orienta títulos, headings, arquitetura semântica e cobertura de intenção sem degradar o português.
 
 ---
 
-## 57. O que não fazer agora
+# 20. O que não fazer
 
 Não:
 
-- escolher 50/50, 60/40 ou qualquer outro peso por conveniência;
-- criar `financial_score` ou `conduct_score` apenas para viabilizar média;
-- premiar excesso de PLA/CMR sem nova evidência metodológica;
-- premiar ILT extremo;
-- tratar `below_expected` como prova de melhor atendimento;
-- usar confiança como desempenho;
-- usar ICA/IC como bônus oculto;
-- tratar pilar indisponível como neutro;
-- abrir `assessment_eligible` sem o contrato formal de elegibilidade;
-- abrir `ranking_eligible`;
-- chamar as 85 semanticamente completas de ranking integral do mercado;
-- produzir ranking 1–157;
-- usar reclamações brutas como nota;
-- usar prêmio como número de clientes;
-- misturar previdência com seguros;
-- misturar capitalização com seguros;
-- transferir reclamações entre subject/carrier sem evidência;
-- incluir Sandbox no benchmark ordinário;
-- reabrir ILPL sem nova justificativa;
+- reabrir score para “facilitar” UI;
+- escolher peso Financeiro × Conduta arbitrariamente;
+- usar ranking geral para satisfazer palavra-chave;
+- premiar excesso de PLA/CMR ou ILT sem novo contrato;
+- tratar ausência como zero;
+- tratar incomparabilidade como neutralidade;
+- misturar seguros, previdência e capitalização;
+- transferir reclamações por semelhança de nome;
+- incluir Sandbox no baseline ordinário;
 - aplicar fuzzy matching decisório;
-- implementar scoring no PHP/JS;
-- alterar `main`.
+- permitir PHP/JS corrigir backend;
+- publicar artifacts antigos após mudança metodológica;
+- manter processo manual só porque funciona em teste;
+- apagar código experimental antes de confirmar dependências;
+- alterar `main` antes do encerramento da consolidação.
 
 ---
 
-## 58. Próximo gate — Assessment Eligibility Contract
+# 21. Critério de sucesso da consolidação
 
-A próxima investigação deve transformar o suporte semântico já validado em uma política formal de elegibilidade, sem confundi-lo com ranking.
+A fase termina quando:
 
-O contrato deve responder:
-
-1. quais requisitos mínimos de identidade, atualidade, comparabilidade e confiança são obrigatórios para `assessment_eligible`?;
-2. `joint_core_complete` é condição necessária e suficiente ou ainda exige gates adicionais de evidência?;
-3. como tratar histórico financeiro limitado sem transformá-lo em desempenho ruim?;
-4. como publicar avaliação conjunta completa quando um qualificador contextual estiver indisponível?;
-5. quais falhas tornam a avaliação incompleta, e quais apenas reduzem confiança?;
-6. como garantir que alertas materiais continuem visíveis mesmo quando `assessment_eligible = false`?;
-7. como versionar elegibilidade quando a metodologia ou a fonte mudar?;
-8. como separar `assessment_eligible` de `ranking_eligible` de forma estrutural e testável?;
-9. qual disclosure de cobertura deve acompanhar comparações entre avaliadas?;
-10. quais condições precisam ser satisfeitas antes de qualquer discussão de ranking público?
-
-O contrato semântico atual já prova que:
-
-```text
-semantic_public_assessment_supported = 85
-```
-
-mas deliberadamente mantém:
-
-```text
-assessment_eligible = 0
-ranking_eligible    = 0
-```
-
-A próxima etapa deve decidir se e em quais condições o primeiro gate pode ser aberto **sem abrir o segundo**.
+- fórmulas críticas foram auditadas da fonte à tela;
+- regressões cobrem bugs materiais conhecidos;
+- artifacts dependentes do novo PLA foram reconstruídos e validados;
+- o frontend apresenta corretamente identidade, relações, avaliação e limites;
+- comparação funciona em desktop e mobile sem sobreposição de elementos;
+- linguagem pública está limpa de jargão interno desnecessário;
+- SEO e UX foram revisados em conjunto;
+- a publicação dos JSONs é automática, versionada e atômica;
+- cron jobs têm dependência clara e falha segura;
+- arquivos experimentais/legacy estão classificados e limpos;
+- documentação não contém “próximo gate” já encerrado nem snapshots contraditórios;
+- `main` recebe somente o que estiver auditado e pronto para produção.
 
 ---
 
-## 59. Definição de sucesso da v2
+# 22. Diretriz final
 
-A refatoração será considerada bem-sucedida quando:
-
-- o consumidor puder pesquisar entidade ou marca sem conhecer a estrutura jurídica;
-- a natureza da entidade for identificada corretamente;
-- marcas relevantes forem resolvidas sem virar falsamente seguradoras;
-- Sandbox puder ter inteligência própria sem contaminar o universo ordinário;
-- seguradoras comparáveis forem avaliadas pela mesma metodologia;
-- players difíceis não desapareçam apenas por estrutura societária complexa;
-- ausência de dado não vire punição nem neutralidade;
-- pressão de reclamações seja ajustada por exposição de forma defensável;
-- pequenas amostras não dominem o resultado;
-- persistência e tendência sejam distinguidas;
-- a avaliação conjunta não esconda uma insuficiência material atrás de outro pilar;
-- a cobertura da comparação seja transparente;
-- o processo seja auditável;
-- o frontend não corrija nem invente lógica;
-- atualização editorial rotineira seja mínima;
-- score só apareça quando a evidência realmente sustentar uma conclusão.
-
----
-
-## 60. Diretriz final
-
-A v2 não existe para reproduzir a lógica da v1.
+A v2 não existe para reproduzir a v1 com outros números.
 
 Ela deve preservar o que a engenharia anterior fazia bem:
 
 - automação;
 - cache;
 - snapshots;
-- testes;
-- rastreabilidade.
+- rastreabilidade;
+- busca rápida;
+- utilidade ao consumidor.
 
-E substituir o que era conceitualmente frágil:
+E eliminar o que era frágil:
 
 - universo mal delimitado;
 - matching tratado como verdade;
-- nota sobre dados incompletos;
+- score sobre dados incompletos;
 - proxies excessivos;
-- score sem comparabilidade;
-- frontend acoplado à metodologia;
-- mistura de entidades, marcas e carriers;
+- mistura de pessoa jurídica, marca e carrier;
 - mistura de domínios de produto;
-- falsa precisão de uma ordem total quando os sinais só sustentam estados.
+- frontend recalculando metodologia;
+- falsa precisão de uma ordem total;
+- jargão antes da resposta humana;
+- processos manuais permanentes;
+- artifacts experimentais vazando para produto.
 
-A próxima etapa é:
+O próximo estágio é:
 
 ```text
-Assessment Eligibility Contract
-→ definir requisitos formais de avaliação
-→ separar completude, confiança e desempenho
-→ preservar alertas em casos inelegíveis
-→ abrir assessment_eligible somente quando sustentado
-→ manter ranking_eligible independente e bloqueado
-→ somente depois discutir coortes, comparação ordinal e eventual ranking
+AUDITAR
+→ RECONSTRUIR ARTIFACTS AFETADOS
+→ CONSOLIDAR WORKFLOWS
+→ AUTOMATIZAR PUBLICAÇÃO
+→ AUDITAR FRONTEND
+→ POLIR UX/SEO
+→ LIMPAR LEGACY/EXPERIMENTOS
+→ VALIDAR STAGING
+→ SOMENTE DEPOIS PREPARAR MERGE/PRODUÇÃO
 ```
 
 ---
