@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from api.v2 import build_financial_methodology_closure as financial_closure
 
-
 FIXTURE_POPULATION = 123
 
 
