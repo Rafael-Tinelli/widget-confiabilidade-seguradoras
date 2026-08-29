@@ -9,9 +9,11 @@ from api.sources.susep_financial_evidence import (
     OPERATING_FORMULA_CMPIDS,
 )
 
-FINANCIAL_EVIDENCE_VERSION = "2.0-draft-evidence-profile-2"
+FINANCIAL_EVIDENCE_VERSION = "2.0-draft-evidence-profile-3"
 CORE_HISTORY_MONTHS = 12
 DESCRIPTIVE_HISTORY_WINDOWS = (12, 24, 36)
+CAPITAL_PLA_SOURCE_FIELD = "new_pla"
+CAPITAL_PLA_RAW_INTERMEDIATE_FIELD = "pla_adjusted"
 
 
 class FinancialEvidenceInvariantError(ValueError):
@@ -87,7 +89,7 @@ def _capital_metric_state(record: dict[str, Any] | None) -> str:
         return "unavailable"
     if _is_zero_filled_capital_record(record):
         return "zero_filled_record_unusable"
-    pla = record.get("pla_adjusted")
+    pla = record.get(CAPITAL_PLA_SOURCE_FIELD)
     cmr = record.get("cmr")
     if pla is None:
         return "pla_missing"
@@ -122,7 +124,7 @@ def _capital_profile(
             adequacy_periods.add(period)
 
     metric_state = _capital_metric_state(latest)
-    latest_pla = (latest or {}).get("pla_adjusted")
+    latest_pla = (latest or {}).get(CAPITAL_PLA_SOURCE_FIELD)
     latest_cmr = (latest or {}).get("cmr")
     ratio = None
     if metric_state == "pla_cmr_derivable":
@@ -145,6 +147,8 @@ def _capital_profile(
         "reference_period": reference_period,
         "state": state,
         "current_metric_state": metric_state,
+        "pla_cmr_numerator_field": CAPITAL_PLA_SOURCE_FIELD,
+        "pla_cmr_raw_intermediate_field": CAPITAL_PLA_RAW_INTERMEDIATE_FIELD,
         "first_period": min(periods) if periods else None,
         "last_period": max(periods) if periods else None,
         "observed_periods_total": len(periods),
@@ -175,11 +179,11 @@ def _capital_profile(
         ),
         "duplicate_rows": int(evidence.get("duplicate_capital_rows") or 0),
         "interpretation": (
-            "A zero CMR in Ses_pl_margem is treated as unusable evidence, not as a zero "
-            "capital requirement and not as an adverse solvency conclusion. Under SUSEP's "
-            "prudential framework, CMR is a capital requirement to be maintained by the "
-            "supervised entity; the evidence gate only uses PLA/CMR when CMR is positive "
-            "and both values are available."
+            "PLA/CMR uses NovoPla (normalized as new_pla) from Ses_pl_margem.csv as the "
+            "prudential PLA numerator. The raw plajustado value is retained as intermediate "
+            "source evidence but is not used as the numerator. A zero CMR is treated as "
+            "unusable evidence, not as a zero capital requirement and not as an adverse "
+            "solvency conclusion."
         ),
     }
 
@@ -332,11 +336,13 @@ def derive_financial_evidence_profile(
         "operations": operations,
         "reason_codes": list(dict.fromkeys(reasons)),
         "methodology_note": (
-            "This is an evidence-completeness profile, not a financial score. Twelve months "
-            "is used only to identify a complete annual observation window; 24/36-month "
-            "history is retained descriptively for later stability/confidence testing. "
-            "Zero-filled prudential rows and zero CMR values are treated as unavailable "
-            "evidence rather than adverse financial signals."
+            "This is an evidence-completeness profile, not a financial score. PLA/CMR uses "
+            "NovoPla/new_pla as the prudential PLA numerator; plajustado/pla_adjusted remains "
+            "preserved only as raw intermediate evidence. Twelve months is used only to "
+            "identify a complete annual observation window; 24/36-month history is retained "
+            "descriptively for later stability/confidence testing. Zero-filled prudential "
+            "rows and zero CMR values are treated as unavailable evidence rather than adverse "
+            "financial signals."
         ),
     }
 
@@ -381,9 +387,17 @@ def validate_financial_evidence(entities: list[dict[str, Any]]) -> None:
             errors.append(f"{entity_id}: evidence profile cannot enable ranking")
         capital = profile.get("capital") or {}
         if capital.get("pla_cmr_ratio_state") == "derivable":
-            cmr = (capital.get("latest") or {}).get("cmr")
+            latest = capital.get("latest") or {}
+            cmr = latest.get("cmr")
+            pla = latest.get(CAPITAL_PLA_SOURCE_FIELD)
             if cmr is None or float(cmr) <= 0:
                 errors.append(f"{entity_id}: derivable PLA/CMR ratio with invalid CMR")
+            if pla is None:
+                errors.append(
+                    f"{entity_id}: derivable PLA/CMR ratio without {CAPITAL_PLA_SOURCE_FIELD}"
+                )
+            if capital.get("pla_cmr_numerator_field") != CAPITAL_PLA_SOURCE_FIELD:
+                errors.append(f"{entity_id}: unexpected PLA/CMR numerator field")
         if capital.get("current_metric_state") in {
             "cmr_zero_unusable",
             "zero_filled_record_unusable",
