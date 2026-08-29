@@ -4,8 +4,10 @@ from collections import Counter
 from copy import deepcopy
 from typing import Any
 
-ELIGIBILITY_VERSION = "2.0-draft-regulatory-gate-1"
-REGULATORY_UNIVERSE_ID = "ordinary_current_insurers"
+from api.v2.regulatory_scope import is_special_purpose_insurer
+
+ELIGIBILITY_VERSION = "2.0-draft-regulatory-gate-2"
+REGULATORY_UNIVERSE_ID = "ordinary_current_consumer_insurers"
 
 PENDING_ASSESSMENT_REQUIREMENTS = [
     "financial_evidence_gate",
@@ -65,12 +67,16 @@ def derive_eligibility(entity: dict[str, Any]) -> dict[str, Any]:
     """Derive v2 eligibility without calculating any score.
 
     Regulatory-universe eligibility answers only whether the record is a
-    current ordinary insurer that can proceed to the future evidence gates.
-    It deliberately does not imply assessment or ranking eligibility.
+    current ordinary consumer insurer that can proceed to the future evidence
+    gates. It deliberately does not imply assessment or ranking eligibility.
 
     SUSEP is authoritative for licensing. Receita lifecycle is a legal
     cross-check: contradictory non-active CNPJ evidence blocks the entity, but
     an unavailable Receita observation must not silently revoke a SUSEP license.
+    SSPEs remain licensed/searchable insurer entities but are structurally
+    outside the consumer-insurer comparator because their exclusive regulatory
+    role is risk transfer/securitization through LRS rather than ordinary retail
+    or commercial insurance underwriting.
     """
     entity_type = str(entity.get("entity_type") or "unknown")
     regulatory_regime = str(entity.get("regulatory_regime") or "unknown")
@@ -88,6 +94,10 @@ def derive_eligibility(entity: dict[str, Any]) -> dict[str, Any]:
     if entity_type != "insurer":
         regulatory_eligible = False
         reasons.append(_outside_scope_reason(entity_type))
+
+    if is_special_purpose_insurer(entity):
+        regulatory_eligible = False
+        reasons.append("special_purpose_insurer_outside_consumer_scope")
 
     if regulatory_regime == "special":
         regulatory_eligible = False
@@ -114,6 +124,7 @@ def derive_eligibility(entity: dict[str, Any]) -> dict[str, Any]:
                 "susep_current_insurer",
                 "ordinary_regulatory_regime",
                 "current_active_license",
+                "consumer_insurer_scope",
             ]
         )
         if legal_status == "active":
@@ -167,6 +178,8 @@ def validate_eligibility(entities: list[dict[str, Any]]) -> None:
 
         if entity.get("entity_type") != "insurer":
             errors.append(f"{entity_id}: non-insurer entered regulatory universe")
+        if is_special_purpose_insurer(entity):
+            errors.append(f"{entity_id}: SSPE entered consumer insurer universe")
         if entity.get("regulatory_regime") != "ordinary":
             errors.append(f"{entity_id}: non-ordinary regime entered regulatory universe")
         if entity.get("regulatory_status") != "active_licensed":
