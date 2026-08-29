@@ -7,11 +7,14 @@ from api.v2.build_financial_methodology_closure import (
 )
 
 
+FIXTURE_POPULATION = 123
+
+
 def _payloads():
     financial_entities = []
     liquidity_entities = []
     operating_entities = []
-    for index in range(157):
+    for index in range(FIXTURE_POPULATION):
         entity_id = f"fip:{index:06d}"
         financial_entities.append(
             {
@@ -53,7 +56,10 @@ def _payloads():
         )
 
     financial = {
-        "meta": {"financial_period_maturity": {"selected_period": 202605}},
+        "meta": {
+            "regulatory_eligible_count": FIXTURE_POPULATION,
+            "financial_period_maturity": {"selected_period": 202605},
+        },
         "entities": financial_entities,
     }
     liquidity = {
@@ -75,6 +81,7 @@ def test_capital_shortfall_cannot_be_offset_by_high_liquidity():
     payload = build_financial_methodology_closure(financial, liquidity, operating)
     first = payload["entities"][0]
 
+    assert payload["population"]["regulatory_universe"] == FIXTURE_POPULATION
     assert first["core_financial_signal"] == "capital_requirement_shortfall_observed"
     assert first["liquidity"]["state"] == "ilt_at_or_above_arithmetic_parity"
     assert (
