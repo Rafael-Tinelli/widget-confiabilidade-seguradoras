@@ -13,6 +13,8 @@ on:
       - "api/v2/liquidity_experiment.py"
       - "api/v2/operating_experiment.py"
       - "api/v2/operating_states.py"
+      - "api/v2/eligibility.py"
+      - "api/v2/regulatory_scope.py"
 
 concurrency:
   group: v2-financial-methodology-closure-${{ github.event.pull_request.number || github.ref }}
@@ -23,6 +25,7 @@ jobs:
     runs-on: ubuntu-24.04
     env:
       GH_TOKEN: ${{ github.token }}
+      V2_SOURCE_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -40,12 +43,15 @@ jobs:
           python -m pip install -r requirements.txt
           python -m pip install -r requirements-dev.txt
 
-      - name: Restore latest successful Financial Evidence
+      - name: Restore same-head Financial Evidence
         run: |
           set -euo pipefail
           branch="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
-          run_id="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow "V2 Financial Evidence Validation" --branch "$branch" --status success --limit 30 --json databaseId --jq '.[0].databaseId')"
-          test -n "$run_id"
+          run_id="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow "V2 Financial Evidence Validation" --branch "$branch" --status success --limit 50 --json databaseId,headSha --jq '[.[] | select(.headSha == env.V2_SOURCE_HEAD_SHA)][0].databaseId')"
+          if [[ -z "$run_id" || "$run_id" == "null" ]]; then
+            echo "No same-head Financial Evidence artifact for $V2_SOURCE_HEAD_SHA" >&2
+            exit 1
+          fi
           rm -rf "$RUNNER_TEMP/financial-upstream"
           mkdir -p "$RUNNER_TEMP/financial-upstream"
           gh run download "$run_id" --repo "$GITHUB_REPOSITORY" --name "v2-financial-evidence-$run_id" --dir "$RUNNER_TEMP/financial-upstream"
@@ -53,14 +59,17 @@ jobs:
           test -n "$source_file"
           mkdir -p data/derived/v2
           cp "$source_file" data/derived/v2/entity_financial_evidence_inventory.json
-          echo "Restored Financial Evidence from run $run_id"
+          echo "Restored same-head Financial Evidence from run $run_id"
 
-      - name: Restore latest successful Liquidity Experiment
+      - name: Restore same-head Liquidity Experiment
         run: |
           set -euo pipefail
           branch="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
-          run_id="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow "V2 Liquidity Experiment" --branch "$branch" --status success --limit 30 --json databaseId --jq '.[0].databaseId')"
-          test -n "$run_id"
+          run_id="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow "V2 Liquidity Experiment" --branch "$branch" --status success --limit 50 --json databaseId,headSha --jq '[.[] | select(.headSha == env.V2_SOURCE_HEAD_SHA)][0].databaseId')"
+          if [[ -z "$run_id" || "$run_id" == "null" ]]; then
+            echo "No same-head Liquidity artifact for $V2_SOURCE_HEAD_SHA" >&2
+            exit 1
+          fi
           rm -rf "$RUNNER_TEMP/liquidity-upstream"
           mkdir -p "$RUNNER_TEMP/liquidity-upstream"
           gh run download "$run_id" --repo "$GITHUB_REPOSITORY" --name "v2-liquidity-experiment-$run_id" --dir "$RUNNER_TEMP/liquidity-upstream"
@@ -68,14 +77,17 @@ jobs:
           test -n "$source_file"
           mkdir -p data/derived/v2
           cp "$source_file" data/derived/v2/liquidity_experiment.json
-          echo "Restored Liquidity Experiment from run $run_id"
+          echo "Restored same-head Liquidity Experiment from run $run_id"
 
-      - name: Restore latest successful Operating Experiment
+      - name: Restore same-head Operating Experiment
         run: |
           set -euo pipefail
           branch="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
-          run_id="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow "V2 Operating Experiment" --branch "$branch" --status success --limit 30 --json databaseId --jq '.[0].databaseId')"
-          test -n "$run_id"
+          run_id="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow "V2 Operating Experiment" --branch "$branch" --status success --limit 50 --json databaseId,headSha --jq '[.[] | select(.headSha == env.V2_SOURCE_HEAD_SHA)][0].databaseId')"
+          if [[ -z "$run_id" || "$run_id" == "null" ]]; then
+            echo "No same-head Operating artifact for $V2_SOURCE_HEAD_SHA" >&2
+            exit 1
+          fi
           rm -rf "$RUNNER_TEMP/operating-upstream"
           mkdir -p "$RUNNER_TEMP/operating-upstream"
           gh run download "$run_id" --repo "$GITHUB_REPOSITORY" --name "v2-operating-experiment-$run_id" --dir "$RUNNER_TEMP/operating-upstream"
@@ -83,7 +95,7 @@ jobs:
           test -n "$source_file"
           mkdir -p data/derived/v2
           cp "$source_file" data/derived/v2/operating_experiment.json
-          echo "Restored Operating Experiment from run $run_id"
+          echo "Restored same-head Operating Experiment from run $run_id"
 
       - name: Lint financial closure
         run: |
@@ -109,6 +121,10 @@ jobs:
 
           path = Path("data/derived/v2/financial_methodology_closure.json")
           payload = json.loads(path.read_text(encoding="utf-8"))
+          financial = json.loads(
+              Path("data/derived/v2/entity_financial_evidence_inventory.json").read_text(encoding="utf-8")
+          )
+          expected = int(((financial.get("meta") or {}).get("regulatory_eligible_count")) or 0)
 
           if payload.get("scoring") != "forbidden_in_this_artifact":
               raise SystemExit("Financial closure must forbid scoring")
@@ -116,8 +132,11 @@ jobs:
               raise SystemExit("Financial closure must forbid ranking")
           if payload.get("status") != "financial_methodology_closed_for_signal_design":
               raise SystemExit("Unexpected financial closure status")
-          if payload.get("population", {}).get("regulatory_universe") != 157:
-              raise SystemExit("Financial closure must preserve 157 insurers")
+          if payload.get("population", {}).get("regulatory_universe") != expected:
+              raise SystemExit(
+                  "Financial closure population mismatch: "
+                  f"closure={payload.get('population', {}).get('regulatory_universe')} financial={expected}"
+              )
 
           decisions = payload.get("methodology_decisions") or {}
           if decisions.get("capital", {}).get("primary_metric") != "PLA_CMR":
@@ -147,6 +166,7 @@ jobs:
           walk(payload)
 
           print(json.dumps({
+              "source_head_sha": "${{ env.V2_SOURCE_HEAD_SHA }}",
               "population": payload["population"],
               "diagnostics": payload["diagnostics"],
               "closure": payload["closure"],
