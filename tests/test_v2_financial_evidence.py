@@ -19,10 +19,21 @@ def _eligible_entity() -> dict:
     }
 
 
-def _source(months: int = 12, cmr: float = 80.0) -> dict:
+def _source(
+    months: int = 12,
+    cmr: float = 80.0,
+    *,
+    pla_adjusted: float | None = 100.0,
+    new_pla: float | None = 100.0,
+) -> dict:
     periods = month_window(202606, months)
     capital = {
-        period: {"period": period, "pla_adjusted": 100.0, "cmr": cmr}
+        period: {
+            "period": period,
+            "pla_adjusted": pla_adjusted,
+            "new_pla": new_pla,
+            "cmr": cmr,
+        }
         for period in periods
     }
     balance_values = {
@@ -62,8 +73,37 @@ def test_complete_core_history_is_readiness_not_assessment() -> None:
     assert profile["state"] == "complete_core_history"
     assert profile["core_financial_evidence_ready"] is True
     assert profile["capital"]["pla_cmr_ratio"] == 1.25
+    assert profile["capital"]["pla_cmr_numerator_field"] == "new_pla"
     assert profile["assessment_eligible"] is False
     assert profile["ranking_eligible"] is False
+
+
+def test_pla_cmr_uses_final_new_pla_not_intermediate_plajustado() -> None:
+    entities = apply_financial_evidence(
+        [_eligible_entity()],
+        _source(pla_adjusted=70.0, new_pla=110.0, cmr=100.0),
+    )
+    validate_financial_evidence(entities)
+    capital = entities[0]["financial_evidence"]["capital"]
+
+    assert capital["pla_cmr_ratio"] == 1.10
+    assert capital["latest"]["pla_adjusted"] == 70.0
+    assert capital["latest"]["new_pla"] == 110.0
+    assert capital["pla_cmr_numerator_field"] == "new_pla"
+    assert capital["pla_cmr_raw_intermediate_field"] == "pla_adjusted"
+
+
+def test_missing_new_pla_does_not_fall_back_to_plajustado() -> None:
+    entities = apply_financial_evidence(
+        [_eligible_entity()],
+        _source(pla_adjusted=120.0, new_pla=None, cmr=100.0),
+    )
+    profile = entities[0]["financial_evidence"]
+
+    assert profile["state"] == "capital_metric_unavailable"
+    assert profile["capital"]["current_metric_state"] == "pla_missing"
+    assert profile["capital"]["pla_cmr_ratio"] is None
+    assert profile["capital"]["pla_cmr_ratio_state"] == "unavailable"
 
 
 def test_short_history_remains_limited_not_bad() -> None:
