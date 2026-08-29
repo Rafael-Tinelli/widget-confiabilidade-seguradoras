@@ -7,6 +7,8 @@ on:
     paths:
       - "api/sources/susep_insurance_exposure.py"
       - "api/v2/build_conduct_coverage_reconciliation.py"
+      - "api/v2/eligibility.py"
+      - "api/v2/regulatory_scope.py"
       - "data/reference/v2/conduct_subject_relationships.json"
       - "tests/test_susep_insurance_exposure.py"
       - "tests/test_v2_conduct_coverage_reconciliation.py"
@@ -26,6 +28,7 @@ jobs:
     timeout-minutes: 90
     env:
       GH_TOKEN: ${{ github.token }}
+      V2_SOURCE_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
       SES_CACHE_DIR: "data/raw/ses"
 
     steps:
@@ -53,7 +56,7 @@ jobs:
           restore-keys: |
             ses-source-${{ runner.os }}-
 
-      - name: Restore latest validated eligibility artifact
+      - name: Restore same-head validated eligibility artifact
         run: |
           set -euo pipefail
           branch="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
@@ -62,11 +65,11 @@ jobs:
             --workflow "V2 Eligibility Validation" \
             --branch "$branch" \
             --status success \
-            --limit 30 \
-            --json databaseId \
-            --jq '.[0].databaseId')"
+            --limit 50 \
+            --json databaseId,headSha \
+            --jq '[.[] | select(.headSha == env.V2_SOURCE_HEAD_SHA)][0].databaseId')"
           if [[ -z "$run_id" || "$run_id" == "null" ]]; then
-            echo "No successful eligibility artifact found." >&2
+            echo "No same-head eligibility artifact for $V2_SOURCE_HEAD_SHA" >&2
             exit 1
           fi
           rm -rf "$RUNNER_TEMP/eligibility-upstream"
@@ -82,9 +85,9 @@ jobs:
           fi
           mkdir -p data/derived/v2
           cp "$source_file" data/derived/v2/entity_eligibility_inventory.json
-          echo "Restored eligibility from run $run_id"
+          echo "Restored same-head eligibility from run $run_id"
 
-      - name: Restore latest successful Consumer.gov Conduct evidence
+      - name: Restore same-head Consumer.gov Conduct evidence
         run: |
           set -euo pipefail
           branch="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
@@ -93,11 +96,11 @@ jobs:
             --workflow "V2 Consumer.gov Conduct Evidence" \
             --branch "$branch" \
             --status success \
-            --limit 30 \
-            --json databaseId \
-            --jq '.[0].databaseId')"
+            --limit 50 \
+            --json databaseId,headSha \
+            --jq '[.[] | select(.headSha == env.V2_SOURCE_HEAD_SHA)][0].databaseId')"
           if [[ -z "$run_id" || "$run_id" == "null" ]]; then
-            echo "No successful Consumer.gov Conduct artifact found." >&2
+            echo "No same-head Consumer.gov Conduct artifact for $V2_SOURCE_HEAD_SHA" >&2
             exit 1
           fi
           rm -rf "$RUNNER_TEMP/conduct-upstream"
@@ -113,7 +116,7 @@ jobs:
           fi
           mkdir -p data/derived/v2
           cp "$source_file" data/derived/v2/consumer_gov_conduct_evidence.json
-          echo "Restored Conduct evidence from run $run_id"
+          echo "Restored same-head Conduct evidence from run $run_id"
 
       - name: Verify SES cache
         run: |
@@ -172,6 +175,8 @@ jobs:
               for entity in eligibility.get("entities") or []
           )
           entities = audit.get("entities") or []
+          if expected < 100:
+              raise SystemExit(f"unexpectedly small eligible universe: {expected}")
           if len(entities) != expected:
               raise SystemExit(f"audit lost eligible entities: {len(entities)} != {expected}")
           if audit.get("scoring") != "forbidden_in_this_artifact":
@@ -194,6 +199,7 @@ jobs:
               "17197385000121": "portfolio_transfer_counterparty_requires_temporal_reconciliation",
               "33055146000193": "multi_carrier_subject_requires_product_split",
               "09248608000104": "runoff_pressure_not_applicable",
+              "09315871000179": "runoff_pressure_not_applicable",
           }
           for cnpj, state in expected_special.items():
               entity = by_cnpj.get(cnpj)
