@@ -2,9 +2,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 
-from api.v2.build_financial_methodology_closure import (
-    build_financial_methodology_closure,
-)
+from api.v2 import build_financial_methodology_closure as financial_closure
 
 
 FIXTURE_POPULATION = 123
@@ -78,7 +76,11 @@ def test_capital_shortfall_cannot_be_offset_by_high_liquidity():
     financial["entities"][0]["financial_evidence"]["capital"]["pla_cmr_ratio"] = 0.90
     liquidity["entities"][0]["metrics"]["ILT"]["current"]["value"] = 8.0
 
-    payload = build_financial_methodology_closure(financial, liquidity, operating)
+    payload = financial_closure.build_financial_methodology_closure(
+        financial,
+        liquidity,
+        operating,
+    )
     first = payload["entities"][0]
 
     assert payload["population"]["regulatory_universe"] == FIXTURE_POPULATION
@@ -99,7 +101,11 @@ def test_excess_capital_does_not_erase_liquidity_pressure_or_create_bonus_tier()
     financial["entities"][1]["financial_evidence"]["capital"]["pla_cmr_ratio"] = 5.0
     liquidity["entities"][1]["metrics"]["ILT"]["current"]["value"] = 0.80
 
-    payload = build_financial_methodology_closure(financial, liquidity, operating)
+    payload = financial_closure.build_financial_methodology_closure(
+        financial,
+        liquidity,
+        operating,
+    )
     row = payload["entities"][1]
 
     assert row["core_financial_signal"] == "capital_requirement_met_with_liquidity_pressure"
@@ -112,11 +118,15 @@ def test_excess_capital_does_not_erase_liquidity_pressure_or_create_bonus_tier()
 def test_short_history_changes_confidence_not_current_core_signal():
     financial, liquidity, operating = _payloads()
     financial["entities"][2]["financial_evidence"]["state"] = "limited_core_history"
-    baseline = build_financial_methodology_closure(financial, liquidity, operating)
+    baseline = financial_closure.build_financial_methodology_closure(
+        financial,
+        liquidity,
+        operating,
+    )
 
     financial_complete = deepcopy(financial)
     financial_complete["entities"][2]["financial_evidence"]["state"] = "complete_core_history"
-    complete = build_financial_methodology_closure(
+    complete = financial_closure.build_financial_methodology_closure(
         financial_complete,
         liquidity,
         operating,
