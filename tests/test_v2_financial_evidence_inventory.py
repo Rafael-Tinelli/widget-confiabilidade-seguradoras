@@ -28,7 +28,8 @@ def test_inventory_keeps_assessment_and_ranking_closed() -> None:
                 "capital_history": {
                     period: {
                         "period": period,
-                        "pla_adjusted": 100.0,
+                        "pla_adjusted": 70.0,
+                        "new_pla": 100.0,
                         "cmr": 80.0,
                     }
                     for period in periods
@@ -46,4 +47,7 @@ def test_inventory_keeps_assessment_and_ranking_closed() -> None:
     assert payload["meta"]["core_financial_evidence_ready_count"] == 1
     assert payload["meta"]["assessment_eligible_count"] == 0
     assert payload["meta"]["ranking_eligible_count"] == 0
-    assert payload["entities"][0]["financial_evidence"]["state"] == "complete_core_history"
+    profile = payload["entities"][0]["financial_evidence"]
+    assert profile["state"] == "complete_core_history"
+    assert profile["capital"]["pla_cmr_ratio"] == 1.25
+    assert profile["capital"]["pla_cmr_numerator_field"] == "new_pla"
