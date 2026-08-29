@@ -3,9 +3,10 @@ from __future__ import annotations
 import math
 from typing import Any
 
-MATURITY_POLICY_VERSION = "2.0-draft-financial-period-maturity-1"
+MATURITY_POLICY_VERSION = "2.0-draft-financial-period-maturity-2"
 MATURITY_LOOKBACK_PERIODS = 6
 MATURITY_MIN_RELATIVE_COVERAGE = 0.95
+CAPITAL_PLA_SOURCE_FIELD = "new_pla"
 
 
 class FinancialPeriodMaturityError(RuntimeError):
@@ -27,7 +28,7 @@ def _as_period_set(values: Any) -> set[int]:
 def _capital_metric_derivable(record: dict[str, Any] | None) -> bool:
     if not record:
         return False
-    pla = record.get("pla_adjusted")
+    pla = record.get(CAPITAL_PLA_SOURCE_FIELD)
     cmr = record.get("cmr")
     if pla is None or cmr is None:
         return False
@@ -69,10 +70,10 @@ def build_financial_period_maturity(
     insurer universe still has unusable prudential rows. This diagnostic keeps
     raw observation separate from the period used for methodology work.
 
-    Maturity is based on PLA/CMR derivability because capital adequacy is the
-    core prudential metric in the current financial evidence gate. The selected
-    period must also exist in balance and insurance-operation sources so the
-    financial components are aligned to one reference month.
+    Maturity is based on PLA/CMR derivability using NovoPla/new_pla as the
+    prudential PLA numerator. The selected period must also exist in balance and
+    insurance-operation sources so the financial components are aligned to one
+    reference month.
     """
     if lookback_periods <= 0:
         raise ValueError("lookback_periods must be positive")
@@ -122,7 +123,8 @@ def build_financial_period_maturity(
 
     return {
         "policy_version": MATURITY_POLICY_VERSION,
-        "selection_basis": "pla_cmr_derivable_coverage",
+        "selection_basis": "new_pla_cmr_derivable_coverage",
+        "capital_pla_source_field": CAPITAL_PLA_SOURCE_FIELD,
         "lookback_common_periods": lookback_periods,
         "min_relative_coverage": min_relative_coverage,
         "source_observed_reference_periods": source_reference_periods,
