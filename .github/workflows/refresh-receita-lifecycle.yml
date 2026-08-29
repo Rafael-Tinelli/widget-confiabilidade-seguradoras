@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       force:
-        description: "Force full refresh even when the stored reference period is current"
+        description: "Force full refresh even when period and regulatory target are current"
         required: false
         default: false
         type: boolean
@@ -115,11 +115,15 @@ jobs:
               raise SystemExit("unexpected Receita ingestion method")
           if not source.get("reference_period"):
               raise SystemExit("missing Receita reference period")
+          target_hash = str(meta.get("target_universe_hash") or "")
+          if len(target_hash) != 64:
+              raise SystemExit("missing/invalid regulatory target-universe hash")
           if int(meta.get("resolved_count") or 0) < 200:
               raise SystemExit("automatic Receita lifecycle resolved too few CNPJs")
           print(
               "Receita snapshot OK: "
               f"period={source['reference_period']} "
+              f"target_hash={target_hash[:12]} "
               f"resolved={meta.get('resolved_count')}/{meta.get('target_count')}"
           )
           PY
@@ -133,7 +137,8 @@ jobs:
             tests/test_v2_receita_refresh.py \
             tests/test_v2_lifecycle.py \
             tests/test_v2_relationships.py \
-            tests/test_v2_lifecycle_relationship_inventory.py
+            tests/test_v2_lifecycle_relationship_inventory.py \
+            tests/test_v2_gate2_regulatory_scope.py
 
       - name: Commit refreshed lifecycle snapshot
         run: |
