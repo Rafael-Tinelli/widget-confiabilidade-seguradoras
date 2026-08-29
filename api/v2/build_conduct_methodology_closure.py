@@ -14,12 +14,13 @@ RECONCILIATION_PATH = Path("data/derived/v2/conduct_coverage_reconciliation.json
 PORTFOLIO_PATH = Path("data/derived/v2/conduct_portfolio_mix_diagnostic.json")
 OUTPUT_PATH = Path("data/derived/v2/conduct_methodology_closure.json")
 
-VERSION = "2.0-draft-conduct-methodology-closure-1"
+VERSION = "2.0-draft-conduct-methodology-closure-2"
 FAMILYWISE_ALPHA = 0.05
 COMMON_MONTHS = 12
 MIN_TEMPORAL_MONTHS = 9
 PERSISTENCE_SHARE = 0.50
 HALF_MIN_COMPARABLE_MONTHS = 3
+MINIMUM_SANITY_POPULATION = 100
 
 RECOVERY_ROUTE_BY_STATE = {
     "hybrid_insurance_pension_requires_product_numerator": "recover_product_specific_complaint_numerator",
@@ -113,20 +114,12 @@ def _rate_ratio_interval(
             return 0.0
         if probability >= 1:
             return None
-        return (
-            probability
-            / (1.0 - probability)
-            * early_expected
-            / recent_expected
-        )
+        return probability / (1.0 - probability) * early_expected / recent_expected
 
     if early_observed == 0:
         point = None
     else:
-        point = (
-            (recent_observed / recent_expected)
-            / (early_observed / early_expected)
-        )
+        point = (recent_observed / recent_expected) / (early_observed / early_expected)
 
     lower = convert(lower_p)
     upper = convert(upper_p)
@@ -150,8 +143,7 @@ def _rate_ratio_interval(
 
 
 def _baselines(
-    entities: list[dict[str, Any]],
-    premium_key: str,
+    entities: list[dict[str, Any]], premium_key: str
 ) -> dict[str, dict[str, Any]]:
     months = sorted(
         {
@@ -272,9 +264,7 @@ def _series(
             "uncertainty": None,
         }
     else:
-        interval = _poisson_ratio_interval(
-            aligned_observed, aligned_expected, annual_alpha
-        )
+        interval = _poisson_ratio_interval(aligned_observed, aligned_expected, annual_alpha)
         annual = {
             "state": "available",
             "observed_complaints": aligned_observed,
@@ -284,11 +274,7 @@ def _series(
         }
 
     monthly_states = [
-        (
-            point["uncertainty"]["state"]
-            if point.get("uncertainty")
-            else "unavailable"
-        )
+        point["uncertainty"]["state"] if point.get("uncertainty") else "unavailable"
         for point in points
     ]
     above = sum(state == "above_size_proportional_reference" for state in monthly_states)
@@ -302,9 +288,7 @@ def _series(
     annual_state = (
         annual["uncertainty"]["state"] if annual.get("uncertainty") else "unavailable"
     )
-    required_persistent_months = (
-        math.ceil(available * PERSISTENCE_SHARE) if available else None
-    )
+    required_persistent_months = math.ceil(available * PERSISTENCE_SHARE) if available else None
     if available < MIN_TEMPORAL_MONTHS:
         persistence_state = "insufficient_temporal_coverage"
     elif annual_state == "above_size_proportional_reference":
@@ -336,10 +320,7 @@ def _series(
 
     early_observed, early_expected, early_months = half_summary(early_points)
     recent_observed, recent_expected, recent_months = half_summary(recent_points)
-    if (
-        early_months < HALF_MIN_COMPARABLE_MONTHS
-        or recent_months < HALF_MIN_COMPARABLE_MONTHS
-    ):
+    if early_months < HALF_MIN_COMPARABLE_MONTHS or recent_months < HALF_MIN_COMPARABLE_MONTHS:
         trend = {
             "state": "insufficient_temporal_coverage",
             "early_comparable_months": early_months,
@@ -418,8 +399,7 @@ def _satisfaction_context(entity: dict[str, Any]) -> dict[str, Any]:
 
 
 def _final_pressure_state(
-    direct: dict[str, Any],
-    earned: dict[str, Any],
+    direct: dict[str, Any], earned: dict[str, Any]
 ) -> tuple[str, str]:
     direct_coverage = int(direct["temporal_coverage"]["comparable_months"])
     direct_interval = (direct.get("annual") or {}).get("uncertainty")
@@ -472,14 +452,29 @@ def build_closure(
         raise ConductMethodologyClosureError("portfolio diagnostic must forbid scoring")
 
     candidates = list(calibration.get("entities") or [])
-    if len(candidates) != 103:
-        raise ConductMethodologyClosureError(
-            f"expected 103 current pressure candidates, found {len(candidates)}"
-        )
     reconciliation_entities = list(reconciliation.get("entities") or [])
-    if len(reconciliation_entities) != 157:
+    if len(reconciliation_entities) < MINIMUM_SANITY_POPULATION:
         raise ConductMethodologyClosureError(
-            f"expected 157 reconciled insurers, found {len(reconciliation_entities)}"
+            "reconciled insurer population is unexpectedly small: "
+            f"{len(reconciliation_entities)}"
+        )
+
+    expected_candidate_ids = {
+        str(row.get("entity_id") or "")
+        for row in reconciliation_entities
+        if str(((row.get("pressure_comparability") or {}).get("state")) or "")
+        == "direct_one_to_one_candidate"
+        and bool((row.get("pressure_comparability") or {}).get("pressure_eligible_candidate"))
+    }
+    candidate_ids = {str(row.get("entity_id") or "") for row in candidates}
+    if not candidates:
+        raise ConductMethodologyClosureError("conduct calibration has no pressure candidates")
+    if candidate_ids != expected_candidate_ids:
+        missing = sorted(expected_candidate_ids - candidate_ids)[:10]
+        extra = sorted(candidate_ids - expected_candidate_ids)[:10]
+        raise ConductMethodologyClosureError(
+            "calibration and reconciliation candidate populations differ: "
+            f"missing={missing} extra={extra}"
         )
 
     direct_baselines = _baselines(candidates, "premium_direct")
@@ -488,12 +483,9 @@ def build_closure(
     monthly_alpha = FAMILYWISE_ALPHA / COMMON_MONTHS
 
     portfolio_by_id = {
-        str(row.get("entity_id") or ""): row
-        for row in portfolio.get("entities") or []
+        str(row.get("entity_id") or ""): row for row in portfolio.get("entities") or []
     }
-    candidate_by_id = {
-        str(row.get("entity_id") or ""): row for row in candidates
-    }
+    candidate_by_id = {str(row.get("entity_id") or ""): row for row in candidates}
 
     candidate_rows: list[dict[str, Any]] = []
     for entity_id, entity in sorted(candidate_by_id.items()):
@@ -523,9 +515,7 @@ def build_closure(
                 "cnpj": entity.get("cnpj"),
                 "legal_name": entity.get("legal_name"),
                 "display_name": entity.get("display_name"),
-                "conduct_observed_complaints_12m": int(
-                    entity.get("complaints_12m") or 0
-                ),
+                "conduct_observed_complaints_12m": int(entity.get("complaints_12m") or 0),
                 "comparability_state": "direct_one_to_one_candidate",
                 "pressure_conclusion": {
                     "state": final_state,
@@ -539,12 +529,8 @@ def build_closure(
                     "role": "diagnostic_guard_only",
                     "selected_as_denominator": False,
                     "annual_state_consistent_with_direct": (
-                        (
-                            (earned.get("annual") or {}).get("uncertainty") or {}
-                        ).get("state")
-                        == (
-                            (direct.get("annual") or {}).get("uncertainty") or {}
-                        ).get("state")
+                        ((earned.get("annual") or {}).get("uncertainty") or {}).get("state")
+                        == ((direct.get("annual") or {}).get("uncertainty") or {}).get("state")
                     )
                     if (earned.get("annual") or {}).get("uncertainty")
                     else None,
@@ -552,9 +538,7 @@ def build_closure(
                 "portfolio_context": {
                     "role": "context_and_sensitivity_only",
                     "nearest_distance": portfolio_context.get("nearest_distance"),
-                    "fifth_nearest_distance": portfolio_context.get(
-                        "fifth_nearest_distance"
-                    ),
+                    "fifth_nearest_distance": portfolio_context.get("fifth_nearest_distance"),
                     "peer_group_selected": False,
                     "pressure_adjusted_for_portfolio": False,
                 },
@@ -605,32 +589,26 @@ def build_closure(
             }
         )
 
-    if len(noncomparable_rows) != 54:
+    if len(candidate_rows) + len(noncomparable_rows) != len(reconciliation_entities):
         raise ConductMethodologyClosureError(
-            f"expected 54 non-comparable entities, found {len(noncomparable_rows)}"
+            "candidate and non-comparable partitions do not cover reconciliation population"
         )
 
     conclusion_counts = Counter(
         str(row["pressure_conclusion"]["state"]) for row in candidate_rows
     )
     persistence_counts = Counter(
-        str(row["direct_pressure"]["persistence"]["state"])
-        for row in candidate_rows
+        str(row["direct_pressure"]["persistence"]["state"]) for row in candidate_rows
     )
     trend_counts = Counter(
         str(row["direct_pressure"]["trend"]["state"]) for row in candidate_rows
     )
-    satisfaction_counts = Counter(
-        str(row["satisfaction"]["direction"]) for row in candidate_rows
-    )
+    satisfaction_counts = Counter(str(row["satisfaction"]["direction"]) for row in candidate_rows)
 
     portfolio_association = (
-        (portfolio.get("diagnostics") or {})
-        .get("portfolio_distance_vs_pressure_difference", {})
+        (portfolio.get("diagnostics") or {}).get("portfolio_distance_vs_pressure_difference", {})
     )
-    portfolio_coverage = (
-        (portfolio.get("diagnostics") or {}).get("peer_coverage_curve") or []
-    )
+    portfolio_coverage = (portfolio.get("diagnostics") or {}).get("peer_coverage_curve") or []
 
     return {
         "artifact": "v2_conduct_methodology_closure",
@@ -697,9 +675,7 @@ def build_closure(
                     "e limiares estreitos deixam a maior parte do universo sem peers; coramo "
                     "permanece contexto e diagnostico de sensibilidade."
                 ),
-                "all_pairs_spearman": portfolio_association.get(
-                    "all_pairs_spearman"
-                ),
+                "all_pairs_spearman": portfolio_association.get("all_pairs_spearman"),
                 "high_volume_pairs_spearman": portfolio_association.get(
                     "high_volume_100_plus_pairs_spearman"
                 ),
@@ -745,7 +721,7 @@ def build_closure(
             "next_stage": "cross_pillar_score_calibration_after_financial_methodology_closure",
             "important": (
                 "Fechar Conduta significa saber quando e como afirmar algo; "
-                "nao significa fabricar pressao para os 54 casos sem comparabilidade."
+                "nao significa fabricar pressao para casos sem comparabilidade."
             ),
         },
     }
@@ -763,8 +739,7 @@ def main() -> None:
     payload = build_from_files()
     OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
     OUTPUT_PATH.write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2),
-        encoding="utf-8",
+        json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
     )
     print(
         json.dumps(
