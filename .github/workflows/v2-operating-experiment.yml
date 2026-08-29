@@ -18,6 +18,7 @@ jobs:
     timeout-minutes: 30
     env:
       GH_TOKEN: ${{ github.token }}
+      V2_SOURCE_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
       V2_ELIGIBILITY_INPUT: data/derived/v2/entity_eligibility_inventory.json
       SES_ALLOW_INSECURE_SSL: "1"
       SES_KEEP_ZIP: "1"
@@ -67,19 +68,20 @@ jobs:
           print(f"SES cache OK: {path.stat().st_size} bytes")
           PY
 
-      - name: Restore latest validated eligibility artifact
+      - name: Restore same-head validated eligibility artifact
         run: |
           set -euo pipefail
+          branch="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
           run_id="$(gh run list \
             --repo "$GITHUB_REPOSITORY" \
             --workflow "V2 Eligibility Validation" \
-            --branch "$GITHUB_HEAD_REF" \
+            --branch "$branch" \
             --status success \
-            --limit 20 \
-            --json databaseId \
-            --jq '.[0].databaseId')"
+            --limit 50 \
+            --json databaseId,headSha \
+            --jq '[.[] | select(.headSha == env.V2_SOURCE_HEAD_SHA)][0].databaseId')"
           if [[ -z "$run_id" || "$run_id" == "null" ]]; then
-            echo "No successful upstream eligibility artifact found." >&2
+            echo "No same-head upstream eligibility artifact for $V2_SOURCE_HEAD_SHA" >&2
             exit 1
           fi
           rm -rf "$RUNNER_TEMP/eligibility-upstream"
