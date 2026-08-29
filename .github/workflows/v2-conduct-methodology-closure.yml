@@ -9,6 +9,9 @@ on:
       - "api/v2/build_conduct_comparative_calibration_v2.py"
       - "api/v2/build_conduct_credibility_diagnostic.py"
       - "api/v2/build_conduct_portfolio_mix_diagnostic.py"
+      - "api/v2/eligibility.py"
+      - "api/v2/regulatory_scope.py"
+      - "data/reference/v2/conduct_subject_relationships.json"
       - "data/curated/v2/**"
   workflow_dispatch:
 
@@ -21,6 +24,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ github.token }}
+      V2_SOURCE_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
 
     steps:
       - name: Checkout
@@ -39,7 +43,7 @@ jobs:
           python -m pip install -r requirements.txt
           python -m pip install -r requirements-dev.txt
 
-      - name: Restore latest successful Conduct comparative calibration v2
+      - name: Restore same-head Conduct comparative calibration v2
         run: |
           set -euo pipefail
           branch="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
@@ -48,11 +52,11 @@ jobs:
             --workflow "V2 Conduct Comparative Calibration v2" \
             --branch "$branch" \
             --status success \
-            --limit 30 \
-            --json databaseId \
-            --jq '.[0].databaseId')"
+            --limit 50 \
+            --json databaseId,headSha \
+            --jq '[.[] | select(.headSha == env.V2_SOURCE_HEAD_SHA)][0].databaseId')"
           if [[ -z "$run_id" || "$run_id" == "null" ]]; then
-            echo "No successful Conduct comparative calibration v2 artifact found." >&2
+            echo "No same-head Conduct comparative calibration v2 artifact for $V2_SOURCE_HEAD_SHA" >&2
             exit 1
           fi
           rm -rf "$RUNNER_TEMP/calibration-upstream"
@@ -65,9 +69,9 @@ jobs:
           test -n "$source_file"
           mkdir -p data/derived/v2
           cp "$source_file" data/derived/v2/conduct_comparative_calibration_v2.json
-          echo "Restored calibration from run $run_id"
+          echo "Restored same-head calibration from run $run_id"
 
-      - name: Restore latest successful Conduct coverage reconciliation
+      - name: Restore same-head Conduct coverage reconciliation
         run: |
           set -euo pipefail
           branch="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
@@ -76,11 +80,11 @@ jobs:
             --workflow "V2 Conduct Coverage Reconciliation" \
             --branch "$branch" \
             --status success \
-            --limit 30 \
-            --json databaseId \
-            --jq '.[0].databaseId')"
+            --limit 50 \
+            --json databaseId,headSha \
+            --jq '[.[] | select(.headSha == env.V2_SOURCE_HEAD_SHA)][0].databaseId')"
           if [[ -z "$run_id" || "$run_id" == "null" ]]; then
-            echo "No successful Conduct coverage reconciliation artifact found." >&2
+            echo "No same-head Conduct coverage reconciliation artifact for $V2_SOURCE_HEAD_SHA" >&2
             exit 1
           fi
           rm -rf "$RUNNER_TEMP/reconciliation-upstream"
@@ -93,9 +97,9 @@ jobs:
           test -n "$source_file"
           mkdir -p data/derived/v2
           cp "$source_file" data/derived/v2/conduct_coverage_reconciliation.json
-          echo "Restored reconciliation from run $run_id"
+          echo "Restored same-head reconciliation from run $run_id"
 
-      - name: Restore latest successful Conduct portfolio mix diagnostic
+      - name: Restore same-head Conduct portfolio mix diagnostic
         run: |
           set -euo pipefail
           branch="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
@@ -104,11 +108,11 @@ jobs:
             --workflow "V2 Conduct Portfolio Mix Diagnostic" \
             --branch "$branch" \
             --status success \
-            --limit 30 \
-            --json databaseId \
-            --jq '.[0].databaseId')"
+            --limit 50 \
+            --json databaseId,headSha \
+            --jq '[.[] | select(.headSha == env.V2_SOURCE_HEAD_SHA)][0].databaseId')"
           if [[ -z "$run_id" || "$run_id" == "null" ]]; then
-            echo "No successful Conduct portfolio mix diagnostic artifact found." >&2
+            echo "No same-head Conduct portfolio mix diagnostic artifact for $V2_SOURCE_HEAD_SHA" >&2
             exit 1
           fi
           rm -rf "$RUNNER_TEMP/portfolio-upstream"
@@ -121,7 +125,7 @@ jobs:
           test -n "$source_file"
           mkdir -p data/derived/v2
           cp "$source_file" data/derived/v2/conduct_portfolio_mix_diagnostic.json
-          echo "Restored portfolio diagnostic from run $run_id"
+          echo "Restored same-head portfolio diagnostic from run $run_id"
 
       - name: Lint Conduct closure
         run: |
@@ -149,6 +153,12 @@ jobs:
 
           path = Path("data/derived/v2/conduct_methodology_closure.json")
           payload = json.loads(path.read_text(encoding="utf-8"))
+          reconciliation = json.loads(
+              Path("data/derived/v2/conduct_coverage_reconciliation.json").read_text(encoding="utf-8")
+          )
+          calibration = json.loads(
+              Path("data/derived/v2/conduct_comparative_calibration_v2.json").read_text(encoding="utf-8")
+          )
 
           if payload.get("scoring") != "forbidden_in_this_artifact":
               raise SystemExit("Conduct closure must forbid scoring")
@@ -158,12 +168,19 @@ jobs:
               raise SystemExit("unexpected closure status")
 
           population = payload.get("population") or {}
-          if population.get("regulatory_universe") != 157:
-              raise SystemExit("Conduct closure must preserve 157 insurers")
-          if population.get("pressure_candidates") != 103:
-              raise SystemExit("Conduct closure must preserve 103 pressure candidates")
-          if population.get("pressure_unavailable_not_comparable") != 54:
-              raise SystemExit("Conduct closure must preserve 54 non-comparable entities")
+          expected_regulatory = len(reconciliation.get("entities") or [])
+          expected_candidates = len(calibration.get("entities") or [])
+          expected_noncomparable = expected_regulatory - expected_candidates
+          if expected_regulatory < 100:
+              raise SystemExit(f"unexpectedly small Conduct universe: {expected_regulatory}")
+          if population.get("regulatory_universe") != expected_regulatory:
+              raise SystemExit("Conduct closure regulatory population mismatch")
+          if population.get("pressure_candidates") != expected_candidates:
+              raise SystemExit("Conduct closure candidate population mismatch")
+          if population.get("pressure_unavailable_not_comparable") != expected_noncomparable:
+              raise SystemExit("Conduct closure non-comparable partition mismatch")
+          if expected_candidates + expected_noncomparable != expected_regulatory:
+              raise SystemExit("Conduct partitions do not cover regulatory universe")
 
           decisions = payload.get("methodology_decisions") or {}
           denominator = decisions.get("approved_operational_denominator") or {}
