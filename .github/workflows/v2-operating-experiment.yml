@@ -95,6 +95,15 @@ jobs:
           fi
           mkdir -p "$(dirname "$V2_ELIGIBILITY_INPUT")"
           cp "$source_file" "$V2_ELIGIBILITY_INPUT"
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          payload = json.loads(Path("data/derived/v2/entity_eligibility_inventory.json").read_text(encoding="utf-8"))
+          count = int(((payload.get("meta") or {}).get("regulatory_universe_eligible_count")) or 0)
+          if count < 100:
+              raise SystemExit(f"unexpectedly small validated regulatory universe: {count}")
+          print(f"Validated eligibility regulatory_universe={count}")
+          PY
 
       - name: Run operating experiment unit tests
         run: |
@@ -115,21 +124,31 @@ jobs:
           payload = json.loads(
               Path("data/derived/v2/operating_experiment.json").read_text(encoding="utf-8")
           )
+          eligibility = json.loads(
+              Path("data/derived/v2/entity_eligibility_inventory.json").read_text(encoding="utf-8")
+          )
           summary = payload["summary"]
+          expected = int(
+              ((eligibility.get("meta") or {}).get("regulatory_universe_eligible_count")) or 0
+          )
           if payload.get("status") != "experimental":
               raise SystemExit("operating artifact must remain experimental")
-          if summary.get("entity_count") != 157:
-              raise SystemExit(f"unexpected operating universe: {summary.get('entity_count')}")
+          if summary.get("entity_count") != expected:
+              raise SystemExit(
+                  "operating population mismatch: "
+                  f"operating={summary.get('entity_count')} eligibility={expected}"
+              )
           states = summary.get("operating_states") or {}
-          if sum((states.get("formula_state_counts") or {}).values()) != 157:
+          if sum((states.get("formula_state_counts") or {}).values()) != expected:
               raise SystemExit("operating formula states do not cover the regulatory universe")
-          if sum((states.get("history_state_counts") or {}).values()) != 157:
+          if sum((states.get("history_state_counts") or {}).values()) != expected:
               raise SystemExit("operating history states do not cover the regulatory universe")
-          if sum((states.get("operating_signal_counts") or {}).values()) != 157:
+          if sum((states.get("operating_signal_counts") or {}).values()) != expected:
               raise SystemExit("operating signals do not cover the regulatory universe")
 
           compact = {
               "reference_period": summary.get("reference_period"),
+              "entity_count": summary.get("entity_count"),
               "period_maturity": payload.get("period_maturity"),
               "IC": summary["metrics"]["IC"],
               "ICA": summary["metrics"]["ICA"],
