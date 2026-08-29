@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
@@ -36,11 +37,37 @@ def _coverage(payload: dict[str, Any]) -> float:
     return resolved / target if target else 0.0
 
 
-def _existing_reference_period(path: Path) -> str | None:
+def _existing_metadata(path: Path) -> tuple[str | None, str | None]:
     if not path.exists():
-        return None
+        return None, None
     payload = json.loads(path.read_text(encoding="utf-8"))
-    return str((payload.get("source") or {}).get("reference_period") or "").strip() or None
+    period = str((payload.get("source") or {}).get("reference_period") or "").strip() or None
+    target_hash = str((payload.get("meta") or {}).get("target_universe_hash") or "").strip() or None
+    return period, target_hash
+
+
+def regulatory_target_universe_hash(entities: list[dict[str, Any]]) -> str:
+    """Hash the exact CNPJ target population used for Receita lifecycle filtering."""
+    rows: list[str] = []
+    for entity in entities:
+        cnpj = str(entity.get("cnpj") or "").strip()
+        if not cnpj:
+            continue
+        rows.append(
+            "|".join(
+                [
+                    str(entity.get("entity_id") or ""),
+                    cnpj,
+                    str(entity.get("legal_name") or "").strip(),
+                    str(entity.get("entity_type") or "unknown"),
+                    str(entity.get("regulatory_subtype") or ""),
+                    str(entity.get("regulatory_regime") or "unknown"),
+                    str(entity.get("regulatory_status") or "unknown"),
+                ]
+            )
+        )
+    canonical = "\n".join(sorted(set(rows))).encode("utf-8")
+    return hashlib.sha256(canonical).hexdigest()
 
 
 def validate_refresh_payload(
@@ -59,6 +86,9 @@ def validate_refresh_payload(
         raise ReceitaRefreshValidationError("unexpected Receita ingestion method")
     if not source.get("reference_period"):
         raise ReceitaRefreshValidationError("Receita reference period is missing")
+    target_hash = str(meta.get("target_universe_hash") or "").strip()
+    if len(target_hash) != 64:
+        raise ReceitaRefreshValidationError("Receita target universe hash is missing or invalid")
 
     target = int(meta.get("target_count") or 0)
     resolved = int(meta.get("resolved_count") or 0)
@@ -130,10 +160,13 @@ def refresh_receita_lifecycle(
     output: Path = DEFAULT_FILTERED_SNAPSHOT,
     min_coverage: float = DEFAULT_MIN_COVERAGE,
     release: ReceitaOpenDataRelease | None = None,
+    entities: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     resolved_release = release or discover_latest_release()
-    entities = build_current_regulatory_universe()
-    payload = refresh_filtered_lifecycle(entities, release=resolved_release)
+    target_entities = entities if entities is not None else build_current_regulatory_universe()
+    target_hash = regulatory_target_universe_hash(target_entities)
+    payload = refresh_filtered_lifecycle(target_entities, release=resolved_release)
+    payload.setdefault("meta", {})["target_universe_hash"] = target_hash
 
     previous_records = None
     if output.exists():
@@ -165,16 +198,25 @@ def main() -> None:
     parser.add_argument(
         "--force",
         action="store_true",
-        help="Refresh even when the stored snapshot already matches the latest release.",
+        help=(
+            "Refresh even when both the stored Receita reference period and the "
+            "regulatory target-universe hash are current."
+        ),
     )
     args = parser.parse_args()
 
     release = discover_latest_release()
-    existing_period = _existing_reference_period(args.output)
-    if not args.force and existing_period == release.period:
+    entities = build_current_regulatory_universe()
+    current_target_hash = regulatory_target_universe_hash(entities)
+    existing_period, existing_target_hash = _existing_metadata(args.output)
+    if (
+        not args.force
+        and existing_period == release.period
+        and existing_target_hash == current_target_hash
+    ):
         print(
             "Receita lifecycle refresh skipped: "
-            f"stored snapshot already uses reference_period={release.period}"
+            f"reference_period={release.period} and target_universe_hash unchanged"
         )
         return
 
@@ -182,12 +224,14 @@ def main() -> None:
         output=args.output,
         min_coverage=args.min_coverage,
         release=release,
+        entities=entities,
     )
     meta = payload["meta"]
     source = payload["source"]
     print(
         "Receita lifecycle refresh OK: "
         f"period={source['reference_period']} "
+        f"target_hash={meta['target_universe_hash'][:12]} "
         f"resolved={meta['resolved_count']}/{meta['target_count']} "
         f"coverage={_coverage(payload):.2%} "
         f"files={len(meta['files_scanned'])}"
