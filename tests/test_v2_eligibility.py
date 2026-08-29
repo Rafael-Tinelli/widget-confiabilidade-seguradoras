@@ -33,13 +33,14 @@ def test_current_ordinary_insurer_passes_only_regulatory_gate():
     state = derive_eligibility(_entity())
 
     assert state["regulatory_universe_eligible"] is True
-    assert state["regulatory_universe_id"] == "ordinary_current_insurers"
+    assert state["regulatory_universe_id"] == "ordinary_current_consumer_insurers"
     assert state["assessment_state"] == "pending_evidence"
     assert state["assessment_eligible"] is False
     assert state["ranking_state"] == "pending_assessment"
     assert state["ranking_eligible"] is False
     assert state["comparison_cohort"] is None
     assert "receita_legal_entity_active" in state["reason_codes"]
+    assert "consumer_insurer_scope" in state["reason_codes"]
     assert "financial_evidence_gate" in state["pending_requirements"]
 
 
@@ -57,6 +58,21 @@ def test_non_active_receita_status_blocks_regulatory_universe():
 
     assert state["regulatory_universe_eligible"] is False
     assert "legal_entity_not_active_in_receita" in state["reason_codes"]
+
+
+def test_sspe_remains_insurer_but_is_outside_consumer_comparator():
+    entity = _entity(
+        legal_name="TESTE SOCIEDADE SEGURADORA DE PROPÓSITO ESPECÍFICO S.A.",
+        regulatory_subtype="special_purpose_insurer",
+        query_context={"entity_state": "special_purpose_insurer", "filter_bucket": "other"},
+    )
+    state = derive_eligibility(entity)
+
+    assert entity["entity_type"] == "insurer"
+    assert state["regulatory_universe_eligible"] is False
+    assert state["assessment_eligible"] is False
+    assert state["ranking_eligible"] is False
+    assert "special_purpose_insurer_outside_consumer_scope" in state["reason_codes"]
 
 
 def test_sandbox_never_enters_ordinary_insurer_universe():
@@ -134,6 +150,18 @@ def test_validator_rejects_manual_non_insurer_eligibility_override():
     }
 
     with pytest.raises(EligibilityInvariantError, match="non-insurer"):
+        validate_eligibility([entity])
+
+
+def test_validator_rejects_manual_sspe_eligibility_override():
+    entity = _entity(regulatory_subtype="special_purpose_insurer")
+    entity["eligibility"] = {
+        "regulatory_universe_eligible": True,
+        "assessment_eligible": False,
+        "ranking_eligible": False,
+    }
+
+    with pytest.raises(EligibilityInvariantError, match="SSPE"):
         validate_eligibility([entity])
 
 
