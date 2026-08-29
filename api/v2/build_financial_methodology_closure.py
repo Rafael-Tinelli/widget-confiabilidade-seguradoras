@@ -12,9 +12,10 @@ LIQUIDITY_PATH = Path("data/derived/v2/liquidity_experiment.json")
 OPERATING_PATH = Path("data/derived/v2/operating_experiment.json")
 OUTPUT_PATH = Path("data/derived/v2/financial_methodology_closure.json")
 
-VERSION = "2.0-draft-financial-methodology-closure-1"
+VERSION = "2.0-draft-financial-methodology-closure-2"
 CAPITAL_REQUIREMENT_REFERENCE = 1.0
 LIQUIDITY_PARITY_REFERENCE = 1.0
+MINIMUM_SANITY_POPULATION = 100
 
 
 class FinancialMethodologyClosureError(RuntimeError):
@@ -147,9 +148,18 @@ def build_financial_methodology_closure(
     liquidity_entities = _entity_map(liquidity)
     operating_entities = _entity_map(operating)
 
-    if len(financial_entities) != 157:
+    expected_population = int(
+        ((financial.get("meta") or {}).get("regulatory_eligible_count")) or 0
+    )
+    if len(financial_entities) < MINIMUM_SANITY_POPULATION:
         raise FinancialMethodologyClosureError(
-            f"expected 157 regulatory-universe insurers, got {len(financial_entities)}"
+            "financial regulatory population is unexpectedly small: "
+            f"{len(financial_entities)}"
+        )
+    if expected_population and expected_population != len(financial_entities):
+        raise FinancialMethodologyClosureError(
+            "financial evidence population metadata mismatch: "
+            f"meta={expected_population} actual={len(financial_entities)}"
         )
     if set(financial_entities) != set(liquidity_entities):
         raise FinancialMethodologyClosureError(
