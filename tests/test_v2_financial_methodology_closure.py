@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from copy import deepcopy
-
 from api.v2 import build_financial_methodology_closure as financial_closure
 
 
@@ -124,8 +122,7 @@ def test_short_history_changes_confidence_not_current_core_signal():
         operating,
     )
 
-    financial_complete = deepcopy(financial)
-    financial_complete["entities"][2]["financial_evidence"]["state"] = "complete_core_history"
+    financial_complete, _, _ = _payloads()
     complete = financial_closure.build_financial_methodology_closure(
         financial_complete,
         liquidity,
