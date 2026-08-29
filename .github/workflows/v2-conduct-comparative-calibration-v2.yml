@@ -7,6 +7,11 @@ on:
     paths:
       - "api/v2/build_conduct_comparative_calibration_v2.py"
       - "tests/test_v2_conduct_comparative_calibration_v2.py"
+      - "api/v2/build_conduct_coverage_reconciliation.py"
+      - "api/v2/build_consumer_gov_conduct_evidence.py"
+      - "api/v2/eligibility.py"
+      - "api/v2/regulatory_scope.py"
+      - "data/reference/v2/conduct_subject_relationships.json"
       - ".github/workflows/v2-conduct-comparative-calibration-v2.yml"
 
 permissions:
@@ -23,6 +28,7 @@ jobs:
     timeout-minutes: 90
     env:
       GH_TOKEN: ${{ github.token }}
+      V2_SOURCE_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
       SES_CACHE_DIR: "data/raw/ses"
 
     steps:
@@ -50,7 +56,7 @@ jobs:
           restore-keys: |
             ses-source-${{ runner.os }}-
 
-      - name: Restore latest successful Consumer.gov Conduct evidence
+      - name: Restore same-head Consumer.gov Conduct evidence
         run: |
           set -euo pipefail
           branch="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
@@ -59,11 +65,11 @@ jobs:
             --workflow "V2 Consumer.gov Conduct Evidence" \
             --branch "$branch" \
             --status success \
-            --limit 30 \
-            --json databaseId \
-            --jq '.[0].databaseId')"
+            --limit 50 \
+            --json databaseId,headSha \
+            --jq '[.[] | select(.headSha == env.V2_SOURCE_HEAD_SHA)][0].databaseId')"
           if [[ -z "$run_id" || "$run_id" == "null" ]]; then
-            echo "No successful Consumer.gov Conduct artifact found." >&2
+            echo "No same-head Consumer.gov Conduct artifact for $V2_SOURCE_HEAD_SHA" >&2
             exit 1
           fi
           rm -rf "$RUNNER_TEMP/conduct-upstream"
@@ -73,15 +79,12 @@ jobs:
             --name "v2-consumer-gov-conduct-$run_id" \
             --dir "$RUNNER_TEMP/conduct-upstream"
           source_file="$(find "$RUNNER_TEMP/conduct-upstream" -type f -name consumer_gov_conduct_evidence.json | head -n 1)"
-          if [[ -z "$source_file" ]]; then
-            echo "Conduct artifact does not contain consumer_gov_conduct_evidence.json" >&2
-            exit 1
-          fi
+          test -n "$source_file"
           mkdir -p data/derived/v2
           cp "$source_file" data/derived/v2/consumer_gov_conduct_evidence.json
-          echo "Restored Conduct evidence from run $run_id"
+          echo "Restored same-head Conduct evidence from run $run_id"
 
-      - name: Restore latest successful Conduct coverage reconciliation
+      - name: Restore same-head Conduct coverage reconciliation
         run: |
           set -euo pipefail
           branch="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
@@ -90,11 +93,11 @@ jobs:
             --workflow "V2 Conduct Coverage Reconciliation" \
             --branch "$branch" \
             --status success \
-            --limit 30 \
-            --json databaseId \
-            --jq '.[0].databaseId')"
+            --limit 50 \
+            --json databaseId,headSha \
+            --jq '[.[] | select(.headSha == env.V2_SOURCE_HEAD_SHA)][0].databaseId')"
           if [[ -z "$run_id" || "$run_id" == "null" ]]; then
-            echo "No successful Conduct coverage reconciliation artifact found." >&2
+            echo "No same-head Conduct coverage reconciliation artifact for $V2_SOURCE_HEAD_SHA" >&2
             exit 1
           fi
           rm -rf "$RUNNER_TEMP/reconciliation-upstream"
@@ -104,13 +107,10 @@ jobs:
             --name "v2-conduct-coverage-reconciliation-$run_id" \
             --dir "$RUNNER_TEMP/reconciliation-upstream"
           source_file="$(find "$RUNNER_TEMP/reconciliation-upstream" -type f -name conduct_coverage_reconciliation.json | head -n 1)"
-          if [[ -z "$source_file" ]]; then
-            echo "Reconciliation artifact does not contain conduct_coverage_reconciliation.json" >&2
-            exit 1
-          fi
+          test -n "$source_file"
           mkdir -p data/derived/v2
           cp "$source_file" data/derived/v2/conduct_coverage_reconciliation.json
-          echo "Restored Conduct reconciliation from run $run_id"
+          echo "Restored same-head Conduct reconciliation from run $run_id"
 
       - name: Verify SES cache
         run: |
@@ -152,6 +152,9 @@ jobs:
 
           path = Path("data/derived/v2/conduct_comparative_calibration_v2.json")
           payload = json.loads(path.read_text(encoding="utf-8"))
+          reconciliation = json.loads(
+              Path("data/derived/v2/conduct_coverage_reconciliation.json").read_text(encoding="utf-8")
+          )
           if payload.get("scoring") != "forbidden_in_this_artifact":
               raise SystemExit("calibration v2 must forbid scoring")
           if payload.get("ranking") != "forbidden_in_this_artifact":
@@ -162,8 +165,17 @@ jobs:
           if denominator.get("final_denominator_approved") is not False:
               raise SystemExit("candidate denominator was promoted prematurely")
           population = payload.get("population") or {}
-          if int(population.get("direct_one_to_one_candidates") or 0) <= 0:
-              raise SystemExit("calibration v2 has no direct one-to-one candidates")
+          candidates = int(population.get("direct_one_to_one_candidates") or 0)
+          expected_candidates = sum(
+              str(((row.get("pressure_comparability") or {}).get("state")) or "")
+              == "direct_one_to_one_candidate"
+              and bool((row.get("pressure_comparability") or {}).get("pressure_eligible_candidate"))
+              for row in reconciliation.get("entities") or []
+          )
+          if candidates <= 0 or candidates != expected_candidates:
+              raise SystemExit(
+                  f"calibration candidate population mismatch: {candidates} != {expected_candidates}"
+              )
           if payload["diagnostics"].get("shrinkage_applied") is not False:
               raise SystemExit("shrinkage must remain diagnostic/pending in this gate")
 
