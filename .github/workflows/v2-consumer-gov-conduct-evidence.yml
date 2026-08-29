@@ -15,6 +15,8 @@ on:
       - "api/v2/consumer_gov_receita_resolution.py"
       - "api/v2/build_consumer_gov_receita_identity.py"
       - "api/v2/build_consumer_gov_receita_resolution_experiment.py"
+      - "api/v2/eligibility.py"
+      - "api/v2/regulatory_scope.py"
       - "api/sources/consumer_gov_direct.py"
       - "api/sources/receita_cnpj_identity.py"
       - "api/build_consumidor_gov.py"
@@ -41,6 +43,7 @@ jobs:
 
     env:
       GH_TOKEN: ${{ github.token }}
+      V2_SOURCE_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
       V2_ELIGIBILITY_INPUT: data/derived/v2/entity_eligibility_inventory.json
       SES_ALLOW_INSECURE_SSL: "1"
       SES_KEEP_ZIP: "1"
@@ -134,19 +137,20 @@ jobs:
           set -euo pipefail
           python -m api.build_consumidor_gov
 
-      - name: Restore latest validated eligibility artifact
+      - name: Restore same-head validated eligibility artifact
         run: |
           set -euo pipefail
+          branch="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
           run_id="$(gh run list \
             --repo "$GITHUB_REPOSITORY" \
             --workflow "V2 Eligibility Validation" \
-            --branch "$GITHUB_HEAD_REF" \
+            --branch "$branch" \
             --status success \
-            --limit 20 \
-            --json databaseId \
-            --jq '.[0].databaseId')"
+            --limit 50 \
+            --json databaseId,headSha \
+            --jq '[.[] | select(.headSha == env.V2_SOURCE_HEAD_SHA)][0].databaseId')"
           if [[ -z "$run_id" || "$run_id" == "null" ]]; then
-            echo "No successful upstream eligibility artifact found." >&2
+            echo "No same-head upstream eligibility artifact for $V2_SOURCE_HEAD_SHA" >&2
             exit 1
           fi
           rm -rf "$RUNNER_TEMP/eligibility-upstream"
@@ -162,6 +166,15 @@ jobs:
           fi
           mkdir -p "$(dirname "$V2_ELIGIBILITY_INPUT")"
           cp "$source_file" "$V2_ELIGIBILITY_INPUT"
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          payload = json.loads(Path("data/derived/v2/entity_eligibility_inventory.json").read_text(encoding="utf-8"))
+          count = int(((payload.get("meta") or {}).get("regulatory_universe_eligible_count")) or 0)
+          if count < 100:
+              raise SystemExit(f"unexpectedly small same-head regulatory universe: {count}")
+          print(f"Same-head eligibility regulatory_universe={count}")
+          PY
 
       - name: Build base Consumer.gov identity
         run: |
@@ -282,9 +295,7 @@ jobs:
               )
 
           for entity in conduct["entities"]:
-              monthly_total = sum(
-                  int(item["complaints"]) for item in entity["monthly"]
-              )
+              monthly_total = sum(int(item["complaints"]) for item in entity["monthly"])
               if monthly_total != int(entity["totals"]["complaints"]):
                   raise SystemExit(
                       f"monthly reconciliation failed for {entity['entity_id']}"
