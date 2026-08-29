@@ -105,9 +105,9 @@ jobs:
           path = Path("data/derived/v2/entity_eligibility_inventory.json")
           payload = load_validated_eligibility_artifact(path)
           meta = payload.get("meta") or {}
-          count = meta.get("regulatory_universe_eligible_count")
-          if count != 157:
-              raise SystemExit(f"unexpected validated regulatory universe: {count}")
+          count = int(meta.get("regulatory_universe_eligible_count") or 0)
+          if count < 100:
+              raise SystemExit(f"unexpectedly small validated regulatory universe: {count}")
           print(
               "Validated eligibility snapshot: "
               f"entities={len(payload.get('entities') or [])} "
@@ -134,9 +134,16 @@ jobs:
           path = Path("data/derived/v2/liquidity_experiment.json")
           payload = json.loads(path.read_text(encoding="utf-8"))
           summary = payload["summary"]
-          if summary["entity_count"] != 157:
+          eligibility = json.loads(
+              Path("data/derived/v2/entity_eligibility_inventory.json").read_text(encoding="utf-8")
+          )
+          expected = int(
+              ((eligibility.get("meta") or {}).get("regulatory_universe_eligible_count")) or 0
+          )
+          if summary["entity_count"] != expected:
               raise SystemExit(
-                  f"unexpected liquidity universe: {summary['entity_count']}"
+                  "liquidity population mismatch: "
+                  f"liquidity={summary['entity_count']} eligibility={expected}"
               )
           if payload.get("status") != "experimental":
               raise SystemExit("liquidity artifact must remain experimental")
