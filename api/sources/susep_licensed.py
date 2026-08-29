@@ -61,6 +61,44 @@ def decode_susep_html(content: bytes) -> str:
     return content.decode("utf-8", errors="replace")
 
 
+def parse_licensed_entity_type_options(document: str) -> dict[str, str]:
+    """Read the type taxonomy exposed by SUSEP's own licensed-entity form."""
+    select_match = re.search(
+        r"<select\b[^>]*name=[\"']tiposempresas[\"'][^>]*>(.*?)</select>",
+        document,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    if not select_match:
+        return {}
+
+    options: dict[str, str] = {}
+    for value, label in re.findall(
+        r"<option\b[^>]*value=[\"']([^\"']*)[\"'][^>]*>(.*?)</option>",
+        select_match.group(1),
+        flags=re.IGNORECASE | re.DOTALL,
+    ):
+        code = str(value or "").strip()
+        if not code.isdigit():
+            continue
+        options[code] = _text(label)
+    return options
+
+
+def _assert_known_official_taxonomy(document: str) -> None:
+    discovered = parse_licensed_entity_type_options(document)
+    if not discovered:
+        raise LicensedEntitiesSourceError(
+            "SUSEP licensed-entities page did not expose a parseable type taxonomy"
+        )
+    unknown = sorted(set(discovered) - set(LICENSED_ENTITY_TYPES))
+    if unknown:
+        details = {code: discovered[code] for code in unknown}
+        raise LicensedEntitiesSourceError(
+            "SUSEP licensed-entity taxonomy changed; explicit classification is required "
+            f"before publication: {details}"
+        )
+
+
 def parse_licensed_entities_html(document: str, type_code: str) -> list[dict[str, Any]]:
     """Parse one official SUSEP licensed-entity result page."""
     entity_type = LICENSED_ENTITY_TYPES.get(str(type_code))
@@ -139,7 +177,12 @@ def fetch_licensed_entities(
     timeout: int = 60,
     verify_ssl: bool | None = None,
 ) -> list[dict[str, Any]]:
-    """Fetch the current licensed universe from the official SUSEP service."""
+    """Fetch the current licensed universe from the official SUSEP service.
+
+    When consuming the complete universe, validate the form taxonomy first. A
+    newly introduced official category must fail closed until its semantics are
+    explicitly modeled; it must never be ignored or silently mapped to insurer.
+    """
     codes = [str(code) for code in (type_codes or LICENSED_ENTITY_TYPES.keys())]
     unknown = [code for code in codes if code not in LICENSED_ENTITY_TYPES]
     if unknown:
@@ -148,6 +191,20 @@ def fetch_licensed_entities(
     verify = _env_bool("SUSEP_LICENSED_VERIFY_SSL", True) if verify_ssl is None else verify_ssl
     client = session or requests.Session()
     output: list[dict[str, Any]] = []
+
+    if type_codes is None:
+        taxonomy_response = client.get(
+            LICENSED_ENTITIES_URL,
+            headers=_DEFAULT_HEADERS,
+            timeout=timeout,
+            verify=verify,
+        )
+        if taxonomy_response.status_code != 200:
+            raise LicensedEntitiesSourceError(
+                "SUSEP licensed-entities taxonomy page returned HTTP "
+                f"{taxonomy_response.status_code}"
+            )
+        _assert_known_official_taxonomy(decode_susep_html(taxonomy_response.content))
 
     for code in codes:
         response = client.post(
