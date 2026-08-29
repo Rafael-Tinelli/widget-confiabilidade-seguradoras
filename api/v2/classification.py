@@ -6,6 +6,7 @@ from typing import Any
 
 from api.utils.identifiers import normalize_cnpj_v2
 from api.v2.identity import canonical_fip_code
+from api.v2.regulatory_scope import infer_regulatory_subtype
 
 
 class ClassificationConflictError(ValueError):
@@ -100,6 +101,25 @@ def _entity_from_licensed(licensed: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _apply_regulatory_subtypes(entities: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Attach source-backed subtypes without changing the legal entity type."""
+    output: list[dict[str, Any]] = []
+    for raw in entities:
+        entity = deepcopy(raw)
+        subtype = infer_regulatory_subtype(entity)
+        if subtype:
+            entity["regulatory_subtype"] = subtype
+            evidence = deepcopy(entity.get("evidence") or {})
+            evidence["regulatory_subtype"] = {
+                "value": subtype,
+                "source": "susep_licensed_legal_name",
+                "derivation": "official_legal_name_required_marker",
+            }
+            entity["evidence"] = evidence
+        output.append(entity)
+    return output
+
+
 def apply_licensed_classification(
     entities: list[dict[str, Any]],
     licensed_records: list[dict[str, Any]],
@@ -150,6 +170,7 @@ def apply_licensed_classification(
     for fip in sorted(set(by_fip) - seen_fips):
         output.append(_entity_from_licensed(by_fip[fip]))
 
+    output = _apply_regulatory_subtypes(output)
     _assert_unique_classified_entities(output)
     return sorted(output, key=lambda item: item["entity_id"])
 
@@ -341,6 +362,11 @@ def classification_summary(
         if item.get("regulatory_status") not in {None, "", "unknown"}
     ]
     by_type = Counter(item.get("entity_type") or "unknown" for item in classified)
+    by_subtype = Counter(
+        item.get("regulatory_subtype") or "none"
+        for item in classified
+        if item.get("entity_type") == "insurer"
+    )
     by_status = Counter(item.get("regulatory_status") or "unknown" for item in entities)
 
     cnpj_filled = 0
@@ -383,6 +409,7 @@ def classification_summary(
         "classified_count": len(classified),
         "unclassified": len(entities) - len(classified),
         "by_entity_type": dict(sorted(by_type.items())),
+        "by_regulatory_subtype": dict(sorted(by_subtype.items())),
         "by_regulatory_status": dict(sorted(by_status.items())),
         "cnpj_filled_from_licensed_source": cnpj_filled,
         "cnpj_variances_between_ses_and_licensed": cnpj_variances,
