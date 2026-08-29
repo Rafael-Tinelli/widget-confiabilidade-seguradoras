@@ -74,7 +74,8 @@ jobs:
           set -euo pipefail
           python -m pytest -q \
             tests/test_v2_eligibility.py \
-            tests/test_v2_eligibility_inventory.py
+            tests/test_v2_eligibility_inventory.py \
+            tests/test_v2_gate2_regulatory_scope.py
 
       - name: Build formal eligibility inventory
         run: |
@@ -88,16 +89,19 @@ jobs:
           import json
           from pathlib import Path
 
+          from api.v2.regulatory_scope import (
+              is_current_ordinary_consumer_insurer,
+              is_special_purpose_insurer,
+          )
+
           path = Path("data/derived/v2/entity_eligibility_inventory.json")
           payload = json.loads(path.read_text(encoding="utf-8"))
           entities = payload["entities"]
           meta = payload["meta"]
 
-          current_ordinary_insurers = [
+          current_consumer_insurers = [
               entity for entity in entities
-              if entity.get("entity_type") == "insurer"
-              and entity.get("regulatory_regime") == "ordinary"
-              and entity.get("regulatory_status") == "active_licensed"
+              if is_current_ordinary_consumer_insurer(entity)
               and (entity.get("query_context") or {}).get("filter_bucket") != "historical"
           ]
           eligible = [
@@ -105,15 +109,20 @@ jobs:
               if (entity.get("eligibility") or {}).get("regulatory_universe_eligible")
           ]
 
-          if len(current_ordinary_insurers) < 100:
+          if len(current_consumer_insurers) < 100:
               raise SystemExit(
-                  f"unexpectedly small current insurer universe: {len(current_ordinary_insurers)}"
+                  "unexpectedly small current consumer insurer universe: "
+                  f"{len(current_consumer_insurers)}"
               )
-          if len(eligible) != len(current_ordinary_insurers):
+          if len(eligible) != len(current_consumer_insurers):
               raise SystemExit(
                   "regulatory gate mismatch: "
-                  f"eligible={len(eligible)} current_ordinary={len(current_ordinary_insurers)}"
+                  f"eligible={len(eligible)} current_consumer={len(current_consumer_insurers)}"
               )
+          if {e["entity_id"] for e in eligible} != {
+              e["entity_id"] for e in current_consumer_insurers
+          }:
+              raise SystemExit("regulatory gate entity-set mismatch")
           if meta.get("regulatory_universe_eligible_count") != len(eligible):
               raise SystemExit("eligibility meta count mismatch")
           if meta.get("assessment_eligible_count") != 0:
@@ -132,27 +141,23 @@ jobs:
                   invalid.append((entity["entity_id"], "sandbox"))
               if entity.get("regulatory_regime") == "special":
                   invalid.append((entity["entity_id"], "special_regime"))
+              if is_special_purpose_insurer(entity):
+                  invalid.append((entity["entity_id"], "sspe"))
           if invalid:
               raise SystemExit(f"invalid entities in regulatory universe: {invalid[:10]}")
 
-          sandbox_eligible = [
-              entity["entity_id"] for entity in entities
-              if entity.get("entity_type") == "sandbox_participant"
-              and (entity.get("eligibility") or {}).get("regulatory_universe_eligible")
+          sspe = [entity for entity in entities if is_special_purpose_insurer(entity)]
+          sspe_eligible = [
+              entity["entity_id"] for entity in sspe
+              if (entity.get("eligibility") or {}).get("regulatory_universe_eligible")
           ]
-          special_eligible = [
-              entity["entity_id"] for entity in entities
-              if entity.get("regulatory_regime") == "special"
-              and (entity.get("eligibility") or {}).get("regulatory_universe_eligible")
-          ]
-          if sandbox_eligible or special_eligible:
-              raise SystemExit(
-                  f"forbidden eligibility: sandbox={sandbox_eligible} special={special_eligible}"
-              )
+          if sspe_eligible:
+              raise SystemExit(f"SSPE must remain outside consumer comparator: {sspe_eligible}")
 
           print(json.dumps({
               "entities_total": len(entities),
-              "current_ordinary_insurers": len(current_ordinary_insurers),
+              "current_consumer_insurers": len(current_consumer_insurers),
+              "sspe_detected": len(sspe),
               "regulatory_universe_eligible": len(eligible),
               "assessment_eligible": meta["assessment_eligible_count"],
               "ranking_eligible": meta["ranking_eligible_count"],
