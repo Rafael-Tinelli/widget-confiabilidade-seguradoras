@@ -12,8 +12,8 @@ def _write_zip(path: Path) -> None:
             "Ses_pl_margem.csv",
             "coenti;damesano;plajustado;margem;pl;AjustesContabeis;"
             "AjustesEconomicos;NovoPla;CMR\n"
-            "1;202605;1.234,56;100;1200;0;0;1234,56;900\n"
-            "1;202606;-100,50;100;1200;0;0;-100,50;800\n"
+            "1;202605;1.234,56;100;1200;0;0;1.345,67;900\n"
+            "1;202606;-100,50;100;1200;0;0;950,25;800\n"
             "2;202606;;100;1200;0;0;;700\n",
         )
         z.writestr(
@@ -52,12 +52,15 @@ def test_reader_preserves_missing_negative_and_formula_components(tmp_path: Path
     }
     one = payload["entities"]["000001"]
     assert one["capital_history"][202605]["pla_adjusted"] == 1234.56
+    assert one["capital_history"][202605]["new_pla"] == 1345.67
     assert one["capital_history"][202606]["pla_adjusted"] == -100.5
+    assert one["capital_history"][202606]["new_pla"] == 950.25
     assert one["capital_history"][202606]["cmr"] == 800.0
     assert set(one["balance_values"][202606]) >= {1479, 11160, 351, 1040}
     assert one["nonzero_premium_periods"] == {202605, 202606}
 
     two = payload["entities"]["000002"]
     assert two["capital_history"][202606]["pla_adjusted"] is None
+    assert two["capital_history"][202606]["new_pla"] is None
     assert two["capital_history"][202606]["cmr"] == 700.0
     assert two["nonzero_premium_periods"] == set()
