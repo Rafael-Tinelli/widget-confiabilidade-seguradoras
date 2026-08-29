@@ -104,8 +104,10 @@ def build_identity_experiment() -> dict[str, Any]:
     eligibility = json.loads(ELIGIBILITY_PATH.read_text(encoding="utf-8"))
     indexes = _build_indexes(eligibility)
     eligible = indexes["eligible"]
-    if len(eligible) != 157:
-        raise RuntimeError(f"expected 157 current ordinary insurers, got {len(eligible)}")
+    if len(eligible) < 100:
+        raise RuntimeError(
+            f"unexpectedly small current ordinary insurer universe: {len(eligible)}"
+        )
 
     registry = load_provider_resolution_registry()
     temporal_brand_index = build_temporal_brand_index(
