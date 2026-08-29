@@ -7,6 +7,11 @@ on:
     paths:
       - "api/v2/build_conduct_credibility_diagnostic.py"
       - "tests/test_v2_conduct_credibility_diagnostic.py"
+      - "api/v2/build_conduct_comparative_calibration_v2.py"
+      - "api/v2/build_conduct_coverage_reconciliation.py"
+      - "api/v2/build_consumer_gov_conduct_evidence.py"
+      - "api/v2/eligibility.py"
+      - "api/v2/regulatory_scope.py"
       - ".github/workflows/v2-conduct-credibility-diagnostic.yml"
 
 permissions:
@@ -23,6 +28,7 @@ jobs:
     timeout-minutes: 30
     env:
       GH_TOKEN: ${{ github.token }}
+      V2_SOURCE_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
 
     steps:
       - name: Checkout
@@ -41,7 +47,7 @@ jobs:
           python -m pip install -r requirements.txt
           python -m pip install -r requirements-dev.txt
 
-      - name: Restore latest successful Conduct comparative calibration v2
+      - name: Restore same-head Conduct comparative calibration v2
         run: |
           set -euo pipefail
           branch="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
@@ -50,11 +56,11 @@ jobs:
             --workflow "V2 Conduct Comparative Calibration v2" \
             --branch "$branch" \
             --status success \
-            --limit 30 \
-            --json databaseId \
-            --jq '.[0].databaseId')"
+            --limit 50 \
+            --json databaseId,headSha \
+            --jq '[.[] | select(.headSha == env.V2_SOURCE_HEAD_SHA)][0].databaseId')"
           if [[ -z "$run_id" || "$run_id" == "null" ]]; then
-            echo "No successful Conduct comparative calibration v2 artifact found." >&2
+            echo "No same-head Conduct comparative calibration v2 artifact for $V2_SOURCE_HEAD_SHA" >&2
             exit 1
           fi
           rm -rf "$RUNNER_TEMP/calibration-upstream"
@@ -64,13 +70,10 @@ jobs:
             --name "v2-conduct-comparative-calibration-v2-$run_id" \
             --dir "$RUNNER_TEMP/calibration-upstream"
           source_file="$(find "$RUNNER_TEMP/calibration-upstream" -type f -name conduct_comparative_calibration_v2.json | head -n 1)"
-          if [[ -z "$source_file" ]]; then
-            echo "Calibration artifact does not contain conduct_comparative_calibration_v2.json" >&2
-            exit 1
-          fi
+          test -n "$source_file"
           mkdir -p data/derived/v2
           cp "$source_file" data/derived/v2/conduct_comparative_calibration_v2.json
-          echo "Restored Conduct comparative calibration v2 from run $run_id"
+          echo "Restored same-head calibration from run $run_id"
 
       - name: Lint credibility diagnostic
         run: |
@@ -98,6 +101,9 @@ jobs:
 
           path = Path("data/derived/v2/conduct_credibility_diagnostic.json")
           payload = json.loads(path.read_text(encoding="utf-8"))
+          calibration = json.loads(
+              Path("data/derived/v2/conduct_comparative_calibration_v2.json").read_text(encoding="utf-8")
+          )
           if payload.get("scoring") != "forbidden_in_this_artifact":
               raise SystemExit("credibility diagnostic must forbid scoring")
           if payload.get("ranking") != "forbidden_in_this_artifact":
@@ -111,8 +117,16 @@ jobs:
               raise SystemExit("denominator cannot be promoted in this gate")
           if methodology.get("portfolio_mix_adjusted") is not False:
               raise SystemExit("portfolio mix cannot be silently adjusted in this gate")
-          if payload["population"].get("direct_candidate_entities", 0) <= 0:
-              raise SystemExit("credibility diagnostic has no direct candidate entities")
+          expected = int(
+              ((calibration.get("population") or {}).get("direct_one_to_one_candidates")) or 0
+          )
+          actual = int(
+              ((payload.get("population") or {}).get("direct_candidate_entities")) or 0
+          )
+          if expected <= 0 or actual != expected:
+              raise SystemExit(
+                  f"credibility candidate population mismatch: {actual} != {expected}"
+              )
 
           forbidden = {
               "overall_score",
