@@ -82,6 +82,22 @@
           "fact": "Ata do Conselho Diretor de 2026 registra que a Seguradora Líder do Consórcio DPVAT se encontra em run-off devido à extinção do DPVAT."
         }
       ]
+    },
+    {
+      "relationship_id": "conduct:consorcio-dpvat-runoff",
+      "relationship_type": "runoff",
+      "subject_cnpj": "09315871000179",
+      "target_cnpjs": [],
+      "effective_from": "2021-01-01",
+      "pressure_policy": "current_premium_pressure_not_applicable",
+      "reconciliation_state": "runoff_pressure_not_applicable",
+      "evidence": [
+        {
+          "authority": "SUSEP",
+          "url": "https://www.gov.br/susep/pt-br/arquivos/arquivos-regulacao-prudencial/manual_de_praticas_e_procedimentos_contabeis_do_mercado_segurador_versao_julho_2025.pdf",
+          "fact": "O Manual de Práticas e Procedimentos Contábeis da SUSEP registra a dissolução do Consórcio DPVAT e estabelece que a contabilização remanescente se aplica somente ao run-off dos riscos vigentes até 31/12/2020, sem nova emissão de bilhetes do seguro DPVAT."
+        }
+      ]
     }
   ]
 }
