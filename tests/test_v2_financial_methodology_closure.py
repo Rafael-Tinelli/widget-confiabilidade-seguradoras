@@ -2,9 +2,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 
-from api.v2.build_financial_methodology_closure import (
-    build_financial_methodology_closure,
-)
+from api.v2.build_financial_methodology_closure import build_financial_methodology_closure
 
 
 FIXTURE_POPULATION = 123
