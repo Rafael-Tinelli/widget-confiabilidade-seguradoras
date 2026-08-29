@@ -16,6 +16,7 @@ def _entity(capital_by_period: dict[int, tuple[float | None, float | None]]) -> 
             period: {
                 "period": period,
                 "pla_adjusted": pla,
+                "new_pla": pla,
                 "cmr": cmr,
             }
             for period, (pla, cmr) in capital_by_period.items()
@@ -43,6 +44,8 @@ def test_latest_immature_period_rolls_back_to_latest_mature_common_period() -> N
     maturity = build_financial_period_maturity(source, min_relative_coverage=0.95)
 
     assert maturity["capital_derivable_counts"] == {"202605": 4, "202606": 1}
+    assert maturity["capital_pla_source_field"] == "new_pla"
+    assert maturity["selection_basis"] == "new_pla_cmr_derivable_coverage"
     assert maturity["latest_common_period"] == 202606
     assert maturity["selected_period"] == 202605
     assert maturity["status"] == "latest_common_immature_rolled_back"
@@ -57,6 +60,33 @@ def test_latest_immature_period_rolls_back_to_latest_mature_common_period() -> N
         "insurance_operations": 202605,
     }
     assert aligned["period_maturity"]["selected_period"] == 202605
+
+
+def test_maturity_uses_new_pla_not_intermediate_plajustado() -> None:
+    source = {
+        "reference_periods": {
+            "capital": 202606,
+            "balance": 202606,
+            "insurance_operations": 202606,
+        },
+        "entities": {
+            "000001": {
+                "capital_history": {
+                    202606: {
+                        "period": 202606,
+                        "pla_adjusted": 100.0,
+                        "new_pla": None,
+                        "cmr": 80.0,
+                    }
+                },
+                "balance_periods": {202606},
+                "insurance_operation_periods": {202606},
+            }
+        },
+    }
+
+    with pytest.raises(FinancialPeriodMaturityError):
+        build_financial_period_maturity(source)
 
 
 def test_latest_common_period_is_kept_when_coverage_remains_near_peak() -> None:
@@ -88,7 +118,13 @@ def test_period_maturity_requires_common_financial_period() -> None:
         },
         "entities": {
             "000001": {
-                "capital_history": {202606: {"pla_adjusted": 100.0, "cmr": 80.0}},
+                "capital_history": {
+                    202606: {
+                        "pla_adjusted": 100.0,
+                        "new_pla": 100.0,
+                        "cmr": 80.0,
+                    }
+                },
                 "balance_periods": {202606},
                 "insurance_operation_periods": {202605},
             }
