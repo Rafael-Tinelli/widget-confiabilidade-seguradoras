@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import json
 from datetime import datetime, timezone
 from pathlib import Path
@@ -26,6 +27,8 @@ from api.v2.financial_periods import apply_mature_financial_reference_period
 from api.v2.relationships import load_verified_relationship_registry
 
 DEFAULT_OUTPUT = Path("data/derived/v2/entity_financial_evidence_inventory.json")
+DEFAULT_ELIGIBILITY_INPUT = Path("data/derived/v2/entity_eligibility_inventory.json")
+DEFAULT_SES_ZIP = Path("data/raw/ses/BaseCompleta.zip")
 
 
 def _utc_now() -> str:
@@ -92,7 +95,7 @@ def write_financial_evidence_inventory(
     return output
 
 
-def main() -> None:
+def _build_legacy_eligibility_from_sources() -> dict[str, Any]:
     group_records = load_susep_economic_groups()
     ses_out = extract_ses_master_and_financials()
     if not isinstance(ses_out, tuple) or len(ses_out) < 2:
@@ -110,16 +113,60 @@ def main() -> None:
         load_verified_relationship_registry(),
         group_records,
     )
-    eligibility = build_eligibility_inventory(lifecycle)
-    eligible_fips = [
+    return build_eligibility_inventory(lifecycle)
+
+
+def _load_eligibility_input(path: Path) -> dict[str, Any]:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if payload.get("artifact") != "v2_entity_eligibility_inventory":
+        raise RuntimeError("unexpected eligibility input artifact")
+    return payload
+
+
+def _eligible_fips(eligibility: dict[str, Any]) -> list[str]:
+    return [
         str(entity.get("fip_code") or "")
-        for entity in eligibility["entities"]
+        for entity in eligibility.get("entities") or []
         if (entity.get("eligibility") or {}).get("regulatory_universe_eligible")
         and entity.get("fip_code")
     ]
-    source_payload = load_susep_financial_evidence(eligible_fips)
+
+
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Build the v2 financial evidence inventory.")
+    parser.add_argument(
+        "--eligibility-input",
+        type=Path,
+        help=(
+            "Use an already materialized eligibility inventory. Gate 4 uses this mode "
+            "so this builder does not refetch regulatory sources."
+        ),
+    )
+    parser.add_argument(
+        "--ses-zip",
+        type=Path,
+        default=DEFAULT_SES_ZIP,
+        help="Validated BaseCompleta.zip snapshot used for financial derivation.",
+    )
+    parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
+    return parser.parse_args()
+
+
+def main() -> None:
+    args = _parse_args()
+    if args.eligibility_input is not None:
+        eligibility = _load_eligibility_input(args.eligibility_input)
+        financial_zip: Path | None = args.ses_zip
+    else:
+        eligibility = _build_legacy_eligibility_from_sources()
+        financial_zip = None
+
+    source_payload = load_susep_financial_evidence(
+        _eligible_fips(eligibility),
+        zip_path=financial_zip,
+    )
     payload = build_financial_evidence_inventory(eligibility, source_payload)
-    path = write_financial_evidence_inventory(payload)
+    path = write_financial_evidence_inventory(payload, args.output)
     meta = payload["meta"]
     maturity = meta.get("financial_period_maturity") or {}
     print(
