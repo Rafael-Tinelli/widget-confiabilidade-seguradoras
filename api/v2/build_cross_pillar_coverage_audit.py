@@ -97,8 +97,10 @@ def build_cross_pillar_coverage_audit(
 
     stage1_by_id = _stage1_entities(stage1)
     reconciliation_by_id = _reconciliation_entities(reconciliation)
-    if len(stage1_by_id) != 157 or len(reconciliation_by_id) != 157:
-        raise CrossPillarCoverageAuditError("coverage audit requires 157 entities")
+    if len(stage1_by_id) < 100 or len(reconciliation_by_id) < 100:
+        raise CrossPillarCoverageAuditError(
+            "coverage audit received an unexpectedly small insurer universe"
+        )
     if set(stage1_by_id) != set(reconciliation_by_id):
         raise CrossPillarCoverageAuditError("stage-1 and reconciliation populations differ")
 
@@ -189,7 +191,12 @@ def build_cross_pillar_coverage_audit(
     )
 
     reason_counts = Counter(
-        str((reconciliation_by_id[entity_id].get("pressure_comparability") or {}).get("state") or "missing")
+        str(
+            (reconciliation_by_id[entity_id].get("pressure_comparability") or {}).get(
+                "state"
+            )
+            or "missing"
+        )
         for entity_id in joint_incomplete
     )
 
@@ -218,7 +225,7 @@ def build_cross_pillar_coverage_audit(
             "complaints_are_not_customer_counts": True,
         },
         "universe": {
-            "entities": 157,
+            "entities": len(all_ids),
             "positive_direct_premium_12m": float(total_positive_premium),
             "signed_direct_premium_12m": float(total_signed_premium),
             "complaints_12m": total_complaints,
