@@ -3,11 +3,10 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import shutil
 import zipfile
-from datetime import datetime, timezone
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 import pandas as pd
 import requests
@@ -133,7 +132,7 @@ def _download_urls(urls: list[str], destination: Path, *, timeout: int) -> None:
                         if chunk:
                             handle.write(chunk)
             return
-        except Exception as exc:
+        except (requests.RequestException, OSError) as exc:
             last_error = exc
             if destination.exists():
                 destination.unlink()
@@ -355,13 +354,13 @@ def _receita_snapshot(
             state_reason="official bulk lifecycle snapshot refreshed",
         )
         return AcquisitionResult(observation=observation, used_cache=False)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         current_error = f"{type(exc).__name__}: {exc}"
 
     try:
         fetched_at = cache.materialize(destination)
         load_filtered_lifecycle_snapshot(destination)
-    except Exception:
+    except (SourceCacheError, OSError, ValueError, json.JSONDecodeError):
         if destination.exists():
             destination.unlink()
         observation = SourceObservation(
