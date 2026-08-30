@@ -97,7 +97,7 @@ jobs:
             "V2 Cross-Pillar Architecture Stage 2" \
             "v2-cross-pillar-architecture-stage-2" \
             "cross_pillar_architecture_experiment.json" \
-            "data/derived/v2/cross_pillar_architecture_stage_2.json"
+            "data/derived/v2/cross_pillar_architecture_experiment.json"
 
           restore_artifact \
             "V2 Cross-Pillar Coverage Audit" \
