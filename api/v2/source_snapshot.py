@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -74,3 +75,34 @@ def build_source_lineage(
         (observation.to_lineage(context) for observation in observations),
         key=lambda source: source.source_id,
     )
+
+
+def source_lineage_payload(
+    observations: list[SourceObservation],
+    context: BuildContext,
+) -> dict:
+    sources = build_source_lineage(observations, context)
+    states = {"fresh": 0, "stale": 0, "unavailable": 0}
+    for source in sources:
+        states[source.state] += 1
+    return {
+        "artifact": "v2_source_lineage",
+        "version": 1,
+        "build": context.as_dict(),
+        "state_counts": states,
+        "sources": [source.as_dict() for source in sources],
+    }
+
+
+def write_source_lineage(
+    path: Path,
+    observations: list[SourceObservation],
+    context: BuildContext,
+) -> Path:
+    payload = source_lineage_payload(observations, context)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return path
