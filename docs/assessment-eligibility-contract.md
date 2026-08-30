@@ -1,214 +1,116 @@
-# Assessment Eligibility Contract — v2
+# Contrato de elegibilidade de avaliação — v2
 
-Status: **fechado e validado; `assessment_eligible` está formalmente aberto para 85 seguradoras. `ranking_eligible` permanece fechado.**
+Status: **fechado; assessment individual pode ser aberto quando a evidência satisfaz o contrato; ranking permanece independente e bloqueado**.
 
-Este contrato sucede `docs/cross-pillar-assessment-semantic-contract.md`.
-
-O gate é **fail-closed**: divergência de população, contrato semântico não fechado ou confiança central insuficiente impede a abertura da avaliação em vez de produzir fallback.
-
-A pergunta é:
+## Pergunta do gate
 
 > **Temos base regulatória, comparabilidade e evidência suficientes para publicar uma avaliação conjunta desta seguradora?**
 
-A resposta não depende de a seguradora apresentar uma leitura favorável, atenção ou alerta. Elegibilidade mede a possibilidade de **avaliar**, não a qualidade do resultado.
+A elegibilidade mede se a avaliação pode ser feita com segurança. Ela **não mede se o resultado é bom ou ruim**.
 
-## 1. Separação dos gates
+## Regras permanentes
 
-A v2 passa a distinguir explicitamente:
+Para `assessment_eligible = true`:
 
-```text
-regulatory_universe_eligible
-        ↓
-semantic_public_assessment_supported
-        ↓
-assessment_eligible
-        ↓
-ranking_eligible
-```
+- a entidade deve pertencer ao universo regulatório ordinário comparável;
+- o núcleo conjunto deve estar completo;
+- o contrato semântico deve suportar avaliação pública;
+- a evidência financeira central deve ser suficiente;
+- a conclusão de Conduta deve ser comparável e conclusiva.
 
-Os significados são diferentes:
-
-- `regulatory_universe_eligible`: a entidade é uma seguradora ordinária atual apta a seguir no pipeline;
-- `semantic_public_assessment_supported`: os pilares fechados sustentam uma leitura conjunta semanticamente segura;
-- `assessment_eligible`: o contrato formal autoriza publicar a avaliação conjunta;
-- `ranking_eligible`: eventual autorização posterior para participar de uma comparação ordenada/coorte de ranking.
-
-Nenhum gate posterior é herdado automaticamente do anterior.
-
-## 2. Regra de elegibilidade para avaliação
-
-Uma entidade só pode receber:
+Guardrails:
 
 ```text
-assessment_eligible = true
+performance_result_used_for_eligibility             false
+adverse_result_blocks_assessment                     false
+limited_financial_history_blocks_assessment          false
+missingness_treated_as_neutral                       false
+ranking_gate_independent                             true
 ```
 
-quando satisfaz simultaneamente:
+Histórico financeiro limitado, quando ainda aceito pelo contrato de evidência, é disclosure de confiança e não penalidade de desempenho.
 
-1. pertence ao universo regulatório atual;
-2. possui `joint_core_complete`;
-3. possui suporte semântico público fechado;
-4. possui núcleo Financeiro utilizável;
-5. possui conclusão de Conduta comparável e suficientemente sustentada;
-6. a confiança central não é insuficiente ou não classificada;
-7. os artifacts regulatório e semântico usados são os últimos validados com sucesso na mesma branch.
-
-Não existe requisito de “bom desempenho”.
-
-## 3. Resultado adverso não bloqueia avaliação
-
-Regra fundamental:
+## Estados
 
 ```text
-favorable_reading
-attention
-prudential_warning
+eligible_complete_joint_assessment
+not_eligible_joint_evidence_incomplete
+not_eligible_core_evidence_confidence
 ```
 
-podem ser igualmente `assessment_eligible`.
+Uma entidade inelegível não recebe nota zero, posição inferior ou classe negativa. O motivo da ineligibilidade deve permanecer explícito.
 
-Excluir uma seguradora porque ela apresenta um alerta enviesaria o produto: o gate passaria a esconder justamente as avaliações mais importantes ao consumidor.
+## População dinâmica
 
-Assim:
+O workflow não exige 157, 156, 85 ou qualquer outra quantidade fixa.
+
+Invariantes executáveis:
 
 ```text
-assessment_eligible != selo de qualidade
-assessment_eligible != recomendação
-assessment_eligible != ausência de alerta
+assessment_eligible + assessment_not_eligible = regulatory_universe
+ranking_eligible = 0
+entity rows = regulatory_universe
+eligible rows = assessment_eligible
+semantic_supported >= assessment_eligible
 ```
 
-`assessment_eligible` significa apenas:
+A distribuição entre classes públicas também é diagnóstico. O único veto semântico estrutural é: `evidence_incomplete` não pode aparecer entre as entidades elegíveis.
 
-> **há evidência suficiente e comparável para publicar a avaliação definida pela metodologia.**
+## Snapshot validado — 30/08/2026
 
-## 4. Histórico limitado
-
-O contrato preserva a separação entre desempenho e confiança.
-
-Estados aceitos:
+Run:
 
 ```text
-historico_estabelecido
-historico_limitado
+V2 Assessment Eligibility Contract
+run 33323343812
+head 35e509d31de68a9311ede57ac245de6b7d3c0e11
+artifact 9735530398
+SHA256 ZIP 237a9444bd373302758c0e1f7f0d9642f30ef0ac6ba2870a83a6a896db2d4d4d
 ```
 
-`historico_limitado`:
-
-- não reduz desempenho;
-- não cria penalidade;
-- não bloqueia automaticamente `assessment_eligible`;
-- deve ser exibido como disclosure de confiança.
-
-Bloqueiam o gate:
+População:
 
 ```text
-evidencia_central_insuficiente
-confianca_nao_classificada
+regulatory_universe                    156
+semantic_public_assessment_supported    85
+assessment_eligible                     85
+assessment_not_eligible                 71
+ranking_eligible                         0
 ```
 
-Isso não é uma nota ruim. Significa que o núcleo necessário para a avaliação ainda não possui base suficiente.
-
-No snapshot atual, as 85 entidades semanticamente completas possuem `historico_estabelecido`. A regra para histórico limitado existe para que novas seguradoras não sejam punidas por idade quando o núcleo atual for utilizável.
-
-## 5. Evidência incompleta permanece fora do gate
-
-Os estados sem conclusão conjunta não recebem neutralidade nem avaliação parcial disfarçada de completa.
-
-Rotas atuais incluem:
+Classes entre as 85 elegíveis:
 
 ```text
-Conduta não comparável com segurança
-cobertura temporal insuficiente
-conclusão sensível ao denominador
-Financeiro central incompleto
+favorable_reading     48
+attention              36
+prudential_warning      1
 ```
 
-Essas entidades continuam pesquisáveis e seus sinais disponíveis continuam visíveis conforme o contrato semântico.
-
-Mas:
+Razões principais entre as 71 não elegíveis:
 
 ```text
-joint_core_incomplete
-→ assessment_eligible = false
+conduta_nao_comparavel_com_seguranca       52
+conduta_com_cobertura_temporal_insuficiente 11
+conduta_sensivel_ao_denominador              5
+financeiro_central_incompleto                3
 ```
 
-até que a rota de recuperação correspondente seja resolvida.
+Todas as 85 elegíveis têm, no snapshot atual, `historico_estabelecido` como confiança financeira central. Isso é resultado da execução, não requisito de contagem.
 
-## 6. Atualidade
+## O que este gate não autoriza
 
-O contrato não inventa um prazo arbitrário como “dados com menos de 30 dias”.
+`assessment_eligible = true` não significa:
 
-A política operacional é:
+- seguradora boa;
+- seguradora recomendada;
+- ranking elegível;
+- posição relativa;
+- ausência de alertas;
+- garantia futura.
 
-> o workflow do gate restaura os artifacts **mais recentes com execução bem-sucedida na mesma branch** para o universo regulatório e para o contrato semântico.
+Uma avaliação adversa pode ser perfeitamente elegível se a evidência for suficiente.
 
-A competência e a janela metodológica continuam definidas pelos próprios contratos dos pilares.
-
-Atualidade é requisito de proveniência do pipeline; não é desempenho e não gera pontos.
-
-## 7. Coorte e ranking continuam separados
-
-O gate de avaliação não define `comparison_cohort`.
-
-Para as entidades elegíveis:
-
-```text
-ranking_state = pending_ranking_eligibility_contract
-ranking_eligible = false
-comparison_cohort = null
-```
-
-Para as demais:
-
-```text
-ranking_state = blocked_by_assessment_ineligibility
-ranking_eligible = false
-```
-
-Abrir avaliação não resolve os 222 trade-offs normativos nem a cobertura insuficiente para uma alegação de ranking integral do mercado.
-
-## 8. Snapshot validado
-
-Na execução real do contrato:
-
-```text
-universo regulatório                         157
-suporte semântico para avaliação              85
-assessment_eligible                           85
-assessment_not_eligible                       72
-ranking_eligible                               0
-```
-
-Entre as 85 elegíveis:
-
-```text
-Leitura central favorável   46
-Atenção                     30
-Alerta prudencial            9
-```
-
-A presença das 9 avaliações com alerta prudencial dentro do gate é intencional e funciona como teste de independência entre **elegibilidade** e **resultado**.
-
-## 9. Guardrails
-
-O builder e os testes devem impedir:
-
-- entidade fora do universo regulatório no gate;
-- divergência de população entre universo regulatório e contrato semântico;
-- avaliação completa sem estado semântico;
-- `evidence_incomplete` tornando-se elegível;
-- resultado favorável sendo requisito de elegibilidade;
-- alerta prudencial bloqueando avaliação;
-- histórico limitado virando penalidade;
-- missingness virando neutralidade;
-- score sendo criado;
-- posição de ranking sendo criada;
-- `ranking_eligible = true`;
-- seleção silenciosa de coorte de ranking.
-
-## 10. Implementação
-
-Arquivos:
+## Implementação
 
 ```text
 api/v2/build_assessment_eligibility_contract.py
@@ -222,59 +124,10 @@ Artifact:
 data/derived/v2/assessment_eligibility_contract.json
 ```
 
-Workflow:
+## Operação atual
 
-```text
-V2 Assessment Eligibility Contract
-```
+Neste Gate 3, o workflow restaura artifacts bem-sucedidos da branch e os builders reconciliam população/IDs, falhando quando gerações incompatíveis são misturadas. A orquestração transversal por build ID/same-head para toda a cadeia é assunto do Gate 4.
 
-## 10.1. Precedência dos artifacts de elegibilidade
+## Próximo gate
 
-`data/derived/v2/entity_eligibility_inventory.json` continua sendo o artifact **upstream do gate regulatório**. Ele deliberadamente não consome evidência Financeira/Conduta e, por isso, seus campos de avaliação representam o estado pendente naquela etapa do pipeline.
-
-Após o fechamento deste contrato, a fonte autoritativa para a elegibilidade de **avaliação** passa a ser:
-
-```text
-data/derived/v2/assessment_eligibility_contract.json
-```
-
-Assim:
-
-```text
-entity_eligibility_inventory
-→ responde ao gate regulatório
-
-assessment_eligibility_contract
-→ responde ao gate formal de avaliação
-```
-
-Não há conflito metodológico entre as camadas; há progressão de gates. O frontend/API final deverá consumir o estado downstream apropriado, e não inferir a elegibilidade final apenas do inventário regulatório.
-
-## 11. Fechamento validado
-
-Execução oficial:
-
-```text
-V2 Assessment Eligibility Contract
-run                     33025120193
-job                     98364518971
-Ruff                    verde
-testes                  6/6
-build real              verde
-boundaries              verdes
-artifact                9628104960
-SHA256 ZIP              7997da1c36999a99fdd6380f685b04c66cfb830737fcf4a12e678558db4efc12
-```
-
-O contrato fechou como:
-
-```text
-status = assessment_eligibility_contract_closed
-assessment_eligibility_gate_opened = true
-assessment_eligible = 85
-
-ranking_eligibility_gate_opened = false
-ranking_eligible = 0
-```
-
-O próximo passo metodológico é um **preflight de elegibilidade para ranking**, que deverá tratar coorte, representatividade, natureza da alegação pública e os trade-offs que a matriz deliberadamente não totaliza. A abertura do gate de avaliação não autoriza ranking integral ou parcial por si só.
+O `ranking_eligibility_preflight` pergunta separadamente se existe escopo e regra de ordenação defensáveis para chamar o produto de ranking.

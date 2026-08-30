@@ -1,474 +1,162 @@
-# Exploratory Leaderboards Contract — v2
+# Contrato de leaderboards exploratórios — v2
 
-Status: **contrato de exploração fechado para rankings unidimensionais e coleções semânticas; ranking geral permanece bloqueado**.
+Status: **fechado para exploração pública; ranking geral continua bloqueado**.
 
-Este contrato sucede:
+Este contrato define o que pode ser publicado quando uma pergunta é estritamente unidimensional ou quando o usuário quer explorar uma coleção semântica. Ele não cria score composto nem “melhor seguradora”.
 
-- `docs/cross-pillar-assessment-semantic-contract.md`;
-- `docs/assessment-eligibility-contract.md`;
-- `docs/ranking-eligibility-preflight.md`.
+## Princípio
 
-A direção de produto é deliberadamente assimétrica:
+Uma lista só pode ser ordenada quando a pergunta e a métrica já definem a direção sem necessidade de compensar domínios diferentes.
+
+Exemplos permitidos:
 
 ```text
-produto principal
-= avaliação semântica + comparador lado a lado
-
-produto secundário
-= leaderboards de métricas específicas + coleções exploratórias
-
-ranking geral composto
-= bloqueado
+maior prêmio direto
+maior PLA/CMR disponível
+maior ILT disponível
+menor razão de pressão de Conduta entre conclusões abaixo do esperado
+maior razão de pressão de Conduta entre conclusões acima do esperado
 ```
 
-## 1. Pergunta humana
+Esses leaderboards são fatos métricos em escopo explícito. Não são proxies de qualidade geral.
 
-> **Quais formas de explorar e ordenar aspectos específicos do mercado são úteis e honestas sem transformar uma métrica isolada em ranking geral?**
+## Leaderboards públicos fechados
 
-Regra central:
-
-> **um leaderboard numérico só existe quando a própria métrica define a ordem; conceitos compostos permanecem coleções semânticas ou não suportados.**
-
-Isso permite satisfazer curiosidade pública e intenções de busca sem reabrir a discussão já encerrada pelo `Ranking Eligibility Preflight` sobre uma ordem total 1–85 ou 1–157.
-
-## 2. Separação obrigatória de produtos
-
-### Avaliação individual
-
-Responde:
-
-> O que sabemos sobre esta seguradora?
-
-Usa o contrato semântico já fechado e preserva:
-
-- identidade correta;
-- elegibilidade de avaliação;
-- leitura geral;
-- capital;
-- liquidez;
-- contexto operacional;
-- Conduta;
-- persistência e tendência quando aplicáveis;
-- confiança e missingness.
-
-### Comparação lado a lado
-
-Responde:
-
-> Em que estas seguradoras diferem nos mesmos eixos?
-
-A comparação não precisa declarar vencedora. O contrato autoriza o backend a entregar até quatro cards como recomendação de UX, mas não cria `winner`, score composto ou ordem geral.
-
-### Exploração do mercado
-
-Responde perguntas factuais ou semânticas estreitas, como:
-
-- quais têm maior prêmio direto?;
-- quais apresentam maior PLA/CMR?;
-- quais apresentam maior ILT?;
-- quais têm pressão de reclamações confirmadamente abaixo ou acima do esperado?;
-- quais pertencem a uma coleção sem sinal financeiro central adverso?;
-- quais têm leitura conjunta favorável?;
-- quais mostram melhora recente em Conduta embora a pressão anual ainda seja adversa?
-
-## 3. Leaderboards numéricos autorizados
-
-O snapshot atual suporta cinco leaderboards públicos.
-
-### 3.1. Maiores por prêmio direto
+IDs estruturais:
 
 ```text
-id = largest_by_direct_premium
-candidatas = 132
-ordem = prêmio direto de seguros 12m, decrescente
+largest_by_direct_premium
+highest_pla_cmr_ratio
+highest_ilt
+lowest_conduct_pressure_ratio
+highest_conduct_pressure_ratio
 ```
 
-Semântica:
+Regras:
 
-> Maiores seguradoras por prêmio direto de seguros.
+- máximo de dez posições públicas;
+- empate por valor recebe a mesma posição (`competition rank`);
+- nenhum tiebreaker secundário de mérito é inventado;
+- missingness exclui a entidade daquela métrica, não a envia para o fim;
+- Conduta baixa só admite conclusão `below_expected_with_sufficient_evidence`;
+- Conduta alta só admite `above_expected_with_sufficient_evidence`;
+- `is_general_ranking = false` em todos os boards.
 
-Não significa:
+## Coleções semânticas
 
-- mais confiáveis;
-- melhores;
-- mais populares;
-- maior satisfação.
-
-Prêmio mede volume econômico.
-
-### 3.2. Maiores relações PLA/CMR
-
-```text
-id = highest_pla_cmr_ratio
-candidatas = 155
-ordem = PLA/CMR, decrescente
-```
-
-Semântica:
-
-> Maiores relações entre Patrimônio Líquido Ajustado e Capital Mínimo Requerido na competência observada.
-
-Não significa ranking financeiro geral. A avaliação Financeira continua sem recompensa ilimitada por magnitude acima do requisito.
-
-### 3.3. Maiores ILTs
+Coleções são **não ordenadas**. IDs estruturais atuais:
 
 ```text
-id = highest_ilt
-candidatas = 156
-ordem = ILT, decrescente
-```
-
-Semântica:
-
-> Maiores ILTs observados na competência de referência.
-
-Não significa selo de liquidez da SUSEP nem ranking financeiro geral. A referência 1,0 permanece paridade aritmética da metodologia, não limite prudencial oficial.
-
-### 3.4. Menor pressão relativa de reclamações
-
-```text
-id = lowest_conduct_pressure_ratio
-candidatas = 41
-escopo = below_expected_with_sufficient_evidence
-ordem = observed / expected, crescente
-```
-
-Somente conclusões anuais abaixo do esperado com evidência suficiente e denominador estável podem entrar.
-
-Razão menor:
-
-- não prova melhor atendimento;
-- não mede percentual de clientes insatisfeitos;
-- não vira bônus no ranking geral.
-
-### 3.5. Maior pressão relativa de reclamações
-
-```text
-id = highest_conduct_pressure_ratio
-candidatas = 26
-escopo = above_expected_with_sufficient_evidence
-ordem = observed / expected, decrescente
-```
-
-Somente conclusões anuais acima do esperado com evidência suficiente e denominador estável podem entrar.
-
-Razão maior descreve pressão proporcional no indicador. Não significa que todos os clientes terão problemas e não define sozinha a qualidade geral da seguradora.
-
-## 4. Política de empate
-
-Leaderboards não recebem desempate de mérito secundário.
-
-```text
-competition rank
-mesmo valor da métrica → mesma posição
-```
-
-Exemplo:
-
-```text
-1
-1
-3
-```
-
-O nome jurídico é usado somente para estabilidade de serialização quando valores são iguais; ele não altera a posição.
-
-O Top 10 significa **dez posições**, não necessariamente dez entidades. Se uma posição contém empate, todas as entidades empatadas naquela posição podem aparecer.
-
-## 5. Coleções semânticas autorizadas
-
-Coleções são explicitamente:
-
-```text
-ordered = false
-```
-
-Não existe 1º ou último lugar.
-
-Snapshot atual:
-
-```text
-financial_core_without_current_adverse_signal   120
-favorable_joint_assessment                       46
-favorable_with_below_expected_conduct             33
-conduct_improving_but_still_adverse                4
-conduct_persistent_above_expected                 20
-```
-
-### `financial_core_without_current_adverse_signal`
-
-Critério:
-
-```text
-core_financial_signal == core_indicators_without_current_shortfall
-```
-
-É a tradução segura mais próxima de uma intenção como “financeiro mais em dia”. Não é Top 10 porque os contratos não autorizam ordenar internamente esse grupo por mérito geral.
-
-### `favorable_joint_assessment`
-
-Critério:
-
-```text
-assessment_eligible == true
-AND public_class == favorable_reading
-```
-
-### `favorable_with_below_expected_conduct`
-
-Critério:
-
-```text
+financial_core_without_current_adverse_signal
 favorable_joint_assessment
-AND Conduct == below_expected_with_sufficient_evidence
+favorable_with_below_expected_conduct
+conduct_improving_but_still_adverse
+conduct_persistent_above_expected
 ```
 
-A coincidência de sinais favoráveis não é selo de excelência.
+A quantidade de membros varia com os dados. `ordered = false` e `is_general_ranking = false` são invariantes.
 
-### `conduct_improving_but_still_adverse`
+## Conceitos explicitamente não suportados
 
-Critério:
+O registry mantém bloqueados conceitos que exigiriam julgamento amplo sem contrato próprio, incluindo:
 
 ```text
-Conduct == above_expected_with_sufficient_evidence
-AND trend == improving_pressure
+mais_popular
+emergente_promissora
+consagrada_exemplar
+ranking_geral
 ```
 
-A melhora recente não apaga o estado anual adverso.
+A interface não deve transformar um leaderboard factual em “melhor”, “mais confiável” ou “mais recomendada”.
 
-### `conduct_persistent_above_expected`
+## População dinâmica
 
-Critério:
+Candidate counts, collection counts e nomes dos líderes são **diagnósticos de uma execução**.
 
-```text
-Conduct == above_expected_with_sufficient_evidence
-AND persistence == persistent_above_expected
-```
+O workflow valida apenas:
 
-Persistência qualifica o sinal adverso; não cria ranking de “piores seguradoras”.
+- IDs previstos pelo contrato;
+- counts entre zero e o universo;
+- entradas não excedem a população candidata;
+- posições públicas entre 1 e 10;
+- filtros semânticos de Conduta;
+- coleções não ordenadas;
+- explorer com o mesmo universo regulatório;
+- ausência de score geral;
+- ranking geral bloqueado.
 
-## 6. Conceitos pedidos, mas não sustentados pelo dado atual
+Nenhum nome de empresa é um teste de integridade.
 
-O artifact contém um `concept_registry` para impedir que o frontend transforme intenção de busca em conclusão metodológica inexistente.
+## Snapshot validado — 30/08/2026
 
-### “Mais popular”
-
-```text
-classification = not_supported
-safe_alternative = largest_by_direct_premium
-```
-
-Prêmio mede tamanho econômico; reclamações medem atrito observado. Nenhum dos dois mede popularidade.
-
-### “Emergente promissora”
-
-```text
-classification = not_supported
-```
-
-Exige contrato próprio para:
-
-- crescimento;
-- porte;
-- maturidade mínima;
-- janela histórica;
-- significado público de “promissora”.
-
-A v2 ainda não fechou um contrato longitudinal de crescimento de produção para essa finalidade.
-
-### “Consagrada exemplar”
-
-```text
-classification = not_supported
-safe_alternative = favorable_with_below_expected_conduct
-```
-
-“Consagrada” exige evidência de tenure/legado que a arquitetura atual não modela. “Exemplar” implicaria mérito geral além dos contratos fechados.
-
-### “Mais reclamadas em volume absoluto”
-
-```text
-classification = context_only
-```
-
-O número bruto permanece disponível no `insurer_explorer.json`, mas não é publicado como ranking de qualidade porque tamanho da operação influencia fortemente o volume absoluto.
-
-### “Ranking geral”
-
-```text
-classification = not_supported
-ranking_eligible = 0
-```
-
-O `Ranking Eligibility Preflight` continua autoritativo: cobertura e ordem total permanecem insuficientes.
-
-## 7. Pacote JSON público
-
-O builder gera um artifact metodológico e um pacote destinado à camada PHP.
-
-```text
-data/derived/v2/exploratory_leaderboards_contract.json
-
-data/derived/v2/public/
-├── insurer_explorer.json
-├── explore_index.json
-├── leaderboards/
-│   ├── largest_by_direct_premium.json
-│   ├── highest_pla_cmr_ratio.json
-│   ├── highest_ilt.json
-│   ├── lowest_conduct_pressure_ratio.json
-│   └── highest_conduct_pressure_ratio.json
-└── collections/
-    ├── financial_core_without_current_adverse_signal.json
-    ├── favorable_joint_assessment.json
-    ├── favorable_with_below_expected_conduct.json
-    ├── conduct_improving_but_still_adverse.json
-    └── conduct_persistent_above_expected.json
-```
-
-## 8. `insurer_explorer.json`
-
-Preserva as 157 seguradoras e entrega dados semanticamente prontos para busca e comparação.
-
-Cada entidade pode carregar:
-
-```text
-identity
-assessment
-financial
-conduct
-market_context
-explore_memberships
-```
-
-A camada pública recebe, entre outros:
-
-- nome jurídico e display name observado;
-- `assessment_eligible`;
-- classe, título, resumo e limites da avaliação;
-- PLA/CMR e estado de capital;
-- ILT e estado de liquidez;
-- contexto operacional;
-- confiança financeira;
-- conclusão de Conduta;
-- observed / expected quando comparável;
-- meses comparáveis;
-- persistência;
-- tendência;
-- prêmio direto 12m;
-- reclamações observadas 12m;
-- memberships em leaderboards e coleções.
-
-Entidades sem avaliação conjunta continuam no explorer. Missingness não vira posição inferior.
-
-## 9. Papel do PHP no HostGator
-
-Regra formal:
-
-```text
-php_may_recompute_methodology = false
-```
-
-O PHP deve:
-
-- carregar JSON;
-- localizar a seguradora;
-- filtrar/buscar;
-- montar cards;
-- apresentar os mesmos eixos lado a lado;
-- renderizar leaderboards e coleções;
-- exibir períodos, fontes, labels e caveats já definidos.
-
-O PHP não deve:
-
-- recalcular PLA/CMR;
-- recalcular ILT;
-- recalcular observed/expected;
-- inventar score;
-- converter coleções em ranking;
-- criar desempate secundário;
-- declarar vencedor geral;
-- reinterpretar missingness.
-
-## 10. Guardrails executáveis
-
-O builder e os testes impedem:
-
-- `ranking_eligible > 0`;
-- abertura silenciosa do ranking geral;
-- `overall_score`, `financial_score` ou `conduct_score`;
-- leaderboard sem métrica declarada;
-- uso de estado inconclusivo nos leaderboards de Conduta;
-- missingness como bottom rank;
-- desempate de mérito secundário;
-- reclassificação de leaderboard métrico como “melhor seguradora”;
-- síntese automática de “popular”, “promissora”, “consagrada exemplar” ou “ranking geral”;
-- recálculo metodológico no PHP.
-
-## 11. Resultado validado do snapshot atual
-
-```text
-universo regulatório              157
-assessment_eligible                85
-assessment_not_eligible            72
-ranking_eligible                     0
-
-leaderboards numéricos               5
-coleções semânticas                   5
-arquivos públicos gerados            12
-```
-
-O contrato abre:
-
-```text
-exploratory_leaderboards_gate_opened = true
-semantic_comparator_ready_for_data_contract = true
-metric_specific_public_leaderboards_ready = true
-```
-
-E mantém:
-
-```text
-general_ranking_gate_opened = false
-ranking_eligible = 0
-general_ranking_remains_blocked = true
-```
-
-### Validação real
+Run:
 
 ```text
 V2 Exploratory Leaderboards Contract
-run                     33040347388
-job                     98412282069
-Ruff                    verde
-testes                  7/7
-build real              verde
-boundaries              verdes
-artifact                9633622703
-SHA256 ZIP              ebedc4ea8d10959ab3dbb01000d923e4f57d1cb2db960dfbec7ff54a93598905
-arquivos públicos       12
+run 33323343770
+head 35e509d31de68a9311ede57ac245de6b7d3c0e11
+artifact 9735524497
+SHA256 ZIP 5c9ade70aa2b51aecf581f0983c81a0471ce65d566af30051ed6285b046d665b
 ```
 
-A validação acima foi executada contra os artifacts reais da branch. Alterações posteriores apenas de governança/documentação não mudam os contratos nem os dados derivados; o workflow oficial inclui `README.md` e este documento em seus gatilhos de validação.
-
-## 12. Próximo estágio de produto
-
-Com este contrato fechado, a próxima etapa deixa de ser escolha de score.
-
-Ela passa a ser:
+População:
 
 ```text
-public_api_json_packaging_and_frontend_php_integration
+regulatory_universe       156
+assessment_eligible        85
+assessment_not_eligible    71
+ranking_eligible             0
 ```
 
-Ou seja:
+Candidates observados:
 
-1. estabilizar os JSONs públicos como interface entre backend e host;
-2. definir versionamento/cache/publicação;
-3. construir a busca por seguradora;
-4. construir cards de avaliação;
-5. construir seleção de 2–4 seguradoras para comparação;
-6. montar as páginas/abas de exploração e Top 10;
-7. preservar os caveats metodológicos no frontend.
+```text
+largest_by_direct_premium          131
+highest_pla_cmr_ratio              153
+highest_ilt                        154
+lowest_conduct_pressure_ratio       41
+highest_conduct_pressure_ratio      26
+```
 
-O ranking geral continua fora desse caminho até que um contrato futuro, se desejado, resolva explicitamente escopo e ordenação.
+Coleções observadas:
+
+```text
+financial_core_without_current_adverse_signal 123
+favorable_joint_assessment                     48
+favorable_with_below_expected_conduct          35
+conduct_improving_but_still_adverse             4
+conduct_persistent_above_expected               20
+```
+
+Cada leaderboard gerou dez linhas públicas na execução atual.
+
+Os líderes atuais podem ser exibidos pelo próprio artifact, mas **não são contrato**. Por exemplo, uma mudança legítima de dados pode trocar o primeiro lugar sem que nenhum teste de metodologia deva falhar.
+
+Essa distinção corrige o padrão anterior, no qual nomes de líderes e counts como 132/155/156 eram tratados como boundaries. Após a exclusão regulatória das SSPEs e atualização dos artifacts, os candidates passaram naturalmente para 131/153/154 em três métricas sem mudança da regra de publicação.
+
+## Public outputs
+
+```text
+data/derived/v2/public/insurer_explorer.json
+data/derived/v2/public/explore_index.json
+data/derived/v2/public/leaderboards/*.json
+data/derived/v2/public/collections/*.json
+```
+
+O explorer é dataset de comparação das seguradoras ordinárias, não catálogo completo de todas as identidades pesquisáveis.
+
+## Implementação
+
+```text
+api/v2/build_exploratory_leaderboards_contract.py
+tests/test_v2_exploratory_leaderboards_contract.py
+.github/workflows/v2-exploratory-leaderboards-contract.yml
+```
+
+## Limites públicos obrigatórios
+
+- prêmio mede volume econômico, não qualidade;
+- PLA/CMR e ILT respondem perguntas financeiras específicas, não qualidade global;
+- razão de Conduta depende de comparabilidade e não prova causalidade de atendimento;
+- uma empresa ausente de um board por missingness não ocupa automaticamente posição inferior;
+- nenhum leaderboard unidimensional deve ser apresentado como ranking geral de confiabilidade.
