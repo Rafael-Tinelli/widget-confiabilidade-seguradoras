@@ -4,11 +4,10 @@ import hashlib
 import json
 import os
 import re
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterable, Mapping
-
 
 _SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -57,7 +56,7 @@ class BuildContext:
         env: Mapping[str, str] | None = None,
         *,
         generated_at: str | None = None,
-    ) -> "BuildContext":
+    ) -> BuildContext:
         values = dict(os.environ if env is None else env)
         source_head_sha = values.get("V2_SOURCE_HEAD_SHA") or values.get("GITHUB_SHA") or ""
         workflow_run_id = values.get("GITHUB_RUN_ID") or "local"
@@ -110,7 +109,7 @@ class SourceLineage:
     snapshot_path: str | None = None
 
     @classmethod
-    def from_mapping(cls, value: Mapping[str, object]) -> "SourceLineage":
+    def from_mapping(cls, value: Mapping[str, object]) -> SourceLineage:
         source = cls(
             source_id=str(value.get("source_id") or ""),
             source_url=str(value.get("source_url") or ""),
