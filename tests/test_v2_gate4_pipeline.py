@@ -34,9 +34,9 @@ def test_gate4_pipeline_is_acyclic_and_outputs_are_unique():
 def test_financial_chain_is_topologically_ordered():
     position = _positions()
 
-    assert position["source_snapshot"] < position["financial_evidence"]
     assert position["source_snapshot"] < position["lifecycle"]
     assert position["lifecycle"] < position["eligibility"]
+    assert position["eligibility"] < position["financial_evidence"]
     assert position["eligibility"] < position["liquidity"]
     assert position["eligibility"] < position["operating"]
     assert position["financial_evidence"] < position["financial_closure"]
@@ -79,7 +79,6 @@ def test_current_blockers_are_explicit_instead_of_silently_published():
 
     assert blockers == {
         "source_snapshot",
-        "financial_evidence",
         "consumer_conduct",
         "lifecycle",
     }
@@ -161,3 +160,16 @@ def test_pipeline_keeps_ranking_blocked_methodologically_not_operationally():
     )
     assert ranking.evergreen_ready is True
     assert "ranking_preflight" not in publication_blockers()
+
+
+def test_financial_evidence_uses_materialized_gate4_inputs():
+    mapping = stage_map(STAGES)
+    financial = mapping["financial_evidence"]
+
+    assert financial.kind == "derive"
+    assert financial.evergreen_ready is True
+    assert financial.dependencies == ("source_snapshot", "eligibility")
+    command = financial.commands[0]
+    assert "--eligibility-input" in command
+    assert "--ses-zip" in command
+    assert "financial_evidence" not in publication_blockers()
