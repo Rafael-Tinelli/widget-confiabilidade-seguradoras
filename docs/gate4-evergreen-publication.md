@@ -108,6 +108,16 @@ build_lifecycle_relationship_inventory
 
 Assim, Eligibility deixa de reconstruir Classification/Lifecycle e de repetir chamadas de fonte. A regra de elegibilidade não mudou; apenas a proveniência do input passa a ser explícita e reutilizável dentro da mesma geração.
 
+### Ranking Stage 2 sem alias operacional
+
+O Ranking Preflight passou a consumir diretamente o artifact canônico:
+
+```text
+cross_pillar_architecture_experiment.json
+```
+
+O alias legado `cross_pillar_architecture_stage_2.json` deixou de ser necessário no caminho Gate 4. O ranking continua metodologicamente bloqueado (`ranking_eligible = 0`); o que foi removido foi apenas o blocker operacional de nome de arquivo.
+
 ## 6. Blockers atuais
 
 A publicação permanece propositalmente fechada enquanto estes stages ainda não satisfazem o contrato evergreen:
@@ -116,7 +126,6 @@ A publicação permanece propositalmente fechada enquanto estes stages ainda nã
 source_snapshot
 financial_evidence
 consumer_conduct
-ranking_preflight
 lifecycle
 ```
 
@@ -133,10 +142,6 @@ Hoje ainda combinam, em graus diferentes, aquisição de fonte e derivação. Pr
 ### `consumer_conduct`
 
 Ainda combina atualização Consumer.gov, resolução Receita e derivação de Conduta. Também precisa de política explícita para indisponibilidade das fontes oficiais.
-
-### `ranking_preflight`
-
-Existe dívida operacional de nome do Stage 2: o builder canônico gera `cross_pillar_architecture_experiment.json`, enquanto o caminho legado de Ranking materializa um alias `cross_pillar_architecture_stage_2.json`. O build único não deve depender desse renomeio entre workflows.
 
 Enquanto qualquer blocker permanecer, o contrato retorna:
 
@@ -171,28 +176,40 @@ distribution_manifest.json
 
 O manifest não inclui seu próprio hash na lista, evitando recursão.
 
-## 8. Publicação no HostGator
+## 8. Produção atual e deploy v2
 
-Arquitetura-alvo:
+A infraestrutura atualmente observada no HostGator pertence ao **widget v1 em `main`** e não é o contrato de deploy da v2.
+
+O cron legado executa `/home1/sanid210/scripts/update-widget.sh`, que:
+
+```text
+REF=main
+→ baixa api/v1/insurers.json
+→ baixa widget-ui/dist/assets/widget.css
+→ baixa widget-ui/dist/assets/widget.js
+→ faz backup desses três arquivos
+→ substitui esses três destinos
+```
+
+Esse mecanismo deve permanecer intocado durante o desenvolvimento do Gate 4 para não afetar a produção atual.
+
+A v2 terá rotina própria. Não se assume que cron, diretórios de backup ou arquivos `widget.js/widget.css` atuais serão reaproveitados. O desenho do novo cron/deploy só será fechado depois que o artifact v2 único e o `distribution_manifest.json` estiverem estáveis.
+
+Arquitetura-alvo da v2:
 
 ```text
 GitHub Actions
 → build completo em uma geração
 → validação de contracts + hashes
-→ artifact único
-→ HostGator baixa nova versão para diretório temporário
-→ verifica distribution_manifest.json
-→ troca atomicamente a versão ativa
-→ conserva a versão anterior para rollback
+→ artifact v2 único
+→ rotina v2 de instalação no HostGator
+→ staging em diretório temporário/versionado
+→ verificação de distribution_manifest.json
+→ troca atômica da geração ativa
+→ conservação da geração anterior para rollback
 ```
 
-O diretório público previsto continua:
-
-```text
-/ranking-seguradoras/data/v2/public/
-```
-
-O servidor não recalcula metodologia e não decide se o pacote está completo por contagem informal de arquivos.
+A distribuição pública observada hoje em `/ranking-seguradoras/data/v2/public/` é tratada como instalação de desenvolvimento existente, não como prova de que o mecanismo v1 de atualização seja adequado para a v2.
 
 ## 9. Migração dos workflows existentes
 
@@ -205,8 +222,10 @@ A migração deve ocorrer em ordem:
 3. eliminar aliases operacionais e `latest successful` do caminho de distribuição;
 4. executar o DAG inteiro em um único workspace;
 5. produzir e validar o artifact único;
-6. testar instalação atômica/rollback no lado HostGator;
-7. somente então habilitar `schedule` semanal.
+6. desenhar e testar a rotina v2 de instalação atômica/rollback no HostGator;
+7. somente então criar/habilitar o cron v2 apropriado.
+
+O cron v1 existente não deve ser alterado como parte desses passos até o cutover deliberado.
 
 ## 10. Workflow de contrato
 
@@ -240,8 +259,8 @@ E uma execução completa demonstrar simultaneamente:
 - todos os contratos dos Gates 1–3 preservados;
 - `ranking_eligible = 0` salvo decisão metodológica futura independente;
 - pacote público completo e hash-verificado;
-- instalação atômica testada com rollback;
+- rotina v2 de instalação atômica testada com rollback;
 - execução manual reproduzível;
-- somente após isso, execução semanal habilitada.
+- somente após isso, cron v2 habilitado.
 
 Até esse fechamento, PR #1 permanece Draft e `main`/produção permanecem intocados.
