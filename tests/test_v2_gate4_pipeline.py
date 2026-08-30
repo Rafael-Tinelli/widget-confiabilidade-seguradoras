@@ -80,7 +80,6 @@ def test_current_blockers_are_explicit_instead_of_silently_published():
     assert blockers == {
         "source_snapshot",
         "consumer_conduct",
-        "lifecycle",
     }
     contract = pipeline_contract()
     assert contract["publication_ready"] is False
@@ -173,3 +172,17 @@ def test_financial_evidence_uses_materialized_gate4_inputs():
     assert "--eligibility-input" in command
     assert "--ses-zip" in command
     assert "financial_evidence" not in publication_blockers()
+
+
+def test_lifecycle_uses_materialized_gate4_inputs():
+    mapping = stage_map(STAGES)
+    lifecycle = mapping["lifecycle"]
+
+    assert lifecycle.kind == "derive"
+    assert lifecycle.evergreen_ready is True
+    assert lifecycle.dependencies == ("source_snapshot",)
+    command = lifecycle.commands[0]
+    assert "--classification-input" in command
+    assert "--receita-lifecycle-input" in command
+    assert "--ses-zip" in command
+    assert "lifecycle" not in publication_blockers()
