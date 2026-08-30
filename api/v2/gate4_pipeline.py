@@ -197,7 +197,6 @@ STAGES: tuple[PipelineStage, ...] = (
         ),
         commands=(_module("api.v2.build_ranking_eligibility_preflight"),),
         outputs=("data/derived/v2/ranking_eligibility_preflight.json",),
-        evergreen_ready=False,
     ),
     PipelineStage(
         stage_id="leaderboards",
