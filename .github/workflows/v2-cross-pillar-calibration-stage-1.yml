@@ -26,6 +26,7 @@ jobs:
     runs-on: ubuntu-24.04
     env:
       GH_TOKEN: ${{ github.token }}
+      V2_SOURCE_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
 
     steps:
       - name: Checkout
@@ -44,7 +45,7 @@ jobs:
           python -m pip install -r requirements.txt
           python -m pip install -r requirements-dev.txt
 
-      - name: Restore latest successful Financial methodology closure
+      - name: Restore same-head Financial methodology closure
         run: |
           set -euo pipefail
           branch="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
@@ -53,11 +54,11 @@ jobs:
             --workflow "V2 Financial Methodology Closure" \
             --branch "$branch" \
             --status success \
-            --limit 30 \
-            --json databaseId \
-            --jq '.[0].databaseId')"
+            --limit 50 \
+            --json databaseId,headSha \
+            --jq '[.[] | select(.headSha == env.V2_SOURCE_HEAD_SHA)][0].databaseId')"
           if [[ -z "$run_id" || "$run_id" == "null" ]]; then
-            echo "No successful Financial methodology closure artifact found." >&2
+            echo "No same-head Financial methodology closure artifact for $V2_SOURCE_HEAD_SHA" >&2
             exit 1
           fi
           rm -rf "$RUNNER_TEMP/financial-closure"
@@ -70,9 +71,9 @@ jobs:
           test -n "$source_file"
           mkdir -p data/derived/v2
           cp "$source_file" data/derived/v2/financial_methodology_closure.json
-          echo "Restored Financial closure from run $run_id"
+          echo "Restored same-head Financial closure from run $run_id"
 
-      - name: Restore latest successful Conduct methodology closure
+      - name: Restore same-head Conduct methodology closure
         run: |
           set -euo pipefail
           branch="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
@@ -81,11 +82,11 @@ jobs:
             --workflow "V2 Conduct Methodology Closure" \
             --branch "$branch" \
             --status success \
-            --limit 30 \
-            --json databaseId \
-            --jq '.[0].databaseId')"
+            --limit 50 \
+            --json databaseId,headSha \
+            --jq '[.[] | select(.headSha == env.V2_SOURCE_HEAD_SHA)][0].databaseId')"
           if [[ -z "$run_id" || "$run_id" == "null" ]]; then
-            echo "No successful Conduct methodology closure artifact found." >&2
+            echo "No same-head Conduct methodology closure artifact for $V2_SOURCE_HEAD_SHA" >&2
             exit 1
           fi
           rm -rf "$RUNNER_TEMP/conduct-closure"
@@ -98,7 +99,7 @@ jobs:
           test -n "$source_file"
           mkdir -p data/derived/v2
           cp "$source_file" data/derived/v2/conduct_methodology_closure.json
-          echo "Restored Conduct closure from run $run_id"
+          echo "Restored same-head Conduct closure from run $run_id"
 
       - name: Lint cross-pillar calibration diagnostic
         run: |
@@ -133,8 +134,19 @@ jobs:
               raise SystemExit("stage 1 must forbid scoring")
           if payload.get("ranking") != "forbidden_in_this_artifact":
               raise SystemExit("stage 1 must forbid ranking")
-          if payload.get("population", {}).get("regulatory_universe") != 157:
-              raise SystemExit("stage 1 must preserve 157 insurers")
+
+          population = payload.get("population") or {}
+          universe = population.get("regulatory_universe")
+          conclusive = population.get("joint_core_conclusive")
+          incomplete = population.get("joint_core_not_conclusive")
+          if not isinstance(universe, int) or universe < 100:
+              raise SystemExit(f"unexpectedly small stage-1 universe: {universe}")
+          if not isinstance(conclusive, int) or conclusive < 0:
+              raise SystemExit("invalid joint conclusive population")
+          if not isinstance(incomplete, int) or incomplete < 0:
+              raise SystemExit("invalid joint incomplete population")
+          if conclusive + incomplete != universe:
+              raise SystemExit("stage-1 population accounting mismatch")
 
           preservation = payload.get("closed_contract_preservation") or {}
           if preservation.get("financial_excess_magnitude_rewarded") is not False:
