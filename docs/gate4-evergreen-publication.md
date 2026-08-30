@@ -72,8 +72,9 @@ O estado `stale` não significa automaticamente que o dado é aceitável para qu
 
 ```text
 fontes
-→ eligibility / evidência financeira / lifecycle
-→ liquidez / operação / Conduta
+→ lifecycle
+→ eligibility
+→ evidência financeira / liquidez / operação / Conduta
 → closures Financeiro e Conduta
 → cross-pillar
 → contrato semântico
@@ -95,13 +96,24 @@ O DAG é testado para:
 
 O caminho evergreen não deve usar `gh run list` para procurar outputs intermediários. Os builders executam no mesmo workspace e consomem arquivos produzidos anteriormente na própria geração.
 
+### Eligibility já separado da aquisição
+
+O modo legado de `build_eligibility_inventory.py` continua disponível para os workflows atuais. O Gate 4, porém, usa:
+
+```text
+build_lifecycle_relationship_inventory
+→ entity_lifecycle_relationship_inventory.json
+→ build_eligibility_inventory --lifecycle-input <arquivo>
+```
+
+Assim, Eligibility deixa de reconstruir Classification/Lifecycle e de repetir chamadas de fonte. A regra de elegibilidade não mudou; apenas a proveniência do input passa a ser explícita e reutilizável dentro da mesma geração.
+
 ## 6. Blockers atuais
 
 A publicação permanece propositalmente fechada enquanto estes stages ainda não satisfazem o contrato evergreen:
 
 ```text
 source_snapshot
-eligibility
 financial_evidence
 consumer_conduct
 ranking_preflight
@@ -114,7 +126,7 @@ Razões:
 
 A lineage e os estados já estão modelados, mas ainda falta integrar todas as aquisições oficiais a um snapshot transversal materializado antes das derivações.
 
-### `eligibility`, `financial_evidence` e `lifecycle`
+### `financial_evidence` e `lifecycle`
 
 Hoje ainda combinam, em graus diferentes, aquisição de fonte e derivação. Precisam consumir o snapshot da geração em vez de abrir conexões oficiais independentes durante o próprio builder.
 
