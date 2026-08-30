@@ -1,8 +1,14 @@
+import json
+import sys
+from pathlib import Path
+
+import api.v2.build_eligibility_inventory as eligibility_builder
 from api.v2.build_eligibility_inventory import build_eligibility_inventory
 
 
 def _payload():
     return {
+        "artifact": "v2_entity_lifecycle_relationship_inventory",
         "meta": {"entities_total": 3},
         "unresolved": {},
         "groups": [],
@@ -63,3 +69,38 @@ def test_builder_materializes_only_regulatory_gate_as_eligible():
     ]
     assert [entity["entity_id"] for entity in eligible] == ["fip:000001"]
     assert eligible[0]["eligibility"]["comparison_cohort"] is None
+
+
+def test_cli_lifecycle_input_does_not_refetch_sources(
+    tmp_path: Path,
+    monkeypatch,
+):
+    lifecycle = tmp_path / "lifecycle.json"
+    output = tmp_path / "eligibility.json"
+    lifecycle.write_text(json.dumps(_payload()), encoding="utf-8")
+
+    def forbidden_legacy_fetch():
+        raise AssertionError("Gate 4 lifecycle-input path must not fetch sources")
+
+    monkeypatch.setattr(
+        eligibility_builder,
+        "_build_legacy_lifecycle_from_sources",
+        forbidden_legacy_fetch,
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "build_eligibility_inventory",
+            "--lifecycle-input",
+            str(lifecycle),
+            "--output",
+            str(output),
+        ],
+    )
+
+    eligibility_builder.main()
+
+    payload = json.loads(output.read_text(encoding="utf-8"))
+    assert payload["artifact"] == "v2_entity_eligibility_inventory"
+    assert payload["meta"]["regulatory_universe_eligible_count"] == 1
