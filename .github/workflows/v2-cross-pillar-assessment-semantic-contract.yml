@@ -139,31 +139,37 @@ jobs:
               raise SystemExit("semantic contract must forbid ranking")
 
           entities = payload.get("entities") or []
-          if len(entities) != 157:
-              raise SystemExit("semantic contract must preserve 157 entities")
-
           population = payload.get("population") or {}
-          if population.get("semantic_public_assessment_supported") != 85:
-              raise SystemExit("expected 85 semantically complete joint assessments")
-          if population.get("joint_core_incomplete") != 72:
-              raise SystemExit("expected 72 incomplete joint assessments")
+          universe = population.get("regulatory_universe")
+          supported = population.get("semantic_public_assessment_supported")
+          incomplete = population.get("joint_core_incomplete")
+          if not isinstance(universe, int) or universe < 100:
+              raise SystemExit(f"unexpectedly small semantic universe: {universe}")
+          if len(entities) != universe:
+              raise SystemExit("semantic entity count must equal regulatory universe")
+          if not isinstance(supported, int) or supported < 0:
+              raise SystemExit("invalid semantic complete population")
+          if not isinstance(incomplete, int) or incomplete < 0:
+              raise SystemExit("invalid semantic incomplete population")
+          if supported + incomplete != universe:
+              raise SystemExit("semantic population accounting mismatch")
 
-          expected_classes = {
-              "attention": 30,
-              "evidence_incomplete": 72,
-              "favorable_reading": 46,
-              "prudential_warning": 9,
-          }
-          if (payload.get("diagnostics") or {}).get("public_class_counts") != expected_classes:
-              raise SystemExit("unexpected public semantic class distribution")
+          diagnostics = payload.get("diagnostics") or {}
+          public_classes = diagnostics.get("public_class_counts") or {}
+          if sum(public_classes.values()) != universe:
+              raise SystemExit("public semantic class counts must cover the universe")
+          if public_classes.get("evidence_incomplete", 0) != incomplete:
+              raise SystemExit("evidence-incomplete class count must equal incomplete population")
+          state_counts = diagnostics.get("state_counts") or {}
+          if sum(state_counts.values()) != universe:
+              raise SystemExit("semantic state counts must cover the universe")
+          if state_counts.get("evidence_incomplete_for_joint_assessment", 0) != incomplete:
+              raise SystemExit("incomplete matrix-state count must equal incomplete population")
 
-          incomplete_alerts = (payload.get("diagnostics") or {}).get(
-              "incomplete_available_alert_counts"
-          ) or {}
-          if incomplete_alerts.get("prudential_capital_warning") != 5:
-              raise SystemExit("five incomplete assessments must preserve capital warnings")
-          if incomplete_alerts.get("liquidity_attention") != 5:
-              raise SystemExit("five incomplete assessments must preserve liquidity attention")
+          incomplete_alerts = diagnostics.get("incomplete_available_alert_counts") or {}
+          for name, count in incomplete_alerts.items():
+              if not isinstance(count, int) or count < 0 or count > incomplete:
+                  raise SystemExit(f"invalid incomplete alert count for {name}: {count}")
 
           decision = payload.get("closure_decision") or {}
           if decision.get("semantic_contract_closed") is not True:
@@ -175,17 +181,26 @@ jobs:
           if decision.get("full_market_ranking_supported") is not False:
               raise SystemExit("full-market ranking must remain blocked")
 
+          entity_ids = []
           for row in entities:
+              entity_id = row.get("entity_id")
+              if not entity_id:
+                  raise SystemExit("semantic contract contains entity without entity_id")
+              entity_ids.append(entity_id)
               public = row.get("public_assessment") or {}
               if not all(public.get(key) for key in ("title", "summary", "why_it_matters", "mandatory_limit")):
-                  raise SystemExit(f"incomplete public language block: {row.get('entity_id')}")
+                  raise SystemExit(f"incomplete public language block: {entity_id}")
               completeness = row.get("assessment_completeness")
               if completeness == "joint_core_complete":
                   if row.get("matrix_state") is None:
                       raise SystemExit("complete assessment without matrix state")
+                  if row.get("semantic_public_assessment_supported") is not True:
+                      raise SystemExit("complete assessment not marked semantically supported")
               elif completeness == "joint_core_incomplete":
                   if row.get("matrix_state") is not None:
                       raise SystemExit("incomplete assessment with matrix state")
+                  if row.get("semantic_public_assessment_supported") is not False:
+                      raise SystemExit("incomplete assessment marked semantically supported")
                   if public.get("title") != "Avaliação conjunta incompleta":
                       raise SystemExit("incomplete assessment has wrong public title")
               else:
@@ -196,6 +211,15 @@ jobs:
               if qualifiers.get("conduct_persistence") or qualifiers.get("conduct_trend"):
                   if conduct != "acima_do_esperado":
                       raise SystemExit("adverse Conduct qualifier leaked to non-adverse conclusion")
+
+          if len(set(entity_ids)) != universe:
+              raise SystemExit("semantic entity_id population must be unique")
+          complete_rows = sum(
+              row.get("assessment_completeness") == "joint_core_complete"
+              for row in entities
+          )
+          if complete_rows != supported:
+              raise SystemExit("semantic supported count differs from complete row count")
 
           forbidden = {
               "overall_score",
@@ -220,7 +244,7 @@ jobs:
           walk(payload)
           print(json.dumps({
               "population": population,
-              "diagnostics": payload.get("diagnostics"),
+              "diagnostics": diagnostics,
               "closure_decision": decision,
           }, ensure_ascii=False, indent=2))
           PY

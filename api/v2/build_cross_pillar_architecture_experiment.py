@@ -10,7 +10,8 @@ STAGE1_PATH = Path("data/derived/v2/cross_pillar_calibration_diagnostic.json")
 COVERAGE_PATH = Path("data/derived/v2/cross_pillar_coverage_audit.json")
 OUTPUT_PATH = Path("data/derived/v2/cross_pillar_architecture_experiment.json")
 
-VERSION = "2.0-draft-cross-pillar-architecture-stage-2-1"
+VERSION = "2.0-draft-cross-pillar-architecture-stage-2-2"
+MINIMUM_UNIVERSE_SANITY = 100
 
 STATE_BY_SIGNATURE = {
     "F0|C0": "no_current_core_adverse_signal",
@@ -144,9 +145,7 @@ def _pair_relation(left: int, right: int) -> int:
 
 def _tradeoff_breakdown(rows: list[dict[str, Any]]) -> dict[str, Any]:
     coordinate_counts = Counter(
-        tuple(_coordinate(row))
-        for row in rows
-        if _coordinate(row) is not None
+        tuple(_coordinate(row)) for row in rows if _coordinate(row) is not None
     )
     tradeoff_coordinate_pairs = [
         ((0, 1), (1, 0)),
@@ -170,7 +169,11 @@ def _tradeoff_breakdown(rows: list[dict[str, Any]]) -> dict[str, Any]:
                 _scenario_rank(right, scenario),
             )
             scenario_relations[scenario] = (
-                "left_preferred" if relation < 0 else "right_preferred" if relation > 0 else "tied"
+                "left_preferred"
+                if relation < 0
+                else "right_preferred"
+                if relation > 0
+                else "tied"
             )
         details.append(
             {
@@ -251,8 +254,41 @@ def build_architecture_experiment(
         raise ValueError("coverage scoring must remain forbidden")
 
     rows = stage1.get("entities") or []
-    if len(rows) != 157:
-        raise ValueError("Stage 2 requires 157 entities")
+    stage1_population = stage1.get("population") or {}
+    regulatory_universe = int(stage1_population.get("regulatory_universe") or 0)
+    if regulatory_universe < MINIMUM_UNIVERSE_SANITY:
+        raise ValueError(
+            f"unexpectedly small Stage 2 regulatory universe: {regulatory_universe}"
+        )
+    if len(rows) != regulatory_universe:
+        raise ValueError(
+            "Stage 1 entity rows do not match its regulatory universe: "
+            f"rows={len(rows)} universe={regulatory_universe}"
+        )
+
+    coverage_universe = int((coverage.get("universe") or {}).get("entities") or 0)
+    if coverage_universe != regulatory_universe:
+        raise ValueError(
+            "Stage 1 and coverage regulatory universes differ: "
+            f"stage1={regulatory_universe} coverage={coverage_universe}"
+        )
+
+    joint_coverage = (coverage.get("coverage") or {}).get("joint_core_conclusive") or {}
+    incomplete_coverage = (coverage.get("coverage") or {}).get("joint_core_incomplete") or {}
+    joint_count = int(joint_coverage.get("entity_count") or 0)
+    incomplete_count = int(incomplete_coverage.get("entity_count") or 0)
+    if joint_count + incomplete_count != regulatory_universe:
+        raise ValueError("coverage population accounting does not match regulatory universe")
+    if joint_count != int(stage1_population.get("joint_core_conclusive") or 0):
+        raise ValueError("Stage 1 and coverage jointly conclusive counts differ")
+    if incomplete_count != int(stage1_population.get("joint_core_not_conclusive") or 0):
+        raise ValueError("Stage 1 and coverage jointly incomplete counts differ")
+
+    entity_ids = [str(row.get("entity_id") or "") for row in rows]
+    if any(not entity_id for entity_id in entity_ids):
+        raise ValueError("Stage 1 contains entity without entity_id")
+    if len(set(entity_ids)) != regulatory_universe:
+        raise ValueError("Stage 1 entity_id population is not unique")
 
     matrix_counts = Counter()
     qualifier_counts = Counter()
@@ -297,12 +333,8 @@ def build_architecture_experiment(
         for row in conduct_adverse
     )
     adverse_trend = Counter(
-        row["qualifiers"]["conduct_trend"] or "missing"
-        for row in conduct_adverse
+        row["qualifiers"]["conduct_trend"] or "missing" for row in conduct_adverse
     )
-
-    joint_coverage = (coverage.get("coverage") or {}).get("joint_core_conclusive") or {}
-    incomplete_coverage = (coverage.get("coverage") or {}).get("joint_core_incomplete") or {}
 
     tradeoffs = _tradeoff_breakdown(rows)
     scenario_comparison = _scenario_comparison(rows)
@@ -314,6 +346,11 @@ def build_architecture_experiment(
         "status": "cross_pillar_architecture_stage_2_experiment",
         "scoring": "forbidden_in_this_artifact",
         "ranking": "forbidden_in_this_artifact",
+        "population": {
+            "regulatory_universe": regulatory_universe,
+            "joint_core_conclusive": joint_count,
+            "joint_core_incomplete": incomplete_count,
+        },
         "human_model": {
             "primary_question": (
                 "Qual arquitetura traduz melhor os sinais conjuntos sem inventar compensacao, "
@@ -356,12 +393,12 @@ def build_architecture_experiment(
             ),
         },
         "coverage_constraint": {
-            "joint_conclusive_entities": int(joint_coverage.get("entity_count") or 0),
+            "joint_conclusive_entities": joint_count,
             "joint_conclusive_positive_premium_share": joint_coverage.get(
                 "positive_premium_share"
             ),
             "joint_conclusive_complaint_share": joint_coverage.get("complaint_share"),
-            "joint_incomplete_entities": int(incomplete_coverage.get("entity_count") or 0),
+            "joint_incomplete_entities": incomplete_count,
             "full_market_ranking_supported": False,
         },
         "architecture_decision": {
@@ -407,6 +444,7 @@ def main() -> None:
                 "artifact": payload["artifact"],
                 "version": payload["version"],
                 "status": payload["status"],
+                "population": payload["population"],
                 "matrix_architecture": payload["matrix_architecture"],
                 "normative_tradeoffs": payload["normative_tradeoffs"],
                 "scenario_comparison": payload["scenario_comparison"],

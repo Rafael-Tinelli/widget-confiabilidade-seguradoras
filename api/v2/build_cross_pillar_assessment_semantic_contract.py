@@ -10,7 +10,8 @@ STAGE1_PATH = Path("data/derived/v2/cross_pillar_calibration_diagnostic.json")
 STAGE2_PATH = Path("data/derived/v2/cross_pillar_architecture_experiment.json")
 OUTPUT_PATH = Path("data/derived/v2/cross_pillar_assessment_semantic_contract.json")
 
-VERSION = "2.0-draft-cross-pillar-assessment-semantic-contract-1"
+VERSION = "2.0-draft-cross-pillar-assessment-semantic-contract-2"
+MINIMUM_UNIVERSE_SANITY = 100
 
 STATE_BY_SIGNATURE = {
     "F0|C0": "no_current_core_adverse_signal",
@@ -319,12 +320,25 @@ def build_semantic_contract(
     if stage2.get("ranking") != "forbidden_in_this_artifact":
         raise ValueError("Stage 2 ranking must remain forbidden")
 
+    stage1_population = stage1.get("population") or {}
+    regulatory_universe = int(stage1_population.get("regulatory_universe") or 0)
+    if regulatory_universe < MINIMUM_UNIVERSE_SANITY:
+        raise ValueError(
+            f"unexpectedly small semantic regulatory universe: {regulatory_universe}"
+        )
+
     stage1_by_id = _by_id(stage1.get("entities") or [], "stage1")
     stage2_by_id = _by_id(stage2.get("entities") or [], "stage2")
-    if len(stage1_by_id) != 157 or len(stage2_by_id) != 157:
-        raise ValueError("semantic contract requires 157 entities in both inputs")
+    if len(stage1_by_id) != regulatory_universe:
+        raise ValueError("Stage 1 entity population differs from its regulatory universe")
+    if len(stage2_by_id) != regulatory_universe:
+        raise ValueError("Stage 2 entity population differs from Stage 1 regulatory universe")
     if set(stage1_by_id) != set(stage2_by_id):
         raise ValueError("Stage 1 and Stage 2 entity populations differ")
+
+    stage2_population = stage2.get("population") or {}
+    if int(stage2_population.get("regulatory_universe") or 0) != regulatory_universe:
+        raise ValueError("Stage 2 population metadata differs from Stage 1")
 
     rows = []
     state_counts: Counter[str] = Counter()
@@ -443,10 +457,15 @@ def build_semantic_contract(
         )
 
     coverage = stage2.get("coverage_constraint") or {}
+    incomplete_count = regulatory_universe - complete_count
     if complete_count != int(coverage.get("joint_conclusive_entities") or 0):
         raise ValueError("semantic complete count diverges from Stage 2 coverage")
-    if 157 - complete_count != int(coverage.get("joint_incomplete_entities") or 0):
+    if incomplete_count != int(coverage.get("joint_incomplete_entities") or 0):
         raise ValueError("semantic incomplete count diverges from Stage 2 coverage")
+    if complete_count != int(stage1_population.get("joint_core_conclusive") or 0):
+        raise ValueError("semantic complete count diverges from Stage 1 population")
+    if incomplete_count != int(stage1_population.get("joint_core_not_conclusive") or 0):
+        raise ValueError("semantic incomplete count diverges from Stage 1 population")
 
     return {
         "artifact": "v2_cross_pillar_assessment_semantic_contract",
@@ -488,9 +507,9 @@ def build_semantic_contract(
             "no_total_order": True,
         },
         "population": {
-            "regulatory_universe": 157,
+            "regulatory_universe": regulatory_universe,
             "semantic_public_assessment_supported": complete_count,
-            "joint_core_incomplete": 157 - complete_count,
+            "joint_core_incomplete": incomplete_count,
         },
         "diagnostics": {
             "state_counts": dict(state_counts),

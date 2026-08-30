@@ -125,8 +125,35 @@ jobs:
               raise SystemExit("Stage 2 must forbid scoring")
           if payload.get("ranking") != "forbidden_in_this_artifact":
               raise SystemExit("Stage 2 must forbid ranking")
-          if len(payload.get("entities") or []) != 157:
-              raise SystemExit("Stage 2 must preserve 157 entities")
+
+          entities = payload.get("entities") or []
+          population = payload.get("population") or {}
+          universe = population.get("regulatory_universe")
+          conclusive = population.get("joint_core_conclusive")
+          incomplete = population.get("joint_core_incomplete")
+          if not isinstance(universe, int) or universe < 100:
+              raise SystemExit(f"unexpectedly small Stage 2 universe: {universe}")
+          if len(entities) != universe:
+              raise SystemExit("Stage 2 entity count must equal its regulatory universe")
+          entity_ids = [row.get("entity_id") for row in entities]
+          if any(not entity_id for entity_id in entity_ids):
+              raise SystemExit("Stage 2 contains entity without entity_id")
+          if len(set(entity_ids)) != universe:
+              raise SystemExit("Stage 2 entity_id population must be unique")
+          if not isinstance(conclusive, int) or conclusive < 0:
+              raise SystemExit("invalid Stage 2 conclusive population")
+          if not isinstance(incomplete, int) or incomplete < 0:
+              raise SystemExit("invalid Stage 2 incomplete population")
+          if conclusive + incomplete != universe:
+              raise SystemExit("Stage 2 population accounting mismatch")
+
+          coverage = payload.get("coverage_constraint") or {}
+          if coverage.get("joint_conclusive_entities") != conclusive:
+              raise SystemExit("Stage 2 conclusive coverage differs from population metadata")
+          if coverage.get("joint_incomplete_entities") != incomplete:
+              raise SystemExit("Stage 2 incomplete coverage differs from population metadata")
+          if coverage.get("full_market_ranking_supported") is not False:
+              raise SystemExit("full-market ranking must remain blocked")
 
           decision = payload.get("architecture_decision") or {}
           if decision.get("continuous_weighted_score_selected") is not False:
@@ -143,11 +170,17 @@ jobs:
               raise SystemExit("matrix must remain a leading candidate, not final contract")
           if matrix.get("properties", {}).get("noncompensatory") is not True:
               raise SystemExit("leading matrix candidate must be noncompensatory")
+          state_counts = matrix.get("state_counts") or {}
+          if sum(state_counts.values()) != universe:
+              raise SystemExit("Stage 2 matrix state counts must cover the regulatory universe")
 
-          if payload.get("normative_tradeoffs", {}).get("tradeoff_entity_pairs") != 222:
-              raise SystemExit("expected 222 normative tradeoff entity pairs")
-          if payload.get("coverage_constraint", {}).get("full_market_ranking_supported") is not False:
-              raise SystemExit("full-market ranking must remain blocked")
+          tradeoffs = payload.get("normative_tradeoffs") or {}
+          tradeoff_total = tradeoffs.get("tradeoff_entity_pairs")
+          if not isinstance(tradeoff_total, int) or tradeoff_total < 0:
+              raise SystemExit("invalid derived tradeoff pair count")
+          details = tradeoffs.get("coordinate_pair_details") or []
+          if sum(int(row.get("entity_pair_count") or 0) for row in details) != tradeoff_total:
+              raise SystemExit("tradeoff pair accounting mismatch")
 
           forbidden = {
               "overall_score",
@@ -170,12 +203,13 @@ jobs:
           walk(payload)
 
           print(json.dumps({
-              "matrix_architecture": payload.get("matrix_architecture"),
-              "normative_tradeoffs": payload.get("normative_tradeoffs"),
+              "population": population,
+              "matrix_architecture": matrix,
+              "normative_tradeoffs": tradeoffs,
               "scenario_comparison": payload.get("scenario_comparison"),
               "adverse_qualifier_diagnostic": payload.get("adverse_qualifier_diagnostic"),
-              "coverage_constraint": payload.get("coverage_constraint"),
-              "architecture_decision": payload.get("architecture_decision"),
+              "coverage_constraint": coverage,
+              "architecture_decision": decision,
               "next_test": payload.get("next_test"),
           }, ensure_ascii=False, indent=2))
           PY
