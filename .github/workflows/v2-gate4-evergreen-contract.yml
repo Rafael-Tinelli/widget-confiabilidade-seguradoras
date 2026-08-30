@@ -7,6 +7,8 @@ on:
     paths:
       - "api/v2/generation.py"
       - "api/v2/source_snapshot.py"
+      - "api/v2/source_cache.py"
+      - "api/v2/build_source_snapshot.py"
       - "api/v2/gate4_pipeline.py"
       - "api/v2/build_public_distribution_manifest.py"
       - "api/v2/build_eligibility_inventory.py"
@@ -14,6 +16,8 @@ on:
       - "api/v2/build_lifecycle_relationship_inventory.py"
       - "tests/test_v2_generation.py"
       - "tests/test_v2_source_snapshot.py"
+      - "tests/test_v2_source_cache.py"
+      - "tests/test_v2_build_source_snapshot.py"
       - "tests/test_v2_gate4_pipeline.py"
       - "tests/test_v2_eligibility_inventory.py"
       - "docs/gate4-evergreen-publication.md"
@@ -57,6 +61,8 @@ jobs:
           ruff check \
             api/v2/generation.py \
             api/v2/source_snapshot.py \
+            api/v2/source_cache.py \
+            api/v2/build_source_snapshot.py \
             api/v2/gate4_pipeline.py \
             api/v2/build_public_distribution_manifest.py \
             api/v2/build_eligibility_inventory.py \
@@ -64,6 +70,8 @@ jobs:
             api/v2/build_lifecycle_relationship_inventory.py \
             tests/test_v2_generation.py \
             tests/test_v2_source_snapshot.py \
+            tests/test_v2_source_cache.py \
+            tests/test_v2_build_source_snapshot.py \
             tests/test_v2_gate4_pipeline.py \
             tests/test_v2_eligibility_inventory.py
 
@@ -73,6 +81,8 @@ jobs:
           python -m pytest -q \
             tests/test_v2_generation.py \
             tests/test_v2_source_snapshot.py \
+            tests/test_v2_source_cache.py \
+            tests/test_v2_build_source_snapshot.py \
             tests/test_v2_gate4_pipeline.py \
             tests/test_v2_eligibility_inventory.py
 
