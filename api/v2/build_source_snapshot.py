@@ -22,7 +22,10 @@ from api.sources.ses import (
     SES_ZIP_URL_FALLBACK,
 )
 from api.sources.susep_licensed import LICENSED_ENTITIES_URL, fetch_licensed_entities
-from api.sources.susep_sandbox import SANDBOX_PARTICIPANTS_URL, fetch_sandbox_participants
+from api.sources.susep_sandbox import (
+    SANDBOX_PARTICIPANTS_URL,
+    fetch_sandbox_participants,
+)
 from api.sources.susep_special_regimes import (
     SPECIAL_REGIME_URLS,
     fetch_special_regime_records,
