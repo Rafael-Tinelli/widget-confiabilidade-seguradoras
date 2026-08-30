@@ -32,22 +32,41 @@ class SourceObservation:
     source_url: str
     snapshot_path: Path
     fetched_at: str
-    current_fetch_succeeded: bool
+    current_fetch_succeeded: bool = False
+    current_validation_succeeded: bool = False
+    state_reason: str | None = None
 
     def to_lineage(self, context: BuildContext) -> SourceLineage:
         fetched_at = _normalize_timestamp(self.fetched_at)
         exists = self.snapshot_path.is_file()
-        if self.current_fetch_succeeded and not exists:
+        if (
+            self.current_fetch_succeeded
+            and self.current_validation_succeeded
+        ):
+            raise ValueError(
+                f"source {self.source_id!r} cannot be both freshly fetched and cache-validated"
+            )
+        current_is_fresh = (
+            self.current_fetch_succeeded or self.current_validation_succeeded
+        )
+        if current_is_fresh and not exists:
             raise ValueError(
                 f"fresh source {self.source_id!r} has no materialized snapshot"
             )
 
-        if self.current_fetch_succeeded:
+        if current_is_fresh:
             state = "fresh"
+            freshness_method = (
+                "current_fetch"
+                if self.current_fetch_succeeded
+                else "current_validation"
+            )
         elif exists:
             state = "stale"
+            freshness_method = "validated_cache_fallback"
         else:
             state = "unavailable"
+            freshness_method = "unavailable"
 
         return SourceLineage.from_mapping(
             {
@@ -58,6 +77,8 @@ class SourceObservation:
                 "build_id": context.build_id,
                 "sha256": _sha256(self.snapshot_path) if exists else None,
                 "snapshot_path": str(self.snapshot_path) if exists else None,
+                "freshness_method": freshness_method,
+                "state_reason": self.state_reason,
             }
         )
 
@@ -83,13 +104,17 @@ def source_lineage_payload(
 ) -> dict:
     sources = build_source_lineage(observations, context)
     states = {"fresh": 0, "stale": 0, "unavailable": 0}
+    methods: dict[str, int] = {}
     for source in sources:
         states[source.state] += 1
+        method = source.freshness_method or "unspecified"
+        methods[method] = methods.get(method, 0) + 1
     return {
         "artifact": "v2_source_lineage",
-        "version": 1,
+        "version": 2,
         "build": context.as_dict(),
         "state_counts": states,
+        "freshness_method_counts": dict(sorted(methods.items())),
         "sources": [source.as_dict() for source in sources],
     }
 
