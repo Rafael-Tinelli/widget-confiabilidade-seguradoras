@@ -12,6 +12,12 @@ from pathlib import Path
 _SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _ALLOWED_SOURCE_STATES = {"fresh", "stale", "unavailable"}
+_ALLOWED_FRESHNESS_METHODS = {
+    "current_fetch",
+    "current_validation",
+    "validated_cache_fallback",
+    "unavailable",
+}
 _REQUIRED_PUBLIC_FILES = {
     "search_index.json",
     "profile_manifest.json",
@@ -107,6 +113,8 @@ class SourceLineage:
     build_id: str
     sha256: str | None = None
     snapshot_path: str | None = None
+    freshness_method: str | None = None
+    state_reason: str | None = None
 
     @classmethod
     def from_mapping(cls, value: Mapping[str, object]) -> SourceLineage:
@@ -120,6 +128,12 @@ class SourceLineage:
             snapshot_path=(
                 str(value["snapshot_path"]) if value.get("snapshot_path") else None
             ),
+            freshness_method=(
+                str(value["freshness_method"])
+                if value.get("freshness_method")
+                else None
+            ),
+            state_reason=(str(value["state_reason"]) if value.get("state_reason") else None),
         )
         source.validate()
         return source
@@ -139,6 +153,25 @@ class SourceLineage:
             raise ValueError(f"unavailable source cannot claim content hash: {self.source_id}")
         if self.state in {"fresh", "stale"} and self.sha256 is None:
             raise ValueError(f"{self.state} source requires content hash: {self.source_id}")
+        if self.freshness_method is not None and self.freshness_method not in _ALLOWED_FRESHNESS_METHODS:
+            raise ValueError(
+                f"invalid freshness method for {self.source_id}: {self.freshness_method}"
+            )
+        if self.state == "fresh" and self.freshness_method not in {
+            None,
+            "current_fetch",
+            "current_validation",
+        }:
+            raise ValueError(f"fresh source has incompatible freshness method: {self.source_id}")
+        if self.state == "stale" and self.freshness_method not in {
+            None,
+            "validated_cache_fallback",
+        }:
+            raise ValueError(f"stale source has incompatible freshness method: {self.source_id}")
+        if self.state == "unavailable" and self.freshness_method not in {None, "unavailable"}:
+            raise ValueError(
+                f"unavailable source has incompatible freshness method: {self.source_id}"
+            )
 
     def as_dict(self) -> dict:
         return {
@@ -149,6 +182,8 @@ class SourceLineage:
             "build_id": self.build_id,
             "sha256": self.sha256,
             "snapshot_path": self.snapshot_path,
+            "freshness_method": self.freshness_method,
+            "state_reason": self.state_reason,
         }
 
 
