@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
 
-from api.v2.generation import BuildContext
-from api.v2.source_snapshot import SourceObservation, build_source_lineage
+from api.v2.generation import BuildContext, load_source_lineage
+from api.v2.source_snapshot import (
+    SourceObservation,
+    build_source_lineage,
+    write_source_lineage,
+)
 
 HEAD = "c" * 40
 BUILD_ID = "v2-cccccccccccc-456-a1"
@@ -87,3 +92,21 @@ def test_source_observations_must_have_unique_ids(tmp_path: Path):
 
     with pytest.raises(ValueError, match="duplicate source observation"):
         build_source_lineage(observations, _context())
+
+
+def test_written_source_lineage_round_trips_into_distribution_contract(tmp_path: Path):
+    snapshot = tmp_path / "BaseCompleta.zip"
+    snapshot.write_bytes(b"snapshot-current")
+    output = tmp_path / "source_lineage.json"
+
+    write_source_lineage(output, [_observation(snapshot, succeeded=True)], _context())
+
+    payload = json.loads(output.read_text(encoding="utf-8"))
+    assert payload["artifact"] == "v2_source_lineage"
+    assert payload["build"]["build_id"] == BUILD_ID
+    assert payload["state_counts"] == {"fresh": 1, "stale": 0, "unavailable": 0}
+
+    loaded = load_source_lineage(output, _context())
+    assert len(loaded) == 1
+    assert loaded[0].source_id == "susep_ses_base_completa"
+    assert loaded[0].state == "fresh"
