@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import sys
+
 import pytest
 
 from api.v2.gate4_pipeline import (
@@ -152,7 +154,7 @@ def test_pipeline_keeps_ranking_blocked_methodologically():
 
     assert ranking.commands == (
         (
-            pytest.importorskip("sys").executable,
+            sys.executable,
             "-m",
             "api.v2.build_ranking_eligibility_preflight",
         ),
