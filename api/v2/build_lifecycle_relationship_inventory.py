@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import json
 from copy import deepcopy
 from datetime import datetime, timezone
@@ -25,6 +26,13 @@ from api.v2.relationships import (
 )
 
 DEFAULT_OUTPUT = Path("data/derived/v2/entity_lifecycle_relationship_inventory.json")
+DEFAULT_CLASSIFICATION_INPUT = Path(
+    "data/derived/v2/source/classification_inventory.json"
+)
+DEFAULT_RECEITA_LIFECYCLE_INPUT = Path(
+    "data/derived/v2/source/receita_lifecycle_records.json"
+)
+DEFAULT_SES_ZIP = Path("data/raw/ses/BaseCompleta.zip")
 
 REINSURANCE_ENTITY_TYPES = {
     "local_reinsurer",
@@ -262,9 +270,10 @@ def write_lifecycle_relationship_inventory(
     return output
 
 
-def main() -> None:
+def _build_legacy_inputs_from_sources() -> tuple[
+    dict[str, Any], list[dict[str, Any]], list[dict[str, Any]]
+]:
     group_records = load_susep_economic_groups()
-
     ses_out = extract_ses_master_and_financials()
     if not isinstance(ses_out, tuple) or len(ses_out) < 2:
         raise RuntimeError(f"Unexpected SES return: {type(ses_out)}")
@@ -275,13 +284,76 @@ def main() -> None:
         fetch_special_regime_records(),
         fetch_sandbox_participants(),
     )
+    return classification, load_lifecycle_records(), group_records
+
+
+def _load_classification_input(path: Path) -> dict[str, Any]:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if payload.get("artifact") != "v2_classification_inventory":
+        raise RuntimeError("unexpected classification input artifact")
+    return payload
+
+
+def _load_receita_lifecycle_input(path: Path) -> list[dict[str, Any]]:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if isinstance(payload, list):
+        records = payload
+    elif isinstance(payload, dict) and isinstance(payload.get("records"), list):
+        records = payload["records"]
+    else:
+        raise RuntimeError("unexpected Receita lifecycle input artifact")
+    return [dict(record) for record in records]
+
+
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Build the v2 lifecycle and relationship inventory."
+    )
+    parser.add_argument(
+        "--classification-input",
+        type=Path,
+        help=(
+            "Use a materialized classification inventory. Gate 4 uses this mode so "
+            "Lifecycle does not refetch SUSEP regulatory sources."
+        ),
+    )
+    parser.add_argument(
+        "--receita-lifecycle-input",
+        type=Path,
+        help="Materialized Receita lifecycle records for the same Gate 4 generation.",
+    )
+    parser.add_argument(
+        "--ses-zip",
+        type=Path,
+        default=DEFAULT_SES_ZIP,
+        help="Validated BaseCompleta.zip snapshot used for economic-group derivation.",
+    )
+    parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
+    return parser.parse_args()
+
+
+def main() -> None:
+    args = _parse_args()
+    gate4_mode = args.classification_input is not None or args.receita_lifecycle_input is not None
+    if gate4_mode:
+        if args.classification_input is None or args.receita_lifecycle_input is None:
+            raise RuntimeError(
+                "Gate 4 lifecycle mode requires both --classification-input and "
+                "--receita-lifecycle-input"
+            )
+        classification = _load_classification_input(args.classification_input)
+        lifecycle_records = _load_receita_lifecycle_input(args.receita_lifecycle_input)
+        group_records = load_susep_economic_groups(args.ses_zip)
+    else:
+        classification, lifecycle_records, group_records = _build_legacy_inputs_from_sources()
+
     payload = build_lifecycle_relationship_inventory(
         classification,
-        load_lifecycle_records(),
+        lifecycle_records,
         load_verified_relationship_registry(),
         group_records,
     )
-    path = write_lifecycle_relationship_inventory(payload)
+    path = write_lifecycle_relationship_inventory(payload, args.output)
     meta = payload["meta"]
     print(
         "V2 lifecycle + relationships: "
