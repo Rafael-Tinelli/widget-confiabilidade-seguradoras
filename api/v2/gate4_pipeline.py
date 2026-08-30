@@ -49,14 +49,6 @@ STAGES: tuple[PipelineStage, ...] = (
         evergreen_ready=False,
     ),
     PipelineStage(
-        stage_id="financial_evidence",
-        kind="mixed_source_derive",
-        dependencies=("source_snapshot",),
-        commands=(_module("api.v2.build_financial_evidence_inventory"),),
-        outputs=("data/derived/v2/entity_financial_evidence_inventory.json",),
-        evergreen_ready=False,
-    ),
-    PipelineStage(
         stage_id="lifecycle",
         kind="mixed_source_derive",
         dependencies=("source_snapshot",),
@@ -76,6 +68,21 @@ STAGES: tuple[PipelineStage, ...] = (
             ),
         ),
         outputs=("data/derived/v2/entity_eligibility_inventory.json",),
+    ),
+    PipelineStage(
+        stage_id="financial_evidence",
+        kind="derive",
+        dependencies=("source_snapshot", "eligibility"),
+        commands=(
+            _module(
+                "api.v2.build_financial_evidence_inventory",
+                "--eligibility-input",
+                "data/derived/v2/entity_eligibility_inventory.json",
+                "--ses-zip",
+                "data/raw/ses/BaseCompleta.zip",
+            ),
+        ),
+        outputs=("data/derived/v2/entity_financial_evidence_inventory.json",),
     ),
     PipelineStage(
         stage_id="liquidity",
