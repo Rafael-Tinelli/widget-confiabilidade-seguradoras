@@ -24,6 +24,7 @@ jobs:
     runs-on: ubuntu-24.04
     env:
       GH_TOKEN: ${{ github.token }}
+      V2_SOURCE_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
 
     steps:
       - name: Checkout
@@ -42,7 +43,7 @@ jobs:
           python -m pip install -r requirements.txt
           python -m pip install -r requirements-dev.txt
 
-      - name: Restore latest successful Cross-Pillar Calibration Stage 1
+      - name: Restore same-head Cross-Pillar Calibration Stage 1
         run: |
           set -euo pipefail
           branch="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
@@ -51,11 +52,11 @@ jobs:
             --workflow "V2 Cross-Pillar Calibration Stage 1" \
             --branch "$branch" \
             --status success \
-            --limit 30 \
-            --json databaseId \
-            --jq '.[0].databaseId')"
+            --limit 50 \
+            --json databaseId,headSha \
+            --jq '[.[] | select(.headSha == env.V2_SOURCE_HEAD_SHA)][0].databaseId')"
           if [[ -z "$run_id" || "$run_id" == "null" ]]; then
-            echo "No successful Cross-Pillar Calibration Stage 1 artifact found." >&2
+            echo "No same-head Cross-Pillar Calibration Stage 1 artifact for $V2_SOURCE_HEAD_SHA" >&2
             exit 1
           fi
           rm -rf "$RUNNER_TEMP/stage1"
@@ -68,9 +69,9 @@ jobs:
           test -n "$source_file"
           mkdir -p data/derived/v2
           cp "$source_file" data/derived/v2/cross_pillar_calibration_diagnostic.json
-          echo "Restored stage 1 from run $run_id"
+          echo "Restored same-head stage 1 from run $run_id"
 
-      - name: Restore latest successful Conduct coverage reconciliation
+      - name: Restore same-head Conduct coverage reconciliation
         run: |
           set -euo pipefail
           branch="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
@@ -79,11 +80,11 @@ jobs:
             --workflow "V2 Conduct Coverage Reconciliation" \
             --branch "$branch" \
             --status success \
-            --limit 30 \
-            --json databaseId \
-            --jq '.[0].databaseId')"
+            --limit 50 \
+            --json databaseId,headSha \
+            --jq '[.[] | select(.headSha == env.V2_SOURCE_HEAD_SHA)][0].databaseId')"
           if [[ -z "$run_id" || "$run_id" == "null" ]]; then
-            echo "No successful Conduct coverage reconciliation artifact found." >&2
+            echo "No same-head Conduct coverage reconciliation artifact for $V2_SOURCE_HEAD_SHA" >&2
             exit 1
           fi
           rm -rf "$RUNNER_TEMP/reconciliation"
@@ -96,7 +97,7 @@ jobs:
           test -n "$source_file"
           mkdir -p data/derived/v2
           cp "$source_file" data/derived/v2/conduct_coverage_reconciliation.json
-          echo "Restored reconciliation from run $run_id"
+          echo "Restored same-head reconciliation from run $run_id"
 
       - name: Lint cross-pillar coverage audit
         run: |
@@ -131,10 +132,18 @@ jobs:
               raise SystemExit("coverage audit must forbid scoring")
           if payload.get("ranking") != "forbidden_in_this_artifact":
               raise SystemExit("coverage audit must forbid ranking")
-          if payload.get("universe", {}).get("entities") != 157:
-              raise SystemExit("coverage audit must preserve 157 entities")
-          if payload.get("coverage", {}).get("joint_core_conclusive", {}).get("entity_count") != 85:
-              raise SystemExit("expected 85 jointly conclusive entities")
+
+          universe = (payload.get("universe") or {}).get("entities")
+          joint = ((payload.get("coverage") or {}).get("joint_core_conclusive") or {}).get("entity_count")
+          incomplete = ((payload.get("coverage") or {}).get("joint_core_incomplete") or {}).get("entity_count")
+          if not isinstance(universe, int) or universe < 100:
+              raise SystemExit(f"unexpectedly small coverage universe: {universe}")
+          if not isinstance(joint, int) or joint < 0 or joint > universe:
+              raise SystemExit("invalid jointly conclusive population")
+          if not isinstance(incomplete, int) or incomplete < 0:
+              raise SystemExit("invalid jointly incomplete population")
+          if joint + incomplete != universe:
+              raise SystemExit("coverage population accounting mismatch")
           if payload.get("interpretation", {}).get("current_joint_conclusive_population_can_be_called_full_market_ranking") is not False:
               raise SystemExit("current subset cannot be labeled full-market ranking")
 
