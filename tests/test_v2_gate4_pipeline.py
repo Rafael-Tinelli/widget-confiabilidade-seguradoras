@@ -35,6 +35,8 @@ def test_financial_chain_is_topologically_ordered():
     position = _positions()
 
     assert position["source_snapshot"] < position["financial_evidence"]
+    assert position["source_snapshot"] < position["lifecycle"]
+    assert position["lifecycle"] < position["eligibility"]
     assert position["eligibility"] < position["liquidity"]
     assert position["eligibility"] < position["operating"]
     assert position["financial_evidence"] < position["financial_closure"]
@@ -77,7 +79,6 @@ def test_current_blockers_are_explicit_instead_of_silently_published():
 
     assert blockers == {
         "source_snapshot",
-        "eligibility",
         "financial_evidence",
         "consumer_conduct",
         "ranking_preflight",
