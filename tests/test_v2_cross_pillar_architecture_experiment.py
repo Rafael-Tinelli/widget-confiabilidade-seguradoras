@@ -4,6 +4,10 @@ from api.v2.build_cross_pillar_architecture_experiment import (
     build_architecture_experiment,
 )
 
+FIXTURE_UNIVERSE = 156
+FIXTURE_CONCLUSIVE = 85
+FIXTURE_INCOMPLETE = FIXTURE_UNIVERSE - FIXTURE_CONCLUSIVE
+
 
 def _stage1() -> dict:
     signatures = (
@@ -15,7 +19,7 @@ def _stage1() -> dict:
         + ["F2|C1"] * 4
     )
     entities = []
-    for index in range(157):
+    for index in range(FIXTURE_UNIVERSE):
         if index < len(signatures):
             signature = signatures[index]
             f_level, c_level = (int(part[1]) for part in signature.split("|"))
@@ -59,6 +63,11 @@ def _stage1() -> dict:
     return {
         "status": "cross_pillar_calibration_stage_1_diagnostic",
         "scoring": "forbidden_in_this_artifact",
+        "population": {
+            "regulatory_universe": FIXTURE_UNIVERSE,
+            "joint_core_conclusive": FIXTURE_CONCLUSIVE,
+            "joint_core_not_conclusive": FIXTURE_INCOMPLETE,
+        },
         "entities": entities,
     }
 
@@ -67,13 +76,14 @@ def _coverage() -> dict:
     return {
         "status": "cross_pillar_market_coverage_audit",
         "scoring": "forbidden_in_this_artifact",
+        "universe": {"entities": FIXTURE_UNIVERSE},
         "coverage": {
             "joint_core_conclusive": {
-                "entity_count": 85,
+                "entity_count": FIXTURE_CONCLUSIVE,
                 "positive_premium_share": 0.70,
                 "complaint_share": 0.54,
             },
-            "joint_core_incomplete": {"entity_count": 72},
+            "joint_core_incomplete": {"entity_count": FIXTURE_INCOMPLETE},
         },
     }
 
@@ -86,10 +96,15 @@ def test_matrix_preserves_six_exact_states_and_missingness() -> None:
         "capital_shortfall_and_conduct_pressure": 4,
         "capital_shortfall_without_conduct_pressure": 5,
         "conduct_pressure_only": 14,
-        "evidence_incomplete_for_joint_assessment": 72,
+        "evidence_incomplete_for_joint_assessment": FIXTURE_INCOMPLETE,
         "liquidity_and_conduct_pressure": 8,
         "liquidity_pressure_only": 8,
         "no_current_core_adverse_signal": 46,
+    }
+    assert payload["population"] == {
+        "regulatory_universe": FIXTURE_UNIVERSE,
+        "joint_core_conclusive": FIXTURE_CONCLUSIVE,
+        "joint_core_incomplete": FIXTURE_INCOMPLETE,
     }
     assert payload["scoring"] == "forbidden_in_this_artifact"
     assert payload["ranking"] == "forbidden_in_this_artifact"

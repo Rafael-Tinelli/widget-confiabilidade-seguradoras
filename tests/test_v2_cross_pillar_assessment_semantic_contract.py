@@ -4,6 +4,10 @@ from api.v2.build_cross_pillar_assessment_semantic_contract import (
     build_semantic_contract,
 )
 
+FIXTURE_UNIVERSE = 156
+FIXTURE_CONCLUSIVE = 85
+FIXTURE_INCOMPLETE = FIXTURE_UNIVERSE - FIXTURE_CONCLUSIVE
+
 
 def _inputs() -> tuple[dict, dict]:
     signatures = (
@@ -31,7 +35,6 @@ def _inputs() -> tuple[dict, dict]:
     stage1_rows = []
     stage2_rows = []
     below_remaining = 41
-    neutral_remaining = 18
 
     for index, signature in enumerate(signatures):
         f_level, c_level = (int(part[1]) for part in signature.split("|"))
@@ -50,7 +53,6 @@ def _inputs() -> tuple[dict, dict]:
             trend = "improving_pressure"
         else:
             conduct_state = "not_distinguishable_from_expected"
-            neutral_remaining -= 1
             persistence = "not_distinguishable_from_expected"
             trend = "deteriorating_pressure"
 
@@ -91,18 +93,18 @@ def _inputs() -> tuple[dict, dict]:
         )
 
     incomplete_conduct_states = (
-        ["pressure_unavailable_not_comparable"] * 54
+        ["pressure_unavailable_not_comparable"] * 53
         + ["pressure_inconclusive_denominator_sensitivity"] * 6
         + ["pressure_unavailable_insufficient_temporal_coverage"] * 12
     )
     incomplete_financial_states = (
         ["capital_requirement_shortfall_observed"] * 5
         + ["capital_requirement_met_with_liquidity_pressure"] * 5
-        + ["core_indicators_without_current_shortfall"] * 60
+        + ["core_indicators_without_current_shortfall"] * 59
         + ["core_financial_signal_unavailable"] * 2
     )
 
-    for offset in range(72):
+    for offset in range(FIXTURE_INCOMPLETE):
         index = len(signatures) + offset
         entity_id = f"fip:{index:06d}"
         financial_state = incomplete_financial_states[offset]
@@ -163,40 +165,50 @@ def _inputs() -> tuple[dict, dict]:
         "liquidity_and_conduct_pressure": 8,
         "capital_shortfall_without_conduct_pressure": 5,
         "capital_shortfall_and_conduct_pressure": 4,
-        "evidence_incomplete_for_joint_assessment": 72,
+        "evidence_incomplete_for_joint_assessment": FIXTURE_INCOMPLETE,
     }
     stage1 = {
         "status": "cross_pillar_calibration_stage_1_diagnostic",
         "scoring": "forbidden_in_this_artifact",
+        "population": {
+            "regulatory_universe": FIXTURE_UNIVERSE,
+            "joint_core_conclusive": FIXTURE_CONCLUSIVE,
+            "joint_core_not_conclusive": FIXTURE_INCOMPLETE,
+        },
         "entities": stage1_rows,
     }
     stage2 = {
         "status": "cross_pillar_architecture_stage_2_experiment",
         "scoring": "forbidden_in_this_artifact",
         "ranking": "forbidden_in_this_artifact",
+        "population": {
+            "regulatory_universe": FIXTURE_UNIVERSE,
+            "joint_core_conclusive": FIXTURE_CONCLUSIVE,
+            "joint_core_incomplete": FIXTURE_INCOMPLETE,
+        },
         "matrix_architecture": {"state_counts": state_counts},
         "coverage_constraint": {
-            "joint_conclusive_entities": 85,
-            "joint_incomplete_entities": 72,
+            "joint_conclusive_entities": FIXTURE_CONCLUSIVE,
+            "joint_incomplete_entities": FIXTURE_INCOMPLETE,
         },
         "entities": stage2_rows,
     }
     return stage1, stage2
 
 
-def test_semantic_contract_closes_for_all_157_without_opening_ranking() -> None:
+def test_semantic_contract_closes_for_dynamic_population_without_opening_ranking() -> None:
     stage1, stage2 = _inputs()
     payload = build_semantic_contract(stage1, stage2)
 
     assert payload["status"] == "cross_pillar_assessment_semantic_contract_closed"
     assert payload["population"] == {
-        "regulatory_universe": 157,
-        "semantic_public_assessment_supported": 85,
-        "joint_core_incomplete": 72,
+        "regulatory_universe": FIXTURE_UNIVERSE,
+        "semantic_public_assessment_supported": FIXTURE_CONCLUSIVE,
+        "joint_core_incomplete": FIXTURE_INCOMPLETE,
     }
     assert payload["diagnostics"]["public_class_counts"] == {
         "attention": 30,
-        "evidence_incomplete": 72,
+        "evidence_incomplete": FIXTURE_INCOMPLETE,
         "favorable_reading": 46,
         "prudential_warning": 9,
     }
@@ -241,7 +253,10 @@ def test_conduct_detail_is_preserved_without_turning_below_expected_into_bonus()
     ]
     details = {row["available_pillar_reading"]["conduct"] for row in favorable}
     assert details == {"abaixo_do_esperado", "sem_diferenca_clara"}
-    assert all(row["public_assessment"]["title"] == "Leitura central favorável" for row in favorable)
+    assert all(
+        row["public_assessment"]["title"] == "Leitura central favorável"
+        for row in favorable
+    )
 
 
 def test_public_conduct_qualifiers_only_exist_for_final_adverse_pressure() -> None:
