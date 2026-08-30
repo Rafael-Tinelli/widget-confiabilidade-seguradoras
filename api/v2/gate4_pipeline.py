@@ -49,20 +49,33 @@ STAGES: tuple[PipelineStage, ...] = (
         evergreen_ready=False,
     ),
     PipelineStage(
-        stage_id="eligibility",
-        kind="mixed_source_derive",
-        dependencies=("source_snapshot",),
-        commands=(_module("api.v2.build_eligibility_inventory"),),
-        outputs=("data/derived/v2/entity_eligibility_inventory.json",),
-        evergreen_ready=False,
-    ),
-    PipelineStage(
         stage_id="financial_evidence",
         kind="mixed_source_derive",
         dependencies=("source_snapshot",),
         commands=(_module("api.v2.build_financial_evidence_inventory"),),
         outputs=("data/derived/v2/entity_financial_evidence_inventory.json",),
         evergreen_ready=False,
+    ),
+    PipelineStage(
+        stage_id="lifecycle",
+        kind="mixed_source_derive",
+        dependencies=("source_snapshot",),
+        commands=(_module("api.v2.build_lifecycle_relationship_inventory"),),
+        outputs=("data/derived/v2/entity_lifecycle_relationship_inventory.json",),
+        evergreen_ready=False,
+    ),
+    PipelineStage(
+        stage_id="eligibility",
+        kind="derive",
+        dependencies=("lifecycle",),
+        commands=(
+            _module(
+                "api.v2.build_eligibility_inventory",
+                "--lifecycle-input",
+                "data/derived/v2/entity_lifecycle_relationship_inventory.json",
+            ),
+        ),
+        outputs=("data/derived/v2/entity_eligibility_inventory.json",),
     ),
     PipelineStage(
         stage_id="liquidity",
@@ -203,14 +216,6 @@ STAGES: tuple[PipelineStage, ...] = (
             "data/derived/v2/public/insurer_explorer.json",
             "data/derived/v2/public/explore_index.json",
         ),
-    ),
-    PipelineStage(
-        stage_id="lifecycle",
-        kind="mixed_source_derive",
-        dependencies=("source_snapshot",),
-        commands=(_module("api.v2.build_lifecycle_relationship_inventory"),),
-        outputs=("data/derived/v2/entity_lifecycle_relationship_inventory.json",),
-        evergreen_ready=False,
     ),
     PipelineStage(
         stage_id="sandbox_brand_conduct",
