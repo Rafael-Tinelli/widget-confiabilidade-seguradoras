@@ -3,8 +3,11 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from api.v2.generation import BuildContext, load_source_lineage, write_distribution_manifest
-
+from api.v2.generation import (
+    BuildContext,
+    load_source_lineage,
+    write_distribution_manifest,
+)
 
 DEFAULT_PUBLIC_DIR = Path("data/derived/v2/public")
 DEFAULT_LINEAGE = Path("data/derived/v2/source_lineage.json")
