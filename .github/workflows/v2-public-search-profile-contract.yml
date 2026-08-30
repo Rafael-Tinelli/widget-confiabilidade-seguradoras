@@ -6,11 +6,13 @@ on:
     paths:
       - "README.md"
       - "api/v2/build_public_search_profile_contract.py"
+      - "api/v2/public_profile_regulatory_semantics.py"
       - "api/v2/validate_public_search_profile_contract.py"
       - "api/v2/build_lifecycle_relationship_inventory.py"
       - "api/v2/build_exploratory_leaderboards_contract.py"
       - "api/v2/build_sandbox_brand_conduct_evidence.py"
       - "tests/test_v2_public_search_profile_contract.py"
+      - "tests/test_v2_public_profile_regulatory_semantics.py"
       - "docs/public-search-profile-contract.md"
       - "data/reference/v2/conduct_subject_relationships.json"
       - "data/reference/v2/verified_relationships.json"
@@ -115,13 +117,17 @@ jobs:
           set -euo pipefail
           ruff check \
             api/v2/build_public_search_profile_contract.py \
+            api/v2/public_profile_regulatory_semantics.py \
             api/v2/validate_public_search_profile_contract.py \
-            tests/test_v2_public_search_profile_contract.py
+            tests/test_v2_public_search_profile_contract.py \
+            tests/test_v2_public_profile_regulatory_semantics.py
 
       - name: Run public search/profile tests
         run: |
           set -euo pipefail
-          python -m pytest -q tests/test_v2_public_search_profile_contract.py
+          python -m pytest -q \
+            tests/test_v2_public_search_profile_contract.py \
+            tests/test_v2_public_profile_regulatory_semantics.py
 
       - name: Build real public search/profile package
         run: |
@@ -131,7 +137,7 @@ jobs:
             data/derived/v2/public/search_index.json \
             data/derived/v2/public/profile_manifest.json \
             data/derived/v2/public_search_profile_contract.json
-          python -m api.v2.build_public_search_profile_contract
+          python -m api.v2.public_profile_regulatory_semantics
 
       - name: Validate real public contract boundaries
         run: |

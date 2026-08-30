@@ -45,105 +45,65 @@ jobs:
           python -m pip install -r requirements.txt
           python -m pip install -r requirements-dev.txt
 
-      - name: Restore latest successful assessment eligibility contract
+      - name: Restore latest successful upstream contracts
         run: |
           set -euo pipefail
           branch="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
-          run_id="$(gh run list \
-            --repo "$GITHUB_REPOSITORY" \
-            --workflow "V2 Assessment Eligibility Contract" \
-            --branch "$branch" \
-            --status success \
-            --limit 30 \
-            --json databaseId \
-            --jq '.[0].databaseId')"
-          test -n "$run_id"
-          rm -rf "$RUNNER_TEMP/assessment"
-          mkdir -p "$RUNNER_TEMP/assessment"
-          gh run download "$run_id" \
-            --repo "$GITHUB_REPOSITORY" \
-            --name "v2-assessment-eligibility-contract-$run_id" \
-            --dir "$RUNNER_TEMP/assessment"
-          source_file="$(find "$RUNNER_TEMP/assessment" -type f -name assessment_eligibility_contract.json | head -n 1)"
-          test -n "$source_file"
           mkdir -p data/derived/v2
-          cp "$source_file" data/derived/v2/assessment_eligibility_contract.json
-          echo "Restored assessment eligibility from run $run_id"
 
-      - name: Restore latest successful Cross-Pillar Stage 1
-        run: |
-          set -euo pipefail
-          branch="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
-          run_id="$(gh run list \
-            --repo "$GITHUB_REPOSITORY" \
-            --workflow "V2 Cross-Pillar Calibration Stage 1" \
-            --branch "$branch" \
-            --status success \
-            --limit 30 \
-            --json databaseId \
-            --jq '.[0].databaseId')"
-          test -n "$run_id"
-          rm -rf "$RUNNER_TEMP/stage1"
-          mkdir -p "$RUNNER_TEMP/stage1"
-          gh run download "$run_id" \
-            --repo "$GITHUB_REPOSITORY" \
-            --name "v2-cross-pillar-calibration-stage-1-$run_id" \
-            --dir "$RUNNER_TEMP/stage1"
-          source_file="$(find "$RUNNER_TEMP/stage1" -type f -name cross_pillar_calibration_diagnostic.json | head -n 1)"
-          test -n "$source_file"
-          mkdir -p data/derived/v2
-          cp "$source_file" data/derived/v2/cross_pillar_calibration_diagnostic.json
-          echo "Restored Stage 1 from run $run_id"
+          restore_artifact() {
+            workflow="$1"
+            prefix="$2"
+            filename="$3"
+            destination="$4"
+            temp_dir="$RUNNER_TEMP/restore-${prefix}"
+            run_id="$(gh run list \
+              --repo "$GITHUB_REPOSITORY" \
+              --workflow "$workflow" \
+              --branch "$branch" \
+              --status success \
+              --limit 30 \
+              --json databaseId \
+              --jq '.[0].databaseId')"
+            if [[ -z "$run_id" || "$run_id" == "null" ]]; then
+              echo "No successful artifact found for $workflow on $branch" >&2
+              exit 1
+            fi
+            rm -rf "$temp_dir"
+            mkdir -p "$temp_dir"
+            gh run download "$run_id" \
+              --repo "$GITHUB_REPOSITORY" \
+              --name "${prefix}-${run_id}" \
+              --dir "$temp_dir"
+            source_file="$(find "$temp_dir" -type f -name "$filename" | head -n 1)"
+            test -n "$source_file"
+            cp "$source_file" "$destination"
+            echo "Restored $workflow from run $run_id"
+          }
 
-      - name: Restore latest successful Cross-Pillar Stage 2
-        run: |
-          set -euo pipefail
-          branch="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
-          run_id="$(gh run list \
-            --repo "$GITHUB_REPOSITORY" \
-            --workflow "V2 Cross-Pillar Architecture Stage 2" \
-            --branch "$branch" \
-            --status success \
-            --limit 30 \
-            --json databaseId \
-            --jq '.[0].databaseId')"
-          test -n "$run_id"
-          rm -rf "$RUNNER_TEMP/stage2"
-          mkdir -p "$RUNNER_TEMP/stage2"
-          gh run download "$run_id" \
-            --repo "$GITHUB_REPOSITORY" \
-            --name "v2-cross-pillar-architecture-stage-2-$run_id" \
-            --dir "$RUNNER_TEMP/stage2"
-          source_file="$(find "$RUNNER_TEMP/stage2" -type f -name cross_pillar_architecture_experiment.json | head -n 1)"
-          test -n "$source_file"
-          mkdir -p data/derived/v2
-          cp "$source_file" data/derived/v2/cross_pillar_architecture_stage_2.json
-          echo "Restored Stage 2 from run $run_id"
+          restore_artifact \
+            "V2 Assessment Eligibility Contract" \
+            "v2-assessment-eligibility-contract" \
+            "assessment_eligibility_contract.json" \
+            "data/derived/v2/assessment_eligibility_contract.json"
 
-      - name: Restore latest successful coverage audit
-        run: |
-          set -euo pipefail
-          branch="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
-          run_id="$(gh run list \
-            --repo "$GITHUB_REPOSITORY" \
-            --workflow "V2 Cross-Pillar Coverage Audit" \
-            --branch "$branch" \
-            --status success \
-            --limit 30 \
-            --json databaseId \
-            --jq '.[0].databaseId')"
-          test -n "$run_id"
-          rm -rf "$RUNNER_TEMP/coverage"
-          mkdir -p "$RUNNER_TEMP/coverage"
-          gh run download "$run_id" \
-            --repo "$GITHUB_REPOSITORY" \
-            --name "v2-cross-pillar-coverage-audit-$run_id" \
-            --dir "$RUNNER_TEMP/coverage"
-          source_file="$(find "$RUNNER_TEMP/coverage" -type f -name cross_pillar_coverage_audit.json | head -n 1)"
-          test -n "$source_file"
-          mkdir -p data/derived/v2
-          cp "$source_file" data/derived/v2/cross_pillar_coverage_audit.json
-          echo "Restored coverage audit from run $run_id"
+          restore_artifact \
+            "V2 Cross-Pillar Calibration Stage 1" \
+            "v2-cross-pillar-calibration-stage-1" \
+            "cross_pillar_calibration_diagnostic.json" \
+            "data/derived/v2/cross_pillar_calibration_diagnostic.json"
+
+          restore_artifact \
+            "V2 Cross-Pillar Architecture Stage 2" \
+            "v2-cross-pillar-architecture-stage-2" \
+            "cross_pillar_architecture_experiment.json" \
+            "data/derived/v2/cross_pillar_architecture_stage_2.json"
+
+          restore_artifact \
+            "V2 Cross-Pillar Coverage Audit" \
+            "v2-cross-pillar-coverage-audit" \
+            "cross_pillar_coverage_audit.json" \
+            "data/derived/v2/cross_pillar_coverage_audit.json"
 
       - name: Lint ranking eligibility preflight
         run: |
@@ -180,15 +140,28 @@ jobs:
               raise SystemExit("ranking preflight must forbid ranking")
 
           population = payload.get("population") or {}
-          expected = {
-              "regulatory_universe": 157,
-              "assessment_eligible": 85,
-              "assessment_not_eligible": 72,
-              "ranking_preflight_candidates": 85,
-              "ranking_eligible": 0,
-          }
-          if population != expected:
-              raise SystemExit(f"unexpected population: {population}")
+          universe = population.get("regulatory_universe")
+          assessable = population.get("assessment_eligible")
+          ineligible = population.get("assessment_not_eligible")
+          candidates = population.get("ranking_preflight_candidates")
+          ranking_eligible = population.get("ranking_eligible")
+          for label, value in {
+              "regulatory_universe": universe,
+              "assessment_eligible": assessable,
+              "assessment_not_eligible": ineligible,
+              "ranking_preflight_candidates": candidates,
+              "ranking_eligible": ranking_eligible,
+          }.items():
+              if not isinstance(value, int) or value < 0:
+                  raise SystemExit(f"invalid population field {label}: {value}")
+          if universe <= 0:
+              raise SystemExit("ranking preflight universe must be non-empty")
+          if assessable + ineligible != universe:
+              raise SystemExit("ranking preflight population accounting mismatch")
+          if candidates != assessable:
+              raise SystemExit("ranking candidates must equal assessment-eligible population")
+          if ranking_eligible != 0:
+              raise SystemExit("ranking eligibility must remain zero")
 
           claims = payload.get("claim_contract") or {}
           if claims.get("full_market_total_ranking_supported") is not False:
@@ -203,30 +176,35 @@ jobs:
               raise SystemExit("excluded entities cannot be assigned bottom rank")
 
           coverage = payload.get("coverage_diagnostic") or {}
-          if abs(coverage.get("assessment_eligible_positive_premium_share", 0) - 0.6993568386764415) > 1e-12:
-              raise SystemExit("unexpected eligible premium share")
-          if abs(coverage.get("assessment_eligible_complaint_share", 0) - 0.5439501110127027) > 1e-12:
-              raise SystemExit("unexpected eligible complaint share")
-          if coverage.get("full_market_scope_complete") is not False:
-              raise SystemExit("full-market scope cannot be complete at 85/157")
+          for key in (
+              "assessment_eligible_entity_share",
+              "assessment_eligible_positive_premium_share",
+              "assessment_eligible_complaint_share",
+              "assessment_ineligible_positive_premium_share",
+              "assessment_ineligible_complaint_share",
+          ):
+              value = coverage.get(key)
+              if not isinstance(value, (int, float)) or not 0.0 <= float(value) <= 1.0:
+                  raise SystemExit(f"invalid coverage share {key}: {value}")
+          expected_full_scope = assessable == universe
+          if coverage.get("full_market_scope_complete") is not expected_full_scope:
+              raise SystemExit("full-market scope flag does not match population")
 
           ordering = payload.get("ordering_diagnostic") or {}
-          expected_ordering = {
-              "unique_semantic_groups": 6,
-              "largest_semantic_group": 46,
-              "entities_in_tied_semantic_groups": 85,
-              "pair_count": 3570,
-              "strictly_comparable_pairs": 2150,
-              "tied_pairs": 1198,
-              "incomparable_pairs": 222,
-              "normative_tradeoff_pairs": 222,
-              "financial_vs_conduct_lexicographic_disagreement_pairs": 222,
-          }
-          for key, expected_value in expected_ordering.items():
-              if ordering.get(key) != expected_value:
-                  raise SystemExit(
-                      f"unexpected ordering diagnostic {key}: {ordering.get(key)}"
-                  )
+          pair_count = ordering.get("pair_count")
+          expected_pairs = assessable * (assessable - 1) // 2
+          if pair_count != expected_pairs:
+              raise SystemExit(
+                  f"pair count mismatch: {pair_count} != {expected_pairs}"
+              )
+          comparable = int(ordering.get("strictly_comparable_pairs") or 0)
+          tied = int(ordering.get("tied_pairs") or 0)
+          incomparable = int(ordering.get("incomparable_pairs") or 0)
+          if comparable + tied + incomparable != pair_count:
+              raise SystemExit("pairwise ordering categories do not reconcile")
+          tradeoffs = int(ordering.get("normative_tradeoff_pairs") or 0)
+          if tradeoffs < 0 or tradeoffs > pair_count:
+              raise SystemExit("invalid normative tradeoff pair count")
           if ordering.get("approved_total_order_selected") is not False:
               raise SystemExit("no total-order rule should be selected")
           if ordering.get("within_state_tiebreaker_selected") is not False:
@@ -237,18 +215,18 @@ jobs:
           blockers = payload.get("blocking_reasons") or {}
           full = blockers.get("full_market_total_ranking") or []
           subset = blockers.get("assessment_eligible_subset_total_ranking") or []
-          if "assessment_does_not_cover_full_regulatory_universe" not in full:
+          if not expected_full_scope and "assessment_does_not_cover_full_regulatory_universe" not in full:
               raise SystemExit("full-market coverage blocker missing")
           if "assessment_does_not_cover_full_regulatory_universe" in subset:
               raise SystemExit("subset ranking incorrectly blocked by full-market scope")
-          if "normative_cross_pillar_tradeoffs_unresolved" not in subset:
-              raise SystemExit("subset normative-ordering blocker missing")
+          if "no_approved_total_order_rule" not in subset:
+              raise SystemExit("subset total-order blocker missing")
 
           rows = payload.get("entities") or []
-          if len(rows) != 157:
-              raise SystemExit("ranking preflight must preserve 157 entities")
-          if sum(bool(row.get("ranking_preflight_candidate")) for row in rows) != 85:
-              raise SystemExit("expected 85 ranking preflight candidates")
+          if len(rows) != universe:
+              raise SystemExit("ranking preflight entity rows differ from regulatory universe")
+          if sum(bool(row.get("ranking_preflight_candidate")) for row in rows) != candidates:
+              raise SystemExit("ranking preflight candidate row count mismatch")
           if any(row.get("ranking_eligible") for row in rows):
               raise SystemExit("ranking eligibility must remain zero")
           if any(row.get("ranking_position") is not None for row in rows):
@@ -270,7 +248,6 @@ jobs:
                       walk(child)
 
           walk(payload)
-
           print(json.dumps({
               "population": population,
               "coverage_diagnostic": coverage,

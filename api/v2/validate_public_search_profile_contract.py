@@ -4,6 +4,12 @@ import json
 from pathlib import Path
 from typing import Any
 
+from api.v2.public_profile_regulatory_semantics import (
+    SSPE_ASSESSMENT_REASON,
+    SSPE_LABEL,
+    SSPE_QUERY_STATE,
+)
+
 CONTRACT_PATH = Path("data/derived/v2/public_search_profile_contract.json")
 EXPLORER_PATH = Path("data/derived/v2/public/insurer_explorer.json")
 SANDBOX_PATH = Path("data/derived/v2/sandbox_brand_conduct_evidence.json")
@@ -11,7 +17,7 @@ PUBLIC_DIR = Path("data/derived/v2/public")
 
 
 class PublicProfileValidationError(RuntimeError):
-    """Raised when the real public profile package violates the closed contract."""
+    """Raised when public profile outputs violate structural publication contracts."""
 
 
 def _load(path: Path) -> dict[str, Any]:
@@ -23,38 +29,118 @@ def _require(condition: bool, message: str) -> None:
         raise PublicProfileValidationError(message)
 
 
+def _profile_maps(
+    contract: dict[str, Any],
+) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
+    profiles = list(contract.get("profiles") or [])
+    by_profile_id = {
+        str(row.get("profile_id") or ""): row for row in profiles
+    }
+    _require(
+        "" not in by_profile_id and len(by_profile_id) == len(profiles),
+        "public profile ids must be non-empty and unique",
+    )
+
+    entity_by_id: dict[str, dict[str, Any]] = {}
+    for profile in profiles:
+        if profile.get("profile_kind") != "entity":
+            continue
+        entity_id = str((profile.get("identity") or {}).get("entity_id") or "")
+        _require(entity_id, f"entity profile without entity_id: {profile.get('profile_id')}")
+        _require(entity_id not in entity_by_id, f"duplicate entity profile: {entity_id}")
+        entity_by_id[entity_id] = profile
+    return by_profile_id, entity_by_id
+
+
 def _validate_population(
     contract: dict[str, Any],
     explorer: dict[str, Any],
     sandbox: dict[str, Any],
-) -> None:
+    entity_by_id: dict[str, dict[str, Any]],
+) -> dict[str, int]:
     population = contract.get("population") or {}
-    lifecycle_entities = int(population.get("lifecycle_entities") or 0)
-    brands = int(population.get("brands") or 0)
-    profiles = int(population.get("profiles") or 0)
-    search_entries = int(population.get("search_entries") or 0)
-    ordinary = int(population.get("ordinary_current_insurer_profiles") or 0)
-    assessed = int(
-        population.get("ordinary_profiles_with_assessment_payload") or 0
-    )
-    sandbox_profiles = int(population.get("sandbox_entity_profiles") or 0)
-    sandbox_with_conduct = int(
-        population.get("sandbox_profiles_with_conduct_context") or 0
-    )
+    integer_fields = {
+        key: population.get(key)
+        for key in (
+            "lifecycle_entities",
+            "brands",
+            "profiles",
+            "search_entries",
+            "ordinary_current_insurer_profiles",
+            "ordinary_profiles_with_assessment_payload",
+            "sandbox_entity_profiles",
+            "sandbox_profiles_with_conduct_context",
+            "special_purpose_insurer_profiles",
+        )
+    }
+    for key, value in integer_fields.items():
+        _require(isinstance(value, int) and value >= 0, f"invalid population field {key}: {value}")
 
-    explorer_count = len(explorer.get("entities") or [])
-    sandbox_count = len(sandbox.get("carriers") or [])
+    lifecycle_entities = int(integer_fields["lifecycle_entities"])
+    brands = int(integer_fields["brands"])
+    profiles = int(integer_fields["profiles"])
+    search_entries = int(integer_fields["search_entries"])
+    ordinary = int(integer_fields["ordinary_current_insurer_profiles"])
+    assessed = int(integer_fields["ordinary_profiles_with_assessment_payload"])
+    sandbox_profiles = int(integer_fields["sandbox_entity_profiles"])
+    sandbox_with_conduct = int(integer_fields["sandbox_profiles_with_conduct_context"])
+    sspe_profiles = int(integer_fields["special_purpose_insurer_profiles"])
 
-    _require(lifecycle_entities >= explorer_count, "search universe smaller than explorer")
+    _require(lifecycle_entities == len(entity_by_id), "lifecycle entity count differs from entity profiles")
     _require(profiles == lifecycle_entities + brands, "profile population mismatch")
     _require(search_entries == profiles, "every profile must have one search entry")
-    _require(ordinary >= explorer_count, "ordinary search universe lost assessed insurers")
-    _require(assessed == explorer_count, "assessment coverage differs from explorer")
-    _require(sandbox_profiles == sandbox_count, "Sandbox profile population mismatch")
+
+    explorer_ids = {
+        str(row.get("entity_id") or "") for row in explorer.get("entities") or []
+    }
+    _require("" not in explorer_ids, "explorer contains empty entity_id")
+    ordinary_ids = {
+        entity_id
+        for entity_id, profile in entity_by_id.items()
+        if (profile.get("regulatory") or {}).get("query_state")
+        == "current_ordinary_insurer"
+    }
     _require(
-        sandbox_with_conduct == sandbox_count,
+        ordinary_ids == explorer_ids,
+        "ordinary public profile set differs from assessment explorer set",
+    )
+    _require(ordinary == len(ordinary_ids), "ordinary profile count mismatch")
+    _require(assessed == len(explorer_ids), "assessment payload count differs from explorer")
+
+    sspe_ids = {
+        entity_id
+        for entity_id, profile in entity_by_id.items()
+        if (profile.get("regulatory") or {}).get("query_state") == SSPE_QUERY_STATE
+    }
+    _require(sspe_profiles == len(sspe_ids), "SSPE population count mismatch")
+    _require(not (sspe_ids & ordinary_ids), "SSPE leaked into ordinary assessment universe")
+
+    sandbox_carrier_ids = {
+        str(row.get("entity_id") or "") for row in sandbox.get("carriers") or []
+    }
+    _require("" not in sandbox_carrier_ids, "Sandbox carrier without entity_id")
+    sandbox_profile_ids = {
+        entity_id
+        for entity_id, profile in entity_by_id.items()
+        if (profile.get("regulatory") or {}).get("regime") == "sandbox"
+    }
+    _require(
+        sandbox_profile_ids == sandbox_carrier_ids,
+        "Sandbox public profile set differs from Sandbox Conduct carrier set",
+    )
+    _require(sandbox_profiles == len(sandbox_profile_ids), "Sandbox profile population mismatch")
+    _require(
+        sandbox_with_conduct == len(sandbox_carrier_ids),
         "not every Sandbox carrier received Conduct context",
     )
+
+    return {
+        "explorer": len(explorer_ids),
+        "ordinary": ordinary,
+        "sspe": sspe_profiles,
+        "sandbox": sandbox_profiles,
+        "profiles": profiles,
+    }
 
 
 def _validate_policy(contract: dict[str, Any]) -> None:
@@ -67,100 +153,85 @@ def _validate_policy(contract: dict[str, Any]) -> None:
         "raw_zero_may_be_relabelled_as_missing",
         "zero_complaints_is_automatically_favorable",
         "sandbox_enters_ordinary_ranking",
+        "sspe_enters_ordinary_assessment",
+        "sspe_enters_ordinary_ranking",
         "php_may_recompute_methodology",
     }
     for key in required_false:
         _require(policy.get(key) is False, f"public safety policy changed: {key}")
-
-
-def _validate_youse(profiles: dict[str, dict[str, Any]]) -> dict[str, Any]:
-    youse = profiles.get("entity:fip:001121")
-    _require(youse is not None, "Youse public profile missing")
-    assessment = youse.get("assessment") or {}
-    technical = ((assessment.get("conduct") or {}).get("technical") or {})
-
-    observed = (technical.get("observed_complaints_12m") or {}).get("value")
-    _require(observed == 1367, "Youse observed complaints changed unexpectedly")
-
-    for metric in (
-        "expected_complaints_12m",
-        "observed_expected_ratio",
-        "comparable_months",
-    ):
-        item = technical.get(metric) or {}
-        _require(item.get("value") is None, f"Youse {metric} was coerced to a value")
-        _require(
-            item.get("availability") == "unavailable",
-            f"Youse {metric} missingness semantics changed",
-        )
-
-    operation = (
-        assessment.get("operation_context", {}).get("insurance_premium_direct_12m", {})
-    )
-    _require(operation.get("value") == 0.0, "Youse raw premium snapshot changed")
     _require(
-        operation.get("public_use") == "do_not_render_as_operation_size",
-        "Youse raw zero could be rendered as operation size",
+        policy.get("search_is_broader_than_ordinary_assessment") is True,
+        "search must remain broader than ordinary assessment",
     )
 
-    relationships = (
-        (youse.get("relationship_context") or {}).get("conduct_reconciliation") or []
-    )
-    relation = next(
-        (
-            row
-            for row in relationships
-            if row.get("relationship_type") == "consumer_subject_single_risk_carrier"
-        ),
-        None,
-    )
-    _require(relation is not None, "Youse -> Caixa relationship missing")
-    names = {row.get("name") for row in relation.get("targets") or []}
-    _require("CAIXA SEGURADORA S.A." in names, "Youse did not resolve Caixa")
 
-    return {
-        "complaints": observed,
-        "expected": None,
-        "operation_public_use": operation.get("public_use"),
+def _validate_profile_semantics(
+    profiles: dict[str, dict[str, Any]],
+) -> None:
+    for profile_id, profile in profiles.items():
+        kind = profile.get("profile_kind")
+        assessment = profile.get("assessment") or {}
+        if kind == "brand":
+            _require(
+                assessment.get("availability") == "not_applicable",
+                f"brand inherited entity assessment: {profile_id}",
+            )
+            continue
+        if kind != "entity":
+            raise PublicProfileValidationError(f"unknown profile kind: {kind}")
+
+        regulatory = profile.get("regulatory") or {}
+        query_state = regulatory.get("query_state")
+        if query_state == SSPE_QUERY_STATE:
+            _require(regulatory.get("label") == SSPE_LABEL, f"SSPE label missing: {profile_id}")
+            _require(
+                (profile.get("public_summary") or {}).get("headline") == SSPE_LABEL,
+                f"SSPE headline missing: {profile_id}",
+            )
+            _require(
+                assessment.get("availability") == "not_applicable",
+                f"SSPE received ordinary assessment: {profile_id}",
+            )
+            _require(
+                assessment.get("reason") == SSPE_ASSESSMENT_REASON,
+                f"SSPE assessment reason is ambiguous: {profile_id}",
+            )
+        elif query_state == "current_ordinary_insurer":
+            _require(
+                assessment.get("availability") in {"available", "incomplete"},
+                f"ordinary insurer lost assessment payload: {profile_id}",
+            )
+
+
+def _validate_search_index(
+    contract: dict[str, Any],
+    profiles: dict[str, dict[str, Any]],
+) -> None:
+    entries = list(contract.get("search_index") or [])
+    by_profile = {
+        str(row.get("profile_id") or ""): row for row in entries
     }
-
-
-def _validate_loovi_lti(profiles: dict[str, dict[str, Any]]) -> int:
-    loovi = profiles.get("brand:loovi")
-    lti = profiles.get("entity:cnpj:47006254000180")
-    _require(loovi is not None and lti is not None, "Loovi/LTI profiles missing")
     _require(
-        (loovi.get("assessment") or {}).get("availability") == "not_applicable",
-        "brand inherited entity assessment",
+        "" not in by_profile and len(by_profile) == len(entries),
+        "search profile ids must be non-empty and unique",
     )
-    context = loovi.get("sandbox_conduct_context") or {}
-    complaints = ((context.get("metrics") or {}).get("complaints") or {}).get("value")
-    _require(complaints == 1329, "Loovi/LTI complaints not preserved")
-    _require(
-        context.get("risk_carrier_profile_id") == "entity:cnpj:47006254000180",
-        "Loovi did not resolve to LTI",
-    )
-    lti_complaints = (
-        (((lti.get("sandbox_conduct") or {}).get("metrics") or {}).get("complaints") or {})
-        .get("value")
-    )
-    _require(lti_complaints == 1329, "LTI carrier complaints not preserved")
-    return int(complaints)
+    _require(set(by_profile) == set(profiles), "search index/profile manifest population differs")
+    paths = [str(row.get("profile_path") or "") for row in entries]
+    _require(all(paths) and len(set(paths)) == len(paths), "search profile paths must be unique")
 
-
-def _validate_hdi(profiles: dict[str, dict[str, Any]]) -> str:
-    hdi = profiles.get("entity:fip:006572")
-    hdi_global = profiles.get("entity:fip:001571")
-    _require(hdi is not None and hdi_global is not None, "HDI profiles missing")
-    _require(
-        hdi["identity"].get("cnpj") != hdi_global["identity"].get("cnpj"),
-        "HDI and HDI Global identities collapsed",
-    )
-    group = (hdi.get("relationship_context") or {}).get("economic_group") or {}
-    _require(group.get("group_name") == "TALANX AG", "HDI TALANX context missing")
-    related = {row.get("profile_id") for row in group.get("related_entities") or []}
-    _require("entity:fip:001571" in related, "HDI Global missing from HDI context")
-    return str(group["group_name"])
+    for profile_id, profile in profiles.items():
+        regulatory = profile.get("regulatory") or {}
+        if regulatory.get("query_state") != SSPE_QUERY_STATE:
+            continue
+        entry = by_profile[profile_id]
+        _require(
+            SSPE_LABEL in str(entry.get("disambiguation") or ""),
+            f"SSPE search result lacks subtype disambiguation: {profile_id}",
+        )
+        _require(
+            entry.get("filter_bucket") != "insurers",
+            f"SSPE search result leaked into ordinary insurer filter: {profile_id}",
+        )
 
 
 def _walk_public(value: Any, path: str = "$") -> None:
@@ -181,6 +252,17 @@ def _walk_public(value: Any, path: str = "$") -> None:
             _walk_public(child, f"{path}[{index}]")
 
 
+def _validate_public_files(profile_count: int) -> None:
+    _require((PUBLIC_DIR / "search_index.json").is_file(), "search index missing")
+    _require((PUBLIC_DIR / "profile_manifest.json").is_file(), "manifest missing")
+    profile_dir = PUBLIC_DIR / "profiles"
+    _require(profile_dir.is_dir(), "profile directory missing")
+    _require(
+        len(list(profile_dir.glob("*.json"))) == profile_count,
+        "profile-file count differs from profile population",
+    )
+
+
 def validate_real_public_search_profile_contract() -> dict[str, Any]:
     contract = _load(CONTRACT_PATH)
     explorer = _load(EXPLORER_PATH)
@@ -189,37 +271,21 @@ def validate_real_public_search_profile_contract() -> dict[str, Any]:
         contract.get("status") == "public_search_profile_contract_closed",
         "public search/profile contract did not close",
     )
-    _validate_population(contract, explorer, sandbox)
+
+    profiles, entity_by_id = _profile_maps(contract)
+    counts = _validate_population(contract, explorer, sandbox, entity_by_id)
     _validate_policy(contract)
-
-    profiles = {
-        row["profile_id"]: row for row in contract.get("profiles") or []
-    }
-    youse = _validate_youse(profiles)
-    loovi_complaints = _validate_loovi_lti(profiles)
-    hdi_group = _validate_hdi(profiles)
+    _validate_profile_semantics(profiles)
+    _validate_search_index(contract, profiles)
     _walk_public(contract.get("profiles") or [])
+    _validate_public_files(counts["profiles"])
 
-    profile_count = int((contract.get("population") or {}).get("profiles") or 0)
-    _require((PUBLIC_DIR / "search_index.json").is_file(), "search index missing")
-    _require((PUBLIC_DIR / "profile_manifest.json").is_file(), "manifest missing")
-    _require(
-        len(list((PUBLIC_DIR / "profiles").glob("*.json"))) == profile_count,
-        "profile-file count differs from profile population",
-    )
-
-    ordinary = int(
-        (contract.get("population") or {}).get("ordinary_current_insurer_profiles") or 0
-    )
-    explorer_count = len(explorer.get("entities") or [])
     return {
         "status": contract["status"],
+        "version": contract.get("version"),
         "population": contract["population"],
-        "explorer_assessment_profiles": explorer_count,
-        "new_ordinary_profiles_without_assessment": ordinary - explorer_count,
-        "youse": youse,
-        "loovi_lti_complaints": loovi_complaints,
-        "hdi_group": hdi_group,
+        "structural_counts": counts,
+        "general_ranking_fields_present": False,
     }
 
 
