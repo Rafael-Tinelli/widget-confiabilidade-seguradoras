@@ -13,7 +13,6 @@ from api.v2.generation import (
     write_distribution_manifest,
 )
 
-
 HEAD = "a" * 40
 BUILD_ID = "v2-aaaaaaaaaaaa-123-a1"
 
