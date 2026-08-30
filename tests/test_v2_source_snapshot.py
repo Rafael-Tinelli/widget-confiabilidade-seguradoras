@@ -45,10 +45,30 @@ def test_successful_current_fetch_is_fresh_and_hashed(tmp_path: Path):
     lineage = _observation(snapshot, succeeded=True).to_lineage(_context())
 
     assert lineage.state == "fresh"
+    assert lineage.freshness_method == "current_fetch"
     assert lineage.build_id == BUILD_ID
     assert lineage.snapshot_path == str(snapshot)
     assert lineage.sha256 is not None
     assert len(lineage.sha256) == 64
+
+
+def test_current_validation_can_confirm_existing_snapshot_as_fresh(tmp_path: Path):
+    snapshot = tmp_path / "receita.json"
+    snapshot.write_text('{"records": []}', encoding="utf-8")
+
+    lineage = SourceObservation(
+        source_id="receita_cnpj_lifecycle",
+        source_url="https://example.test/receita",
+        snapshot_path=snapshot,
+        fetched_at="2026-08-29T10:00:00Z",
+        current_validation_succeeded=True,
+        state_reason="official reference period and target hash unchanged",
+    ).to_lineage(_context())
+
+    assert lineage.state == "fresh"
+    assert lineage.freshness_method == "current_validation"
+    assert lineage.fetched_at == "2026-08-29T10:00:00Z"
+    assert "target hash" in str(lineage.state_reason)
 
 
 def test_failed_current_fetch_with_valid_snapshot_is_explicitly_stale(tmp_path: Path):
@@ -58,6 +78,7 @@ def test_failed_current_fetch_with_valid_snapshot_is_explicitly_stale(tmp_path: 
     lineage = _observation(snapshot, succeeded=False).to_lineage(_context())
 
     assert lineage.state == "stale"
+    assert lineage.freshness_method == "validated_cache_fallback"
     assert lineage.sha256 is not None
     assert lineage.snapshot_path == str(snapshot)
 
@@ -68,8 +89,26 @@ def test_failed_current_fetch_without_snapshot_is_unavailable(tmp_path: Path):
     lineage = _observation(snapshot, succeeded=False).to_lineage(_context())
 
     assert lineage.state == "unavailable"
+    assert lineage.freshness_method == "unavailable"
     assert lineage.sha256 is None
     assert lineage.snapshot_path is None
+
+
+def test_fetch_and_validation_cannot_both_claim_current_freshness(tmp_path: Path):
+    snapshot = tmp_path / "source.bin"
+    snapshot.write_bytes(b"source")
+
+    observation = SourceObservation(
+        source_id="source",
+        source_url="https://example.test/source",
+        snapshot_path=snapshot,
+        fetched_at="2026-08-30T18:55:00Z",
+        current_fetch_succeeded=True,
+        current_validation_succeeded=True,
+    )
+
+    with pytest.raises(ValueError, match="both freshly fetched and cache-validated"):
+        observation.to_lineage(_context())
 
 
 def test_success_claim_without_snapshot_fails_closed(tmp_path: Path):
@@ -103,10 +142,13 @@ def test_written_source_lineage_round_trips_into_distribution_contract(tmp_path:
 
     payload = json.loads(output.read_text(encoding="utf-8"))
     assert payload["artifact"] == "v2_source_lineage"
+    assert payload["version"] == 2
     assert payload["build"]["build_id"] == BUILD_ID
     assert payload["state_counts"] == {"fresh": 1, "stale": 0, "unavailable": 0}
+    assert payload["freshness_method_counts"] == {"current_fetch": 1}
 
     loaded = load_source_lineage(output, _context())
     assert len(loaded) == 1
     assert loaded[0].source_id == "susep_ses_base_completa"
     assert loaded[0].state == "fresh"
+    assert loaded[0].freshness_method == "current_fetch"
