@@ -301,7 +301,7 @@ def _load_receita_lifecycle_input(path: Path) -> list[dict[str, Any]]:
     elif isinstance(payload, dict) and isinstance(payload.get("records"), list):
         records = payload["records"]
     else:
-        raise RuntimeError("unexpected Receita lifecycle input artifact")
+        raise TypeError("unexpected Receita lifecycle input artifact")
     return [dict(record) for record in records]
 
 
