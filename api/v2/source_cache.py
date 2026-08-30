@@ -3,10 +3,10 @@ from __future__ import annotations
 import hashlib
 import json
 import shutil
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable
 
 from api.v2.generation import BuildContext
 from api.v2.source_snapshot import SourceObservation
@@ -117,8 +117,12 @@ def acquire_with_validated_cache(
     """Acquire one source, falling back only to a hash-validated prior snapshot.
 
     A failed current fetch never rewrites cache metadata. When fallback is used,
-    the original fetched_at timestamp is preserved in lineage.
+    the original fetched_at timestamp is preserved in lineage. The broad catches
+    are intentional boundaries: arbitrary source adapters and validators are
+    allowed to fail, but every failure must be converted into stale/unavailable
+    state rather than escaping before lineage can be recorded.
     """
+    del context  # Build identity is applied when SourceObservation becomes lineage.
     if cache.source_id != source_id or cache.source_url != source_url:
         raise SourceCacheError("cache identity differs from requested source")
 
@@ -142,7 +146,7 @@ def acquire_with_validated_cache(
             current_fetch_succeeded=True,
         )
         return AcquisitionResult(observation=observation, used_cache=False)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         current_error = f"{type(exc).__name__}: {exc}"
         if temp.exists():
             temp.unlink()
@@ -150,7 +154,7 @@ def acquire_with_validated_cache(
     try:
         fetched_at = cache.materialize(destination)
         validate_path(destination)
-    except Exception:
+    except Exception:  # noqa: BLE001
         if destination.exists():
             destination.unlink()
         observation = SourceObservation(
@@ -159,6 +163,7 @@ def acquire_with_validated_cache(
             snapshot_path=destination,
             fetched_at=utc_now(),
             current_fetch_succeeded=False,
+            state_reason=current_error,
         )
         return AcquisitionResult(
             observation=observation,
@@ -172,6 +177,7 @@ def acquire_with_validated_cache(
         snapshot_path=destination,
         fetched_at=fetched_at,
         current_fetch_succeeded=False,
+        state_reason=current_error,
     )
     return AcquisitionResult(
         observation=observation,
