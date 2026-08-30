@@ -96,17 +96,27 @@ O DAG é testado para:
 
 O caminho evergreen não deve usar `gh run list` para procurar outputs intermediários. Os builders executam no mesmo workspace e consomem arquivos produzidos anteriormente na própria geração.
 
-### Eligibility já separado da aquisição
+### Lifecycle, Eligibility e Financial Evidence já separados da aquisição
 
-O modo legado de `build_eligibility_inventory.py` continua disponível para os workflows atuais. O Gate 4, porém, usa:
+Os modos legados continuam disponíveis para os workflows de investigação atuais. O Gate 4 usa somente inputs materializados da mesma geração:
 
 ```text
-build_lifecycle_relationship_inventory
-→ entity_lifecycle_relationship_inventory.json
-→ build_eligibility_inventory --lifecycle-input <arquivo>
+source_snapshot
+→ classification_inventory.json
+→ receita_lifecycle_records.json
+→ BaseCompleta.zip
+→ Lifecycle
+→ Eligibility
+→ Financial Evidence
 ```
 
-Assim, Eligibility deixa de reconstruir Classification/Lifecycle e de repetir chamadas de fonte. A regra de elegibilidade não mudou; apenas a proveniência do input passa a ser explícita e reutilizável dentro da mesma geração.
+`Lifecycle` não abre SUSEP ou Receita no modo Gate 4. Ele recebe Classification e Receita lifecycle já materializados e usa o `BaseCompleta.zip` local apenas para grupos econômicos. O relationship registry continua sendo curadoria versionada no repositório.
+
+`Eligibility` recebe diretamente o Lifecycle materializado, sem reconstruir Classification/Lifecycle.
+
+`Financial Evidence` recebe diretamente Eligibility e o `BaseCompleta.zip` materializados; não refaz Lifecycle/Classification nem chama fontes regulatórias.
+
+Nenhuma regra de classificação, elegibilidade ou evidência financeira mudou com essa separação.
 
 ### Ranking Stage 2 sem alias operacional
 
@@ -124,24 +134,38 @@ A publicação permanece propositalmente fechada enquanto estes stages ainda nã
 
 ```text
 source_snapshot
-financial_evidence
 consumer_conduct
-lifecycle
 ```
-
-Razões:
 
 ### `source_snapshot`
 
-A lineage e os estados já estão modelados, mas ainda falta integrar todas as aquisições oficiais a um snapshot transversal materializado antes das derivações.
+A lineage e os estados já estão modelados, e todos os downstreams regulatórios/financeiros já possuem rotas offline. Falta centralizar a aquisição propriamente dita e materializar, com estado verificável, pelo menos:
 
-### `financial_evidence` e `lifecycle`
+```text
+BaseCompleta.zip
+LISTAEMPRESAS.csv
+SUSEP licensed entities
+SUSEP special regimes
+SUSEP Sandbox
+Classification snapshot
+Receita lifecycle snapshot
+source_lineage.json
+```
 
-Hoje ainda combinam, em graus diferentes, aquisição de fonte e derivação. Precisam consumir o snapshot da geração em vez de abrir conexões oficiais independentes durante o próprio builder.
+O ponto pendente não é apenas ter cache: o snapshot precisa saber se a tentativa atual foi bem-sucedida ou se reutilizou conteúdo anterior, para declarar `fresh`, `stale` ou `unavailable` sem inferir isso por timestamp de arquivo.
 
 ### `consumer_conduct`
 
-Ainda combina atualização Consumer.gov, resolução Receita e derivação de Conduta. Também precisa de política explícita para indisponibilidade das fontes oficiais.
+Ainda combina atualização Consumer.gov, resolução Receita e derivação de Conduta. A varredura oficial Receita pode durar horas; portanto esse estágio só deixa de ser blocker quando aquisição/cache e derivação estiverem separados e a validade do snapshot for determinada por uma chave explícita, não por `--force`.
+
+A chave mínima planejada para o snapshot de identidade Receita/Consumer.gov inclui:
+
+```text
+Receita reference_period
+target_universe_hash
+unresolved_provider/query_hash
+schema_version
+```
 
 Enquanto qualquer blocker permanecer, o contrato retorna:
 
@@ -218,8 +242,8 @@ Os workflows de investigação atuais permanecem durante a transição para pres
 A migração deve ocorrer em ordem:
 
 1. fechar source snapshot + lineage;
-2. separar aquisição de derivação nos stages mistos;
-3. eliminar aliases operacionais e `latest successful` do caminho de distribuição;
+2. separar aquisição de derivação na Conduta;
+3. eliminar `latest successful` do caminho de distribuição;
 4. executar o DAG inteiro em um único workspace;
 5. produzir e validar o artifact único;
 6. desenhar e testar a rotina v2 de instalação atômica/rollback no HostGator;
