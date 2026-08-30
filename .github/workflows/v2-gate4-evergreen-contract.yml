@@ -11,6 +11,7 @@ on:
       - "api/v2/build_public_distribution_manifest.py"
       - "api/v2/build_eligibility_inventory.py"
       - "api/v2/build_financial_evidence_inventory.py"
+      - "api/v2/build_lifecycle_relationship_inventory.py"
       - "tests/test_v2_generation.py"
       - "tests/test_v2_source_snapshot.py"
       - "tests/test_v2_gate4_pipeline.py"
@@ -60,6 +61,7 @@ jobs:
             api/v2/build_public_distribution_manifest.py \
             api/v2/build_eligibility_inventory.py \
             api/v2/build_financial_evidence_inventory.py \
+            api/v2/build_lifecycle_relationship_inventory.py \
             tests/test_v2_generation.py \
             tests/test_v2_source_snapshot.py \
             tests/test_v2_gate4_pipeline.py \
