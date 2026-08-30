@@ -113,7 +113,8 @@ def test_sspe_is_publicly_disambiguated_without_changing_legal_superclass():
     assert sspe["regulatory"]["label"] == SSPE_LABEL
     assert sspe["public_summary"]["headline"] == SSPE_LABEL
     assert "propósito específico" in sspe["public_summary"]["quick_answer"]
-    assert "fora" in sspe["public_summary"]["quick_answer"]
+    assert "não recebe avaliação conjunta" in sspe["public_summary"]["quick_answer"]
+    assert "posição de ranking" in sspe["public_summary"]["quick_answer"]
     assert sspe["assessment"] == {
         "availability": "not_applicable",
         "reason": SSPE_ASSESSMENT_REASON,
