@@ -44,17 +44,28 @@ STAGES: tuple[PipelineStage, ...] = (
         commands=(),
         outputs=(
             "data/raw/ses/BaseCompleta.zip",
+            "data/derived/v2/source/classification_inventory.json",
+            "data/derived/v2/source/receita_lifecycle_records.json",
             "data/derived/v2/source_lineage.json",
         ),
         evergreen_ready=False,
     ),
     PipelineStage(
         stage_id="lifecycle",
-        kind="mixed_source_derive",
+        kind="derive",
         dependencies=("source_snapshot",),
-        commands=(_module("api.v2.build_lifecycle_relationship_inventory"),),
+        commands=(
+            _module(
+                "api.v2.build_lifecycle_relationship_inventory",
+                "--classification-input",
+                "data/derived/v2/source/classification_inventory.json",
+                "--receita-lifecycle-input",
+                "data/derived/v2/source/receita_lifecycle_records.json",
+                "--ses-zip",
+                "data/raw/ses/BaseCompleta.zip",
+            ),
+        ),
         outputs=("data/derived/v2/entity_lifecycle_relationship_inventory.json",),
-        evergreen_ready=False,
     ),
     PipelineStage(
         stage_id="eligibility",
