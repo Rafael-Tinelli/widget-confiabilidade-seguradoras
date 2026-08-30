@@ -81,7 +81,6 @@ def test_current_blockers_are_explicit_instead_of_silently_published():
         "source_snapshot",
         "financial_evidence",
         "consumer_conduct",
-        "ranking_preflight",
         "lifecycle",
     }
     contract = pipeline_contract()
@@ -149,7 +148,7 @@ def test_duplicate_output_is_rejected():
         validate_pipeline(broken)
 
 
-def test_pipeline_keeps_ranking_blocked_methodologically():
+def test_pipeline_keeps_ranking_blocked_methodologically_not_operationally():
     mapping = stage_map(STAGES)
     ranking = mapping["ranking_preflight"]
 
@@ -160,4 +159,5 @@ def test_pipeline_keeps_ranking_blocked_methodologically():
             "api.v2.build_ranking_eligibility_preflight",
         ),
     )
-    assert "ranking_preflight" in publication_blockers()
+    assert ranking.evergreen_ready is True
+    assert "ranking_preflight" not in publication_blockers()
