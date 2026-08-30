@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import json
 from datetime import datetime, timezone
 from pathlib import Path
@@ -23,6 +24,9 @@ from api.v2.eligibility import (
 from api.v2.relationships import load_verified_relationship_registry
 
 DEFAULT_OUTPUT = Path("data/derived/v2/entity_eligibility_inventory.json")
+DEFAULT_LIFECYCLE_INPUT = Path(
+    "data/derived/v2/entity_lifecycle_relationship_inventory.json"
+)
 
 
 def _utc_now() -> str:
@@ -73,9 +77,8 @@ def write_eligibility_inventory(
     return output
 
 
-def main() -> None:
+def _build_legacy_lifecycle_from_sources() -> dict[str, Any]:
     group_records = load_susep_economic_groups()
-
     ses_out = extract_ses_master_and_financials()
     if not isinstance(ses_out, tuple) or len(ses_out) < 2:
         raise RuntimeError(f"Unexpected SES return: {type(ses_out)}")
@@ -86,14 +89,39 @@ def main() -> None:
         fetch_special_regime_records(),
         fetch_sandbox_participants(),
     )
-    lifecycle = build_lifecycle_relationship_inventory(
+    return build_lifecycle_relationship_inventory(
         classification,
         load_lifecycle_records(),
         load_verified_relationship_registry(),
         group_records,
     )
+
+
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Build the v2 eligibility inventory.")
+    parser.add_argument(
+        "--lifecycle-input",
+        type=Path,
+        help=(
+            "Use an already materialized lifecycle inventory instead of fetching and "
+            "rebuilding source inputs. Gate 4 uses this mode."
+        ),
+    )
+    parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
+    return parser.parse_args()
+
+
+def main() -> None:
+    args = _parse_args()
+    if args.lifecycle_input is not None:
+        lifecycle = json.loads(args.lifecycle_input.read_text(encoding="utf-8"))
+        if lifecycle.get("artifact") != "v2_entity_lifecycle_relationship_inventory":
+            raise RuntimeError("unexpected lifecycle input artifact")
+    else:
+        lifecycle = _build_legacy_lifecycle_from_sources()
+
     payload = build_eligibility_inventory(lifecycle)
-    path = write_eligibility_inventory(payload)
+    path = write_eligibility_inventory(payload, args.output)
     meta = payload["meta"]
     print(
         "V2 eligibility: "
