@@ -8,7 +8,7 @@ from typing import Any
 
 ASSESSMENT_PATH = Path("data/derived/v2/assessment_eligibility_contract.json")
 STAGE1_PATH = Path("data/derived/v2/cross_pillar_calibration_diagnostic.json")
-STAGE2_PATH = Path("data/derived/v2/cross_pillar_architecture_stage_2.json")
+STAGE2_PATH = Path("data/derived/v2/cross_pillar_architecture_experiment.json")
 COVERAGE_PATH = Path("data/derived/v2/cross_pillar_coverage_audit.json")
 OUTPUT_PATH = Path("data/derived/v2/ranking_eligibility_preflight.json")
 
