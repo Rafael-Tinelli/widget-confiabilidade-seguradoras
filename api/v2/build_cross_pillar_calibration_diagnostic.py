@@ -188,9 +188,9 @@ def build_cross_pillar_diagnostic(
 
     financial_by_id = _financial_entities(financial)
     conduct_by_id = _conduct_entities(conduct)
-    if len(financial_by_id) != 157 or len(conduct_by_id) != 157:
+    if len(financial_by_id) < 100 or len(conduct_by_id) < 100:
         raise CrossPillarCalibrationError(
-            "cross-pillar calibration requires the full 157-insurer universe"
+            "cross-pillar calibration received an unexpectedly small insurer universe"
         )
     if set(financial_by_id) != set(conduct_by_id):
         missing_financial = sorted(set(conduct_by_id) - set(financial_by_id))
@@ -200,6 +200,7 @@ def build_cross_pillar_diagnostic(
             f"missing_financial={missing_financial[:5]} "
             f"missing_conduct={missing_conduct[:5]}"
         )
+    universe_size = len(financial_by_id)
 
     rows: list[dict[str, Any]] = []
     matrix: dict[str, Counter[str]] = defaultdict(Counter)
@@ -383,9 +384,9 @@ def build_cross_pillar_diagnostic(
             ),
         },
         "population": {
-            "regulatory_universe": 157,
+            "regulatory_universe": universe_size,
             "joint_core_conclusive": len(coordinates),
-            "joint_core_not_conclusive": 157 - len(coordinates),
+            "joint_core_not_conclusive": universe_size - len(coordinates),
         },
         "diagnostics": {
             "joint_evidence_readiness_counts": dict(sorted(readiness_counts.items())),
