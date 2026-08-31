@@ -1,4 +1,6 @@
+import hashlib
 import json
+from pathlib import Path
 
 import pytest
 
@@ -46,8 +48,6 @@ def test_consumer_manifest_requires_fetched_at_and_valid_hashes(tmp_path) -> Non
             }
         )
 
-    import hashlib
-
     payload = {
         "artifact": "v2_consumer_gov_core_source_manifest",
         "version": 1,
@@ -59,9 +59,7 @@ def test_consumer_manifest_requires_fetched_at_and_valid_hashes(tmp_path) -> Non
         "months": [
             {
                 **item,
-                "sha256": hashlib.sha256(
-                    open(item["path"], "rb").read()  # noqa: PTH123, SIM115
-                ).hexdigest(),
+                "sha256": hashlib.sha256(Path(item["path"]).read_bytes()).hexdigest(),
             }
             for item in months
         ],
