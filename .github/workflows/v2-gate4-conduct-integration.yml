@@ -1,0 +1,385 @@
+name: V2 Gate 4 Conduct Integration Evergreen
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - refactor/v2-data-foundation
+    paths:
+      - ".github/workflows/v2-gate4-conduct-integration.yml"
+      - "api/v2/ses_activity_evidence.py"
+      - "api/v2/build_classification_inventory.py"
+      - "api/v2/build_source_snapshot.py"
+      - "api/v2/build_lifecycle_relationship_inventory.py"
+      - "api/v2/build_eligibility_inventory.py"
+      - "api/v2/build_conduct_source_snapshot.py"
+      - "api/v2/build_consumer_gov_receita_identity.py"
+      - "api/v2/build_consumer_gov_receita_resolution_experiment.py"
+      - "api/v2/build_consumer_gov_conduct_evidence.py"
+      - "api/v2/build_conduct_coverage_reconciliation.py"
+      - "api/v2/build_conduct_comparative_calibration_v2.py"
+      - "api/v2/build_conduct_credibility_diagnostic.py"
+      - "api/v2/build_conduct_portfolio_mix_diagnostic.py"
+      - "api/v2/build_conduct_methodology_closure.py"
+      - "api/v2/relationship_watchdog.py"
+      - "api/v2/gate4_pipeline.py"
+      - "data/reference/v2/verified_relationships.json"
+      - "data/reference/v2/conduct_subject_relationships.json"
+      - "data/reference/v2/sandbox_brand_relationships.json"
+      - "tests/test_v2_ses_activity_evidence.py"
+      - "tests/test_v2_build_source_snapshot.py"
+      - "tests/test_v2_conduct_source_snapshot.py"
+      - "tests/test_v2_consumer_gov_receita_cache_key.py"
+      - "tests/test_v2_relationship_watchdog.py"
+      - "tests/test_v2_consumer_gov_conduct.py"
+      - "tests/test_v2_consumer_gov_receita_resolution.py"
+      - "tests/test_v2_conduct_coverage_reconciliation.py"
+      - "tests/test_v2_conduct_comparative_calibration_v2.py"
+      - "tests/test_v2_conduct_credibility_diagnostic.py"
+      - "tests/test_v2_conduct_portfolio_mix_diagnostic.py"
+      - "tests/test_v2_conduct_methodology_closure.py"
+      - "tests/test_v2_gate4_pipeline.py"
+
+permissions:
+  contents: read
+
+env:
+  V2_SOURCE_HEAD_SHA: ${{ github.sha }}
+  V2_BUILD_ID: v2-conduct-${{ github.run_id }}-a${{ github.run_attempt }}
+  V2_SOURCE_CACHE_DIR: data/cache/v2/source
+  SES_ALLOW_INSECURE_SSL: "1"
+  SUSEP_LICENSED_VERIFY_SSL: "0"
+  SUSEP_SPECIAL_VERIFY_SSL: "0"
+  SUSEP_SANDBOX_VERIFY_SSL: "1"
+
+concurrency:
+  group: v2-gate4-conduct-evergreen-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  conduct-integration:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+
+    steps:
+      - name: Checkout exact source head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Restore validated regulatory source cache
+        id: regulatory-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: data/cache/v2/source
+          key: v2-gate4-source-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: |
+            v2-gate4-source-${{ runner.os }}-
+
+      - name: Restore validated Conduct source cache
+        id: conduct-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: data/cache/v2/conduct
+          key: v2-gate4-conduct-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: |
+            v2-gate4-conduct-${{ runner.os }}-
+
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install -r requirements-dev.txt
+
+      - name: Validate Gate 4 code before network access
+        run: |
+          set -euo pipefail
+          ruff check \
+            api/v2/ses_activity_evidence.py \
+            api/v2/build_classification_inventory.py \
+            api/v2/build_source_snapshot.py \
+            api/v2/build_lifecycle_relationship_inventory.py \
+            api/v2/build_eligibility_inventory.py \
+            api/v2/build_conduct_source_snapshot.py \
+            api/v2/build_consumer_gov_receita_identity.py \
+            api/v2/build_consumer_gov_receita_resolution_experiment.py \
+            api/v2/build_consumer_gov_conduct_evidence.py \
+            api/v2/build_conduct_coverage_reconciliation.py \
+            api/v2/build_conduct_comparative_calibration_v2.py \
+            api/v2/build_conduct_credibility_diagnostic.py \
+            api/v2/build_conduct_portfolio_mix_diagnostic.py \
+            api/v2/build_conduct_methodology_closure.py \
+            api/v2/relationship_watchdog.py \
+            api/v2/gate4_pipeline.py \
+            tests/test_v2_ses_activity_evidence.py \
+            tests/test_v2_build_source_snapshot.py \
+            tests/test_v2_conduct_source_snapshot.py \
+            tests/test_v2_consumer_gov_receita_cache_key.py \
+            tests/test_v2_relationship_watchdog.py \
+            tests/test_v2_consumer_gov_conduct.py \
+            tests/test_v2_consumer_gov_receita_resolution.py \
+            tests/test_v2_conduct_coverage_reconciliation.py \
+            tests/test_v2_conduct_comparative_calibration_v2.py \
+            tests/test_v2_conduct_credibility_diagnostic.py \
+            tests/test_v2_conduct_portfolio_mix_diagnostic.py \
+            tests/test_v2_conduct_methodology_closure.py \
+            tests/test_v2_gate4_pipeline.py
+          python -m pytest -q \
+            tests/test_v2_ses_activity_evidence.py \
+            tests/test_v2_build_source_snapshot.py \
+            tests/test_v2_conduct_source_snapshot.py \
+            tests/test_v2_consumer_gov_receita_cache_key.py \
+            tests/test_v2_relationship_watchdog.py \
+            tests/test_v2_consumer_gov_conduct.py \
+            tests/test_v2_consumer_gov_receita_resolution.py \
+            tests/test_v2_conduct_coverage_reconciliation.py \
+            tests/test_v2_conduct_comparative_calibration_v2.py \
+            tests/test_v2_conduct_credibility_diagnostic.py \
+            tests/test_v2_conduct_portfolio_mix_diagnostic.py \
+            tests/test_v2_conduct_methodology_closure.py \
+            tests/test_v2_gate4_pipeline.py
+
+      - name: Build coherent regulatory source snapshot
+        run: |
+          set -euo pipefail
+          python -m api.v2.build_source_snapshot
+
+      - name: Validate regulatory snapshot and current SES activity evidence
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          lineage = json.loads(Path("data/derived/v2/source_lineage.json").read_text(encoding="utf-8"))
+          classification = json.loads(Path("data/derived/v2/source/classification_inventory.json").read_text(encoding="utf-8"))
+          build = lineage.get("build") or {}
+          if build.get("build_id") != os.environ["V2_BUILD_ID"]:
+              raise SystemExit("regulatory lineage build_id mismatch")
+          if build.get("source_head_sha") != os.environ["V2_SOURCE_HEAD_SHA"]:
+              raise SystemExit("regulatory lineage source_head_sha mismatch")
+          rows = lineage.get("sources") or []
+          if not rows:
+              raise SystemExit("regulatory source lineage is empty")
+          invalid = [row for row in rows if row.get("state") not in {"fresh", "stale"}]
+          if invalid:
+              raise SystemExit(f"unusable regulatory source states: {invalid}")
+          if any(len(str(row.get("sha256") or "")) != 64 for row in rows):
+              raise SystemExit("regulatory source lineage contains missing hash")
+
+          entities = classification.get("entities") or []
+          insurance = [item for item in entities if (item.get("activities") or {}).get("insurance")]
+          if not insurance:
+              raise SystemExit("SES activity enrichment produced zero insurance entities")
+          if not any((item.get("evidence") or {}).get("ses_recent_activity") for item in insurance):
+              raise SystemExit("SES current activity provenance is missing")
+          print(json.dumps({
+              "classification_entities": len(entities),
+              "insurance_activity_entities": len(insurance),
+          }, indent=2))
+          PY
+
+      - name: Save validated regulatory source cache
+        uses: actions/cache/save@v4
+        with:
+          path: data/cache/v2/source
+          key: v2-gate4-source-${{ runner.os }}-${{ github.run_id }}
+
+      - name: Derive Lifecycle from materialized sources
+        run: |
+          set -euo pipefail
+          python -m api.v2.build_lifecycle_relationship_inventory \
+            --classification-input data/derived/v2/source/classification_inventory.json \
+            --receita-lifecycle-input data/derived/v2/source/receita_lifecycle_records.json \
+            --ses-zip data/raw/ses/BaseCompleta.zip
+
+      - name: Derive Eligibility from same-generation Lifecycle
+        run: |
+          set -euo pipefail
+          python -m api.v2.build_eligibility_inventory \
+            --lifecycle-input data/derived/v2/entity_lifecycle_relationship_inventory.json
+
+      - name: Build coherent Conduct source snapshot
+        run: |
+          set -euo pipefail
+          python -m api.v2.build_conduct_source_snapshot
+
+      - name: Validate Conduct source snapshot before downstream derivation
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          from api.v2.build_consumer_gov_receita_identity import CACHE_KEY_VERSION
+          from api.v2.build_conduct_source_snapshot import CONSUMER_MANIFEST_VERSION
+
+          lineage = json.loads(Path("data/derived/v2/conduct_source_lineage.json").read_text(encoding="utf-8"))
+          identity = json.loads(Path("data/derived/v2/consumer_gov_identity_experiment.json").read_text(encoding="utf-8"))
+          receita = json.loads(Path("data/derived/v2/receita_consumer_gov_identity.json").read_text(encoding="utf-8"))
+          manifest = json.loads(Path("data/cache/v2/conduct/consumer_gov_core_manifest.json").read_text(encoding="utf-8"))
+          build = lineage.get("build") or {}
+          if build.get("build_id") != os.environ["V2_BUILD_ID"]:
+              raise SystemExit("Conduct lineage build_id mismatch")
+          if build.get("source_head_sha") != os.environ["V2_SOURCE_HEAD_SHA"]:
+              raise SystemExit("Conduct lineage source_head_sha mismatch")
+          rows = lineage.get("sources") or []
+          states = {str(row.get("source_id")): str(row.get("state")) for row in rows}
+          if set(states) != {"consumer_gov_core", "receita_consumer_identity"}:
+              raise SystemExit(f"unexpected Conduct source set: {sorted(states)}")
+          if any(state not in {"fresh", "stale"} for state in states.values()):
+              raise SystemExit(f"unusable Conduct source states: {states}")
+          if any(len(str(row.get("sha256") or "")) != 64 for row in rows):
+              raise SystemExit("Conduct source lineage contains missing hash")
+
+          months = sorted(str(month) for month in (identity.get("source") or {}).get("months") or [])
+          if len(months) != 12:
+              raise SystemExit(f"Consumer.gov must preserve exactly 12 months: {len(months)}")
+          if manifest.get("version") != CONSUMER_MANIFEST_VERSION:
+              raise SystemExit("Consumer.gov manifest contract version mismatch")
+          if len(manifest.get("months") or []) != 12:
+              raise SystemExit("Consumer.gov cache manifest does not contain 12 months")
+
+          key = (receita.get("meta") or {}).get("gate4_cache_key") or {}
+          required = {"version", "reference_period", "target_universe_hash", "unresolved_provider_hash"}
+          if not required <= set(key):
+              raise SystemExit(f"Receita Conduct cache key incomplete: {sorted(key)}")
+          if key.get("version") != CACHE_KEY_VERSION:
+              raise SystemExit("Receita Conduct cache version mismatch")
+          if not str(key.get("reference_period") or "").strip():
+              raise SystemExit("Receita Conduct cache reference_period is empty")
+          for name in ("target_universe_hash", "unresolved_provider_hash"):
+              if len(str(key.get(name) or "")) != 64:
+                  raise SystemExit(f"Receita Conduct cache {name} is invalid")
+          print(json.dumps({"source_states": states, "months": months, "receita_cache_key": key}, indent=2))
+          PY
+
+      - name: Save validated Conduct source cache
+        uses: actions/cache/save@v4
+        with:
+          path: data/cache/v2/conduct
+          key: v2-gate4-conduct-${{ runner.os }}-${{ github.run_id }}
+
+      - name: Run relationship watchdog before Conduct derivation
+        run: |
+          set -euo pipefail
+          python -m api.v2.relationship_watchdog \
+            --lifecycle-input data/derived/v2/entity_lifecycle_relationship_inventory.json \
+            --consumer-identity-input data/derived/v2/consumer_gov_identity_experiment.json
+
+      - name: Derive Conduct through methodology closure in one workspace
+        run: |
+          set -euo pipefail
+          for stage in \
+            consumer_conduct \
+            conduct_coverage \
+            conduct_calibration \
+            conduct_credibility \
+            conduct_portfolio \
+            conduct_closure
+          do
+            echo "Running Gate 4 stage: ${stage}"
+            python -m api.v2.gate4_pipeline --run-stage "${stage}" > "/tmp/${stage}.log"
+            tail -n 20 "/tmp/${stage}.log"
+          done
+
+      - name: Validate watchdog and Conduct closure
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          eligibility = json.loads(Path("data/derived/v2/entity_eligibility_inventory.json").read_text(encoding="utf-8"))
+          watchdog = json.loads(Path("data/derived/v2/relationship_watchdog.json").read_text(encoding="utf-8"))
+          reconciliation = json.loads(Path("data/derived/v2/conduct_coverage_reconciliation.json").read_text(encoding="utf-8"))
+          closure = json.loads(Path("data/derived/v2/conduct_methodology_closure.json").read_text(encoding="utf-8"))
+
+          eligible = [item for item in eligibility.get("entities") or [] if (item.get("eligibility") or {}).get("regulatory_universe_eligible")]
+          if len(eligible) < 100:
+              raise SystemExit(f"unexpectedly small ordinary insurer universe: {len(eligible)}")
+          if (watchdog.get("summary") or {}).get("blocking_registry_drift_count") != 0:
+              raise SystemExit("relationship watchdog found blocking registry drift")
+          if (watchdog.get("policy") or {}).get("automatic_registry_mutation") != "forbidden":
+              raise SystemExit("relationship watchdog must never mutate registries")
+
+          rec_summary = reconciliation.get("summary") or {}
+          if int(rec_summary.get("pressure_candidate_entities") or 0) <= 0:
+              raise SystemExit(f"Conduct reconciliation has no pressure candidates: {rec_summary}")
+          if closure.get("artifact") != "v2_conduct_methodology_closure":
+              raise SystemExit(f"unexpected Conduct closure artifact: {closure.get('artifact')}")
+          if closure.get("status") != "conduct_methodology_closed_for_signal_design":
+              raise SystemExit(f"unexpected Conduct closure status: {closure.get('status')}")
+          if closure.get("scoring") != "forbidden_in_this_artifact":
+              raise SystemExit("Conduct closure must preserve scoring prohibition")
+          if closure.get("ranking") != "forbidden_in_this_artifact":
+              raise SystemExit("Conduct closure must preserve ranking prohibition")
+
+          required_outputs = [
+              "data/derived/v2/consumer_gov_receita_resolution_experiment.json",
+              "data/derived/v2/consumer_gov_conduct_evidence.json",
+              "data/derived/v2/conduct_coverage_reconciliation.json",
+              "data/derived/v2/conduct_comparative_calibration_v2.json",
+              "data/derived/v2/conduct_credibility_diagnostic.json",
+              "data/derived/v2/conduct_portfolio_mix_diagnostic.json",
+              "data/derived/v2/conduct_methodology_closure.json",
+          ]
+          missing = [path for path in required_outputs if not Path(path).is_file()]
+          if missing:
+              raise SystemExit(f"missing integrated Conduct outputs: {missing}")
+          summary = {
+              "build_id": os.environ["V2_BUILD_ID"],
+              "source_head_sha": os.environ["V2_SOURCE_HEAD_SHA"],
+              "ordinary_current_insurers": len(eligible),
+              "pressure_candidate_entities": rec_summary.get("pressure_candidate_entities"),
+              "relationship_watchdog": watchdog.get("summary"),
+              "conduct_closure": {
+                  "artifact": closure.get("artifact"),
+                  "version": closure.get("version"),
+                  "status": closure.get("status"),
+                  "population": closure.get("population"),
+              },
+              "integrated_outputs": required_outputs,
+          }
+          Path("data/derived/v2/conduct_integration_summary.json").write_text(
+              json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          print(json.dumps(summary, ensure_ascii=False, indent=2))
+          PY
+
+      - name: Upload integrated Conduct evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: v2-gate4-conduct-evergreen-${{ github.run_id }}-a${{ github.run_attempt }}
+          retention-days: 14
+          if-no-files-found: warn
+          path: |
+            data/derived/v2/source_lineage.json
+            data/derived/v2/conduct_source_lineage.json
+            data/derived/v2/conduct_integration_summary.json
+            data/derived/v2/source/classification_inventory.json
+            data/derived/v2/source/receita_lifecycle_records.json
+            data/derived/v2/entity_lifecycle_relationship_inventory.json
+            data/derived/v2/entity_eligibility_inventory.json
+            data/derived/v2/consumer_gov_identity_experiment.json
+            data/derived/v2/receita_consumer_gov_identity.json
+            data/derived/v2/relationship_watchdog.json
+            data/derived/v2/consumer_gov_receita_resolution_experiment.json
+            data/derived/v2/consumer_gov_conduct_evidence.json
+            data/derived/v2/conduct_coverage_reconciliation.json
+            data/derived/v2/conduct_comparative_calibration_v2.json
+            data/derived/v2/conduct_credibility_diagnostic.json
+            data/derived/v2/conduct_portfolio_mix_diagnostic.json
+            data/derived/v2/conduct_methodology_closure.json
