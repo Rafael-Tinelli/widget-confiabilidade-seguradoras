@@ -13,8 +13,8 @@ from api import build_consumidor_gov as consumer_gov_build
 from api.sources.receita_cnpj import RECEITA_CNPJ_OPEN_DATA_URL
 from api.v2.build_consumer_gov_identity_experiment import (
     OUTPUT_PATH as CONSUMER_IDENTITY_PATH,
-    build_identity_experiment,
 )
+from api.v2.build_consumer_gov_identity_experiment import build_identity_experiment
 from api.v2.build_consumer_gov_receita_identity import (
     CACHE_KEY_VERSION,
     _existing_cache_key,
