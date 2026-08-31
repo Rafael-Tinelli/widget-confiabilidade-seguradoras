@@ -36,8 +36,12 @@ from api.v2.build_classification_inventory import (
 )
 from api.v2.generation import BuildContext
 from api.v2.refresh_receita_lifecycle import (
+    RECEITA_LIFECYCLE_CACHE_CONTRACT_VERSION,
+    ReceitaRefreshValidationError,
     refresh_receita_lifecycle,
     regulatory_target_universe_hash,
+    validate_refresh_payload,
+    write_snapshot_atomic,
 )
 from api.v2.source_cache import (
     AcquisitionResult,
@@ -290,6 +294,76 @@ def _bootstrap_receita_cache(
     cache.store(existing_snapshot, fetched_at=fetched_at)
 
 
+def _receita_payload_contract_version(payload: dict[str, Any]) -> str | None:
+    value = str(
+        (payload.get("meta") or {}).get("gate4_cache_contract_version") or ""
+    ).strip()
+    return value or None
+
+
+def _validate_receita_cache_payload(
+    payload: dict[str, Any],
+    *,
+    target_hash: str,
+    allow_legacy_unversioned: bool,
+) -> None:
+    cached_target_hash = str(
+        (payload.get("meta") or {}).get("target_universe_hash") or ""
+    )
+    if cached_target_hash != target_hash:
+        raise SourceSnapshotError(
+            "Receita lifecycle cache target-universe hash differs from current classification"
+        )
+    validate_refresh_payload(
+        payload,
+        allow_legacy_unversioned=allow_legacy_unversioned,
+    )
+
+
+def _materialize_compatible_receita_cache(
+    *,
+    cache: CachedSource,
+    destination: Path,
+    target_hash: str,
+) -> tuple[str, bool]:
+    """Materialize current cache and promote only structurally compatible legacy v0.
+
+    The pre-version Gate 4 cache is accepted only when it passes the complete current
+    Receita lifecycle validation and belongs to the exact current target universe.
+    Promotion adds only the explicit cache-contract version, preserves the original
+    fetched_at timestamp and rewrites the cached SHA-256 accordingly. Unknown non-empty
+    versions fail closed instead of being guessed compatible.
+    """
+    fetched_at = cache.materialize(destination)
+    payload = json.loads(destination.read_text(encoding="utf-8"))
+    version = _receita_payload_contract_version(payload)
+    if version is None:
+        _validate_receita_cache_payload(
+            payload,
+            target_hash=target_hash,
+            allow_legacy_unversioned=True,
+        )
+        payload.setdefault("meta", {})[
+            "gate4_cache_contract_version"
+        ] = RECEITA_LIFECYCLE_CACHE_CONTRACT_VERSION
+        validate_refresh_payload(payload)
+        write_snapshot_atomic(payload, destination)
+        cache.store(destination, fetched_at=fetched_at)
+        return fetched_at, True
+
+    if version != RECEITA_LIFECYCLE_CACHE_CONTRACT_VERSION:
+        raise SourceSnapshotError(
+            f"unsupported Receita lifecycle cache contract version: {version}"
+        )
+
+    _validate_receita_cache_payload(
+        payload,
+        target_hash=target_hash,
+        allow_legacy_unversioned=False,
+    )
+    return fetched_at, False
+
+
 def _receita_snapshot(
     *,
     classification: dict[str, Any],
@@ -322,7 +396,11 @@ def _receita_snapshot(
                 (cached_payload.get("meta") or {}).get("target_universe_hash") or ""
             )
             if cached_period == release.period and cached_target_hash == target_hash:
-                fetched_at = cache.materialize(destination)
+                fetched_at, promoted = _materialize_compatible_receita_cache(
+                    cache=cache,
+                    destination=destination,
+                    target_hash=target_hash,
+                )
                 observation = SourceObservation(
                     source_id=source_id,
                     source_url=source_url,
@@ -330,7 +408,9 @@ def _receita_snapshot(
                     fetched_at=fetched_at,
                     current_validation_succeeded=True,
                     state_reason=(
-                        "official release period and regulatory target hash unchanged"
+                        "official release period, cache contract and regulatory target "
+                        "hash unchanged"
+                        + ("; compatible legacy cache promoted" if promoted else "")
                     ),
                 )
                 return AcquisitionResult(observation=observation, used_cache=True)
@@ -361,9 +441,20 @@ def _receita_snapshot(
         current_error = f"{type(exc).__name__}: {exc}"
 
     try:
-        fetched_at = cache.materialize(destination)
+        fetched_at, promoted = _materialize_compatible_receita_cache(
+            cache=cache,
+            destination=destination,
+            target_hash=target_hash,
+        )
         load_filtered_lifecycle_snapshot(destination)
-    except (SourceCacheError, OSError, ValueError, json.JSONDecodeError):
+    except (
+        SourceCacheError,
+        SourceSnapshotError,
+        ReceitaRefreshValidationError,
+        OSError,
+        ValueError,
+        json.JSONDecodeError,
+    ):
         if destination.exists():
             destination.unlink()
         observation = SourceObservation(
@@ -384,7 +475,10 @@ def _receita_snapshot(
         source_url=source_url,
         snapshot_path=destination,
         fetched_at=fetched_at,
-        state_reason=current_error,
+        state_reason=(
+            f"{current_error}; using hash-validated Receita lifecycle cache"
+            + ("; compatible legacy cache promoted" if promoted else "")
+        ),
     )
     return AcquisitionResult(
         observation=observation,
