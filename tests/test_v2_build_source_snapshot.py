@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import zipfile
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -10,11 +11,17 @@ from api.sources.receita_cnpj import RECEITA_CNPJ_OPEN_DATA_URL
 from api.v2.build_source_snapshot import (
     SourceSnapshotError,
     _materialize_compatible_receita_cache,
+    _receita_snapshot,
     load_ses_master_companies,
     validate_base_completa,
     validate_listaempresas,
 )
-from api.v2.refresh_receita_lifecycle import RECEITA_LIFECYCLE_CACHE_CONTRACT_VERSION
+from api.v2.generation import BuildContext
+from api.v2.refresh_receita_lifecycle import (
+    RECEITA_LIFECYCLE_CACHE_CONTRACT_VERSION,
+    regulatory_target_universe_hash,
+    write_snapshot_atomic,
+)
 from api.v2.source_cache import CachedSource
 
 
@@ -80,6 +87,23 @@ def _receita_cache(tmp_path: Path) -> CachedSource:
         content_path=tmp_path / "receita-cache.json",
         metadata_path=tmp_path / "receita-cache.meta.json",
     )
+
+
+def _classification(count: int = 300) -> dict:
+    return {
+        "entities": [
+            {
+                "entity_id": f"fip:{index:06d}",
+                "cnpj": f"{index + 10000000000000:014d}",
+                "legal_name": f"SEGURADORA TESTE {index} S.A.",
+                "entity_type": "insurer",
+                "regulatory_subtype": None,
+                "regulatory_regime": "ordinary",
+                "regulatory_status": "active_licensed",
+            }
+            for index in range(count)
+        ]
+    }
 
 
 def test_gate4_ses_master_is_derived_only_from_materialized_files(tmp_path: Path):
@@ -197,3 +221,70 @@ def test_receita_cache_rejects_different_target_universe(tmp_path: Path, monkeyp
             destination=tmp_path / "materialized.json",
             target_hash="d" * 64,
         )
+
+
+def test_incompatible_receita_cache_triggers_fresh_refresh(tmp_path: Path, monkeypatch):
+    classification = _classification()
+    target_hash = regulatory_target_universe_hash(classification["entities"])
+    cache_dir = tmp_path / "cache"
+    cache_dir.mkdir()
+    cache = CachedSource(
+        source_id="receita_cnpj_lifecycle",
+        source_url=RECEITA_CNPJ_OPEN_DATA_URL,
+        content_path=cache_dir / "receita_cnpj_lifecycle.json",
+        metadata_path=cache_dir / "receita_cnpj_lifecycle.meta.json",
+    )
+    future = tmp_path / "future.json"
+    future.write_text(
+        json.dumps(
+            _receita_payload(target_hash, version="v2-receita-lifecycle-999"),
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    cache.store(future, fetched_at="2026-08-31T00:00:00Z")
+
+    monkeypatch.setattr(
+        "api.v2.build_source_snapshot.discover_latest_release",
+        lambda: SimpleNamespace(period="2026-08"),
+    )
+
+    def fake_refresh(*, output, release, entities):
+        assert release.period == "2026-08"
+        assert entities == classification["entities"]
+        payload = _receita_payload(
+            target_hash,
+            version=RECEITA_LIFECYCLE_CACHE_CONTRACT_VERSION,
+        )
+        write_snapshot_atomic(payload, output)
+        return payload
+
+    monkeypatch.setattr(
+        "api.v2.build_source_snapshot.refresh_receita_lifecycle",
+        fake_refresh,
+    )
+    context = BuildContext(
+        build_id="v2-test",
+        source_head_sha="a" * 40,
+        generated_at="2026-08-31T00:00:00Z",
+        workflow_run_id="test",
+        workflow_run_attempt=1,
+    )
+    destination = tmp_path / "receita.json"
+    result = _receita_snapshot(
+        classification=classification,
+        destination=destination,
+        cache_dir=cache_dir,
+        existing_snapshot=tmp_path / "missing-existing.json",
+        context=context,
+    )
+
+    assert result.used_cache is False
+    lineage = result.observation.to_lineage(context)
+    assert lineage.state == "fresh"
+    assert lineage.freshness_method == "current_fetch"
+    payload = json.loads(destination.read_text(encoding="utf-8"))
+    assert (
+        payload["meta"]["gate4_cache_contract_version"]
+        == RECEITA_LIFECYCLE_CACHE_CONTRACT_VERSION
+    )
