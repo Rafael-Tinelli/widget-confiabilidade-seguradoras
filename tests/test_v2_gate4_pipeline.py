@@ -80,14 +80,20 @@ def test_public_package_depends_on_closed_cross_pillar_chain():
 def test_current_blockers_are_explicit_instead_of_silently_published():
     blockers = set(publication_blockers())
 
-    assert blockers == {
-        "source_snapshot",
-        "conduct_source_snapshot",
-    }
+    assert blockers == {"conduct_source_snapshot"}
     contract = pipeline_contract()
     assert contract["publication_ready"] is False
     assert contract["single_generation_workspace_required"] is True
     assert contract["cross_run_latest_successful_restore_forbidden"] is True
+
+
+def test_source_snapshot_is_formally_evergreen():
+    mapping = stage_map(STAGES)
+    source = mapping["source_snapshot"]
+
+    assert source.kind == "source"
+    assert source.evergreen_ready is True
+    assert "source_snapshot" not in publication_blockers()
 
 
 def test_unknown_dependency_is_rejected():
