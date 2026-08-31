@@ -48,7 +48,9 @@ def test_conduct_chain_is_topologically_ordered():
     position = _positions()
 
     assert position["eligibility"] < position["conduct_source_snapshot"]
-    assert position["conduct_source_snapshot"] < position["consumer_conduct"]
+    assert position["lifecycle"] < position["relationship_watchdog"]
+    assert position["conduct_source_snapshot"] < position["relationship_watchdog"]
+    assert position["relationship_watchdog"] < position["consumer_conduct"]
     assert position["consumer_conduct"] < position["conduct_coverage"]
     assert position["conduct_coverage"] < position["conduct_calibration"]
     assert position["conduct_calibration"] < position["conduct_credibility"]
@@ -62,6 +64,7 @@ def test_public_package_depends_on_closed_cross_pillar_chain():
     assert {
         "financial_closure",
         "conduct_source_snapshot",
+        "relationship_watchdog",
         "consumer_conduct",
         "conduct_closure",
         "cross_stage1",
@@ -197,6 +200,27 @@ def test_lifecycle_uses_materialized_gate4_inputs():
     assert "lifecycle" not in publication_blockers()
 
 
+def test_relationship_watchdog_is_evergreen_and_precedes_conduct():
+    mapping = stage_map(STAGES)
+    watchdog = mapping["relationship_watchdog"]
+
+    assert watchdog.kind == "derive"
+    assert watchdog.evergreen_ready is True
+    assert watchdog.dependencies == ("lifecycle", "conduct_source_snapshot")
+    assert watchdog.commands == (
+        (
+            sys.executable,
+            "-m",
+            "api.v2.relationship_watchdog",
+            "--lifecycle-input",
+            "data/derived/v2/entity_lifecycle_relationship_inventory.json",
+            "--consumer-identity-input",
+            "data/derived/v2/consumer_gov_identity_experiment.json",
+        ),
+    )
+    assert "relationship_watchdog" not in publication_blockers()
+
+
 def test_conduct_acquisition_is_isolated_from_conduct_derivation():
     mapping = stage_map(STAGES)
     source = mapping["conduct_source_snapshot"]
@@ -210,7 +234,11 @@ def test_conduct_acquisition_is_isolated_from_conduct_derivation():
     assert source.evergreen_ready is False
 
     assert conduct.kind == "derive"
-    assert conduct.dependencies == ("eligibility", "conduct_source_snapshot")
+    assert conduct.dependencies == (
+        "eligibility",
+        "conduct_source_snapshot",
+        "relationship_watchdog",
+    )
     assert conduct.evergreen_ready is True
     flattened = [part for command in conduct.commands for part in command]
     assert "--force" not in flattened
