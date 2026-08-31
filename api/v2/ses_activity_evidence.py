@@ -118,8 +118,7 @@ def _scan_latest_period_by_fip(
                     continue
                 if period > latest_by_fip.get(fip, 0):
                     latest_by_fip[fip] = period
-                if period > latest_period:
-                    latest_period = period
+                latest_period = max(latest_period, period)
     return latest_by_fip, latest_period
 
 
