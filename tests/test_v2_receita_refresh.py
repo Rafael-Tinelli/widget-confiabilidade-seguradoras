@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 
 from api.v2.refresh_receita_lifecycle import (
+    RECEITA_LIFECYCLE_CACHE_CONTRACT_VERSION,
     ReceitaRefreshValidationError,
     regulatory_target_universe_hash,
     validate_refresh_payload,
@@ -11,24 +12,27 @@ from api.v2.refresh_receita_lifecycle import (
 )
 
 
-def _payload(target=300, resolved=300):
+def _payload(target=300, resolved=300, *, versioned=True):
     records = [
         {"cnpj": f"{i:014d}", "cadastral_status": "active"}
         for i in range(resolved)
     ]
+    meta = {
+        "target_count": target,
+        "resolved_count": resolved,
+        "unresolved_count": target - resolved,
+        "files_scanned": ["Estabelecimentos0.zip"],
+        "target_universe_hash": "a" * 64,
+    }
+    if versioned:
+        meta["gate4_cache_contract_version"] = RECEITA_LIFECYCLE_CACHE_CONTRACT_VERSION
     return {
         "source": {
             "authority": "Receita Federal do Brasil",
             "ingestion_method": "official_nextcloud_webdav_bulk_filtered",
             "reference_period": "2026-08",
         },
-        "meta": {
-            "target_count": target,
-            "resolved_count": resolved,
-            "unresolved_count": target - resolved,
-            "files_scanned": ["Estabelecimentos0.zip"],
-            "target_universe_hash": "a" * 64,
-        },
+        "meta": meta,
         "records": records,
     }
 
@@ -67,6 +71,28 @@ def test_refresh_validation_rejects_material_drop(monkeypatch):
             _payload(target=300, resolved=290),
             previous_records=previous,
         )
+
+
+def test_refresh_validation_requires_current_cache_contract(monkeypatch):
+    _disable_golden_check(monkeypatch)
+    with pytest.raises(ReceitaRefreshValidationError, match="cache contract version"):
+        validate_refresh_payload(_payload(versioned=False))
+
+
+def test_refresh_validation_can_promote_structurally_valid_unversioned_snapshot(monkeypatch):
+    _disable_golden_check(monkeypatch)
+    validate_refresh_payload(
+        _payload(versioned=False),
+        allow_legacy_unversioned=True,
+    )
+
+
+def test_refresh_validation_rejects_unknown_future_cache_contract(monkeypatch):
+    _disable_golden_check(monkeypatch)
+    payload = _payload()
+    payload["meta"]["gate4_cache_contract_version"] = "v2-receita-lifecycle-999"
+    with pytest.raises(ReceitaRefreshValidationError, match="cache contract version"):
+        validate_refresh_payload(payload, allow_legacy_unversioned=True)
 
 
 def test_target_universe_hash_changes_when_new_supervised_cnpj_appears():
