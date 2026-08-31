@@ -9,6 +9,7 @@ on:
       - "api/v2/source_snapshot.py"
       - "api/v2/source_cache.py"
       - "api/v2/build_source_snapshot.py"
+      - "api/v2/refresh_receita_lifecycle.py"
       - "api/v2/build_conduct_source_snapshot.py"
       - "api/v2/build_consumer_gov_receita_identity.py"
       - "api/v2/gate4_pipeline.py"
@@ -20,6 +21,7 @@ on:
       - "tests/test_v2_source_snapshot.py"
       - "tests/test_v2_source_cache.py"
       - "tests/test_v2_build_source_snapshot.py"
+      - "tests/test_v2_receita_refresh.py"
       - "tests/test_v2_conduct_source_snapshot.py"
       - "tests/test_v2_consumer_gov_receita_cache_key.py"
       - "tests/test_v2_gate4_pipeline.py"
@@ -67,6 +69,7 @@ jobs:
             api/v2/source_snapshot.py \
             api/v2/source_cache.py \
             api/v2/build_source_snapshot.py \
+            api/v2/refresh_receita_lifecycle.py \
             api/v2/build_conduct_source_snapshot.py \
             api/v2/build_consumer_gov_receita_identity.py \
             api/v2/gate4_pipeline.py \
@@ -78,6 +81,7 @@ jobs:
             tests/test_v2_source_snapshot.py \
             tests/test_v2_source_cache.py \
             tests/test_v2_build_source_snapshot.py \
+            tests/test_v2_receita_refresh.py \
             tests/test_v2_conduct_source_snapshot.py \
             tests/test_v2_consumer_gov_receita_cache_key.py \
             tests/test_v2_gate4_pipeline.py \
@@ -91,6 +95,7 @@ jobs:
             tests/test_v2_source_snapshot.py \
             tests/test_v2_source_cache.py \
             tests/test_v2_build_source_snapshot.py \
+            tests/test_v2_receita_refresh.py \
             tests/test_v2_conduct_source_snapshot.py \
             tests/test_v2_consumer_gov_receita_cache_key.py \
             tests/test_v2_gate4_pipeline.py \
