@@ -34,7 +34,7 @@ def test_consumer_manifest_content_key_ignores_provenance_timestamp() -> None:
     assert _manifest_content_key(first) != _manifest_content_key(changed)
 
 
-def test_consumer_manifest_requires_fetched_at_and_valid_hashes(tmp_path) -> None:
+def test_consumer_manifest_requires_fetched_at_version_and_valid_hashes(tmp_path) -> None:
     aggregate = tmp_path / "aggregate.gz"
     aggregate.write_bytes(b"aggregate")
     months = []
@@ -68,30 +68,42 @@ def test_consumer_manifest_requires_fetched_at_and_valid_hashes(tmp_path) -> Non
     manifest.write_text(json.dumps(payload), encoding="utf-8")
     assert _validate_consumer_manifest(manifest)["fetched_at"] == payload["fetched_at"]
 
+    wrong_version = {**payload, "version": 2}
+    manifest.write_text(json.dumps(wrong_version), encoding="utf-8")
+    with pytest.raises(ConductSourceSnapshotError, match="version"):
+        _validate_consumer_manifest(manifest)
+
     payload.pop("fetched_at")
     manifest.write_text(json.dumps(payload), encoding="utf-8")
     with pytest.raises(ConductSourceSnapshotError, match="fetched_at"):
         _validate_consumer_manifest(manifest)
 
 
-def test_receita_cache_reuse_requires_current_universe_and_provider_hashes(tmp_path) -> None:
+def test_receita_cache_reuse_requires_current_schema_universe_and_provider_hashes(
+    tmp_path,
+) -> None:
     path = tmp_path / "receita.json"
+    key = {
+        "version": "v2-consumer-receita-identity-1",
+        "reference_period": "2026-08",
+        "target_universe_hash": "a" * 64,
+        "unresolved_provider_hash": "b" * 64,
+    }
     path.write_text(
-        json.dumps(
-            {
-                "meta": {
-                    "gate4_cache_key": {
-                        "version": "v2-consumer-receita-identity-1",
-                        "reference_period": "2026-08",
-                        "target_universe_hash": "a" * 64,
-                        "unresolved_provider_hash": "b" * 64,
-                    }
-                }
-            }
-        ),
+        json.dumps({"meta": {"gate4_cache_key": key}}),
         encoding="utf-8",
     )
 
     assert _cache_matches_current_inputs(path, "a" * 64, "b" * 64)
     assert not _cache_matches_current_inputs(path, "c" * 64, "b" * 64)
     assert not _cache_matches_current_inputs(path, "a" * 64, "d" * 64)
+
+    incompatible = {
+        **key,
+        "version": "v2-consumer-receita-identity-0",
+    }
+    path.write_text(
+        json.dumps({"meta": {"gate4_cache_key": incompatible}}),
+        encoding="utf-8",
+    )
+    assert not _cache_matches_current_inputs(path, "a" * 64, "b" * 64)
