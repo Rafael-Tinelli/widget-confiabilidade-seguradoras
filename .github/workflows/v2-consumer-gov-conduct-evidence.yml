@@ -2,38 +2,13 @@ name: V2 Consumer.gov Conduct Evidence
 
 on:
   workflow_dispatch:
-  pull_request:
-    branches: [main]
-    paths:
-      - "api/v2/consumer_gov_conduct.py"
-      - "api/v2/consumer_gov_conduct_core.py"
-      - "api/v2/build_consumer_gov_conduct_evidence.py"
-      - "api/v2/build_consumer_gov_identity_experiment.py"
-      - "api/v2/consumer_gov_identity.py"
-      - "api/v2/consumer_gov_temporal_brand.py"
-      - "api/v2/consumer_gov_universe_resolution.py"
-      - "api/v2/consumer_gov_receita_resolution.py"
-      - "api/v2/build_consumer_gov_receita_identity.py"
-      - "api/v2/build_consumer_gov_receita_resolution_experiment.py"
-      - "api/v2/eligibility.py"
-      - "api/v2/regulatory_scope.py"
-      - "api/sources/consumer_gov_direct.py"
-      - "api/sources/receita_cnpj_identity.py"
-      - "api/build_consumidor_gov.py"
-      - "data/reference/v2/consumer_gov_provider_resolutions.json"
-      - "data/reference/v2/consumer_gov_receita_verified_hints.json"
-      - "data/reference/v2/verified_relationships.json"
-      - "requirements.txt"
-      - "tests/test_v2_consumer_gov_conduct.py"
-      - "tests/test_consumer_gov_direct.py"
-      - ".github/workflows/v2-consumer-gov-conduct-evidence.yml"
 
 permissions:
   contents: read
   actions: read
 
 concurrency:
-  group: v2-consumer-gov-conduct-${{ github.event.pull_request.number || github.run_id }}
+  group: v2-consumer-gov-conduct-${{ github.run_id }}
   cancel-in-progress: true
 
 jobs:
@@ -43,7 +18,7 @@ jobs:
 
     env:
       GH_TOKEN: ${{ github.token }}
-      V2_SOURCE_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      V2_SOURCE_HEAD_SHA: ${{ github.sha }}
       V2_ELIGIBILITY_INPUT: data/derived/v2/entity_eligibility_inventory.json
       SES_ALLOW_INSECURE_SSL: "1"
       SES_KEEP_ZIP: "1"
