@@ -238,8 +238,18 @@ def _materialize_consumer_manifest(payload: dict[str, Any]) -> None:
             )
 
 
+def _restore_consumer_cache(cache_manifest: Path) -> dict[str, Any] | None:
+    try:
+        cached = _validate_consumer_manifest(cache_manifest)
+        _materialize_consumer_manifest(cached)
+    except (OSError, ValueError, ConductSourceSnapshotError):
+        return None
+    return cached
+
+
 def _consumer_observation(*, cache_dir: Path) -> SourceObservation:
     cache_manifest = cache_dir / CONSUMER_MANIFEST
+    prior = _restore_consumer_cache(cache_manifest)
     current_error: str | None = None
     try:
         resources = consumer_gov_build._list_basecompleta_resources()
@@ -257,11 +267,6 @@ def _consumer_observation(*, cache_dir: Path) -> SourceObservation:
                 f"official={latest_official} materialized={materialized_months[-1]}"
             )
 
-        prior: dict[str, Any] | None = None
-        try:
-            prior = _validate_consumer_manifest(cache_manifest)
-        except (OSError, ValueError, ConductSourceSnapshotError):
-            pass
         if prior and _manifest_content_key(prior) == _manifest_content_key(materialized):
             fetched_at = str(prior["fetched_at"])
         else:
