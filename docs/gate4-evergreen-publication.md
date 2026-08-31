@@ -118,7 +118,7 @@ source_snapshot
 
 Nenhuma regra de classificação, elegibilidade ou evidência financeira mudou com essa separação.
 
-### Relationships: derivação automática versus fato verificado
+### Relationships: derivação automática, watchdog e fato verificado
 
 O contrato de relationships separa duas responsabilidades:
 
@@ -130,7 +130,32 @@ marca / risk carrier / sucessão / transferência de carteira
 → somente fato source-backed materializado no registry verificado
 ```
 
-Nomes semelhantes e pertencimento ao mesmo grupo jamais autorizam inferência de incorporação, sucessão ou transferência de reclamações. O próximo endurecimento evergreen é um watchdog determinístico que descobre e sinaliza automaticamente casos novos ou drift dos registries, mas não altera `verified_relationships.json`, `conduct_subject_relationships.json` ou `sandbox_brand_relationships.json` e não transforma candidato em fato.
+Nomes semelhantes e pertencimento ao mesmo grupo jamais autorizam inferência de incorporação, sucessão ou transferência de reclamações.
+
+O stage evergreen `relationship_watchdog` é executado em toda geração **depois de Lifecycle + `conduct_source_snapshot` e antes de qualquer derivação de Conduta**. Ele produz `data/derived/v2/relationship_watchdog.json` e separa:
+
+```text
+observations
+→ relações já verificadas ou diretamente derivadas de fonte oficial estruturada
+
+candidates
+→ casos novos, ambíguos ou drift que exigem evidência adicional
+```
+
+Candidatos são diagnósticos e possuem contrato explícito:
+
+```text
+assertion_effect = none
+score_effect = none
+complaint_transfer_effect = none
+automatic_registry_mutation = forbidden
+```
+
+Portanto, provider Consumer.gov não resolvido, entidade encerrada sem sucessor documentado, ambiguidade temporal de marca ou outro caso novo é automaticamente sinalizado sem virar relacionamento por heurística. Já drift de uma relação que o backend **afirma como verificada** é fail-closed e impede a Conduta de prosseguir.
+
+O watchdog cruza e protege os contratos centrais de `verified_relationships.json`, `conduct_subject_relationships.json` e `sandbox_brand_relationships.json`. Os testes cobrem explicitamente os padrões Youse → Caixa, Loovi → LTI, BB Seguro Auto → MAPFRE e HDI/HDI Global → Talanx, mantendo as semânticas distintas de risk carrier, subject relationship e economic group.
+
+Nem todo participante Sandbox exige uma marca separada: ausência de brand wrapper, isoladamente, não é tratada como erro. Quando existe wrapper, o watchdog exige coerência com o carrier canônico; quando surge uma marca realmente nova no universo de Conduta, a descoberta ocorre pelo provider não resolvido/ambíguo. Isso evita falsos positivos permanentes sem deixar casos novos invisíveis.
 
 ### Ranking Stage 2 sem alias operacional
 
@@ -193,7 +218,20 @@ unresolved_provider/query_hash
 schema_version
 ```
 
-`consumer_conduct` já é stage de derivação e não é blocker operacional. Enquanto `conduct_source_snapshot` permanecer aberto, o contrato retorna:
+A prova integrada foi ampliada para o workflow `V2 Gate 4 Conduct Integration`. Ele restaura caches validados, materializa `source_snapshot`, Lifecycle e Eligibility na mesma geração, constrói `conduct_source_snapshot`, executa `relationship_watchdog` e somente então deriva, no mesmo workspace:
+
+```text
+consumer_conduct
+→ conduct_coverage
+→ conduct_calibration
+→ conduct_credibility
+→ conduct_portfolio
+→ conduct_closure
+```
+
+O blocker só pode ser removido depois que essa execução demonstrar lineage coerente, contratos de cache válidos, zero registry drift bloqueante e `v2_conduct_methodology_closure` materializado com as proibições de scoring/ranking preservadas.
+
+Enquanto `conduct_source_snapshot` permanecer aberto, o contrato retorna:
 
 ```text
 publication_ready = false
@@ -269,8 +307,8 @@ Os workflows de investigação atuais permanecem durante a transição para pres
 A migração ocorre nesta ordem:
 
 1. `source_snapshot` + lineage — **concluído**;
-2. fechar `conduct_source_snapshot` e executar a integração real da Conduta;
-3. manter o watchdog de relationships no caminho evergreen para descoberta/sinalização automática de casos novos;
+2. watchdog de relationships no caminho evergreen — **implementado e obrigatório antes de Conduta**;
+3. fechar `conduct_source_snapshot` com integração real até `conduct_closure` — **em validação**;
 4. eliminar `latest successful` do caminho de distribuição;
 5. executar o DAG inteiro em um único workspace;
 6. produzir e validar o artifact único;
@@ -286,8 +324,10 @@ O cron v1 existente não deve ser alterado como parte desses passos até o cutov
 - Ruff dos módulos Gate 4;
 - testes de geração/lineage;
 - testes de `fresh/stale/unavailable`;
-- DAG e blockers;
+- testes do relationship watchdog;
+- DAG, ordem watchdog → Conduta e blockers;
 - materialização de `gate4_pipeline_contract.json`;
+- exatamente `conduct_source_snapshot` como blocker operacional enquanto sua integração não fecha;
 - fail-closed de publicação enquanto a migração não termina.
 
 Esse workflow não busca artifacts de outras execuções.
