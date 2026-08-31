@@ -111,6 +111,11 @@ def _validate_versioned_materialization(
 
     aggregate_row = materialized.get("aggregate") or {}
     aggregate_path = Path(str(aggregate_row.get("path") or ""))
+    expected_aggregate = consumer_gov_build.DERIVED_DIR / "consumidor_gov_agg.json.gz"
+    if aggregate_path.resolve() != expected_aggregate.resolve():
+        raise ConductConsumerBootstrapError(
+            "Consumer.gov bootstrap aggregate does not match configured derived directory"
+        )
     try:
         aggregate = _read_gzip_json(aggregate_path)
     except (OSError, UnicodeError, ValueError, ConductSourceSnapshotError) as exc:
