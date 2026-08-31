@@ -1,4 +1,4 @@
-name: V2 Gate 4 Conduct Prefix Integration
+name: V2 Gate 4 Conduct Integration
 
 on:
   workflow_dispatch:
@@ -9,20 +9,36 @@ on:
       - ".github/workflows/v2-gate4-conduct-prefix-integration.yml"
       - "api/v2/build_conduct_source_snapshot.py"
       - "api/v2/build_consumer_gov_receita_identity.py"
+      - "api/v2/build_consumer_gov_receita_resolution_experiment.py"
+      - "api/v2/build_consumer_gov_conduct_evidence.py"
+      - "api/v2/build_conduct_coverage_reconciliation.py"
+      - "api/v2/build_conduct_comparative_calibration_v2.py"
+      - "api/v2/build_conduct_credibility_diagnostic.py"
+      - "api/v2/build_conduct_portfolio_mix_diagnostic.py"
+      - "api/v2/build_conduct_methodology_closure.py"
       - "api/v2/relationship_watchdog.py"
+      - "api/v2/gate4_pipeline.py"
       - "data/reference/v2/verified_relationships.json"
       - "data/reference/v2/conduct_subject_relationships.json"
       - "data/reference/v2/sandbox_brand_relationships.json"
       - "tests/test_v2_conduct_source_snapshot.py"
       - "tests/test_v2_consumer_gov_receita_cache_key.py"
       - "tests/test_v2_relationship_watchdog.py"
+      - "tests/test_v2_consumer_gov_conduct.py"
+      - "tests/test_v2_consumer_gov_receita_resolution.py"
+      - "tests/test_v2_conduct_coverage_reconciliation.py"
+      - "tests/test_v2_conduct_comparative_calibration_v2.py"
+      - "tests/test_v2_conduct_credibility_diagnostic.py"
+      - "tests/test_v2_conduct_portfolio_mix_diagnostic.py"
+      - "tests/test_v2_conduct_methodology_closure.py"
+      - "tests/test_v2_gate4_pipeline.py"
 
 permissions:
   contents: read
 
 env:
   V2_SOURCE_HEAD_SHA: ${{ github.sha }}
-  V2_BUILD_ID: v2-conduct-prefix-${{ github.run_id }}-a${{ github.run_attempt }}
+  V2_BUILD_ID: v2-conduct-${{ github.run_id }}-a${{ github.run_attempt }}
   V2_SOURCE_CACHE_DIR: data/cache/v2/source
   SES_ALLOW_INSECURE_SSL: "1"
   SUSEP_LICENSED_VERIFY_SSL: "0"
@@ -30,11 +46,11 @@ env:
   SUSEP_SANDBOX_VERIFY_SSL: "1"
 
 concurrency:
-  group: v2-gate4-conduct-prefix-${{ github.ref }}
+  group: v2-gate4-conduct-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
-  conduct-prefix:
+  conduct-integration:
     runs-on: ubuntu-24.04
     timeout-minutes: 360
 
@@ -75,7 +91,7 @@ jobs:
           python -m pip install -r requirements.txt
           python -m pip install -r requirements-dev.txt
 
-      - name: Validate Gate 4 prefix code before network access
+      - name: Validate Gate 4 Conduct code before network access
         run: |
           set -euo pipefail
           ruff check \
@@ -86,7 +102,15 @@ jobs:
             api/v2/build_eligibility_inventory.py \
             api/v2/build_conduct_source_snapshot.py \
             api/v2/build_consumer_gov_receita_identity.py \
+            api/v2/build_consumer_gov_receita_resolution_experiment.py \
+            api/v2/build_consumer_gov_conduct_evidence.py \
+            api/v2/build_conduct_coverage_reconciliation.py \
+            api/v2/build_conduct_comparative_calibration_v2.py \
+            api/v2/build_conduct_credibility_diagnostic.py \
+            api/v2/build_conduct_portfolio_mix_diagnostic.py \
+            api/v2/build_conduct_methodology_closure.py \
             api/v2/relationship_watchdog.py \
+            api/v2/gate4_pipeline.py \
             tests/test_v2_source_snapshot.py \
             tests/test_v2_source_cache.py \
             tests/test_v2_build_source_snapshot.py \
@@ -94,7 +118,15 @@ jobs:
             tests/test_v2_eligibility_inventory.py \
             tests/test_v2_conduct_source_snapshot.py \
             tests/test_v2_consumer_gov_receita_cache_key.py \
-            tests/test_v2_relationship_watchdog.py
+            tests/test_v2_relationship_watchdog.py \
+            tests/test_v2_consumer_gov_conduct.py \
+            tests/test_v2_consumer_gov_receita_resolution.py \
+            tests/test_v2_conduct_coverage_reconciliation.py \
+            tests/test_v2_conduct_comparative_calibration_v2.py \
+            tests/test_v2_conduct_credibility_diagnostic.py \
+            tests/test_v2_conduct_portfolio_mix_diagnostic.py \
+            tests/test_v2_conduct_methodology_closure.py \
+            tests/test_v2_gate4_pipeline.py
           python -m pytest -q \
             tests/test_v2_source_snapshot.py \
             tests/test_v2_source_cache.py \
@@ -103,7 +135,15 @@ jobs:
             tests/test_v2_eligibility_inventory.py \
             tests/test_v2_conduct_source_snapshot.py \
             tests/test_v2_consumer_gov_receita_cache_key.py \
-            tests/test_v2_relationship_watchdog.py
+            tests/test_v2_relationship_watchdog.py \
+            tests/test_v2_consumer_gov_conduct.py \
+            tests/test_v2_consumer_gov_receita_resolution.py \
+            tests/test_v2_conduct_coverage_reconciliation.py \
+            tests/test_v2_conduct_comparative_calibration_v2.py \
+            tests/test_v2_conduct_credibility_diagnostic.py \
+            tests/test_v2_conduct_portfolio_mix_diagnostic.py \
+            tests/test_v2_conduct_methodology_closure.py \
+            tests/test_v2_gate4_pipeline.py
 
       - name: Build coherent regulatory source snapshot
         run: |
@@ -124,7 +164,7 @@ jobs:
           python -m api.v2.build_eligibility_inventory \
             --lifecycle-input data/derived/v2/entity_lifecycle_relationship_inventory.json
 
-      - name: Build coherent conduct source snapshot
+      - name: Build coherent Conduct source snapshot
         run: |
           set -euo pipefail
           python -m api.v2.build_conduct_source_snapshot
@@ -136,7 +176,23 @@ jobs:
             --lifecycle-input data/derived/v2/entity_lifecycle_relationship_inventory.json \
             --consumer-identity-input data/derived/v2/consumer_gov_identity_experiment.json
 
-      - name: Validate prefix lineage, cache contracts and relationship watchdog
+      - name: Derive Conduct through methodology closure in one workspace
+        run: |
+          set -euo pipefail
+          for stage in \
+            consumer_conduct \
+            conduct_coverage \
+            conduct_calibration \
+            conduct_credibility \
+            conduct_portfolio \
+            conduct_closure
+          do
+            echo "Running Gate 4 stage: ${stage}"
+            python -m api.v2.gate4_pipeline --run-stage "${stage}" > "/tmp/${stage}.log"
+            tail -n 20 "/tmp/${stage}.log"
+          done
+
+      - name: Validate lineage, cache contracts, watchdog and Conduct closure
         run: |
           set -euo pipefail
           python - <<'PY'
@@ -177,6 +233,11 @@ jobs:
           )
           watchdog = json.loads(
               Path("data/derived/v2/relationship_watchdog.json").read_text(
+                  encoding="utf-8"
+              )
+          )
+          closure = json.loads(
+              Path("data/derived/v2/conduct_methodology_closure.json").read_text(
                   encoding="utf-8"
               )
           )
@@ -262,29 +323,51 @@ jobs:
           }
           if not required_key <= set(key):
               raise SystemExit(
-                  f"Receita conduct cache key incomplete: {sorted(key)}"
+                  f"Receita Conduct cache key incomplete: {sorted(key)}"
               )
           if key.get("version") != CACHE_KEY_VERSION:
               raise SystemExit(
-                  f"Receita conduct cache version mismatch: {key.get('version')!r}"
+                  f"Receita Conduct cache version mismatch: {key.get('version')!r}"
               )
           if not str(key.get("reference_period") or "").strip():
-              raise SystemExit("Receita conduct cache reference_period is empty")
+              raise SystemExit("Receita Conduct cache reference_period is empty")
           for name in ("target_universe_hash", "unresolved_provider_hash"):
               if len(str(key.get(name) or "")) != 64:
-                  raise SystemExit(f"Receita conduct cache {name} is invalid")
+                  raise SystemExit(f"Receita Conduct cache {name} is invalid")
 
           if watchdog.get("artifact") != "v2_relationship_watchdog":
               raise SystemExit("relationship watchdog artifact mismatch")
-          summary = watchdog.get("summary") or {}
-          if summary.get("blocking_registry_drift_count") != 0:
+          watchdog_summary = watchdog.get("summary") or {}
+          if watchdog_summary.get("blocking_registry_drift_count") != 0:
               raise SystemExit(
                   "relationship watchdog found blocking registry drift: "
-                  f"{summary}"
+                  f"{watchdog_summary}"
               )
           policy = watchdog.get("policy") or {}
           if policy.get("automatic_registry_mutation") != "forbidden":
               raise SystemExit("relationship watchdog must never mutate registries")
+
+          if closure.get("artifact") != "v2_conduct_methodology_closure":
+              raise SystemExit(f"unexpected Conduct closure artifact: {closure.get('artifact')}")
+          if closure.get("status") != "conduct_methodology_closed_for_signal_design":
+              raise SystemExit(f"unexpected Conduct closure status: {closure.get('status')}")
+          if closure.get("scoring") != "forbidden_in_this_artifact":
+              raise SystemExit("Conduct closure must preserve the scoring prohibition")
+          if closure.get("ranking") != "forbidden_in_this_artifact":
+              raise SystemExit("Conduct closure must preserve the ranking prohibition")
+
+          required_outputs = [
+              "data/derived/v2/consumer_gov_receita_resolution_experiment.json",
+              "data/derived/v2/consumer_gov_conduct_evidence.json",
+              "data/derived/v2/conduct_coverage_reconciliation.json",
+              "data/derived/v2/conduct_comparative_calibration_v2.json",
+              "data/derived/v2/conduct_credibility_diagnostic.json",
+              "data/derived/v2/conduct_portfolio_mix_diagnostic.json",
+              "data/derived/v2/conduct_methodology_closure.json",
+          ]
+          missing = [path for path in required_outputs if not Path(path).is_file()]
+          if missing:
+              raise SystemExit(f"missing integrated Conduct outputs: {missing}")
 
           summary_payload = {
               "build_id": os.environ["V2_BUILD_ID"],
@@ -297,9 +380,16 @@ jobs:
               "consumer_gov_months": months,
               "consumer_manifest_version": consumer_manifest.get("version"),
               "receita_cache_key": key,
-              "relationship_watchdog": summary,
+              "relationship_watchdog": watchdog_summary,
+              "conduct_closure": {
+                  "artifact": closure.get("artifact"),
+                  "version": closure.get("version"),
+                  "status": closure.get("status"),
+                  "population": closure.get("population"),
+              },
+              "integrated_outputs": required_outputs,
           }
-          output = Path("data/derived/v2/conduct_prefix_integration_summary.json")
+          output = Path("data/derived/v2/conduct_integration_summary.json")
           output.write_text(
               json.dumps(
                   summary_payload,
@@ -320,24 +410,24 @@ jobs:
           path: data/cache/v2/source
           key: v2-gate4-source-${{ runner.os }}-${{ github.run_id }}
 
-      - name: Save validated conduct source cache
+      - name: Save validated Conduct source cache
         if: success()
         uses: actions/cache/save@v4
         with:
           path: data/cache/v2/conduct
           key: v2-gate4-conduct-${{ runner.os }}-${{ github.run_id }}
 
-      - name: Upload conduct prefix integration evidence
+      - name: Upload integrated Conduct evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: v2-gate4-conduct-prefix-${{ github.run_id }}-a${{ github.run_attempt }}
+          name: v2-gate4-conduct-integration-${{ github.run_id }}-a${{ github.run_attempt }}
           retention-days: 14
           if-no-files-found: warn
           path: |
             data/derived/v2/source_lineage.json
             data/derived/v2/conduct_source_lineage.json
-            data/derived/v2/conduct_prefix_integration_summary.json
+            data/derived/v2/conduct_integration_summary.json
             data/derived/v2/source/classification_inventory.json
             data/derived/v2/source/receita_lifecycle_records.json
             data/derived/v2/entity_lifecycle_relationship_inventory.json
@@ -345,3 +435,10 @@ jobs:
             data/derived/v2/consumer_gov_identity_experiment.json
             data/derived/v2/receita_consumer_gov_identity.json
             data/derived/v2/relationship_watchdog.json
+            data/derived/v2/consumer_gov_receita_resolution_experiment.json
+            data/derived/v2/consumer_gov_conduct_evidence.json
+            data/derived/v2/conduct_coverage_reconciliation.json
+            data/derived/v2/conduct_comparative_calibration_v2.json
+            data/derived/v2/conduct_credibility_diagnostic.json
+            data/derived/v2/conduct_portfolio_mix_diagnostic.json
+            data/derived/v2/conduct_methodology_closure.json
