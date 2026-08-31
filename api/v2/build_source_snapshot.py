@@ -384,6 +384,7 @@ def _receita_snapshot(
     entities = list(classification.get("entities") or [])
     target_hash = regulatory_target_universe_hash(entities)
 
+    cache_validation_error: str | None = None
     current_error: str | None = None
     try:
         release = discover_latest_release()
@@ -396,24 +397,39 @@ def _receita_snapshot(
                 (cached_payload.get("meta") or {}).get("target_universe_hash") or ""
             )
             if cached_period == release.period and cached_target_hash == target_hash:
-                fetched_at, promoted = _materialize_compatible_receita_cache(
-                    cache=cache,
-                    destination=destination,
-                    target_hash=target_hash,
-                )
-                observation = SourceObservation(
-                    source_id=source_id,
-                    source_url=source_url,
-                    snapshot_path=destination,
-                    fetched_at=fetched_at,
-                    current_validation_succeeded=True,
-                    state_reason=(
-                        "official release period, cache contract and regulatory target "
-                        "hash unchanged"
-                        + ("; compatible legacy cache promoted" if promoted else "")
-                    ),
-                )
-                return AcquisitionResult(observation=observation, used_cache=True)
+                try:
+                    fetched_at, promoted = _materialize_compatible_receita_cache(
+                        cache=cache,
+                        destination=destination,
+                        target_hash=target_hash,
+                    )
+                except (
+                    SourceCacheError,
+                    SourceSnapshotError,
+                    ReceitaRefreshValidationError,
+                    OSError,
+                    ValueError,
+                    json.JSONDecodeError,
+                ) as exc:
+                    cache_validation_error = (
+                        "current cache validation failed: "
+                        f"{type(exc).__name__}: {exc}"
+                    )
+                    destination.unlink(missing_ok=True)
+                else:
+                    observation = SourceObservation(
+                        source_id=source_id,
+                        source_url=source_url,
+                        snapshot_path=destination,
+                        fetched_at=fetched_at,
+                        current_validation_succeeded=True,
+                        state_reason=(
+                            "official release period, cache contract and regulatory target "
+                            "hash unchanged"
+                            + ("; compatible legacy cache promoted" if promoted else "")
+                        ),
+                    )
+                    return AcquisitionResult(observation=observation, used_cache=True)
 
         temp = destination.with_suffix(destination.suffix + ".incoming")
         if temp.exists():
@@ -438,7 +454,12 @@ def _receita_snapshot(
         )
         return AcquisitionResult(observation=observation, used_cache=False)
     except Exception as exc:  # noqa: BLE001
-        current_error = f"{type(exc).__name__}: {exc}"
+        refresh_error = f"{type(exc).__name__}: {exc}"
+        current_error = (
+            f"{cache_validation_error}; {refresh_error}"
+            if cache_validation_error
+            else refresh_error
+        )
 
     try:
         fetched_at, promoted = _materialize_compatible_receita_cache(
