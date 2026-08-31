@@ -1,5 +1,6 @@
 name: V2 Gate 4 Source Snapshot Integration
 
+# One-shot branch trigger for Gate 4 source integration validation.
 on:
   workflow_dispatch:
   push:
