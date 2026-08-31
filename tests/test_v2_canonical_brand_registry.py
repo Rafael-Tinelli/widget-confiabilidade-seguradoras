@@ -1,6 +1,11 @@
+import json
+from pathlib import Path
+
 from api.utils.name_cleaner import normalize_name_key
 from api.v2.consumer_gov_identity import load_provider_resolution_registry
 from api.v2.relationships import load_verified_relationship_registry
+
+SANDBOX_BRAND_REGISTRY = Path("data/reference/v2/sandbox_brand_relationships.json")
 
 
 def _brands_by_id():
@@ -27,6 +32,20 @@ def test_loovi_is_canonical_sandbox_risk_carrier_relationship():
     assert relation["target_cnpj"] == "47006254000180"
     assert relation["status"] == "current"
     assert relation["evidence"]["authority"] == "Loovi"
+
+
+def test_sandbox_brand_wrapper_cannot_drift_from_canonical_relationship():
+    canonical = _brands_by_id()["brand:loovi"]
+    canonical_relation = canonical["relationships"][0]
+    wrapper = json.loads(SANDBOX_BRAND_REGISTRY.read_text(encoding="utf-8"))
+    sandbox = next(
+        item for item in wrapper["brands"] if item["brand_id"] == "brand:loovi"
+    )
+
+    assert sandbox["risk_carrier_cnpj"] == canonical_relation["target_cnpj"]
+    assert sandbox["name"] == canonical["name"]
+    assert set(sandbox["aliases"]) <= set(canonical["aliases"])
+    assert sandbox["evidence"]
 
 
 def test_caixa_residencial_is_canonical_brand_relationship():
