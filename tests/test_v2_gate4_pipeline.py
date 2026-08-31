@@ -262,3 +262,10 @@ def test_conduct_acquisition_is_isolated_from_conduct_derivation():
     assert "api.v2.build_consumer_gov_receita_identity" not in flattened
     assert "api.v2.build_consumer_gov_receita_resolution_experiment" in flattened
     assert "api.v2.build_consumer_gov_conduct_evidence" in flattened
+
+
+def test_consumer_cache_bootstrap_remains_outside_the_publication_dag():
+    mapping = stage_map(STAGES)
+
+    assert "conduct_consumer_bootstrap" not in mapping
+    assert "conduct_source_snapshot" in publication_blockers()
