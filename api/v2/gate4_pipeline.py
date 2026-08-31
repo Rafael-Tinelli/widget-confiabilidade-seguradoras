@@ -117,22 +117,30 @@ STAGES: tuple[PipelineStage, ...] = (
         outputs=("data/derived/v2/financial_methodology_closure.json",),
     ),
     PipelineStage(
-        stage_id="consumer_conduct",
+        stage_id="conduct_source_snapshot",
         kind="mixed_source_derive",
-        dependencies=("source_snapshot", "eligibility"),
+        dependencies=("eligibility",),
+        commands=(_module("api.v2.build_conduct_source_snapshot"),),
+        outputs=(
+            "data/cache/v2/conduct/consumer_gov_core_manifest.json",
+            "data/derived/v2/consumer_gov_identity_experiment.json",
+            "data/derived/v2/receita_consumer_gov_identity.json",
+            "data/derived/v2/conduct_source_lineage.json",
+        ),
+        evergreen_ready=False,
+    ),
+    PipelineStage(
+        stage_id="consumer_conduct",
+        kind="derive",
+        dependencies=("eligibility", "conduct_source_snapshot"),
         commands=(
-            _module("api.build_consumidor_gov"),
-            _module("api.v2.build_consumer_gov_identity_experiment"),
-            _module("api.v2.build_consumer_gov_receita_identity", "--force"),
             _module("api.v2.build_consumer_gov_receita_resolution_experiment"),
             _module("api.v2.build_consumer_gov_conduct_evidence"),
         ),
         outputs=(
-            "data/derived/v2/consumer_gov_identity_experiment.json",
             "data/derived/v2/consumer_gov_receita_resolution_experiment.json",
             "data/derived/v2/consumer_gov_conduct_evidence.json",
         ),
-        evergreen_ready=False,
     ),
     PipelineStage(
         stage_id="conduct_coverage",
