@@ -12,11 +12,15 @@ on:
       - "api/v2/refresh_receita_lifecycle.py"
       - "api/v2/build_conduct_source_snapshot.py"
       - "api/v2/build_consumer_gov_receita_identity.py"
+      - "api/v2/relationship_watchdog.py"
       - "api/v2/gate4_pipeline.py"
       - "api/v2/build_public_distribution_manifest.py"
       - "api/v2/build_eligibility_inventory.py"
       - "api/v2/build_financial_evidence_inventory.py"
       - "api/v2/build_lifecycle_relationship_inventory.py"
+      - "data/reference/v2/verified_relationships.json"
+      - "data/reference/v2/conduct_subject_relationships.json"
+      - "data/reference/v2/sandbox_brand_relationships.json"
       - "tests/test_v2_generation.py"
       - "tests/test_v2_source_snapshot.py"
       - "tests/test_v2_source_cache.py"
@@ -24,6 +28,7 @@ on:
       - "tests/test_v2_receita_refresh.py"
       - "tests/test_v2_conduct_source_snapshot.py"
       - "tests/test_v2_consumer_gov_receita_cache_key.py"
+      - "tests/test_v2_relationship_watchdog.py"
       - "tests/test_v2_gate4_pipeline.py"
       - "tests/test_v2_eligibility_inventory.py"
       - "docs/gate4-evergreen-publication.md"
@@ -72,6 +77,7 @@ jobs:
             api/v2/refresh_receita_lifecycle.py \
             api/v2/build_conduct_source_snapshot.py \
             api/v2/build_consumer_gov_receita_identity.py \
+            api/v2/relationship_watchdog.py \
             api/v2/gate4_pipeline.py \
             api/v2/build_public_distribution_manifest.py \
             api/v2/build_eligibility_inventory.py \
@@ -84,6 +90,7 @@ jobs:
             tests/test_v2_receita_refresh.py \
             tests/test_v2_conduct_source_snapshot.py \
             tests/test_v2_consumer_gov_receita_cache_key.py \
+            tests/test_v2_relationship_watchdog.py \
             tests/test_v2_gate4_pipeline.py \
             tests/test_v2_eligibility_inventory.py
 
@@ -98,6 +105,7 @@ jobs:
             tests/test_v2_receita_refresh.py \
             tests/test_v2_conduct_source_snapshot.py \
             tests/test_v2_consumer_gov_receita_cache_key.py \
+            tests/test_v2_relationship_watchdog.py \
             tests/test_v2_gate4_pipeline.py \
             tests/test_v2_eligibility_inventory.py
 
@@ -124,12 +132,13 @@ jobs:
           if payload.get("cross_run_latest_successful_restore_forbidden") is not True:
               raise SystemExit("Gate 4 must forbid cross-run latest-successful restoration")
           blockers = payload.get("publication_blockers") or []
-          if not blockers:
+          if blockers != ["conduct_source_snapshot"]:
               raise SystemExit(
-                  "publication became ready unexpectedly; run full evergreen validation before opening"
+                  "Gate 4 must have exactly one operational blocker now: "
+                  f"conduct_source_snapshot; got {blockers}"
               )
           if payload.get("publication_ready") is not False:
-              raise SystemExit("publication must remain fail-closed while blockers exist")
+              raise SystemExit("publication must remain fail-closed while blocker exists")
           print(json.dumps({
               "topological_order": payload.get("topological_order"),
               "publication_ready": payload.get("publication_ready"),
