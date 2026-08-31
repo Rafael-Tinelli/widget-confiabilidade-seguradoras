@@ -3,12 +3,15 @@ import sys
 from pathlib import Path
 
 import api.v2.build_eligibility_inventory as eligibility_builder
-from api.v2.build_eligibility_inventory import build_eligibility_inventory
+from api.v2.build_eligibility_inventory import (
+    LIFECYCLE_ARTIFACT,
+    build_eligibility_inventory,
+)
 
 
 def _payload():
     return {
-        "artifact": "v2_entity_lifecycle_relationship_inventory",
+        "artifact": LIFECYCLE_ARTIFACT,
         "meta": {"entities_total": 3},
         "unresolved": {},
         "groups": [],
