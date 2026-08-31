@@ -15,6 +15,7 @@ from api.v2.build_consumer_gov_identity_experiment import (
     build_identity_experiment,
 )
 from api.v2.build_consumer_gov_receita_identity import (
+    CACHE_KEY_VERSION,
     _existing_cache_key,
     _load_inputs,
     build_snapshot,
@@ -131,6 +132,8 @@ def _validate_consumer_manifest(path: Path) -> dict[str, Any]:
     payload = json.loads(path.read_text(encoding="utf-8"))
     if payload.get("artifact") != "v2_consumer_gov_core_source_manifest":
         raise ConductSourceSnapshotError("invalid Consumer.gov cache manifest artifact")
+    if payload.get("version") != 1:
+        raise ConductSourceSnapshotError("unsupported Consumer.gov cache manifest version")
     fetched_at = str(payload.get("fetched_at") or "").strip()
     if not fetched_at:
         raise ConductSourceSnapshotError("Consumer.gov cache manifest has no fetched_at")
@@ -245,6 +248,7 @@ def _cache_matches_current_inputs(
     key = _existing_cache_key(path)
     return bool(
         key
+        and key.get("version") == CACHE_KEY_VERSION
         and key.get("target_universe_hash") == universe_hash
         and key.get("unresolved_provider_hash") == provider_hash
     )
