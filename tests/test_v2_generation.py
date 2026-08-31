@@ -10,6 +10,7 @@ from api.v2.generation import (
     SourceLineage,
     build_distribution_manifest,
     load_source_lineage,
+    load_source_lineages,
     write_distribution_manifest,
 )
 
@@ -29,16 +30,23 @@ def _context() -> BuildContext:
     )
 
 
-def _source(*, build_id: str = BUILD_ID, state: str = "fresh") -> SourceLineage:
+def _source(
+    *,
+    source_id: str = "susep_licensed_entities",
+    build_id: str = BUILD_ID,
+    state: str = "fresh",
+) -> SourceLineage:
     return SourceLineage.from_mapping(
         {
-            "source_id": "susep_licensed_entities",
-            "source_url": "https://example.test/susep",
+            "source_id": source_id,
+            "source_url": f"https://example.test/{source_id}",
             "fetched_at": "2026-08-30T17:59:00-00:00",
             "state": state,
             "build_id": build_id,
             "sha256": "b" * 64 if state != "unavailable" else None,
-            "snapshot_path": "data/raw/susep/licensed.json" if state != "unavailable" else None,
+            "snapshot_path": (
+                f"data/raw/{source_id}.json" if state != "unavailable" else None
+            ),
         }
     )
 
@@ -46,6 +54,10 @@ def _source(*, build_id: str = BUILD_ID, state: str = "fresh") -> SourceLineage:
 def _write_json(path: Path, payload: object | None = None) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload or {"ok": True}), encoding="utf-8")
+
+
+def _write_lineage(path: Path, sources: list[SourceLineage]) -> None:
+    _write_json(path, {"sources": [source.as_dict() for source in sources]})
 
 
 def _public_package(root: Path) -> Path:
@@ -88,21 +100,35 @@ def test_source_lineage_requires_hash_for_fresh_or_stale_sources():
 
 def test_source_lineage_rejects_cross_generation_mix(tmp_path: Path):
     path = tmp_path / "source_lineage.json"
-    path.write_text(
-        json.dumps(
-            {
-                "sources": [
-                    {
-                        **_source(build_id="v2-other").as_dict(),
-                    }
-                ]
-            }
-        ),
-        encoding="utf-8",
-    )
+    _write_lineage(path, [_source(build_id="v2-other")])
 
     with pytest.raises(ValueError, match="build_id mismatch"):
         load_source_lineage(path, _context())
+
+
+def test_combined_lineages_preserve_regulatory_and_conduct_sources(tmp_path: Path):
+    regulatory = tmp_path / "source_lineage.json"
+    conduct = tmp_path / "conduct_source_lineage.json"
+    _write_lineage(regulatory, [_source(source_id="susep_licensed_entities")])
+    _write_lineage(conduct, [_source(source_id="consumer_gov_core")])
+
+    sources = load_source_lineages((regulatory, conduct), _context())
+
+    assert [source.source_id for source in sources] == [
+        "consumer_gov_core",
+        "susep_licensed_entities",
+    ]
+
+
+def test_combined_lineages_reject_duplicate_source_ids(tmp_path: Path):
+    regulatory = tmp_path / "source_lineage.json"
+    conduct = tmp_path / "conduct_source_lineage.json"
+    duplicate = _source(source_id="shared_source")
+    _write_lineage(regulatory, [duplicate])
+    _write_lineage(conduct, [duplicate])
+
+    with pytest.raises(ValueError, match="duplicate source_id"):
+        load_source_lineages((regulatory, conduct), _context())
 
 
 def test_distribution_manifest_hashes_complete_public_package(tmp_path: Path):
@@ -110,13 +136,17 @@ def test_distribution_manifest_hashes_complete_public_package(tmp_path: Path):
     payload = build_distribution_manifest(
         public_dir=public,
         context=_context(),
-        sources=[_source()],
+        sources=[
+            _source(source_id="susep_licensed_entities"),
+            _source(source_id="consumer_gov_core"),
+        ],
     )
 
     assert payload["artifact"] == "v2_public_distribution_manifest"
     assert payload["build"]["build_id"] == BUILD_ID
     assert payload["build"]["source_head_sha"] == HEAD
-    assert payload["source_lineage"]["state_counts"]["fresh"] == 1
+    assert payload["source_lineage"]["count"] == 2
+    assert payload["source_lineage"]["state_counts"]["fresh"] == 2
     assert payload["public_package"]["files_count"] == 7
     assert len(payload["public_package"]["package_sha256"]) == 64
     assert payload["publication_policy"] == {
@@ -125,6 +155,18 @@ def test_distribution_manifest_hashes_complete_public_package(tmp_path: Path):
         "manifest_hash_verification_required": True,
         "retain_previous_generation_for_rollback": True,
     }
+
+
+def test_distribution_manifest_rejects_duplicate_source_ids(tmp_path: Path):
+    public = _public_package(tmp_path)
+    duplicate = _source(source_id="consumer_gov_core")
+
+    with pytest.raises(ValueError, match="duplicate source_id"):
+        build_distribution_manifest(
+            public_dir=public,
+            context=_context(),
+            sources=[duplicate, duplicate],
+        )
 
 
 def test_distribution_manifest_rejects_incomplete_package(tmp_path: Path):
