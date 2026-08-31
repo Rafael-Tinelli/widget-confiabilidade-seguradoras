@@ -18,6 +18,7 @@ from api.v2.classification import (
 from api.v2.identity import build_canonical_entities
 from api.v2.sandbox_identity import materialize_unmatched_sandbox_identities
 from api.v2.sandbox_semantics import normalize_sandbox_entity_semantics
+from api.v2.ses_activity_evidence import enrich_entities_with_ses_activity_evidence
 
 DEFAULT_OUTPUT = Path("data/derived/v2/entity_classification_inventory.json")
 
@@ -66,6 +67,7 @@ def build_classification_inventory(
         unresolved_sandbox,
     )
     classified = normalize_sandbox_entity_semantics(classified)
+    classified = enrich_entities_with_ses_activity_evidence(classified)
     classified = _mark_unclassified_source_evidence(classified)
 
     summary = classification_summary(
@@ -100,7 +102,9 @@ def build_classification_inventory(
             "ses_master_status_fields_available": False,
             "classification_note": (
                 "SUSEP regulatory sources define scope, type and status. SES contributes "
-                "financial/activity evidence when present. FIP is the preferred regulatory "
+                "financial/activity evidence when present. Current SES activity flags are "
+                "derived from recent structured data-flow presence in BaseCompleta, never "
+                "from company names or corporate groups. FIP is the preferred regulatory "
                 "identity; Sandbox participants without a published FIP are retained by "
                 "their official CNPJ and typed separately as sandbox_participant, never as "
                 "ordinary insurers. Ses_cias.csv exposes entity/group identifiers and names, "
