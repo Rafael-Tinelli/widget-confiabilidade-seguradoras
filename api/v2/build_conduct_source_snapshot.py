@@ -3,6 +3,7 @@ from __future__ import annotations
 import gzip
 import hashlib
 import json
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -32,6 +33,7 @@ from api.v2.source_snapshot import SourceObservation, write_source_lineage
 DEFAULT_CACHE_DIR = Path("data/cache/v2/conduct")
 DEFAULT_LINEAGE = Path("data/derived/v2/conduct_source_lineage.json")
 CONSUMER_MANIFEST = "consumer_gov_core_manifest.json"
+CONSUMER_MANIFEST_VERSION = 2
 CONSUMER_SOURCE_URL = (
     f"{consumer_gov_build.CG_API_BASE}/package_show?id={consumer_gov_build.CG_DATASET_ID}"
 )
@@ -47,6 +49,16 @@ def _sha256(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _atomic_copy(source: Path, destination: Path) -> None:
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temp = destination.with_suffix(destination.suffix + ".tmp")
+    try:
+        shutil.copy2(source, temp)
+        temp.replace(destination)
+    finally:
+        temp.unlink(missing_ok=True)
 
 
 def _read_gzip_json(path: Path) -> dict[str, Any]:
@@ -87,7 +99,7 @@ def _consumer_manifest_payload() -> dict[str, Any]:
     monthly = _valid_monthly_files()
     return {
         "artifact": "v2_consumer_gov_core_source_manifest",
-        "version": 1,
+        "version": CONSUMER_MANIFEST_VERSION,
         "aggregate": {
             "path": str(aggregate),
             "sha256": _sha256(aggregate),
@@ -128,11 +140,65 @@ def _write_json(path: Path, payload: dict[str, Any]) -> Path:
     return path
 
 
+def _cache_object(source: Path, expected_sha: str, cache_dir: Path) -> Path:
+    if len(expected_sha) != 64 or _sha256(source) != expected_sha:
+        raise ConductSourceSnapshotError(f"invalid Consumer.gov source hash: {source}")
+    destination = cache_dir / "consumer_gov_core" / "objects" / expected_sha
+    if destination.is_file() and _sha256(destination) == expected_sha:
+        return destination
+    _atomic_copy(source, destination)
+    if _sha256(destination) != expected_sha:
+        destination.unlink(missing_ok=True)
+        raise ConductSourceSnapshotError(
+            f"Consumer.gov cache object verification failed: {destination}"
+        )
+    return destination
+
+
+def _cache_consumer_manifest(
+    materialized: dict[str, Any],
+    *,
+    cache_dir: Path,
+    fetched_at: str,
+) -> dict[str, Any]:
+    aggregate = dict(materialized.get("aggregate") or {})
+    aggregate_source = Path(str(aggregate.get("path") or ""))
+    aggregate_sha = str(aggregate.get("sha256") or "")
+    cached_aggregate = _cache_object(aggregate_source, aggregate_sha, cache_dir)
+
+    cached_months: list[dict[str, Any]] = []
+    for item in materialized.get("months") or []:
+        row = dict(item)
+        source = Path(str(row.get("path") or ""))
+        expected = str(row.get("sha256") or "")
+        cached = _cache_object(source, expected, cache_dir)
+        cached_months.append(
+            {
+                "month": str(row.get("month") or ""),
+                "path": str(cached),
+                "materialized_path": str(source),
+                "sha256": expected,
+            }
+        )
+
+    return {
+        "artifact": "v2_consumer_gov_core_source_manifest",
+        "version": CONSUMER_MANIFEST_VERSION,
+        "fetched_at": fetched_at,
+        "aggregate": {
+            "path": str(cached_aggregate),
+            "materialized_path": str(aggregate_source),
+            "sha256": aggregate_sha,
+        },
+        "months": cached_months,
+    }
+
+
 def _validate_consumer_manifest(path: Path) -> dict[str, Any]:
     payload = json.loads(path.read_text(encoding="utf-8"))
     if payload.get("artifact") != "v2_consumer_gov_core_source_manifest":
         raise ConductSourceSnapshotError("invalid Consumer.gov cache manifest artifact")
-    if payload.get("version") != 1:
+    if payload.get("version") != CONSUMER_MANIFEST_VERSION:
         raise ConductSourceSnapshotError("unsupported Consumer.gov cache manifest version")
     fetched_at = str(payload.get("fetched_at") or "").strip()
     if not fetched_at:
@@ -144,12 +210,32 @@ def _validate_consumer_manifest(path: Path) -> dict[str, Any]:
     targets = [aggregate, *months]
     for item in targets:
         target = Path(str(item.get("path") or ""))
+        materialized = str(item.get("materialized_path") or "").strip()
         expected = str(item.get("sha256") or "")
+        if not materialized:
+            raise ConductSourceSnapshotError(
+                "Consumer.gov cache manifest is missing materialized_path"
+            )
         if not target.is_file() or len(expected) != 64 or _sha256(target) != expected:
             raise ConductSourceSnapshotError(
                 f"Consumer.gov cached source hash mismatch: {target}"
             )
     return payload
+
+
+def _materialize_consumer_manifest(payload: dict[str, Any]) -> None:
+    aggregate = payload.get("aggregate") or {}
+    targets = [aggregate, *(payload.get("months") or [])]
+    for item in targets:
+        source = Path(str(item.get("path") or ""))
+        destination = Path(str(item.get("materialized_path") or ""))
+        expected = str(item.get("sha256") or "")
+        _atomic_copy(source, destination)
+        if _sha256(destination) != expected:
+            destination.unlink(missing_ok=True)
+            raise ConductSourceSnapshotError(
+                f"Consumer.gov materialization hash mismatch: {destination}"
+            )
 
 
 def _consumer_observation(*, cache_dir: Path) -> SourceObservation:
@@ -162,8 +248,8 @@ def _consumer_observation(*, cache_dir: Path) -> SourceObservation:
         result = consumer_gov_build.main()
         if result != 0:
             raise ConductSourceSnapshotError(f"Consumer.gov builder returned {result}")
-        manifest = _consumer_manifest_payload()
-        materialized_months = [str(item["month"]) for item in manifest["months"]]
+        materialized = _consumer_manifest_payload()
+        materialized_months = [str(item["month"]) for item in materialized["months"]]
         latest_official = max(resources)
         if latest_official > materialized_months[-1]:
             raise ConductSourceSnapshotError(
@@ -176,12 +262,16 @@ def _consumer_observation(*, cache_dir: Path) -> SourceObservation:
             prior = _validate_consumer_manifest(cache_manifest)
         except (OSError, ValueError, ConductSourceSnapshotError):
             pass
-        if prior and _manifest_content_key(prior) == _manifest_content_key(manifest):
+        if prior and _manifest_content_key(prior) == _manifest_content_key(materialized):
             fetched_at = str(prior["fetched_at"])
         else:
             fetched_at = utc_now()
-        manifest["fetched_at"] = fetched_at
-        _write_json(cache_manifest, manifest)
+        cached = _cache_consumer_manifest(
+            materialized,
+            cache_dir=cache_dir,
+            fetched_at=fetched_at,
+        )
+        _write_json(cache_manifest, cached)
         return SourceObservation(
             source_id="consumer_gov_core",
             source_url=CONSUMER_SOURCE_URL,
@@ -200,7 +290,8 @@ def _consumer_observation(*, cache_dir: Path) -> SourceObservation:
         current_error = f"{type(exc).__name__}: {exc}"
 
     try:
-        manifest = _validate_consumer_manifest(cache_manifest)
+        cached = _validate_consumer_manifest(cache_manifest)
+        _materialize_consumer_manifest(cached)
     except (OSError, ValueError, ConductSourceSnapshotError) as exc:
         unavailable = cache_dir / "consumer_gov_core_unavailable.json"
         unavailable.unlink(missing_ok=True)
@@ -212,13 +303,13 @@ def _consumer_observation(*, cache_dir: Path) -> SourceObservation:
             state_reason=f"{current_error}; cache invalid: {type(exc).__name__}: {exc}",
         )
 
-    first_month = str(manifest["months"][0]["month"])
-    last_month = str(manifest["months"][-1]["month"])
+    first_month = str(cached["months"][0]["month"])
+    last_month = str(cached["months"][-1]["month"])
     return SourceObservation(
         source_id="consumer_gov_core",
         source_url=CONSUMER_SOURCE_URL,
         snapshot_path=cache_manifest,
-        fetched_at=str(manifest["fetched_at"]),
+        fetched_at=str(cached["fetched_at"]),
         state_reason=(
             f"{current_error}; using hash-validated Consumer.gov core cache "
             f"for {first_month}..{last_month}"
