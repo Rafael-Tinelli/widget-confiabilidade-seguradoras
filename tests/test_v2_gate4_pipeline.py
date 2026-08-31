@@ -4,6 +4,7 @@ import sys
 
 import pytest
 
+from api.v2.build_eligibility_inventory import LIFECYCLE_ARTIFACT
 from api.v2.gate4_pipeline import (
     STAGES,
     PipelineDefinitionError,
@@ -198,6 +199,21 @@ def test_lifecycle_uses_materialized_gate4_inputs():
     assert "--receita-lifecycle-input" in command
     assert "--ses-zip" in command
     assert "lifecycle" not in publication_blockers()
+
+
+def test_gate4_eligibility_consumes_canonical_lifecycle_contract():
+    mapping = stage_map(STAGES)
+    lifecycle = mapping["lifecycle"]
+    eligibility = mapping["eligibility"]
+
+    assert LIFECYCLE_ARTIFACT == "v2_lifecycle_relationship_inventory"
+    assert lifecycle.outputs == (
+        "data/derived/v2/entity_lifecycle_relationship_inventory.json",
+    )
+    assert eligibility.dependencies == ("lifecycle",)
+    command = eligibility.commands[0]
+    input_index = command.index("--lifecycle-input") + 1
+    assert command[input_index] == lifecycle.outputs[0]
 
 
 def test_relationship_watchdog_is_evergreen_and_precedes_conduct():
