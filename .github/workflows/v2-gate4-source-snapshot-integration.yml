@@ -1,6 +1,5 @@
 name: V2 Gate 4 Source Snapshot Integration
 
-# One-shot branch trigger for Gate 4 source integration validation.
 on:
   workflow_dispatch:
   push:
@@ -8,6 +7,14 @@ on:
       - refactor/v2-data-foundation
     paths:
       - ".github/workflows/v2-gate4-source-snapshot-integration.yml"
+      - "api/v2/build_source_snapshot.py"
+      - "api/v2/refresh_receita_lifecycle.py"
+      - "api/v2/source_cache.py"
+      - "api/v2/source_snapshot.py"
+      - "tests/test_v2_build_source_snapshot.py"
+      - "tests/test_v2_receita_refresh.py"
+      - "tests/test_v2_source_cache.py"
+      - "tests/test_v2_source_snapshot.py"
 
 permissions:
   contents: read
@@ -56,13 +63,16 @@ jobs:
             api/v2/source_cache.py \
             api/v2/source_snapshot.py \
             api/v2/build_source_snapshot.py \
+            api/v2/refresh_receita_lifecycle.py \
             tests/test_v2_source_cache.py \
             tests/test_v2_source_snapshot.py \
-            tests/test_v2_build_source_snapshot.py
+            tests/test_v2_build_source_snapshot.py \
+            tests/test_v2_receita_refresh.py
           python -m pytest -q \
             tests/test_v2_source_cache.py \
             tests/test_v2_source_snapshot.py \
-            tests/test_v2_build_source_snapshot.py
+            tests/test_v2_build_source_snapshot.py \
+            tests/test_v2_receita_refresh.py
 
       - name: Restore validated Gate 4 source cache
         uses: actions/cache/restore@v4
@@ -86,6 +96,10 @@ jobs:
           import zipfile
           from pathlib import Path
 
+          from api.v2.refresh_receita_lifecycle import (
+              RECEITA_LIFECYCLE_CACHE_CONTRACT_VERSION,
+          )
+
           lineage_path = Path("data/derived/v2/source_lineage.json")
           payload = json.loads(lineage_path.read_text(encoding="utf-8"))
           build = payload.get("build") or {}
@@ -97,7 +111,11 @@ jobs:
           sources = payload.get("sources") or []
           if len(sources) < 6:
               raise SystemExit(f"unexpectedly small source lineage: {len(sources)}")
-          unavailable = [item.get("source_id") for item in sources if item.get("state") == "unavailable"]
+          unavailable = [
+              item.get("source_id")
+              for item in sources
+              if item.get("state") == "unavailable"
+          ]
           if unavailable:
               raise SystemExit(f"unavailable critical sources: {unavailable}")
           for item in sources:
@@ -114,14 +132,33 @@ jobs:
               raise SystemExit("Gate 4 BaseCompleta.zip was not materialized")
 
           classification = json.loads(
-              Path("data/derived/v2/source/classification_inventory.json").read_text(encoding="utf-8")
+              Path("data/derived/v2/source/classification_inventory.json").read_text(
+                  encoding="utf-8"
+              )
           )
           entities = classification.get("entities") or []
           if len(entities) < 100:
               raise SystemExit(f"classification unexpectedly small: {len(entities)}")
 
+          receita_source = json.loads(
+              Path("data/derived/v2/source/receita_cnpj_lifecycle.json").read_text(
+                  encoding="utf-8"
+              )
+          )
+          contract_version = str(
+              (receita_source.get("meta") or {}).get("gate4_cache_contract_version")
+              or ""
+          )
+          if contract_version != RECEITA_LIFECYCLE_CACHE_CONTRACT_VERSION:
+              raise SystemExit(
+                  "Receita lifecycle cache contract mismatch: "
+                  f"{contract_version!r}"
+              )
+
           receita = json.loads(
-              Path("data/derived/v2/source/receita_lifecycle_records.json").read_text(encoding="utf-8")
+              Path("data/derived/v2/source/receita_lifecycle_records.json").read_text(
+                  encoding="utf-8"
+              )
           )
           if not (receita.get("records") or []):
               raise SystemExit("Receita lifecycle records snapshot is empty")
@@ -141,6 +178,7 @@ jobs:
               ],
               "classification_entities": len(entities),
               "receita_records": len(receita.get("records") or []),
+              "receita_cache_contract": contract_version,
           }, ensure_ascii=False, indent=2))
           PY
 
