@@ -48,7 +48,7 @@ STAGES: tuple[PipelineStage, ...] = (
             "data/derived/v2/source/receita_lifecycle_records.json",
             "data/derived/v2/source_lineage.json",
         ),
-        evergreen_ready=False,
+        evergreen_ready=True,
     ),
     PipelineStage(
         stage_id="lifecycle",
