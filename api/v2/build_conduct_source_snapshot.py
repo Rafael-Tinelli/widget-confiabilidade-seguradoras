@@ -29,7 +29,9 @@ from api.v2.source_snapshot import SourceObservation, write_source_lineage
 DEFAULT_CACHE_DIR = Path("data/cache/v2/conduct")
 DEFAULT_LINEAGE = Path("data/derived/v2/conduct_source_lineage.json")
 CONSUMER_MANIFEST = "consumer_gov_core_manifest.json"
-CONSUMER_SOURCE_URL = f"{consumer_gov_build.CG_API_BASE}/package_show?id={consumer_gov_build.CG_DATASET_ID}"
+CONSUMER_SOURCE_URL = (
+    f"{consumer_gov_build.CG_API_BASE}/package_show?id={consumer_gov_build.CG_DATASET_ID}"
+)
 
 
 class ConductSourceSnapshotError(RuntimeError):
@@ -98,6 +100,18 @@ def _consumer_manifest_payload() -> dict[str, Any]:
     }
 
 
+def _manifest_content_key(payload: dict[str, Any]) -> tuple[str, tuple[tuple[str, str], ...]]:
+    aggregate = payload.get("aggregate") or {}
+    months = payload.get("months") or []
+    return (
+        str(aggregate.get("sha256") or ""),
+        tuple(
+            (str(item.get("month") or ""), str(item.get("sha256") or ""))
+            for item in months
+        ),
+    )
+
+
 def _write_json(path: Path, payload: dict[str, Any]) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     temp = path.with_suffix(path.suffix + ".tmp")
@@ -113,6 +127,9 @@ def _validate_consumer_manifest(path: Path) -> dict[str, Any]:
     payload = json.loads(path.read_text(encoding="utf-8"))
     if payload.get("artifact") != "v2_consumer_gov_core_source_manifest":
         raise ConductSourceSnapshotError("invalid Consumer.gov cache manifest artifact")
+    fetched_at = str(payload.get("fetched_at") or "").strip()
+    if not fetched_at:
+        raise ConductSourceSnapshotError("Consumer.gov cache manifest has no fetched_at")
     months = payload.get("months") or []
     if not isinstance(months, list) or len(months) != 12:
         raise ConductSourceSnapshotError("Consumer.gov cache manifest must contain 12 months")
@@ -128,12 +145,7 @@ def _validate_consumer_manifest(path: Path) -> dict[str, Any]:
     return payload
 
 
-def _consumer_observation(
-    *,
-    cache_dir: Path,
-    context: BuildContext,
-) -> SourceObservation:
-    del context  # symmetry with the Receita acquisition boundary
+def _consumer_observation(*, cache_dir: Path) -> SourceObservation:
     cache_manifest = cache_dir / CONSUMER_MANIFEST
     current_error: str | None = None
     try:
@@ -151,12 +163,23 @@ def _consumer_observation(
                 "Consumer.gov current publication is newer than the validated materialized window: "
                 f"official={latest_official} materialized={materialized_months[-1]}"
             )
+
+        prior: dict[str, Any] | None = None
+        try:
+            prior = _validate_consumer_manifest(cache_manifest)
+        except (OSError, ValueError, ConductSourceSnapshotError):
+            pass
+        if prior and _manifest_content_key(prior) == _manifest_content_key(manifest):
+            fetched_at = str(prior["fetched_at"])
+        else:
+            fetched_at = utc_now()
+        manifest["fetched_at"] = fetched_at
         _write_json(cache_manifest, manifest)
         return SourceObservation(
             source_id="consumer_gov_core",
             source_url=CONSUMER_SOURCE_URL,
             snapshot_path=cache_manifest,
-            fetched_at=utc_now(),
+            fetched_at=fetched_at,
             current_validation_succeeded=True,
             state_reason="current CKAN publication window validated against materialized core",
         )
@@ -188,7 +211,7 @@ def _consumer_observation(
         source_id="consumer_gov_core",
         source_url=CONSUMER_SOURCE_URL,
         snapshot_path=cache_manifest,
-        fetched_at=utc_now(),
+        fetched_at=str(manifest["fetched_at"]),
         state_reason=(
             f"{current_error}; using hash-validated Consumer.gov core cache "
             f"for {first_month}..{last_month}"
@@ -223,15 +246,27 @@ def _receita_observation(*, cache_dir: Path) -> SourceObservation:
     cache = _receita_cache(cache_dir)
     universe_hash, provider_hash = _current_input_hashes()
     current_error: str | None = None
+
+    if cache.content_path.is_file() and _cache_matches_current_inputs(
+        cache.content_path,
+        universe_hash,
+        provider_hash,
+    ):
+        try:
+            cache.materialize(DEFAULT_RECEITA_IDENTITY_SNAPSHOT)
+        except (OSError, ValueError, SourceCacheError):
+            DEFAULT_RECEITA_IDENTITY_SNAPSHOT.unlink(missing_ok=True)
+
     try:
         payload = build_snapshot(output=DEFAULT_RECEITA_IDENTITY_SNAPSHOT, force=False)
         if payload is not None:
-            cache.store(DEFAULT_RECEITA_IDENTITY_SNAPSHOT, fetched_at=utc_now())
+            fetched_at = utc_now()
+            cache.store(DEFAULT_RECEITA_IDENTITY_SNAPSHOT, fetched_at=fetched_at)
             return SourceObservation(
                 source_id=cache.source_id,
                 source_url=cache.source_url,
                 snapshot_path=DEFAULT_RECEITA_IDENTITY_SNAPSHOT,
-                fetched_at=utc_now(),
+                fetched_at=fetched_at,
                 current_fetch_succeeded=True,
                 state_reason="official Receita filtered identity snapshot refreshed",
             )
@@ -245,8 +280,10 @@ def _receita_observation(*, cache_dir: Path) -> SourceObservation:
                 "Receita builder skipped without a cache key compatible with current inputs"
             )
         if not cache.content_path.is_file():
-            cache.store(DEFAULT_RECEITA_IDENTITY_SNAPSHOT, fetched_at=utc_now())
-        fetched_at = cache.materialize(DEFAULT_RECEITA_IDENTITY_SNAPSHOT)
+            fetched_at = utc_now()
+            cache.store(DEFAULT_RECEITA_IDENTITY_SNAPSHOT, fetched_at=fetched_at)
+        else:
+            fetched_at = cache.materialize(DEFAULT_RECEITA_IDENTITY_SNAPSHOT)
         return SourceObservation(
             source_id=cache.source_id,
             source_url=cache.source_url,
@@ -295,7 +332,7 @@ def build_conduct_source_snapshot(
 ) -> dict[str, Any]:
     cache_dir.mkdir(parents=True, exist_ok=True)
 
-    consumer = _consumer_observation(cache_dir=cache_dir, context=context)
+    consumer = _consumer_observation(cache_dir=cache_dir)
     if consumer.to_lineage(context).state == "unavailable":
         write_source_lineage(lineage_path, [consumer], context)
         raise ConductSourceSnapshotError("Consumer.gov core source is unavailable")
