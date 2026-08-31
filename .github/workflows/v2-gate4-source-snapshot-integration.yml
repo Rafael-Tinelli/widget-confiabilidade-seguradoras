@@ -2,18 +2,6 @@ name: V2 Gate 4 Source Snapshot Integration
 
 on:
   workflow_dispatch:
-  pull_request:
-    branches: [main]
-    paths:
-      - ".github/workflows/v2-gate4-source-snapshot-integration.yml"
-      - "api/v2/build_source_snapshot.py"
-      - "api/v2/refresh_receita_lifecycle.py"
-      - "api/v2/source_cache.py"
-      - "api/v2/source_snapshot.py"
-      - "tests/test_v2_build_source_snapshot.py"
-      - "tests/test_v2_receita_refresh.py"
-      - "tests/test_v2_source_cache.py"
-      - "tests/test_v2_source_snapshot.py"
   push:
     branches:
       - refactor/v2-data-foundation
@@ -32,28 +20,26 @@ permissions:
   contents: read
 
 concurrency:
-  group: v2-gate4-source-snapshot-${{ github.event.pull_request.number || github.ref }}
+  group: v2-gate4-source-snapshot-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
   source-snapshot:
     runs-on: ubuntu-24.04
     timeout-minutes: 360
-
     env:
-      V2_SOURCE_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      V2_SOURCE_HEAD_SHA: ${{ github.sha }}
       V2_BUILD_ID: v2-source-${{ github.run_id }}-a${{ github.run_attempt }}
       V2_SOURCE_CACHE_DIR: data/cache/v2/source
       SES_ALLOW_INSECURE_SSL: "1"
       SUSEP_LICENSED_VERIFY_SSL: "0"
       SUSEP_SPECIAL_VERIFY_SSL: "0"
       SUSEP_SANDBOX_VERIFY_SSL: "1"
-
     steps:
       - name: Checkout selected ref
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.sha }}
           fetch-depth: 1
 
       - name: Setup Python
@@ -72,20 +58,8 @@ jobs:
       - name: Validate source snapshot code
         run: |
           set -euo pipefail
-          ruff check \
-            api/v2/source_cache.py \
-            api/v2/source_snapshot.py \
-            api/v2/build_source_snapshot.py \
-            api/v2/refresh_receita_lifecycle.py \
-            tests/test_v2_source_cache.py \
-            tests/test_v2_source_snapshot.py \
-            tests/test_v2_build_source_snapshot.py \
-            tests/test_v2_receita_refresh.py
-          python -m pytest -q \
-            tests/test_v2_source_cache.py \
-            tests/test_v2_source_snapshot.py \
-            tests/test_v2_build_source_snapshot.py \
-            tests/test_v2_receita_refresh.py
+          ruff check api/v2/source_cache.py api/v2/source_snapshot.py api/v2/build_source_snapshot.py api/v2/refresh_receita_lifecycle.py tests/test_v2_source_cache.py tests/test_v2_source_snapshot.py tests/test_v2_build_source_snapshot.py tests/test_v2_receita_refresh.py
+          python -m pytest -q tests/test_v2_source_cache.py tests/test_v2_source_snapshot.py tests/test_v2_build_source_snapshot.py tests/test_v2_receita_refresh.py
 
       - name: Restore validated Gate 4 source cache
         uses: actions/cache/restore@v4
@@ -108,87 +82,42 @@ jobs:
           import os
           import zipfile
           from pathlib import Path
+          from api.v2.refresh_receita_lifecycle import RECEITA_LIFECYCLE_CACHE_CONTRACT_VERSION
 
-          from api.v2.refresh_receita_lifecycle import (
-              RECEITA_LIFECYCLE_CACHE_CONTRACT_VERSION,
-          )
-
-          lineage_path = Path("data/derived/v2/source_lineage.json")
-          payload = json.loads(lineage_path.read_text(encoding="utf-8"))
+          payload = json.loads(Path("data/derived/v2/source_lineage.json").read_text(encoding="utf-8"))
           build = payload.get("build") or {}
           if build.get("build_id") != os.environ["V2_BUILD_ID"]:
               raise SystemExit("source lineage build_id mismatch")
           if build.get("source_head_sha") != os.environ["V2_SOURCE_HEAD_SHA"]:
               raise SystemExit("source lineage source_head_sha mismatch")
-
           sources = payload.get("sources") or []
           if len(sources) < 6:
               raise SystemExit(f"unexpectedly small source lineage: {len(sources)}")
-          unavailable = [
-              item.get("source_id")
-              for item in sources
-              if item.get("state") == "unavailable"
-          ]
-          if unavailable:
-              raise SystemExit(f"unavailable critical sources: {unavailable}")
           for item in sources:
               if item.get("state") not in {"fresh", "stale"}:
                   raise SystemExit(f"invalid source state: {item}")
-              digest = str(item.get("sha256") or "")
-              if len(digest) != 64:
+              if len(str(item.get("sha256") or "")) != 64:
                   raise SystemExit(f"missing source hash: {item.get('source_id')}")
               if item.get("build_id") != os.environ["V2_BUILD_ID"]:
                   raise SystemExit(f"source build_id mismatch: {item.get('source_id')}")
-
           base = Path("data/raw/ses/BaseCompleta.zip")
           if not base.is_file() or not zipfile.is_zipfile(base):
               raise SystemExit("Gate 4 BaseCompleta.zip was not materialized")
-
-          classification = json.loads(
-              Path("data/derived/v2/source/classification_inventory.json").read_text(
-                  encoding="utf-8"
-              )
-          )
+          classification = json.loads(Path("data/derived/v2/source/classification_inventory.json").read_text(encoding="utf-8"))
           entities = classification.get("entities") or []
           if len(entities) < 100:
               raise SystemExit(f"classification unexpectedly small: {len(entities)}")
-
-          receita_source = json.loads(
-              Path("data/derived/v2/source/receita_cnpj_lifecycle.json").read_text(
-                  encoding="utf-8"
-              )
-          )
-          contract_version = str(
-              (receita_source.get("meta") or {}).get("gate4_cache_contract_version")
-              or ""
-          )
+          receita_source = json.loads(Path("data/derived/v2/source/receita_cnpj_lifecycle.json").read_text(encoding="utf-8"))
+          contract_version = str((receita_source.get("meta") or {}).get("gate4_cache_contract_version") or "")
           if contract_version != RECEITA_LIFECYCLE_CACHE_CONTRACT_VERSION:
-              raise SystemExit(
-                  "Receita lifecycle cache contract mismatch: "
-                  f"{contract_version!r}"
-              )
-
-          receita = json.loads(
-              Path("data/derived/v2/source/receita_lifecycle_records.json").read_text(
-                  encoding="utf-8"
-              )
-          )
+              raise SystemExit(f"Receita lifecycle cache contract mismatch: {contract_version!r}")
+          receita = json.loads(Path("data/derived/v2/source/receita_lifecycle_records.json").read_text(encoding="utf-8"))
           if not (receita.get("records") or []):
               raise SystemExit("Receita lifecycle records snapshot is empty")
-
           print(json.dumps({
               "build": build,
               "state_counts": payload.get("state_counts"),
               "freshness_method_counts": payload.get("freshness_method_counts"),
-              "sources": [
-                  {
-                      "source_id": item.get("source_id"),
-                      "state": item.get("state"),
-                      "freshness_method": item.get("freshness_method"),
-                      "fetched_at": item.get("fetched_at"),
-                  }
-                  for item in sources
-              ],
               "classification_entities": len(entities),
               "receita_records": len(receita.get("records") or []),
               "receita_cache_contract": contract_version,
