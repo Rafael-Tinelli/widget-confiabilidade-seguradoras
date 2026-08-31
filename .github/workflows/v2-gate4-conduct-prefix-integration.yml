@@ -1,0 +1,250 @@
+name: V2 Gate 4 Conduct Prefix Integration
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  V2_SOURCE_HEAD_SHA: ${{ github.sha }}
+  V2_BUILD_ID: v2-conduct-prefix-${{ github.run_id }}-a${{ github.run_attempt }}
+  V2_SOURCE_CACHE_DIR: data/cache/v2/source
+
+concurrency:
+  group: v2-gate4-conduct-prefix-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  conduct-prefix:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+
+    steps:
+      - name: Checkout exact source head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Restore validated regulatory source cache
+        id: regulatory-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: data/cache/v2/source
+          key: v2-source-cache-v1-${{ runner.os }}-${{ github.run_id }}-a${{ github.run_attempt }}
+          restore-keys: |
+            v2-source-cache-v1-${{ runner.os }}-
+
+      - name: Restore validated conduct source cache
+        id: conduct-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: data/cache/v2/conduct
+          key: v2-conduct-cache-v2-${{ runner.os }}-${{ github.run_id }}-a${{ github.run_attempt }}
+          restore-keys: |
+            v2-conduct-cache-v2-${{ runner.os }}-
+
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install -r requirements-dev.txt
+
+      - name: Validate Gate 4 prefix code before network access
+        run: |
+          set -euo pipefail
+          ruff check \
+            api/v2/source_snapshot.py \
+            api/v2/source_cache.py \
+            api/v2/build_source_snapshot.py \
+            api/v2/build_lifecycle_relationship_inventory.py \
+            api/v2/build_eligibility_inventory.py \
+            api/v2/build_conduct_source_snapshot.py \
+            api/v2/build_consumer_gov_receita_identity.py \
+            tests/test_v2_source_snapshot.py \
+            tests/test_v2_source_cache.py \
+            tests/test_v2_build_source_snapshot.py \
+            tests/test_v2_lifecycle_relationship_inventory.py \
+            tests/test_v2_eligibility_inventory.py \
+            tests/test_v2_conduct_source_snapshot.py \
+            tests/test_v2_consumer_gov_receita_cache_key.py
+          python -m pytest -q \
+            tests/test_v2_source_snapshot.py \
+            tests/test_v2_source_cache.py \
+            tests/test_v2_build_source_snapshot.py \
+            tests/test_v2_lifecycle_relationship_inventory.py \
+            tests/test_v2_eligibility_inventory.py \
+            tests/test_v2_conduct_source_snapshot.py \
+            tests/test_v2_consumer_gov_receita_cache_key.py
+
+      - name: Build coherent regulatory source snapshot
+        run: |
+          set -euo pipefail
+          python -m api.v2.build_source_snapshot
+
+      - name: Derive Lifecycle from materialized sources
+        run: |
+          set -euo pipefail
+          python -m api.v2.build_lifecycle_relationship_inventory \
+            --classification-input data/derived/v2/source/classification_inventory.json \
+            --receita-lifecycle-input data/derived/v2/source/receita_lifecycle_records.json \
+            --ses-zip data/raw/ses/BaseCompleta.zip
+
+      - name: Derive Eligibility from same-generation Lifecycle
+        run: |
+          set -euo pipefail
+          python -m api.v2.build_eligibility_inventory \
+            --lifecycle-input data/derived/v2/entity_lifecycle_relationship_inventory.json
+
+      - name: Build coherent conduct source snapshot
+        run: |
+          set -euo pipefail
+          python -m api.v2.build_conduct_source_snapshot
+
+      - name: Validate prefix lineage and population contracts
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          source_lineage = json.loads(
+              Path("data/derived/v2/source_lineage.json").read_text(encoding="utf-8")
+          )
+          conduct_lineage = json.loads(
+              Path("data/derived/v2/conduct_source_lineage.json").read_text(
+                  encoding="utf-8"
+              )
+          )
+          eligibility = json.loads(
+              Path("data/derived/v2/entity_eligibility_inventory.json").read_text(
+                  encoding="utf-8"
+              )
+          )
+          identity = json.loads(
+              Path("data/derived/v2/consumer_gov_identity_experiment.json").read_text(
+                  encoding="utf-8"
+              )
+          )
+          receita = json.loads(
+              Path("data/derived/v2/receita_consumer_gov_identity.json").read_text(
+                  encoding="utf-8"
+              )
+          )
+
+          def states(payload):
+              rows = payload.get("sources") or []
+              return {
+                  str(row.get("source_id")): str(row.get("state"))
+                  for row in rows
+              }
+
+          regulatory_states = states(source_lineage)
+          conduct_states = states(conduct_lineage)
+          if not regulatory_states or not conduct_states:
+              raise SystemExit("Gate 4 source lineage is incomplete")
+          invalid = {
+              **{
+                  f"regulatory:{key}": value
+                  for key, value in regulatory_states.items()
+                  if value not in {"fresh", "stale"}
+              },
+              **{
+                  f"conduct:{key}": value
+                  for key, value in conduct_states.items()
+                  if value not in {"fresh", "stale"}
+              },
+          }
+          if invalid:
+              raise SystemExit(f"unusable Gate 4 source states: {invalid}")
+
+          entities = eligibility.get("entities") or []
+          eligible = [
+              item
+              for item in entities
+              if (item.get("eligibility") or {}).get("regulatory_universe_eligible")
+          ]
+          if len(eligible) < 100:
+              raise SystemExit(
+                  f"unexpectedly small ordinary insurer universe: {len(eligible)}"
+              )
+
+          months = sorted(
+              str(month)
+              for month in (identity.get("source") or {}).get("months") or []
+          )
+          if len(months) != 12:
+              raise SystemExit(
+                  f"Consumer.gov identity must preserve exactly 12 months, got {len(months)}"
+              )
+
+          key = (receita.get("meta") or {}).get("gate4_cache_key") or {}
+          required_key = {
+              "version",
+              "reference_period",
+              "target_universe_hash",
+              "unresolved_provider_hash",
+          }
+          if not required_key <= set(key):
+              raise SystemExit(
+                  f"Receita conduct cache key incomplete: {sorted(key)}"
+              )
+
+          summary = {
+              "build_id": "${{ env.V2_BUILD_ID }}",
+              "source_head_sha": "${{ env.V2_SOURCE_HEAD_SHA }}",
+              "regulatory_cache_restore_key": "${{ steps.regulatory-cache.outputs.cache-matched-key }}",
+              "conduct_cache_restore_key": "${{ steps.conduct-cache.outputs.cache-matched-key }}",
+              "regulatory_source_states": regulatory_states,
+              "conduct_source_states": conduct_states,
+              "ordinary_current_insurers": len(eligible),
+              "consumer_gov_months": months,
+              "receita_cache_key": key,
+          }
+          output = Path("data/derived/v2/conduct_prefix_integration_summary.json")
+          output.write_text(
+              json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True)
+              + "\n",
+              encoding="utf-8",
+          )
+          print(json.dumps(summary, ensure_ascii=False, indent=2))
+          PY
+
+      - name: Save validated regulatory source cache
+        if: success()
+        uses: actions/cache/save@v4
+        with:
+          path: data/cache/v2/source
+          key: v2-source-cache-v1-${{ runner.os }}-${{ github.run_id }}-a${{ github.run_attempt }}
+
+      - name: Save validated conduct source cache
+        if: success()
+        uses: actions/cache/save@v4
+        with:
+          path: data/cache/v2/conduct
+          key: v2-conduct-cache-v2-${{ runner.os }}-${{ github.run_id }}-a${{ github.run_attempt }}
+
+      - name: Upload conduct prefix integration evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: v2-gate4-conduct-prefix-${{ github.run_id }}-a${{ github.run_attempt }}
+          retention-days: 14
+          if-no-files-found: warn
+          path: |
+            data/derived/v2/source_lineage.json
+            data/derived/v2/conduct_source_lineage.json
+            data/derived/v2/conduct_prefix_integration_summary.json
+            data/derived/v2/source/classification_inventory.json
+            data/derived/v2/source/receita_lifecycle_records.json
+            data/derived/v2/entity_lifecycle_relationship_inventory.json
+            data/derived/v2/entity_eligibility_inventory.json
+            data/derived/v2/consumer_gov_identity_experiment.json
+            data/derived/v2/receita_consumer_gov_identity.json
