@@ -400,6 +400,7 @@ def _group_observations(
 def _canonical_brand_targets(
     lifecycle_payload: dict[str, Any],
 ) -> dict[str, set[str]]:
+    entity_by_id, _ = _entity_indexes(lifecycle_payload)
     targets: dict[str, set[str]] = {}
     for brand in lifecycle_payload.get("brands") or []:
         brand_id = str(brand.get("brand_id") or "").strip()
@@ -411,7 +412,11 @@ def _canonical_brand_targets(
                 continue
             if str(relation.get("status") or "current") != "current":
                 continue
-            cnpj = normalize_cnpj_v2(relation.get("target_cnpj"))
+            target_id = str(relation.get("target_entity_id") or "").strip()
+            target = entity_by_id.get(target_id)
+            cnpj = normalize_cnpj_v2(
+                relation.get("target_cnpj") or (target or {}).get("cnpj")
+            )
             if cnpj:
                 current_targets.add(cnpj)
         targets[brand_id] = current_targets
