@@ -130,9 +130,28 @@ STAGES: tuple[PipelineStage, ...] = (
         evergreen_ready=False,
     ),
     PipelineStage(
+        stage_id="relationship_watchdog",
+        kind="derive",
+        dependencies=("lifecycle", "conduct_source_snapshot"),
+        commands=(
+            _module(
+                "api.v2.relationship_watchdog",
+                "--lifecycle-input",
+                "data/derived/v2/entity_lifecycle_relationship_inventory.json",
+                "--consumer-identity-input",
+                "data/derived/v2/consumer_gov_identity_experiment.json",
+            ),
+        ),
+        outputs=("data/derived/v2/relationship_watchdog.json",),
+    ),
+    PipelineStage(
         stage_id="consumer_conduct",
         kind="derive",
-        dependencies=("eligibility", "conduct_source_snapshot"),
+        dependencies=(
+            "eligibility",
+            "conduct_source_snapshot",
+            "relationship_watchdog",
+        ),
         commands=(
             _module("api.v2.build_consumer_gov_receita_resolution_experiment"),
             _module("api.v2.build_consumer_gov_conduct_evidence"),
