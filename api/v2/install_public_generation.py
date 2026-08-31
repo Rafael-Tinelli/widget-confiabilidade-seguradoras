@@ -159,10 +159,10 @@ def install_generation(package_dir: Path, target_root: Path) -> dict[str, Any]:
     if destination.exists():
         existing = verify_package(destination)
         existing_sha = str(
-            ((existing.get("public_package") or {}).get("package_sha256") or "")
+            (existing.get("public_package") or {}).get("package_sha256") or ""
         )
         incoming_sha = str(
-            ((manifest.get("public_package") or {}).get("package_sha256") or "")
+            (manifest.get("public_package") or {}).get("package_sha256") or ""
         )
         if existing_sha != incoming_sha:
             raise PublicGenerationInstallError(
