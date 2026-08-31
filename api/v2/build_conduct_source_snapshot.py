@@ -21,7 +21,9 @@ from api.v2.build_consumer_gov_receita_identity import (
     target_universe_hash,
     unresolved_provider_hash,
 )
-from api.v2.consumer_gov_receita_resolution import DEFAULT_RECEITA_IDENTITY_SNAPSHOT
+from api.v2.consumer_gov_receita_resolution import (
+    DEFAULT_RECEITA_IDENTITY_SNAPSHOT,
+)
 from api.v2.generation import BuildContext
 from api.v2.source_cache import CachedSource, SourceCacheError, utc_now
 from api.v2.source_snapshot import SourceObservation, write_source_lineage
@@ -100,7 +102,9 @@ def _consumer_manifest_payload() -> dict[str, Any]:
     }
 
 
-def _manifest_content_key(payload: dict[str, Any]) -> tuple[str, tuple[tuple[str, str], ...]]:
+def _manifest_content_key(
+    payload: dict[str, Any],
+) -> tuple[str, tuple[tuple[str, str], ...]]:
     aggregate = payload.get("aggregate") or {}
     months = payload.get("months") or []
     return (
@@ -233,7 +237,11 @@ def _current_input_hashes() -> tuple[str, str]:
     return target_universe_hash(entities), unresolved_provider_hash(providers)
 
 
-def _cache_matches_current_inputs(path: Path, universe_hash: str, provider_hash: str) -> bool:
+def _cache_matches_current_inputs(
+    path: Path,
+    universe_hash: str,
+    provider_hash: str,
+) -> bool:
     key = _existing_cache_key(path)
     return bool(
         key
