@@ -47,7 +47,8 @@ def test_financial_chain_is_topologically_ordered():
 def test_conduct_chain_is_topologically_ordered():
     position = _positions()
 
-    assert position["eligibility"] < position["consumer_conduct"]
+    assert position["eligibility"] < position["conduct_source_snapshot"]
+    assert position["conduct_source_snapshot"] < position["consumer_conduct"]
     assert position["consumer_conduct"] < position["conduct_coverage"]
     assert position["conduct_coverage"] < position["conduct_calibration"]
     assert position["conduct_calibration"] < position["conduct_credibility"]
@@ -60,6 +61,8 @@ def test_public_package_depends_on_closed_cross_pillar_chain():
 
     assert {
         "financial_closure",
+        "conduct_source_snapshot",
+        "consumer_conduct",
         "conduct_closure",
         "cross_stage1",
         "cross_coverage",
@@ -79,7 +82,7 @@ def test_current_blockers_are_explicit_instead_of_silently_published():
 
     assert blockers == {
         "source_snapshot",
-        "consumer_conduct",
+        "conduct_source_snapshot",
     }
     contract = pipeline_contract()
     assert contract["publication_ready"] is False
@@ -186,3 +189,26 @@ def test_lifecycle_uses_materialized_gate4_inputs():
     assert "--receita-lifecycle-input" in command
     assert "--ses-zip" in command
     assert "lifecycle" not in publication_blockers()
+
+
+def test_conduct_acquisition_is_isolated_from_conduct_derivation():
+    mapping = stage_map(STAGES)
+    source = mapping["conduct_source_snapshot"]
+    conduct = mapping["consumer_conduct"]
+
+    assert source.kind == "mixed_source_derive"
+    assert source.dependencies == ("eligibility",)
+    assert source.commands == (
+        (sys.executable, "-m", "api.v2.build_conduct_source_snapshot"),
+    )
+    assert source.evergreen_ready is False
+
+    assert conduct.kind == "derive"
+    assert conduct.dependencies == ("eligibility", "conduct_source_snapshot")
+    assert conduct.evergreen_ready is True
+    flattened = [part for command in conduct.commands for part in command]
+    assert "--force" not in flattened
+    assert "api.build_consumidor_gov" not in flattened
+    assert "api.v2.build_consumer_gov_receita_identity" not in flattened
+    assert "api.v2.build_consumer_gov_receita_resolution_experiment" in flattened
+    assert "api.v2.build_consumer_gov_conduct_evidence" in flattened
