@@ -2,6 +2,11 @@ name: V2 Gate 4 Source Snapshot Integration
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - refactor/v2-data-foundation
+    paths:
+      - ".github/workflows/v2-gate4-source-snapshot-integration.yml"
 
 permissions:
   contents: read
