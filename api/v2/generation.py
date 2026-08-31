@@ -203,6 +203,22 @@ def load_source_lineage(path: Path, context: BuildContext) -> list[SourceLineage
     return sorted(sources, key=lambda source: source.source_id)
 
 
+def load_source_lineages(
+    paths: Iterable[Path],
+    context: BuildContext,
+) -> list[SourceLineage]:
+    sources = [
+        source
+        for path in paths
+        for source in load_source_lineage(path, context)
+    ]
+    ids = [source.source_id for source in sources]
+    duplicates = sorted({source_id for source_id in ids if ids.count(source_id) > 1})
+    if duplicates:
+        raise ValueError(f"combined source lineage contains duplicate source_id values: {duplicates}")
+    return sorted(sources, key=lambda source: source.source_id)
+
+
 def _public_files(public_dir: Path) -> list[Path]:
     if not public_dir.is_dir():
         raise ValueError(f"public package directory not found: {public_dir}")
@@ -237,6 +253,10 @@ def build_distribution_manifest(
     source_list = sorted(sources, key=lambda source: source.source_id)
     if not source_list:
         raise ValueError("at least one source lineage record is required")
+    ids = [source.source_id for source in source_list]
+    duplicates = sorted({source_id for source_id in ids if ids.count(source_id) > 1})
+    if duplicates:
+        raise ValueError(f"distribution manifest has duplicate source_id values: {duplicates}")
     if any(source.build_id != context.build_id for source in source_list):
         raise ValueError("all source lineage records must match the current build_id")
 
