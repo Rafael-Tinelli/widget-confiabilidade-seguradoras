@@ -24,6 +24,7 @@ from api.sources.susep_special_regimes import fetch_special_regime_records
 from api.v2.build_classification_inventory import build_classification_inventory
 
 DEFAULT_MIN_COVERAGE = 0.95
+RECEITA_LIFECYCLE_CACHE_CONTRACT_VERSION = "v2-receita-lifecycle-1"
 
 
 class ReceitaRefreshValidationError(RuntimeError):
@@ -37,13 +38,19 @@ def _coverage(payload: dict[str, Any]) -> float:
     return resolved / target if target else 0.0
 
 
-def _existing_metadata(path: Path) -> tuple[str | None, str | None]:
+def _existing_metadata(
+    path: Path,
+) -> tuple[str | None, str | None, str | None]:
     if not path.exists():
-        return None, None
+        return None, None, None
     payload = json.loads(path.read_text(encoding="utf-8"))
     period = str((payload.get("source") or {}).get("reference_period") or "").strip() or None
-    target_hash = str((payload.get("meta") or {}).get("target_universe_hash") or "").strip() or None
-    return period, target_hash
+    meta = payload.get("meta") or {}
+    target_hash = str(meta.get("target_universe_hash") or "").strip() or None
+    contract_version = (
+        str(meta.get("gate4_cache_contract_version") or "").strip() or None
+    )
+    return period, target_hash, contract_version
 
 
 def regulatory_target_universe_hash(entities: list[dict[str, Any]]) -> str:
@@ -75,6 +82,7 @@ def validate_refresh_payload(
     *,
     min_coverage: float = DEFAULT_MIN_COVERAGE,
     previous_records: list[dict[str, Any]] | None = None,
+    allow_legacy_unversioned: bool = False,
 ) -> None:
     source = payload.get("source") or {}
     meta = payload.get("meta") or {}
@@ -86,6 +94,16 @@ def validate_refresh_payload(
         raise ReceitaRefreshValidationError("unexpected Receita ingestion method")
     if not source.get("reference_period"):
         raise ReceitaRefreshValidationError("Receita reference period is missing")
+
+    contract_version = str(meta.get("gate4_cache_contract_version") or "").strip()
+    if contract_version != RECEITA_LIFECYCLE_CACHE_CONTRACT_VERSION:
+        legacy_allowed = allow_legacy_unversioned and not contract_version
+        if not legacy_allowed:
+            raise ReceitaRefreshValidationError(
+                "unsupported Receita lifecycle cache contract version: "
+                f"{contract_version or 'missing'}"
+            )
+
     target_hash = str(meta.get("target_universe_hash") or "").strip()
     if len(target_hash) != 64:
         raise ReceitaRefreshValidationError("Receita target universe hash is missing or invalid")
@@ -166,7 +184,9 @@ def refresh_receita_lifecycle(
     target_entities = entities if entities is not None else build_current_regulatory_universe()
     target_hash = regulatory_target_universe_hash(target_entities)
     payload = refresh_filtered_lifecycle(target_entities, release=resolved_release)
-    payload.setdefault("meta", {})["target_universe_hash"] = target_hash
+    meta = payload.setdefault("meta", {})
+    meta["target_universe_hash"] = target_hash
+    meta["gate4_cache_contract_version"] = RECEITA_LIFECYCLE_CACHE_CONTRACT_VERSION
 
     previous_records = None
     if output.exists():
@@ -199,8 +219,8 @@ def main() -> None:
         "--force",
         action="store_true",
         help=(
-            "Refresh even when both the stored Receita reference period and the "
-            "regulatory target-universe hash are current."
+            "Refresh even when the stored Receita cache-contract version, reference "
+            "period and regulatory target-universe hash are current."
         ),
     )
     args = parser.parse_args()
@@ -208,15 +228,19 @@ def main() -> None:
     release = discover_latest_release()
     entities = build_current_regulatory_universe()
     current_target_hash = regulatory_target_universe_hash(entities)
-    existing_period, existing_target_hash = _existing_metadata(args.output)
+    existing_period, existing_target_hash, existing_contract_version = _existing_metadata(
+        args.output
+    )
     if (
         not args.force
+        and existing_contract_version == RECEITA_LIFECYCLE_CACHE_CONTRACT_VERSION
         and existing_period == release.period
         and existing_target_hash == current_target_hash
     ):
         print(
             "Receita lifecycle refresh skipped: "
-            f"reference_period={release.period} and target_universe_hash unchanged"
+            f"contract={existing_contract_version} reference_period={release.period} "
+            "and target_universe_hash unchanged"
         )
         return
 
@@ -230,6 +254,7 @@ def main() -> None:
     source = payload["source"]
     print(
         "Receita lifecycle refresh OK: "
+        f"contract={meta['gate4_cache_contract_version']} "
         f"period={source['reference_period']} "
         f"target_hash={meta['target_universe_hash'][:12]} "
         f"resolved={meta['resolved_count']}/{meta['target_count']} "
