@@ -27,6 +27,7 @@ DEFAULT_OUTPUT = Path("data/derived/v2/entity_eligibility_inventory.json")
 DEFAULT_LIFECYCLE_INPUT = Path(
     "data/derived/v2/entity_lifecycle_relationship_inventory.json"
 )
+LIFECYCLE_ARTIFACT = "v2_lifecycle_relationship_inventory"
 
 
 def _utc_now() -> str:
@@ -115,7 +116,7 @@ def main() -> None:
     args = _parse_args()
     if args.lifecycle_input is not None:
         lifecycle = json.loads(args.lifecycle_input.read_text(encoding="utf-8"))
-        if lifecycle.get("artifact") != "v2_entity_lifecycle_relationship_inventory":
+        if lifecycle.get("artifact") != LIFECYCLE_ARTIFACT:
             raise RuntimeError("unexpected lifecycle input artifact")
     else:
         lifecycle = _build_legacy_lifecycle_from_sources()
