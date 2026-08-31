@@ -1,6 +1,6 @@
 # Gate 4 — build evergreen, lineage e publicação atômica
 
-Status: **em implementação; publicação evergreen ainda fechada por blockers operacionais explícitos**.
+Status: **em implementação; `source_snapshot` fechado como evergreen e publicação ainda bloqueada por `conduct_source_snapshot`**.
 
 Este Gate sucede os contratos metodológicos já fechados nos Gates 1–3. Ele não altera universo regulatório, PLA/CMR, ILT, Conduta, assessment, leaderboards ou a decisão de manter o ranking geral bloqueado.
 
@@ -96,7 +96,7 @@ O DAG é testado para:
 
 O caminho evergreen não deve usar `gh run list` para procurar outputs intermediários. Os builders executam no mesmo workspace e consomem arquivos produzidos anteriormente na própria geração.
 
-### Lifecycle, Eligibility e Financial Evidence já separados da aquisição
+### Lifecycle, Eligibility e Financial Evidence separados da aquisição
 
 Os modos legados continuam disponíveis para os workflows de investigação atuais. O Gate 4 usa somente inputs materializados da mesma geração:
 
@@ -110,13 +110,27 @@ source_snapshot
 → Financial Evidence
 ```
 
-`Lifecycle` não abre SUSEP ou Receita no modo Gate 4. Ele recebe Classification e Receita lifecycle já materializados e usa o `BaseCompleta.zip` local apenas para grupos econômicos. O relationship registry continua sendo curadoria versionada no repositório.
+`Lifecycle` não abre SUSEP ou Receita no modo Gate 4. Ele recebe Classification e Receita lifecycle já materializados e usa o `BaseCompleta.zip` local apenas para grupos econômicos.
 
 `Eligibility` recebe diretamente o Lifecycle materializado, sem reconstruir Classification/Lifecycle.
 
 `Financial Evidence` recebe diretamente Eligibility e o `BaseCompleta.zip` materializados; não refaz Lifecycle/Classification nem chama fontes regulatórias.
 
 Nenhuma regra de classificação, elegibilidade ou evidência financeira mudou com essa separação.
+
+### Relationships: derivação automática versus fato verificado
+
+O contrato de relationships separa duas responsabilidades:
+
+```text
+fontes estruturadas oficiais
+→ derivação automática de identidade, lifecycle e grupo econômico
+
+marca / risk carrier / sucessão / transferência de carteira
+→ somente fato source-backed materializado no registry verificado
+```
+
+Nomes semelhantes e pertencimento ao mesmo grupo jamais autorizam inferência de incorporação, sucessão ou transferência de reclamações. O próximo endurecimento evergreen é um watchdog determinístico que descobre e sinaliza automaticamente casos novos ou drift dos registries, mas não altera `verified_relationships.json`, `conduct_subject_relationships.json` ou `sandbox_brand_relationships.json` e não transforma candidato em fato.
 
 ### Ranking Stage 2 sem alias operacional
 
@@ -128,18 +142,17 @@ cross_pillar_architecture_experiment.json
 
 O alias legado `cross_pillar_architecture_stage_2.json` deixou de ser necessário no caminho Gate 4. O ranking continua metodologicamente bloqueado (`ranking_eligible = 0`); o que foi removido foi apenas o blocker operacional de nome de arquivo.
 
-## 6. Blockers atuais
+## 6. Blocker atual
 
-A publicação permanece propositalmente fechada enquanto estes stages ainda não satisfazem o contrato evergreen:
+A publicação permanece propositalmente fechada enquanto este stage ainda não satisfaz o contrato evergreen:
 
 ```text
-source_snapshot
-consumer_conduct
+conduct_source_snapshot
 ```
 
-### `source_snapshot`
+### `source_snapshot` — fechado em 31/08/2026
 
-A lineage e os estados já estão modelados, e todos os downstreams regulatórios/financeiros já possuem rotas offline. Falta centralizar a aquisição propriamente dita e materializar, com estado verificável, pelo menos:
+A aquisição regulatória/financeira foi centralizada em snapshot de uma geração, com lineage e estados verificáveis para os materiais necessários, incluindo:
 
 ```text
 BaseCompleta.zip
@@ -152,13 +165,26 @@ Receita lifecycle snapshot
 source_lineage.json
 ```
 
-O ponto pendente não é apenas ter cache: o snapshot precisa saber se a tentativa atual foi bem-sucedida ou se reutilizou conteúdo anterior, para declarar `fresh`, `stale` ou `unavailable` sem inferir isso por timestamp de arquivo.
+O cache Receita lifecycle possui contrato explícito `v2-receita-lifecycle-1`. Um cache legado sem versão só pode ser promovido quando o período, o universo regulatório e todas as validações estruturais atuais continuam compatíveis; a promoção preserva `fetched_at`. Versões desconhecidas não são reutilizadas silenciosamente, e um cache incompatível não impede nova tentativa de aquisição oficial.
 
-### `consumer_conduct`
+A prova de integração que autorizou o fechamento foi:
 
-Ainda combina atualização Consumer.gov, resolução Receita e derivação de Conduta. A varredura oficial Receita pode durar horas; portanto esse estágio só deixa de ser blocker quando aquisição/cache e derivação estiverem separados e a validade do snapshot for determinada por uma chave explícita, não por `--force`.
+```text
+workflow: V2 Gate 4 Source Snapshot Integration
+evento: push
+branch: refactor/v2-data-foundation
+head_sha: f4c2cbbeff80a292a6e5295aefe438a664af66a0
+run_id: 33358623692
+conclusion: success
+```
 
-A chave mínima planejada para o snapshot de identidade Receita/Consumer.gov inclui:
+A execução validou, no mesmo run, restauração do cache da branch, construção do source snapshot, lineage e outputs materializados, salvamento do cache validado e artifact de auditoria. Por isso `source_snapshot.evergreen_ready = true` no DAG.
+
+### `conduct_source_snapshot` — blocker remanescente
+
+A aquisição Consumer.gov e a identidade Receita/Consumer.gov já foram separadas da derivação posterior de Conduta no DAG. O blocker remanescente é provar o mesmo nível de contrato evergreen para esse snapshot misto de fontes: aquisição/cache, chave explícita de validade, lineage e materialização reproduzível em uma única geração.
+
+A chave mínima para o snapshot de identidade Receita/Consumer.gov inclui:
 
 ```text
 Receita reference_period
@@ -167,10 +193,11 @@ unresolved_provider/query_hash
 schema_version
 ```
 
-Enquanto qualquer blocker permanecer, o contrato retorna:
+`consumer_conduct` já é stage de derivação e não é blocker operacional. Enquanto `conduct_source_snapshot` permanecer aberto, o contrato retorna:
 
 ```text
 publication_ready = false
+publication_blockers = ["conduct_source_snapshot"]
 ```
 
 ## 7. Pacote público único
@@ -239,15 +266,16 @@ A distribuição pública observada hoje em `/ranking-seguradoras/data/v2/public
 
 Os workflows de investigação atuais permanecem durante a transição para preservar diagnóstico e não interromper a branch. Eles **não são o desenho final de publicação**.
 
-A migração deve ocorrer em ordem:
+A migração ocorre nesta ordem:
 
-1. fechar source snapshot + lineage;
-2. separar aquisição de derivação na Conduta;
-3. eliminar `latest successful` do caminho de distribuição;
-4. executar o DAG inteiro em um único workspace;
-5. produzir e validar o artifact único;
-6. desenhar e testar a rotina v2 de instalação atômica/rollback no HostGator;
-7. somente então criar/habilitar o cron v2 apropriado.
+1. `source_snapshot` + lineage — **concluído**;
+2. fechar `conduct_source_snapshot` e executar a integração real da Conduta;
+3. manter o watchdog de relationships no caminho evergreen para descoberta/sinalização automática de casos novos;
+4. eliminar `latest successful` do caminho de distribuição;
+5. executar o DAG inteiro em um único workspace;
+6. produzir e validar o artifact único;
+7. desenhar e testar a rotina v2 de instalação atômica/rollback no HostGator;
+8. somente então criar/habilitar o cron v2 apropriado.
 
 O cron v1 existente não deve ser alterado como parte desses passos até o cutover deliberado.
 
