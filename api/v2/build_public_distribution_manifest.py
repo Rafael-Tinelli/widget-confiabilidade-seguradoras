@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 
+from api.v2.audit_financial_publication_chain import run_audit
 from api.v2.generation import (
     BuildContext,
     load_source_lineages,
@@ -41,6 +43,9 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    audit = run_audit()
+    print(json.dumps(audit, ensure_ascii=False, indent=2, sort_keys=True))
+
     context = BuildContext.from_env()
     sources = load_source_lineages(
         (args.source_lineage, args.conduct_source_lineage),
