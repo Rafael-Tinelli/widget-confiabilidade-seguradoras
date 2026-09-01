@@ -47,14 +47,16 @@ def _optional_finite(value: Any, *, field: str) -> float | None:
 
 def _nonnegative_int(value: Any, *, field: str) -> int:
     try:
-        number = int(value)
+        number = float(value)
     except (TypeError, ValueError) as exc:
         raise ConductCredibilityDiagnosticError(
             f"non-integer {field}: {value!r}"
         ) from exc
-    if number < 0:
-        raise ConductCredibilityDiagnosticError(f"negative {field}: {number}")
-    return number
+    if not math.isfinite(number) or number < 0 or not number.is_integer():
+        raise ConductCredibilityDiagnosticError(
+            f"non-integer {field}: {value!r}"
+        )
+    return int(number)
 
 
 def _quantiles(values: list[float]) -> dict[str, float | None]:
@@ -279,7 +281,10 @@ def _earned_series(
             continue
         baseline = baselines[month]
         market_premium = float(baseline["market_premium"])
-        market_complaints = int(baseline["market_complaints"])
+        market_complaints = _nonnegative_int(
+            baseline["market_complaints"],
+            field="market_complaints",
+        )
         if market_premium <= 0 or market_complaints <= 0:
             continue
         expected = market_complaints * premium / market_premium
@@ -318,6 +323,27 @@ def _neutral_side(ratio: float) -> str:
     return "equal"
 
 
+def _unit_contract(calibration: dict[str, Any]) -> dict[str, Any]:
+    denominator = calibration.get("denominator") or {}
+    currency = denominator.get("currency")
+    unit_label = denominator.get("source_unit_label")
+    scale = _finite(
+        denominator.get("scale_factor_applied"),
+        field="denominator.scale_factor_applied",
+    )
+    if currency != "BRL" or unit_label != "R$" or not math.isclose(
+        scale, 1.0, rel_tol=0.0, abs_tol=0.0
+    ):
+        raise ConductCredibilityDiagnosticError(
+            "upstream denominator unit contract must be BRL/R$/1.0"
+        )
+    return {
+        "currency": "BRL",
+        "source_unit_label": "R$",
+        "scale_factor_applied": 1.0,
+    }
+
+
 def build_credibility_diagnostic(calibration: dict[str, Any]) -> dict[str, Any]:
     if calibration.get("scoring") != "forbidden_in_this_artifact":
         raise ConductCredibilityDiagnosticError(
@@ -327,6 +353,7 @@ def build_credibility_diagnostic(calibration: dict[str, Any]) -> dict[str, Any]:
         raise ConductCredibilityDiagnosticError(
             "upstream calibration must explicitly forbid ranking"
         )
+    unit_contract = _unit_contract(calibration)
 
     entities = list(calibration.get("entities") or [])
     if not entities:
@@ -360,7 +387,11 @@ def build_credibility_diagnostic(calibration: dict[str, Any]) -> dict[str, Any]:
         )
 
     earned_eligible = sum(
-        int(item["earned_series"]["comparable_months"]) >= MIN_TEMPORAL_MONTHS
+        _nonnegative_int(
+            item["earned_series"]["comparable_months"],
+            field="earned_series.comparable_months",
+        )
+        >= MIN_TEMPORAL_MONTHS
         and item["earned_series"]["ratio"] is not None
         for item in prepared
     )
@@ -369,7 +400,7 @@ def build_credibility_diagnostic(calibration: dict[str, Any]) -> dict[str, Any]:
     for item in prepared:
         entity = item["entity"]
         entity_id = str(entity.get("entity_id") or "")
-        observed = int(item["observed"])
+        observed = _nonnegative_int(item["observed"], field="observed")
         expected_direct = float(item["expected_direct"])
         ratio_direct = float(item["ratio_direct"])
         direct_individual = _poisson_ratio_interval(
@@ -386,7 +417,10 @@ def build_credibility_diagnostic(calibration: dict[str, Any]) -> dict[str, Any]:
         earned_series = item["earned_series"]
         earned_ratio = earned_series.get("ratio")
         earned_expected = earned_series.get("expected_complaints")
-        earned_coverage = int(earned_series.get("comparable_months") or 0)
+        earned_coverage = _nonnegative_int(
+            earned_series.get("comparable_months") or 0,
+            field="earned_series.comparable_months",
+        )
         earned_diagnostic: dict[str, Any] = {
             **earned_series,
             "premium_earned_12m": entity.get("premium_earned_12m_diagnostic"),
@@ -396,7 +430,10 @@ def build_credibility_diagnostic(calibration: dict[str, Any]) -> dict[str, Any]:
             ),
         }
         if earned_ratio is not None and earned_expected is not None:
-            earned_observed = int(earned_series["observed_complaints"])
+            earned_observed = _nonnegative_int(
+                earned_series["observed_complaints"],
+                field="earned_series.observed_complaints",
+            )
             earned_diagnostic["individual_exact_interval"] = _poisson_ratio_interval(
                 earned_observed,
                 float(earned_expected),
@@ -470,12 +507,20 @@ def build_credibility_diagnostic(calibration: dict[str, Any]) -> dict[str, Any]:
                 ),
                 "direct_candidate": {
                     "premium_direct_12m": direct_premium,
+                    "premium_currency": unit_contract["currency"],
+                    "premium_source_unit_label": unit_contract["source_unit_label"],
+                    "premium_scale_factor_applied": unit_contract[
+                        "scale_factor_applied"
+                    ],
                     "premium_share": None,
                     "premium_share_state": "not_used_under_monthly_aligned_pressure",
                     "observed_complaints": observed,
                     "expected_complaints": expected_direct,
                     "ratio": ratio_direct,
-                    "comparable_months": int(item["direct_months"]),
+                    "comparable_months": _nonnegative_int(
+                        item["direct_months"],
+                        field="direct_months",
+                    ),
                     "aggregation_policy": ALIGNED_AGGREGATION_POLICY,
                     "individual_exact_interval": direct_individual,
                     "familywise_exact_interval": direct_familywise,
@@ -515,18 +560,20 @@ def build_credibility_diagnostic(calibration: dict[str, Any]) -> dict[str, Any]:
     )
 
     complaints_outside_direct = sum(
-        int(
+        _nonnegative_int(
             row["temporal_overlap"]["premium_direct"][
                 "complaints_in_non_positive_premium_months"
-            ]
+            ],
+            field="complaints_in_non_positive_premium_months",
         )
         for row in rows
     )
     entities_outside_direct = sum(
-        int(
+        _nonnegative_int(
             row["temporal_overlap"]["premium_direct"][
                 "complaints_in_non_positive_premium_months"
-            ]
+            ],
+            field="complaints_in_non_positive_premium_months",
         )
         > 0
         for row in rows
@@ -617,6 +664,7 @@ def build_credibility_diagnostic(calibration: dict[str, Any]) -> dict[str, Any]:
             "months": months,
             "direct_candidate": "insurance_premium_direct",
             "earned_companion": "insurance_premium_earned",
+            **unit_contract,
         },
         "methodology": {
             "pressure_definition": ALIGNED_AGGREGATION_POLICY,
@@ -648,6 +696,7 @@ def build_credibility_diagnostic(calibration: dict[str, Any]) -> dict[str, Any]:
                 "monthly_non_positive_premium_does_not_mean_no_active_policy",
                 "premium_earned_remains_diagnostic_only",
                 "sparse_premium_earned_cannot_veto_direct_signal",
+                "premium_unit_must_remain_brl_without_rescaling",
             ],
         },
         "population": {
@@ -659,6 +708,11 @@ def build_credibility_diagnostic(calibration: dict[str, Any]) -> dict[str, Any]:
             "direct_candidate": {
                 "complaints": direct_market_complaints,
                 "premium": direct_market_premium,
+                "premium_currency": unit_contract["currency"],
+                "premium_source_unit_label": unit_contract["source_unit_label"],
+                "premium_scale_factor_applied": unit_contract[
+                    "scale_factor_applied"
+                ],
                 "role": "annual_aggregate_context_not_pressure_baseline",
             },
             "earned_diagnostic": {
