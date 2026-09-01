@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import os
 import zipfile
 from collections import defaultdict
@@ -14,6 +15,18 @@ DEFAULT_SES_ZIP = Path(os.getenv("SES_CACHE_DIR", "data/raw/ses")) / "BaseComple
 FINANCIAL_SOURCE_ID = "susep_ses_financial_evidence"
 FINANCIAL_SOURCE_AUTHORITY = "Superintendência de Seguros Privados (SUSEP)"
 FINANCIAL_SOURCE_METHOD = "official_ses_basecompleta_filtered"
+SES_CSV_CHUNK_ROWS = 300_000
+
+SES_NUMBER_MISSING_TOKENS = {"", "nan", "none", "<na>"}
+SES_FIP_PATTERN = r"[0-9]{1,6}"
+SES_INTEGER_PATTERN = r"[0-9]+"
+SES_NUMBER_DECIMAL_DOT_PATTERN = (
+    r"[+-]?(?:[0-9]+(?:\.[0-9]+)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?"
+)
+SES_NUMBER_DECIMAL_COMMA_PATTERN = (
+    r"[+-]?(?:[0-9]+|[0-9]{1,3}(?:\.[0-9]{3})+),[0-9]+"
+    r"(?:[eE][+-]?[0-9]+)?"
+)
 
 # SUSEP, "Índices para Análise Econômico-Financeira das Supervisionadas" (2018),
 # still linked from the current Solvência e Contabilidade page in 2026.
@@ -90,32 +103,102 @@ def _canon_fip(value: Any) -> str:
     if not text:
         return ""
     text = text.removesuffix(".0")
-    digits = "".join(ch for ch in text if ch.isdigit())
-    return digits.zfill(6) if digits else ""
+    if not text.isdigit() or len(text) > 6:
+        return ""
+    return text.zfill(6)
 
 
-def _canon_fip_series(series: pd.Series) -> pd.Series:
-    text = series.astype(str).str.strip().str.replace(r"\.0+$", "", regex=True)
-    digits = text.str.replace(r"\D+", "", regex=True)
-    result = pd.Series([""] * len(digits), index=digits.index, dtype="object")
-    valid = digits.str.len().fillna(0).astype(int) > 0
-    result.loc[valid] = digits.loc[valid].str.zfill(6)
-    return result
+def _invalid_examples(text: pd.Series, invalid: pd.Series) -> str:
+    return ", ".join(
+        repr(value) for value in text[invalid].drop_duplicates().head(3).tolist()
+    )
 
 
-def _parse_number_series(series: pd.Series) -> pd.Series:
-    """Parse SES numbers without converting missing/invalid data to zero."""
+def _parse_fip_series(series: pd.Series, *, table: str) -> pd.Series:
     text = series.astype("string").str.strip()
-    text = text.replace({"": pd.NA, "nan": pd.NA, "None": pd.NA, "<NA>": pd.NA})
+    valid = text.notna() & text.str.fullmatch(SES_FIP_PATTERN, na=False)
+    if not bool(valid.all()):
+        raise FinancialEvidenceSourceError(
+            f"invalid coenti value in {table}: {_invalid_examples(text, ~valid)}"
+        )
+    return text.str.zfill(6).astype("object")
+
+
+def _parse_integer_series(
+    series: pd.Series,
+    *,
+    field: str,
+    table: str,
+    minimum: int = 0,
+) -> pd.Series:
+    text = series.astype("string").str.strip()
+    valid = text.notna() & text.str.fullmatch(SES_INTEGER_PATTERN, na=False)
+    if not bool(valid.all()):
+        raise FinancialEvidenceSourceError(
+            f"invalid {field} value in {table}: {_invalid_examples(text, ~valid)}"
+        )
+    values = pd.Series((int(value) for value in text), index=text.index, dtype="object")
+    in_range = values.map(lambda value: value >= minimum)
+    if not bool(in_range.all()):
+        raise FinancialEvidenceSourceError(
+            f"invalid {field} value in {table}: "
+            f"{_invalid_examples(text, ~in_range)}"
+        )
+    return values
+
+
+def _parse_period_series(series: pd.Series, *, table: str) -> pd.Series:
+    text = series.astype("string").str.strip()
+    values = _parse_integer_series(
+        series,
+        field="damesano",
+        table=table,
+    )
+    valid = values.map(
+        lambda value: 1000 <= value // 100 <= 9999 and 1 <= value % 100 <= 12
+    )
+    if not bool(valid.all()):
+        raise FinancialEvidenceSourceError(
+            f"invalid damesano value in {table}: {_invalid_examples(text, ~valid)}"
+        )
+    return values
+
+
+def _parse_number_series(
+    series: pd.Series,
+    *,
+    field: str,
+    table: str,
+) -> pd.Series:
+    """Parse SES numbers without deleting characters from malformed tokens."""
+    text = series.astype("string").str.strip()
+    missing = text.isna() | text.str.lower().isin(SES_NUMBER_MISSING_TOKENS)
     has_comma = text.str.contains(",", na=False)
-    normalized = text.copy()
+    valid = missing | (
+        has_comma
+        & text.str.fullmatch(SES_NUMBER_DECIMAL_COMMA_PATTERN, na=False)
+    ) | (
+        ~has_comma & text.str.fullmatch(SES_NUMBER_DECIMAL_DOT_PATTERN, na=False)
+    )
+    if not bool(valid.all()):
+        raise FinancialEvidenceSourceError(
+            f"invalid {field} value in {table}: {_invalid_examples(text, ~valid)}"
+        )
+
+    normalized = text.mask(missing)
     normalized.loc[has_comma] = (
         normalized.loc[has_comma]
         .str.replace(".", "", regex=False)
         .str.replace(",", ".", regex=False)
     )
-    normalized = normalized.str.replace(r"[^0-9.\-]", "", regex=True)
-    return pd.to_numeric(normalized, errors="coerce")
+    parsed = pd.to_numeric(normalized, errors="raise")
+    finite = parsed.map(lambda value: pd.isna(value) or math.isfinite(float(value)))
+    if not bool(finite.all()):
+        raise FinancialEvidenceSourceError(
+            f"non-finite {field} value in {table}: "
+            f"{_invalid_examples(text, ~finite)}"
+        )
+    return parsed
 
 
 def _find_member(z: zipfile.ZipFile, basename: str) -> str:
@@ -195,16 +278,22 @@ def _read_capital_history(
             sep=";",
             encoding="latin1",
             dtype=str,
-            usecols=columns,
-            chunksize=300_000,
-            on_bad_lines="skip",
+            chunksize=SES_CSV_CHUNK_ROWS,
+            on_bad_lines="error",
         ):
             chunk = _normalize_chunk_columns(chunk)
-            chunk["fip"] = _canon_fip_series(chunk["coenti"])
+            chunk = chunk[[column.lower().strip() for column in columns]]
+            chunk["fip"] = _parse_fip_series(
+                chunk["coenti"],
+                table="Ses_pl_margem.csv",
+            )
             chunk = chunk[chunk["fip"].isin(fips)]
             if chunk.empty:
                 continue
-            dates = pd.to_numeric(chunk["damesano"], errors="coerce")
+            dates = _parse_period_series(
+                chunk["damesano"],
+                table="Ses_pl_margem.csv",
+            )
             numeric_columns = [
                 "plajustado",
                 "margem",
@@ -215,15 +304,15 @@ def _read_capital_history(
                 "cmr",
             ]
             parsed = {
-                name: _parse_number_series(chunk[name]) for name in numeric_columns
+                name: _parse_number_series(
+                    chunk[name],
+                    field=name,
+                    table="Ses_pl_margem.csv",
+                )
+                for name in numeric_columns
             }
             for index, fip in chunk["fip"].items():
-                raw_period = dates.loc[index]
-                if pd.isna(raw_period):
-                    continue
-                period = int(raw_period)
-                if period <= 0:
-                    continue
+                period = int(dates.loc[index])
                 record = {
                     "period": period,
                     "pla_adjusted": _optional_float(parsed["plajustado"].loc[index]),
@@ -285,33 +374,40 @@ def _read_balance_history(
             sep=";",
             encoding="latin1",
             dtype=str,
-            usecols=columns,
-            chunksize=300_000,
-            on_bad_lines="skip",
+            chunksize=SES_CSV_CHUNK_ROWS,
+            on_bad_lines="error",
         ):
             chunk = _normalize_chunk_columns(chunk)
-            chunk["fip"] = _canon_fip_series(chunk["coenti"])
+            chunk = chunk[[column.lower().strip() for column in columns]]
+            chunk["fip"] = _parse_fip_series(
+                chunk["coenti"],
+                table="SES_Balanco.csv",
+            )
             chunk = chunk[chunk["fip"].isin(fips)]
             if chunk.empty:
                 continue
-            dates = pd.to_numeric(chunk["damesano"], errors="coerce")
-            cmpids = pd.to_numeric(chunk["cmpid"], errors="coerce")
-            amounts = _parse_number_series(chunk["valor"])
+            dates = _parse_period_series(
+                chunk["damesano"],
+                table="SES_Balanco.csv",
+            )
+            cmpids = _parse_integer_series(
+                chunk["cmpid"],
+                field="cmpid",
+                table="SES_Balanco.csv",
+                minimum=1,
+            )
+            amounts = _parse_number_series(
+                chunk["valor"],
+                field="valor",
+                table="SES_Balanco.csv",
+            )
 
             for index, fip in chunk["fip"].items():
-                raw_period = dates.loc[index]
-                if pd.isna(raw_period):
-                    continue
-                period = int(raw_period)
-                if period <= 0:
-                    continue
+                period = int(dates.loc[index])
                 periods_by_fip[fip].add(period)
                 periods.add(period)
 
-                raw_cmpid = cmpids.loc[index]
-                if pd.isna(raw_cmpid):
-                    continue
-                cmpid = int(raw_cmpid)
+                cmpid = int(cmpids.loc[index])
                 if cmpid not in BALANCE_CMPIDS_OF_INTEREST:
                     continue
                 amount = amounts.loc[index]
@@ -354,6 +450,7 @@ def _read_insurance_operations_presence(
     periods_by_fip: dict[str, set[int]] = defaultdict(set)
     nonzero_periods: dict[str, set[int]] = defaultdict(set)
     periods: set[int] = set()
+    premium_totals: dict[tuple[str, int], float] = defaultdict(float)
 
     with z.open(member) as handle:
         for chunk in pd.read_csv(
@@ -361,36 +458,39 @@ def _read_insurance_operations_presence(
             sep=";",
             encoding="latin1",
             dtype=str,
-            usecols=columns,
-            chunksize=300_000,
-            on_bad_lines="skip",
+            chunksize=SES_CSV_CHUNK_ROWS,
+            on_bad_lines="error",
         ):
             chunk = _normalize_chunk_columns(chunk)
-            chunk["fip"] = _canon_fip_series(chunk["coenti"])
+            chunk = chunk[[column.lower().strip() for column in columns]]
+            chunk["fip"] = _parse_fip_series(
+                chunk["coenti"],
+                table="Ses_seguros.csv",
+            )
             chunk = chunk[chunk["fip"].isin(fips)]
             if chunk.empty:
                 continue
-            dates = pd.to_numeric(chunk["damesano"], errors="coerce")
-            premiums = _parse_number_series(chunk["premio_ganho"])
-            grouped: dict[tuple[str, int], float] = defaultdict(float)
-            seen_pairs: set[tuple[str, int]] = set()
+            dates = _parse_period_series(
+                chunk["damesano"],
+                table="Ses_seguros.csv",
+            )
+            premiums = _parse_number_series(
+                chunk["premio_ganho"],
+                field="premio_ganho",
+                table="Ses_seguros.csv",
+            )
             for index, fip in chunk["fip"].items():
-                raw_period = dates.loc[index]
-                if pd.isna(raw_period):
-                    continue
-                period = int(raw_period)
-                if period <= 0:
-                    continue
+                period = int(dates.loc[index])
                 periods_by_fip[fip].add(period)
                 periods.add(period)
                 key = (fip, period)
-                seen_pairs.add(key)
                 value = premiums.loc[index]
                 if not pd.isna(value):
-                    grouped[key] += float(value)
-            for fip, period in seen_pairs:
-                if grouped.get((fip, period), 0.0) != 0.0:
-                    nonzero_periods[fip].add(period)
+                    premium_totals[key] += float(value)
+
+    for (fip, period), total in premium_totals.items():
+        if total != 0.0:
+            nonzero_periods[fip].add(period)
 
     return (
         {fip: set(items) for fip, items in periods_by_fip.items()},
@@ -408,34 +508,52 @@ def load_susep_financial_evidence(
     This source layer does not score or judge the financial condition. It only
     preserves evidence needed for later methodology and comparability gates.
     """
-    fips = {_canon_fip(value) for value in fip_codes}
-    fips.discard("")
+    fips: set[str] = set()
+    invalid_fips: list[Any] = []
+    for value in fip_codes:
+        fip = _canon_fip(value)
+        if fip:
+            fips.add(fip)
+        else:
+            invalid_fips.append(value)
+    if invalid_fips:
+        examples = ", ".join(repr(value) for value in invalid_fips[:3])
+        raise FinancialEvidenceSourceError(f"invalid requested FIP code: {examples}")
+    if not fips:
+        raise FinancialEvidenceSourceError("at least one valid FIP code is required")
     source_path = Path(zip_path or DEFAULT_SES_ZIP)
     if not source_path.exists() or not zipfile.is_zipfile(source_path):
         raise FinancialEvidenceSourceError(
             f"validated BaseCompleta.zip unavailable at {source_path}"
         )
 
-    with zipfile.ZipFile(source_path) as z:
-        capital_member = _find_member(z, "Ses_pl_margem.csv")
-        balance_member = _find_member(z, "SES_Balanco.csv")
-        operations_member = _find_member(z, "Ses_seguros.csv")
+    try:
+        with zipfile.ZipFile(source_path) as z:
+            capital_member = _find_member(z, "Ses_pl_margem.csv")
+            balance_member = _find_member(z, "SES_Balanco.csv")
+            operations_member = _find_member(z, "Ses_seguros.csv")
 
-        capital, capital_periods, capital_duplicates = _read_capital_history(
-            z, capital_member, fips
-        )
-        (
-            balance_periods_by_fip,
-            balance_values,
-            balance_periods,
-            balance_duplicates,
-            balance_duplicates_by_period,
-        ) = _read_balance_history(z, balance_member, fips)
-        (
-            operation_periods_by_fip,
-            nonzero_premium_periods,
-            operation_periods,
-        ) = _read_insurance_operations_presence(z, operations_member, fips)
+            capital, capital_periods, capital_duplicates = _read_capital_history(
+                z, capital_member, fips
+            )
+            (
+                balance_periods_by_fip,
+                balance_values,
+                balance_periods,
+                balance_duplicates,
+                balance_duplicates_by_period,
+            ) = _read_balance_history(z, balance_member, fips)
+            (
+                operation_periods_by_fip,
+                nonzero_premium_periods,
+                operation_periods,
+            ) = _read_insurance_operations_presence(z, operations_member, fips)
+    except FinancialEvidenceSourceError:
+        raise
+    except (OSError, ValueError, zipfile.BadZipFile) as exc:
+        raise FinancialEvidenceSourceError(
+            f"unable to parse validated BaseCompleta.zip: {exc}"
+        ) from exc
 
     entities: dict[str, Any] = {}
     for fip in sorted(fips):
@@ -459,6 +577,9 @@ def load_susep_financial_evidence(
             "ingestion_method": FINANCIAL_SOURCE_METHOD,
             "source_file": "BaseCompleta.zip",
             "index_formula_reference": SUSEP_INDEX_REFERENCE,
+            "malformed_row_policy": "fail_closed_not_skipped",
+            "key_parsing_policy": "strict_integer_keys_and_valid_aaaamm_periods",
+            "numeric_parsing_policy": "strict_finite_decimal_or_scientific_notation",
         },
         "reference_periods": {
             "capital": max(capital_periods) if capital_periods else None,
