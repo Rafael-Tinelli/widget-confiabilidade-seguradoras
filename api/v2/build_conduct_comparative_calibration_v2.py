@@ -63,7 +63,9 @@ def _validated_periods(months: list[str]) -> list[int]:
         raise ConductComparativeCalibrationV2Error(
             "Conduct comparison months must be chronological"
         )
-    for previous, current in zip(periods, periods[1:], strict=False):
+    for index in range(1, len(periods)):
+        previous = periods[index - 1]
+        current = periods[index]
         if current != _next_period(previous):
             raise ConductComparativeCalibrationV2Error(
                 "Conduct comparison months must be consecutive"
