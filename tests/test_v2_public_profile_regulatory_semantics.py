@@ -2,10 +2,17 @@ from __future__ import annotations
 
 from copy import deepcopy
 
+import pytest
+
 from api.v2.public_profile_regulatory_semantics import (
     SSPE_ASSESSMENT_REASON,
     SSPE_LABEL,
     apply_regulatory_profile_semantics,
+)
+from api.v2.validate_public_search_profile_contract import (
+    PublicProfileValidationError,
+    _profile_maps,
+    _validate_profile_references,
 )
 
 
@@ -146,3 +153,33 @@ def test_adapter_does_not_mutate_input_payload():
     apply_regulatory_profile_semantics(source)
 
     assert source == original
+
+
+def test_public_validator_rejects_dangling_profile_reference():
+    payload = apply_regulatory_profile_semantics(_payload())
+    payload["profiles"][1]["relationships"] = [
+        {
+            "relationship_type": "brand_carrier",
+            "target_profile_id": "entity:fip:999999",
+        }
+    ]
+    profiles, _ = _profile_maps(payload)
+
+    with pytest.raises(
+        PublicProfileValidationError,
+        match="dangling public profile reference",
+    ):
+        _validate_profile_references(profiles)
+
+
+def test_public_validator_accepts_internal_profile_reference():
+    payload = apply_regulatory_profile_semantics(_payload())
+    payload["profiles"][1]["relationships"] = [
+        {
+            "relationship_type": "successor",
+            "target_profile_id": "entity:fip:003191",
+        }
+    ]
+    profiles, _ = _profile_maps(payload)
+
+    _validate_profile_references(profiles)
