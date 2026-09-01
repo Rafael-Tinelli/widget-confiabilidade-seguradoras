@@ -1,15 +1,14 @@
 name: V2 Financial Evidence Validation
 
 on:
-  pull_request:
-    branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: v2-financial-evidence-validation-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
+  group: v2-financial-evidence-validation-${{ github.run_id }}
+  cancel-in-progress: false
 
 jobs:
   validate-v2-financial-evidence:
