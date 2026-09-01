@@ -30,17 +30,54 @@ def _canon_fip(value: Any) -> str:
     return digits.zfill(6) if digits else ""
 
 
-def _number(value: Any) -> float | None:
-    text = str(value or "").strip()
-    if not text:
+def _premium_number(value: Any, *, field: str) -> float | None:
+    """Parse one SES premium cell without conflating missing and malformed values."""
+    if value is None:
+        return None
+    if isinstance(value, float) and math.isnan(value):
+        return None
+    text = str(value).strip()
+    if not text or text.lower() == "nan":
         return None
     if "," in text:
         text = text.replace(".", "").replace(",", ".")
     try:
         number = float(text)
-    except ValueError:
-        return None
-    return number if math.isfinite(number) else None
+    except ValueError as exc:
+        raise InsuranceExposureSourceError(
+            f"invalid {field} value in Ses_seguros.csv: {value!r}"
+        ) from exc
+    if not math.isfinite(number):
+        raise InsuranceExposureSourceError(
+            f"non-finite {field} value in Ses_seguros.csv: {value!r}"
+        )
+    return number
+
+
+def _integer(value: Any, *, field: str) -> int:
+    text = str(value or "").strip()
+    try:
+        number = float(text)
+    except ValueError as exc:
+        raise InsuranceExposureSourceError(
+            f"invalid {field} value in Ses_seguros.csv: {value!r}"
+        ) from exc
+    if not math.isfinite(number) or not number.is_integer():
+        raise InsuranceExposureSourceError(
+            f"invalid {field} value in Ses_seguros.csv: {value!r}"
+        )
+    return int(number)
+
+
+def _period(value: Any) -> int:
+    period = _integer(value, field="damesano")
+    year = period // 100
+    month = period % 100
+    if year < 2000 or not 1 <= month <= 12:
+        raise InsuranceExposureSourceError(
+            f"invalid damesano value in Ses_seguros.csv: {value!r}"
+        )
+    return period
 
 
 def _insurance_member(z: zipfile.ZipFile) -> str:
@@ -94,6 +131,7 @@ def load_susep_insurance_exposure(
 
     Missing cells in the approved direct-premium denominator are preserved as
     missingness metadata. They are never silently converted to economic zero.
+    Malformed numeric cells and malformed period/branch keys fail closed.
     """
     fips = {_canon_fip(value) for value in fip_codes}
     fips.discard("")
@@ -124,22 +162,18 @@ def load_susep_insurance_exposure(
             dtype=str,
             usecols=lambda column: str(column).strip().lower() in REQUIRED_COLUMNS,
             chunksize=300_000,
-            on_bad_lines="skip",
+            on_bad_lines="error",
         ):
             chunk.columns = [str(column).strip().lower() for column in chunk.columns]
             for row in chunk.to_dict(orient="records"):
                 fip = _canon_fip(row.get("coenti"))
                 if fip not in fips:
                     continue
-                try:
-                    period = int(float(str(row.get("damesano") or "")))
-                    branch = int(float(str(row.get("coramo") or "")))
-                except ValueError:
-                    continue
-                direct = _number(row.get("premio_direto"))
-                earned = _number(row.get("premio_ganho"))
-                if direct is None and earned is None:
-                    continue
+                period = _period(row.get("damesano"))
+                branch = _integer(row.get("coramo"), field="coramo")
+                direct = _premium_number(row.get("premio_direto"), field="premio_direto")
+                earned = _premium_number(row.get("premio_ganho"), field="premio_ganho")
+
                 key = (fip, period, branch)
                 values = aggregate[key]
                 values["rows"] += 1.0
@@ -185,6 +219,8 @@ def load_susep_insurance_exposure(
             "primary_candidate": "insurance_premium_direct",
             "diagnostic_only": "insurance_premium_earned",
             "missingness_policy": "missing_premium_cells_are_not_economic_zero",
+            "malformed_value_policy": "fail_closed_not_missing",
+            "malformed_row_policy": "fail_closed_not_skipped",
             "explicitly_excluded_domains": ["private_pension", "capitalization"],
             "scoring": "forbidden_in_source_artifact",
         },
