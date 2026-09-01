@@ -137,8 +137,10 @@ def _operating_signal(
     if not isinstance(current_value, (int, float)) or not isinstance(prior_value, (int, float)):
         return "indeterminate", details
 
-    current_balanced = float(current_value) < PARITY_REFERENCE
-    prior_balanced = float(prior_value) < PARITY_REFERENCE
+    # ICA is a cost/base ratio. Exact 1.0 is arithmetic parity, not pressure;
+    # pressure begins only above parity.
+    current_balanced = float(current_value) <= PARITY_REFERENCE
+    prior_balanced = float(prior_value) <= PARITY_REFERENCE
     if current_balanced and prior_balanced:
         return "balanced_persistent", details
     if current_balanced and not prior_balanced:
