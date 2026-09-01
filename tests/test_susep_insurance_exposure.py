@@ -36,6 +36,9 @@ def test_insurance_exposure_does_not_require_pension_or_capitalization_files(
 
     payload = load_susep_insurance_exposure(["000001"], path)
     assert payload["source"]["component_file"] == "Ses_seguros.csv"
+    assert payload["source"]["missingness_policy"] == (
+        "missing_premium_cells_are_not_economic_zero"
+    )
     assert payload["source"]["explicitly_excluded_domains"] == [
         "private_pension",
         "capitalization",
@@ -47,10 +50,48 @@ def test_insurance_exposure_does_not_require_pension_or_capitalization_files(
     assert set(jan) == {
         "insurance_premium_direct",
         "insurance_premium_earned",
+        "insurance_premium_direct_missing_rows",
+        "insurance_premium_earned_missing_rows",
         "insurance_branches",
     }
     assert jan["insurance_premium_direct"] == pytest.approx(150.0)
     assert jan["insurance_premium_earned"] == pytest.approx(135.0)
+    assert jan["insurance_premium_direct_missing_rows"] == 0
+    assert jan["insurance_premium_earned_missing_rows"] == 0
+
+
+def test_missing_direct_premium_is_preserved_not_imputed_as_zero(tmp_path: Path) -> None:
+    path = tmp_path / "BaseCompleta.zip"
+    insurance = (
+        "damesano;coenti;coramo;premio_direto;premio_ganho\n"
+        "202601;1;1001;;90,00\n"
+        "202601;1;2001;50,00;45,00\n"
+    )
+    with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as z:
+        z.writestr("Ses_seguros.csv", insurance.encode("latin1"))
+
+    payload = load_susep_insurance_exposure(["000001"], path)
+    jan = payload["entities"]["000001"]["months"][202601]
+
+    assert jan["insurance_premium_direct"] == pytest.approx(50.0)
+    assert jan["insurance_premium_direct_missing_rows"] == 1
+    assert jan["insurance_branches"][1001]["premium_direct_missing_rows"] == 1.0
+    assert jan["insurance_branches"][1001]["premium_direct"] == 0.0
+
+
+def test_non_finite_premium_cell_is_preserved_as_missingness(tmp_path: Path) -> None:
+    path = tmp_path / "BaseCompleta.zip"
+    insurance = (
+        "damesano;coenti;coramo;premio_direto;premio_ganho\n"
+        "202601;1;1001;NaN;90,00\n"
+    )
+    with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as z:
+        z.writestr("Ses_seguros.csv", insurance.encode("latin1"))
+
+    payload = load_susep_insurance_exposure(["000001"], path)
+    jan = payload["entities"]["000001"]["months"][202601]
+    assert jan["insurance_premium_direct_missing_rows"] == 1
+    assert jan["insurance_premium_direct"] == 0.0
 
 
 def test_insurance_exposure_filters_requested_fips(tmp_path: Path) -> None:
