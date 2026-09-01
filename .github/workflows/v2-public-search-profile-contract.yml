@@ -2,22 +2,6 @@ name: V2 Public Search Profile Contract
 
 on:
   workflow_dispatch:
-  pull_request:
-    paths:
-      - "README.md"
-      - "api/v2/build_public_search_profile_contract.py"
-      - "api/v2/public_profile_regulatory_semantics.py"
-      - "api/v2/validate_public_search_profile_contract.py"
-      - "api/v2/build_lifecycle_relationship_inventory.py"
-      - "api/v2/build_exploratory_leaderboards_contract.py"
-      - "api/v2/build_sandbox_brand_conduct_evidence.py"
-      - "tests/test_v2_public_search_profile_contract.py"
-      - "tests/test_v2_public_profile_regulatory_semantics.py"
-      - "docs/public-search-profile-contract.md"
-      - "data/reference/v2/conduct_subject_relationships.json"
-      - "data/reference/v2/verified_relationships.json"
-      - "data/reference/v2/sandbox_brand_relationships.json"
-      - ".github/workflows/v2-public-search-profile-contract.yml"
 
 permissions:
   contents: read
