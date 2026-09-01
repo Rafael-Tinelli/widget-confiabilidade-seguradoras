@@ -5,6 +5,7 @@ import math
 from api.v2.ilpl_experiment import (
     SURVIVAL_CRITERIA,
     SURVIVAL_CRITERIA_VERSION,
+    _capital_ratio,
     calculate_ilpl_observation,
     evaluate_survival,
 )
@@ -58,6 +59,20 @@ def test_duplicate_formula_rows_invalidate_observation() -> None:
 
     assert result["state"] == "source_duplicate_components"
     assert result["value"] is None
+
+
+def test_ilpl_redundancy_uses_new_pla_not_plajustado() -> None:
+    source = {
+        "capital_history": {
+            202606: {
+                "new_pla": 110.0,
+                "pla_adjusted": 70.0,
+                "cmr": 100.0,
+            }
+        }
+    }
+
+    assert _capital_ratio(source, 202606) == 1.10
 
 
 def _summary_for_survival() -> dict:
