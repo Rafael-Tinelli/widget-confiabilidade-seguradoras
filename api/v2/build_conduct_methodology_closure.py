@@ -9,18 +9,25 @@ from typing import Any
 
 from scipy.stats import beta, chi2
 
+from api.v2.conduct_monthly_pressure import (
+    ZERO_MARKET_COMPLAINTS_POLICY,
+    ZERO_MARKET_COMPLAINTS_STATE,
+    zero_market_complaints_guard,
+)
+
 CALIBRATION_PATH = Path("data/derived/v2/conduct_comparative_calibration_v2.json")
 RECONCILIATION_PATH = Path("data/derived/v2/conduct_coverage_reconciliation.json")
 PORTFOLIO_PATH = Path("data/derived/v2/conduct_portfolio_mix_diagnostic.json")
 OUTPUT_PATH = Path("data/derived/v2/conduct_methodology_closure.json")
 
-VERSION = "2.0-draft-conduct-methodology-closure-3"
+VERSION = "2.0-draft-conduct-methodology-closure-4"
 FAMILYWISE_ALPHA = 0.05
 COMMON_MONTHS = 12
 MIN_TEMPORAL_MONTHS = 9
 PERSISTENCE_SHARE = 0.50
 HALF_MIN_COMPARABLE_MONTHS = 3
 MINIMUM_SANITY_POPULATION = 100
+ALIGNED_POLICY = "sum_monthly_expected_then_observed_divided_by_expected"
 
 RECOVERY_ROUTE_BY_STATE = {
     "hybrid_insurance_pension_requires_product_numerator": "recover_product_specific_complaint_numerator",
@@ -77,7 +84,9 @@ def _next_period(period: int) -> int:
 def _validate_common_months(entities: list[dict[str, Any]]) -> list[str]:
     month_sets: list[list[str]] = []
     for entity in entities:
-        raw_months = [str(row.get("month") or "") for row in entity.get("monthly") or []]
+        raw_months = [
+            str(row.get("month") or "") for row in entity.get("monthly") or []
+        ]
         if len(raw_months) != COMMON_MONTHS or len(set(raw_months)) != COMMON_MONTHS:
             raise ConductMethodologyClosureError(
                 f"entity {entity.get('entity_id')} does not contain exactly "
@@ -93,16 +102,16 @@ def _validate_common_months(entities: list[dict[str, Any]]) -> list[str]:
         )
     periods = [_period(month) for month in months]
     for index in range(1, len(periods)):
-        previous = periods[index - 1]
-        current = periods[index]
-        if current != _next_period(previous):
+        if periods[index] != _next_period(periods[index - 1]):
             raise ConductMethodologyClosureError(
                 "Conduct comparison window must contain consecutive calendar months"
             )
     return months
 
 
-def _poisson_ratio_interval(observed: int, expected: float, alpha: float) -> dict[str, Any]:
+def _poisson_ratio_interval(
+    observed: int, expected: float, alpha: float
+) -> dict[str, Any]:
     """Exact Poisson interval for an observed/expected standardized ratio."""
     if observed < 0 or expected <= 0 or not 0 < alpha < 1:
         raise ConductMethodologyClosureError("invalid Poisson ratio interval inputs")
@@ -162,11 +171,11 @@ def _rate_ratio_interval(
             return None
         return probability / (1.0 - probability) * early_expected / recent_expected
 
-    if early_observed == 0:
-        point = None
-    else:
-        point = (recent_observed / recent_expected) / (early_observed / early_expected)
-
+    point = (
+        None
+        if early_observed == 0
+        else (recent_observed / recent_expected) / (early_observed / early_expected)
+    )
     lower = convert(lower_p)
     upper = convert(upper_p)
     if lower is not None and lower > 1.0:
@@ -192,7 +201,6 @@ def _baselines(
     entities: list[dict[str, Any]], premium_key: str
 ) -> dict[str, dict[str, Any]]:
     months = _validate_common_months(entities)
-
     result: dict[str, dict[str, Any]] = {}
     for month_name in months:
         comparable: list[dict[str, Any]] = []
@@ -211,16 +219,17 @@ def _baselines(
                 )
             if _finite(month.get(premium_key) or 0.0, field=premium_key) > 0:
                 comparable.append(month)
-
-        market_complaints = sum(int(item.get("complaints") or 0) for item in comparable)
-        market_premium = sum(
-            _finite(item.get(premium_key) or 0.0, field=premium_key)
-            for item in comparable
-        )
         result[month_name] = {
             "comparable_entities": len(comparable),
-            "market_complaints": market_complaints,
-            "market_premium": float(market_premium),
+            "market_complaints": sum(
+                int(item.get("complaints") or 0) for item in comparable
+            ),
+            "market_premium": float(
+                sum(
+                    _finite(item.get(premium_key) or 0.0, field=premium_key)
+                    for item in comparable
+                )
+            ),
         }
     return result
 
@@ -273,10 +282,24 @@ def _series(
                 {
                     "month": month_name,
                     "state": "unavailable_non_positive_comparable_exposure",
+                    "reason_code": "non_positive_entity_or_market_premium",
                     "complaints": complaints,
                     "premium": premium,
                     "expected_complaints": None,
                     "pressure_ratio": None,
+                    "uncertainty": None,
+                }
+            )
+            continue
+
+        zero_guard = zero_market_complaints_guard(market_complaints, market_premium)
+        if zero_guard is not None:
+            points.append(
+                {
+                    "month": month_name,
+                    "complaints": complaints,
+                    "premium": premium,
+                    **zero_guard,
                     "uncertainty": None,
                 }
             )
@@ -290,10 +313,11 @@ def _series(
             {
                 "month": month_name,
                 "state": "available",
+                "reason_code": None,
                 "complaints": complaints,
                 "premium": premium,
                 "expected_complaints": float(expected),
-                "pressure_ratio": float(complaints / expected) if expected > 0 else None,
+                "pressure_ratio": float(complaints / expected),
                 "uncertainty": interval,
             }
         )
@@ -328,11 +352,12 @@ def _series(
         for state in monthly_states
     )
     available = len(comparable_points)
-
     annual_state = (
         annual["uncertainty"]["state"] if annual.get("uncertainty") else "unavailable"
     )
-    required_persistent_months = math.ceil(available * PERSISTENCE_SHARE) if available else None
+    required_persistent_months = (
+        math.ceil(available * PERSISTENCE_SHARE) if available else None
+    )
     if available < MIN_TEMPORAL_MONTHS:
         persistence_state = "insufficient_temporal_coverage"
     elif annual_state == "above_size_proportional_reference":
@@ -390,14 +415,19 @@ def _series(
             "interval": interval,
         }
 
+    zero_months = sum(
+        point.get("state") == ZERO_MARKET_COMPLAINTS_STATE for point in points
+    )
     return {
         "premium_field": premium_key,
-        "aggregation_policy": "sum_monthly_expected_then_observed_divided_by_expected",
+        "aggregation_policy": ALIGNED_POLICY,
         "annual": annual,
         "monthly": points,
         "temporal_coverage": {
             "comparable_months": available,
             "unavailable_months": COMMON_MONTHS - available,
+            "zero_market_complaint_months": zero_months,
+            "zero_market_complaints_policy": ZERO_MARKET_COMPLAINTS_POLICY,
             "complaints_excluded_from_pressure_in_non_comparable_months": excluded_complaints,
         },
         "persistence": {
@@ -425,10 +455,6 @@ def _satisfaction_context(entity: dict[str, Any]) -> dict[str, Any]:
     early_sample = int(trend.get("early_half_sample") or 0)
     recent_sample = int(trend.get("recent_half_sample") or 0)
     direction = str(trend.get("direction") or "insufficient")
-    if early_sample < 10 or recent_sample < 10:
-        usable_direction = "insufficient_sample"
-    else:
-        usable_direction = direction
     return {
         "role": "context_only_not_pressure_weight",
         "sample_count": int(satisfaction.get("sample_count") or 0),
@@ -437,7 +463,11 @@ def _satisfaction_context(entity: dict[str, Any]) -> dict[str, Any]:
         "early_half_sample": early_sample,
         "recent_half_average": trend.get("recent_half_average"),
         "recent_half_sample": recent_sample,
-        "direction": usable_direction,
+        "direction": (
+            "insufficient_sample"
+            if early_sample < 10 or recent_sample < 10
+            else direction
+        ),
         "guard": "satisfaction_does_not_measure_complaint_incidence",
     }
 
@@ -484,9 +514,7 @@ def _final_pressure_state(
 
 def _assert_calibration_alignment(entity: dict[str, Any], direct: dict[str, Any]) -> None:
     calibration_pressure = entity.get("pressure_12m") or {}
-    if calibration_pressure.get("aggregation_policy") != (
-        "sum_monthly_expected_then_observed_divided_by_expected"
-    ):
+    if calibration_pressure.get("aggregation_policy") != ALIGNED_POLICY:
         raise ConductMethodologyClosureError(
             f"calibration pressure is not monthly-aligned: {entity.get('entity_id')}"
         )
@@ -504,6 +532,25 @@ def _assert_calibration_alignment(entity: dict[str, Any], direct: dict[str, Any]
             raise ConductMethodologyClosureError(
                 f"calibration/closure pressure mismatch for {entity.get('entity_id')}: {field}"
             )
+
+    calibration_months = int(calibration_pressure.get("comparable_months") or 0)
+    closure_months = int(
+        (direct.get("temporal_coverage") or {}).get("comparable_months") or 0
+    )
+    if calibration_months != closure_months:
+        raise ConductMethodologyClosureError(
+            f"calibration/closure comparable-month mismatch for {entity.get('entity_id')}"
+        )
+    calibration_zero = int(
+        calibration_pressure.get("zero_market_complaint_months") or 0
+    )
+    closure_zero = int(
+        (direct.get("temporal_coverage") or {}).get("zero_market_complaint_months") or 0
+    )
+    if calibration_zero != closure_zero:
+        raise ConductMethodologyClosureError(
+            f"calibration/closure zero-market-month mismatch for {entity.get('entity_id')}"
+        )
 
 
 def build_closure(
@@ -552,7 +599,6 @@ def build_closure(
     earned_baselines = _baselines(candidates, "premium_earned_diagnostic")
     annual_alpha = FAMILYWISE_ALPHA / len(candidates)
     monthly_alpha = FAMILYWISE_ALPHA / COMMON_MONTHS
-
     portfolio_by_id = {
         str(row.get("entity_id") or ""): row for row in portfolio.get("entities") or []
     }
@@ -577,8 +623,7 @@ def build_closure(
         )
         final_state, human_summary = _final_pressure_state(direct, earned)
 
-        portfolio_entity = portfolio_by_id.get(entity_id) or {}
-        portfolio_context = portfolio_entity.get("portfolio") or {}
+        portfolio_context = (portfolio_by_id.get(entity_id) or {}).get("portfolio") or {}
         earned_coverage = int(earned["temporal_coverage"]["comparable_months"])
         earned_interval = (earned.get("annual") or {}).get("uncertainty")
         earned_sensitivity_usable = (
@@ -682,12 +727,17 @@ def build_closure(
     trend_counts = Counter(
         str(row["direct_pressure"]["trend"]["state"]) for row in candidate_rows
     )
-    satisfaction_counts = Counter(str(row["satisfaction"]["direction"]) for row in candidate_rows)
-
-    portfolio_association = (
-        (portfolio.get("diagnostics") or {}).get("portfolio_distance_vs_pressure_difference", {})
+    satisfaction_counts = Counter(
+        str(row["satisfaction"]["direction"]) for row in candidate_rows
     )
-    portfolio_coverage = (portfolio.get("diagnostics") or {}).get("peer_coverage_curve") or []
+    portfolio_association = (
+        (portfolio.get("diagnostics") or {}).get(
+            "portfolio_distance_vs_pressure_difference", {}
+        )
+    )
+    portfolio_coverage = (
+        (portfolio.get("diagnostics") or {}).get("peer_coverage_curve") or []
+    )
 
     return {
         "artifact": "v2_conduct_methodology_closure",
@@ -717,7 +767,8 @@ def build_closure(
                 "private_pension_excluded": True,
                 "capitalization_excluded": True,
                 "monthly_alignment_required": True,
-                "annual_aggregation": "sum_monthly_expected_then_observed_divided_by_expected",
+                "annual_aggregation": ALIGNED_POLICY,
+                "zero_market_complaints_policy": ZERO_MARKET_COMPLAINTS_POLICY,
             },
             "diagnostic_denominator_guard": {
                 "field": "insurance_premium_earned",
