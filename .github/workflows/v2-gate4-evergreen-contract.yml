@@ -10,6 +10,7 @@ on:
       - "api/v2/source_cache.py"
       - "api/v2/build_source_snapshot.py"
       - "api/v2/refresh_receita_lifecycle.py"
+      - "api/v2/bootstrap_conduct_consumer_cache.py"
       - "api/v2/build_conduct_source_snapshot.py"
       - "api/v2/build_consumer_gov_receita_identity.py"
       - "api/v2/relationship_watchdog.py"
@@ -28,6 +29,7 @@ on:
       - "tests/test_v2_source_cache.py"
       - "tests/test_v2_build_source_snapshot.py"
       - "tests/test_v2_receita_refresh.py"
+      - "tests/test_v2_conduct_consumer_bootstrap.py"
       - "tests/test_v2_conduct_source_snapshot.py"
       - "tests/test_v2_consumer_gov_receita_cache_key.py"
       - "tests/test_v2_relationship_watchdog.py"
@@ -77,6 +79,7 @@ jobs:
             api/v2/source_cache.py \
             api/v2/build_source_snapshot.py \
             api/v2/refresh_receita_lifecycle.py \
+            api/v2/bootstrap_conduct_consumer_cache.py \
             api/v2/build_conduct_source_snapshot.py \
             api/v2/build_consumer_gov_receita_identity.py \
             api/v2/relationship_watchdog.py \
@@ -92,6 +95,7 @@ jobs:
             tests/test_v2_source_cache.py \
             tests/test_v2_build_source_snapshot.py \
             tests/test_v2_receita_refresh.py \
+            tests/test_v2_conduct_consumer_bootstrap.py \
             tests/test_v2_conduct_source_snapshot.py \
             tests/test_v2_consumer_gov_receita_cache_key.py \
             tests/test_v2_relationship_watchdog.py \
@@ -108,6 +112,7 @@ jobs:
             tests/test_v2_source_cache.py \
             tests/test_v2_build_source_snapshot.py \
             tests/test_v2_receita_refresh.py \
+            tests/test_v2_conduct_consumer_bootstrap.py \
             tests/test_v2_conduct_source_snapshot.py \
             tests/test_v2_consumer_gov_receita_cache_key.py \
             tests/test_v2_relationship_watchdog.py \
@@ -120,7 +125,7 @@ jobs:
           python -m api.v2.gate4_pipeline \
             --write-contract data/derived/v2/gate4_pipeline_contract.json
 
-      - name: Validate publication remains fail-closed while blockers exist
+      - name: Validate Gate 4 publication readiness
         run: |
           set -euo pipefail
           python - <<'PY'
@@ -137,13 +142,10 @@ jobs:
           if payload.get("cross_run_latest_successful_restore_forbidden") is not True:
               raise SystemExit("Gate 4 must forbid cross-run latest-successful restoration")
           blockers = payload.get("publication_blockers") or []
-          if blockers != ["conduct_source_snapshot"]:
-              raise SystemExit(
-                  "Gate 4 must have exactly one operational blocker now: "
-                  f"conduct_source_snapshot; got {blockers}"
-              )
-          if payload.get("publication_ready") is not False:
-              raise SystemExit("publication must remain fail-closed while blocker exists")
+          if blockers:
+              raise SystemExit(f"Gate 4 still has operational publication blockers: {blockers}")
+          if payload.get("publication_ready") is not True:
+              raise SystemExit("Gate 4 publication contract must be operationally ready")
           print(json.dumps({
               "topological_order": payload.get("topological_order"),
               "publication_ready": payload.get("publication_ready"),
