@@ -93,7 +93,8 @@ def test_late_publication_stages_are_wired_to_real_contract_builders():
 
     profiles = mapping["public_profiles"]
     assert profiles.commands == (
-        (sys.executable, "-m", "api.v2.build_public_search_profile_contract"),
+        (sys.executable, "-m", "api.v2.public_profile_regulatory_semantics"),
+        (sys.executable, "-m", "api.v2.validate_public_search_profile_contract"),
     )
     assert profiles.outputs == (
         "data/derived/v2/public_search_profile_contract.json",
