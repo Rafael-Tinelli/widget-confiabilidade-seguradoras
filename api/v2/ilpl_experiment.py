@@ -8,14 +8,13 @@ from typing import Any
 import numpy as np
 from scipy.stats import spearmanr
 
+from api.v2.financial_capital_semantics import capital_pla_cmr_ratio
+
 ILPL_EXPERIMENT_VERSION = "2.0-closed-ilpl-experiment-1"
 SURVIVAL_CRITERIA_VERSION = "1.0-locked-before-first-basecompleta-run"
 ILPL_NET_INCOME_CMPID = 518
 ILPL_EQUITY_CMPID = 3333
 
-# PRE-REGISTERED BEFORE THE FIRST REAL BASECOMPLETA RUN.
-# These are hard gates. A failure is not rescued after the fact with caps,
-# winsorization, log transforms, changed cohorts or revised thresholds.
 SURVIVAL_CRITERIA: dict[str, float | int] = {
     "current_coverage_min": 0.90,
     "paired_prior_equivalent_coverage_min": 0.75,
@@ -322,12 +321,7 @@ def _capital_ratio(source_entity: dict[str, Any], period: int | None) -> float |
     if not period:
         return None
     record = (source_entity.get("capital_history") or {}).get(period) or {}
-    pla = _finite(record.get("pla_adjusted"))
-    cmr = _finite(record.get("cmr"))
-    if pla is None or cmr is None or cmr <= 0:
-        return None
-    value = pla / cmr
-    return value if math.isfinite(value) else None
+    return capital_pla_cmr_ratio(record)
 
 
 def _ilt_value(source_entity: dict[str, Any], period: int | None) -> float | None:
