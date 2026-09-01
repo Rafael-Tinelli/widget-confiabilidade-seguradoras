@@ -33,10 +33,18 @@ def test_insurance_exposure_does_not_require_pension_or_capitalization_files(
     probe = probe_susep_insurance_exposure(path)
     assert probe["state"] == "available"
     assert probe["exposure_domain"] == "insurance_only"
+    assert probe["currency"] == "BRL"
+    assert probe["source_unit_label"] == "R$"
+    assert probe["scale_factor_applied"] == 1.0
+    assert probe["source_documentation_url"].endswith("Documentacao_das_tabelas.rtf")
     assert probe["explicitly_excluded_domains"] == ["private_pension", "capitalization"]
 
     payload = load_susep_insurance_exposure(["000001"], path)
     assert payload["source"]["component_file"] == "Ses_seguros.csv"
+    assert payload["source"]["currency"] == "BRL"
+    assert payload["source"]["source_unit_label"] == "R$"
+    assert payload["source"]["scale_factor_applied"] == 1.0
+    assert payload["source"]["unit_policy"] == "raw_ses_currency_values_no_scale_conversion"
     assert payload["source"]["missingness_policy"] == (
         "missing_premium_cells_are_not_economic_zero"
     )
