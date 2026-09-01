@@ -81,22 +81,24 @@ def test_public_package_depends_on_closed_cross_pillar_chain():
     } <= required
 
 
-def test_current_blockers_are_explicit_instead_of_silently_published():
-    blockers = set(publication_blockers())
-
-    assert blockers == {"conduct_source_snapshot"}
+def test_publication_contract_has_no_operational_blockers_after_conduct_proof():
+    assert publication_blockers() == ()
     contract = pipeline_contract()
-    assert contract["publication_ready"] is False
+    assert contract["publication_ready"] is True
+    assert contract["publication_blockers"] == []
     assert contract["single_generation_workspace_required"] is True
     assert contract["cross_run_latest_successful_restore_forbidden"] is True
 
 
-def test_source_snapshot_is_formally_evergreen():
+def test_source_snapshot_is_formally_evergreen_and_executable():
     mapping = stage_map(STAGES)
     source = mapping["source_snapshot"]
 
     assert source.kind == "source"
     assert source.evergreen_ready is True
+    assert source.commands == (
+        (sys.executable, "-m", "api.v2.build_source_snapshot"),
+    )
     assert "source_snapshot" not in publication_blockers()
 
 
@@ -247,7 +249,8 @@ def test_conduct_acquisition_is_isolated_from_conduct_derivation():
     assert source.commands == (
         (sys.executable, "-m", "api.v2.build_conduct_source_snapshot"),
     )
-    assert source.evergreen_ready is False
+    assert source.evergreen_ready is True
+    assert "conduct_source_snapshot" not in publication_blockers()
 
     assert conduct.kind == "derive"
     assert conduct.dependencies == (
@@ -268,4 +271,4 @@ def test_consumer_cache_bootstrap_remains_outside_the_publication_dag():
     mapping = stage_map(STAGES)
 
     assert "conduct_consumer_bootstrap" not in mapping
-    assert "conduct_source_snapshot" in publication_blockers()
+    assert publication_blockers() == ()
