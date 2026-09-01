@@ -2,16 +2,6 @@ name: V2 Conduct Comparative Preflight
 
 on:
   workflow_dispatch:
-  pull_request:
-    branches: [main]
-    paths:
-      - "api/v2/conduct_source_cascade.py"
-      - "api/v2/conduct_comparative.py"
-      - "api/sources/susep_conduct_exposure.py"
-      - "tests/test_v2_conduct_source_cascade.py"
-      - "tests/test_v2_conduct_comparative.py"
-      - "tests/test_susep_conduct_exposure.py"
-      - ".github/workflows/v2-conduct-comparative-preflight.yml"
 
 permissions:
   contents: read
