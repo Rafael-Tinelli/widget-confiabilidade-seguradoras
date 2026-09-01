@@ -205,6 +205,22 @@ def test_gapped_comparison_months_are_rejected() -> None:
         build_reconciliation(eligibility, conduct, ses, {"relationships": []})
 
 
+def test_fractional_exposure_row_count_is_rejected() -> None:
+    entity = _entity("fractional", "000018", "19191919000129", insurance=True)
+    eligibility, conduct, ses = _payloads(
+        [entity], {"fractional": 1}, {"fractional": 500.0}
+    )
+    ses["entities"]["000018"]["months"][202601]["insurance_branches"][1001][
+        "rows"
+    ] = 1.5
+
+    with pytest.raises(
+        ConductCoverageReconciliationError,
+        match=r"invalid non-negative integer insurance_branches\[1001\]\.rows",
+    ):
+        build_reconciliation(eligibility, conduct, ses, {"relationships": []})
+
+
 def test_hybrid_insurance_pension_keeps_conduct_but_blocks_p3_pressure() -> None:
     entities = [
         _entity("hybrid", "000002", "22222222000182", insurance=True, pension=True)
