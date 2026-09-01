@@ -2,15 +2,6 @@ name: V2 Sandbox Brand Conduct Evidence
 
 on:
   workflow_dispatch:
-  pull_request:
-    branches: [main]
-    paths:
-      - "api/v2/build_sandbox_brand_conduct_evidence.py"
-      - "api/v2/consumer_gov_identity.py"
-      - "data/reference/v2/sandbox_brand_relationships.json"
-      - "data/reference/v2/consumer_gov_provider_resolution_extensions.json"
-      - "tests/test_v2_sandbox_brand_conduct.py"
-      - ".github/workflows/v2-sandbox-brand-conduct.yml"
 
 permissions:
   contents: read
