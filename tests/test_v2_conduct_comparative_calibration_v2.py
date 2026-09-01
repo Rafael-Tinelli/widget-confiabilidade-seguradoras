@@ -139,7 +139,6 @@ def test_calibration_v2_aligns_market_population_and_forbids_scoring() -> None:
     a = by_id["fip:000001"]
     b = by_id["fip:000002"]
 
-    # Annual pressure now uses only monthly-aligned comparable exposure.
     assert a["pressure_12m"]["observed_complaints"] == 5
     assert a["pressure_12m"]["expected_complaints"] == pytest.approx(4.0)
     assert a["pressure_12m"]["ratio"] == pytest.approx(1.25)
@@ -215,6 +214,59 @@ def test_calibration_v2_rejects_gapped_comparison_window() -> None:
 
     with pytest.raises(ConductComparativeCalibrationV2Error, match="must be consecutive"):
         build_calibration_v2(conduct, {"entities": []}, {"periods": [202601, 202603]})
+
+
+def test_calibration_v2_zero_market_complaint_month_is_not_neutral() -> None:
+    conduct = {
+        "source": {
+            "months": ["2026-01", "2026-02"],
+            "core": {"state": "available"},
+            "taxonomy_evidence": {"state": "source_unavailable"},
+        },
+        "entities": [
+            _conduct_entity("fip:000001", [0, 2], 3.0),
+            _conduct_entity("fip:000002", [0, 2], 4.0),
+        ],
+    }
+    reconciliation = {
+        "entities": [
+            _candidate("fip:000001", "000001", "A"),
+            _candidate("fip:000002", "000002", "B"),
+        ]
+    }
+    ses = {
+        "periods": [202601, 202602],
+        "entities": {
+            "000001": {
+                "months": {
+                    202601: _ses_month(100.0, 1001),
+                    202602: _ses_month(100.0, 1001),
+                }
+            },
+            "000002": {
+                "months": {
+                    202601: _ses_month(100.0, 2001),
+                    202602: _ses_month(100.0, 2001),
+                }
+            },
+        },
+    }
+
+    payload = build_calibration_v2(conduct, reconciliation, ses)
+    january = payload["monthly_market"][0]
+    row = next(item for item in payload["entities"] if item["entity_id"] == "fip:000001")
+
+    assert january["market_complaints"] == 0
+    assert january["market_premium_direct"] == pytest.approx(200.0)
+    assert january["pressure_baseline_state"] == "unavailable_zero_market_complaints"
+    assert row["monthly"][0]["state"] == "not_comparable_zero_market_complaints"
+    assert row["monthly"][0]["expected_complaints"] == pytest.approx(0.0)
+    assert row["monthly"][0]["pressure_ratio"] is None
+    assert row["pressure_12m"]["comparable_months"] == 1
+    assert row["pressure_12m"]["zero_market_complaint_months"] == 1
+    assert row["pressure_12m"]["observed_complaints"] == 2
+    assert row["pressure_12m"]["expected_complaints"] == pytest.approx(2.0)
+    assert row["pressure_12m"]["ratio"] == pytest.approx(1.0)
 
 
 def test_calibration_v2_preserves_mix_and_excluded_reason() -> None:
