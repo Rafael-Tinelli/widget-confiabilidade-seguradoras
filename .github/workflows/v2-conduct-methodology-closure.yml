@@ -1,18 +1,6 @@
 name: V2 Conduct Methodology Closure
 
 on:
-  pull_request:
-    paths:
-      - "api/v2/build_conduct_methodology_closure.py"
-      - "tests/test_v2_conduct_methodology_closure.py"
-      - ".github/workflows/v2-conduct-methodology-closure.yml"
-      - "api/v2/build_conduct_comparative_calibration_v2.py"
-      - "api/v2/build_conduct_credibility_diagnostic.py"
-      - "api/v2/build_conduct_portfolio_mix_diagnostic.py"
-      - "api/v2/eligibility.py"
-      - "api/v2/regulatory_scope.py"
-      - "data/reference/v2/conduct_subject_relationships.json"
-      - "data/curated/v2/**"
   workflow_dispatch:
 
 permissions:
