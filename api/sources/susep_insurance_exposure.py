@@ -57,6 +57,14 @@ def _premium_number(value: Any, *, field: str) -> float | None:
     return number
 
 
+def _missing_cell(value: Any) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, float) and math.isnan(value):
+        return True
+    return str(value).strip().lower() in {"", "nan"}
+
+
 def _integer(value: Any, *, field: str) -> int:
     text = str(value or "").strip()
     try:
@@ -138,7 +146,10 @@ def load_susep_insurance_exposure(
 
     Missing cells in the approved direct-premium denominator are preserved as
     missingness metadata. They are never silently converted to economic zero.
-    Malformed numeric cells and malformed period/branch keys fail closed.
+    Malformed numeric cells and malformed period/branch keys fail closed. A row
+    without a branch is ignored only when both premium fields are explicit zero;
+    this preserves the two known empty historical SES rows without inventing a
+    branch or changing an exposure denominator.
     Values remain in the source SES unit (R$); no scale conversion is applied.
     """
     fips = {_canon_fip(value) for value in fip_codes}
@@ -161,6 +172,7 @@ def load_susep_insurance_exposure(
         }
     )
     periods: set[int] = set()
+    ignored_unclassified_zero_premium_rows = 0
 
     with zipfile.ZipFile(path) as z, z.open(str(probe["member"])) as handle:
         for chunk in pd.read_csv(
@@ -178,9 +190,18 @@ def load_susep_insurance_exposure(
                 if fip not in fips:
                     continue
                 period = _period(row.get("damesano"))
-                branch = _integer(row.get("coramo"), field="coramo")
                 direct = _premium_number(row.get("premio_direto"), field="premio_direto")
                 earned = _premium_number(row.get("premio_ganho"), field="premio_ganho")
+                branch_raw = row.get("coramo")
+                if _missing_cell(branch_raw):
+                    if direct == 0.0 and earned == 0.0:
+                        ignored_unclassified_zero_premium_rows += 1
+                        continue
+                    raise InsuranceExposureSourceError(
+                        "missing coramo value in Ses_seguros.csv is only allowed "
+                        "when premio_direto and premio_ganho are explicit zero"
+                    )
+                branch = _integer(branch_raw, field="coramo")
 
                 key = (fip, period, branch)
                 values = aggregate[key]
@@ -234,6 +255,13 @@ def load_susep_insurance_exposure(
             "missingness_policy": "missing_premium_cells_are_not_economic_zero",
             "malformed_value_policy": "fail_closed_not_missing",
             "malformed_row_policy": "fail_closed_not_skipped",
+            "unclassified_branch_policy": (
+                "ignore_only_when_direct_and_earned_premiums_are_explicit_zero;"
+                "otherwise_fail_closed"
+            ),
+            "ignored_unclassified_zero_premium_rows": (
+                ignored_unclassified_zero_premium_rows
+            ),
             "explicitly_excluded_domains": ["private_pension", "capitalization"],
             "scoring": "forbidden_in_source_artifact",
         },
