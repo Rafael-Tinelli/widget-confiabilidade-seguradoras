@@ -14,7 +14,7 @@ RECONCILIATION_PATH = Path("data/derived/v2/conduct_coverage_reconciliation.json
 PORTFOLIO_PATH = Path("data/derived/v2/conduct_portfolio_mix_diagnostic.json")
 OUTPUT_PATH = Path("data/derived/v2/conduct_methodology_closure.json")
 
-VERSION = "2.0-draft-conduct-methodology-closure-2"
+VERSION = "2.0-draft-conduct-methodology-closure-3"
 FAMILYWISE_ALPHA = 0.05
 COMMON_MONTHS = 12
 MIN_TEMPORAL_MONTHS = 9
@@ -26,6 +26,7 @@ RECOVERY_ROUTE_BY_STATE = {
     "hybrid_insurance_pension_requires_product_numerator": "recover_product_specific_complaint_numerator",
     "no_current_insurance_activity_observed": "audit_current_insurance_activity_and_exposure",
     "no_current_insurance_activity_observed_pension_activity_present": "audit_insurance_activity_without_using_pension_as_denominator",
+    "insurance_premium_direct_incomplete": "recover_complete_insurance_premium_direct_exposure",
     "negative_direct_premium_requires_accounting_review": "review_negative_direct_premium_accounting",
     "shared_consumer_subject_requires_product_split": "recover_product_or_carrier_specific_complaint_numerator",
     "consumer_subject_single_carrier_exposure_not_brand_specific": "recover_brand_specific_exposure",
@@ -54,6 +55,49 @@ def _finite(value: Any, *, field: str) -> float:
     if not math.isfinite(number):
         raise ConductMethodologyClosureError(f"non-finite {field}: {value!r}")
     return number
+
+
+def _period(month: str) -> int:
+    text = str(month or "").strip().replace("-", "")
+    if len(text) != 6 or not text.isdigit():
+        raise ConductMethodologyClosureError(f"invalid comparison month: {month!r}")
+    year = int(text[:4])
+    number = int(text[4:])
+    if year < 2000 or not 1 <= number <= 12:
+        raise ConductMethodologyClosureError(f"invalid comparison month: {month!r}")
+    return int(text)
+
+
+def _next_period(period: int) -> int:
+    year = period // 100
+    month = period % 100
+    return (year + 1) * 100 + 1 if month == 12 else year * 100 + month + 1
+
+
+def _validate_common_months(entities: list[dict[str, Any]]) -> list[str]:
+    month_sets: list[list[str]] = []
+    for entity in entities:
+        raw_months = [str(row.get("month") or "") for row in entity.get("monthly") or []]
+        if len(raw_months) != COMMON_MONTHS or len(set(raw_months)) != COMMON_MONTHS:
+            raise ConductMethodologyClosureError(
+                f"entity {entity.get('entity_id')} does not contain exactly "
+                f"{COMMON_MONTHS} unique months"
+            )
+        month_sets.append(sorted(raw_months))
+    if not month_sets:
+        raise ConductMethodologyClosureError("no Conduct monthly series available")
+    months = month_sets[0]
+    if any(item != months for item in month_sets[1:]):
+        raise ConductMethodologyClosureError(
+            "Conduct entities do not share one identical comparison window"
+        )
+    periods = [_period(month) for month in months]
+    for previous, current in zip(periods, periods[1:], strict=False):
+        if current != _next_period(previous):
+            raise ConductMethodologyClosureError(
+                "Conduct comparison window must contain consecutive calendar months"
+            )
+    return months
 
 
 def _poisson_ratio_interval(observed: int, expected: float, alpha: float) -> dict[str, Any]:
@@ -145,18 +189,7 @@ def _rate_ratio_interval(
 def _baselines(
     entities: list[dict[str, Any]], premium_key: str
 ) -> dict[str, dict[str, Any]]:
-    months = sorted(
-        {
-            str(month.get("month") or "")
-            for entity in entities
-            for month in entity.get("monthly") or []
-            if str(month.get("month") or "")
-        }
-    )
-    if len(months) != COMMON_MONTHS:
-        raise ConductMethodologyClosureError(
-            f"expected {COMMON_MONTHS} common months, found {len(months)}"
-        )
+    months = _validate_common_months(entities)
 
     result: dict[str, dict[str, Any]] = {}
     for month_name in months:
@@ -215,8 +248,17 @@ def _series(
     aligned_expected = 0.0
     excluded_complaints = 0
 
-    for month in entity.get("monthly") or []:
+    entity_months = list(entity.get("monthly") or [])
+    if len(entity_months) != COMMON_MONTHS:
+        raise ConductMethodologyClosureError(
+            f"entity {entity.get('entity_id')} has unexpected month count"
+        )
+    for month in entity_months:
         month_name = str(month.get("month") or "")
+        if month_name not in baselines:
+            raise ConductMethodologyClosureError(
+                f"entity {entity.get('entity_id')} has month outside baseline: {month_name}"
+            )
         premium = _finite(month.get(premium_key) or 0.0, field=premium_key)
         complaints = int(month.get("complaints") or 0)
         baseline = baselines[month_name]
@@ -410,8 +452,11 @@ def _final_pressure_state(
         )
 
     direct_state = str(direct_interval["state"])
+    earned_coverage = int(
+        (earned.get("temporal_coverage") or {}).get("comparable_months") or 0
+    )
     earned_interval = (earned.get("annual") or {}).get("uncertainty")
-    if earned_interval is not None:
+    if earned_coverage >= MIN_TEMPORAL_MONTHS and earned_interval is not None:
         earned_state = str(earned_interval["state"])
         if earned_state != direct_state:
             return (
@@ -433,6 +478,30 @@ def _final_pressure_state(
         "not_distinguishable_from_expected",
         "Os dados nao mostram diferenca suficientemente clara em relacao ao esperado para o tamanho da operacao.",
     )
+
+
+def _assert_calibration_alignment(entity: dict[str, Any], direct: dict[str, Any]) -> None:
+    calibration_pressure = entity.get("pressure_12m") or {}
+    if calibration_pressure.get("aggregation_policy") != (
+        "sum_monthly_expected_then_observed_divided_by_expected"
+    ):
+        raise ConductMethodologyClosureError(
+            f"calibration pressure is not monthly-aligned: {entity.get('entity_id')}"
+        )
+    closure_annual = direct.get("annual") or {}
+    for field in ("observed_complaints", "expected_complaints", "ratio"):
+        left = calibration_pressure.get(field)
+        right = closure_annual.get(field)
+        if left is None or right is None:
+            if left != right:
+                raise ConductMethodologyClosureError(
+                    f"calibration/closure pressure mismatch for {entity.get('entity_id')}: {field}"
+                )
+            continue
+        if not math.isclose(float(left), float(right), rel_tol=1e-10, abs_tol=1e-10):
+            raise ConductMethodologyClosureError(
+                f"calibration/closure pressure mismatch for {entity.get('entity_id')}: {field}"
+            )
 
 
 def build_closure(
@@ -496,6 +565,7 @@ def build_closure(
             annual_alpha=annual_alpha,
             monthly_alpha=monthly_alpha,
         )
+        _assert_calibration_alignment(entity, direct)
         earned = _series(
             entity,
             "premium_earned_diagnostic",
@@ -507,6 +577,11 @@ def build_closure(
 
         portfolio_entity = portfolio_by_id.get(entity_id) or {}
         portfolio_context = portfolio_entity.get("portfolio") or {}
+        earned_coverage = int(earned["temporal_coverage"]["comparable_months"])
+        earned_interval = (earned.get("annual") or {}).get("uncertainty")
+        earned_sensitivity_usable = (
+            earned_coverage >= MIN_TEMPORAL_MONTHS and earned_interval is not None
+        )
 
         candidate_rows.append(
             {
@@ -528,11 +603,13 @@ def build_closure(
                     **earned,
                     "role": "diagnostic_guard_only",
                     "selected_as_denominator": False,
+                    "minimum_comparable_months_for_veto": MIN_TEMPORAL_MONTHS,
+                    "usable_for_directional_veto": earned_sensitivity_usable,
                     "annual_state_consistent_with_direct": (
-                        ((earned.get("annual") or {}).get("uncertainty") or {}).get("state")
+                        earned_interval.get("state")
                         == ((direct.get("annual") or {}).get("uncertainty") or {}).get("state")
                     )
-                    if (earned.get("annual") or {}).get("uncertainty")
+                    if earned_sensitivity_usable
                     else None,
                 },
                 "portfolio_context": {
@@ -639,6 +716,11 @@ def build_closure(
                 "capitalization_excluded": True,
                 "monthly_alignment_required": True,
                 "annual_aggregation": "sum_monthly_expected_then_observed_divided_by_expected",
+            },
+            "diagnostic_denominator_guard": {
+                "field": "insurance_premium_earned",
+                "minimum_comparable_months_for_directional_veto": MIN_TEMPORAL_MONTHS,
+                "incomplete_source_cells_are_unavailable_not_zero": True,
             },
             "uncertainty": {
                 "annual_method": "exact_poisson_standardized_ratio",
