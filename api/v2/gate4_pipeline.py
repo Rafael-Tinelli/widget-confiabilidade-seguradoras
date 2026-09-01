@@ -99,14 +99,30 @@ STAGES: tuple[PipelineStage, ...] = (
         stage_id="liquidity",
         kind="derive",
         dependencies=("source_snapshot", "eligibility"),
-        commands=(_module("api.v2.build_liquidity_experiment"),),
+        commands=(
+            _module(
+                "api.v2.build_liquidity_experiment",
+                "--eligibility-input",
+                "data/derived/v2/entity_eligibility_inventory.json",
+                "--ses-zip",
+                "data/raw/ses/BaseCompleta.zip",
+            ),
+        ),
         outputs=("data/derived/v2/liquidity_experiment.json",),
     ),
     PipelineStage(
         stage_id="operating",
         kind="derive",
         dependencies=("source_snapshot", "eligibility"),
-        commands=(_module("api.v2.build_operating_experiment"),),
+        commands=(
+            _module(
+                "api.v2.build_operating_experiment",
+                "--eligibility-input",
+                "data/derived/v2/entity_eligibility_inventory.json",
+                "--ses-zip",
+                "data/raw/ses/BaseCompleta.zip",
+            ),
+        ),
         outputs=("data/derived/v2/operating_experiment.json",),
     ),
     PipelineStage(
@@ -238,7 +254,6 @@ STAGES: tuple[PipelineStage, ...] = (
             "assessment_eligibility",
             "cross_stage1",
             "cross_stage2",
-            "cross_coverage",
         ),
         commands=(_module("api.v2.build_ranking_eligibility_preflight"),),
         outputs=("data/derived/v2/ranking_eligibility_preflight.json",),
@@ -246,37 +261,31 @@ STAGES: tuple[PipelineStage, ...] = (
     PipelineStage(
         stage_id="leaderboards",
         kind="derive",
-        dependencies=(
-            "assessment_eligibility",
-            "semantic_contract",
-            "financial_closure",
-            "conduct_closure",
-            "conduct_coverage",
-            "ranking_preflight",
-        ),
-        commands=(_module("api.v2.build_exploratory_leaderboards_contract"),),
+        dependencies=("assessment_eligibility", "ranking_preflight"),
+        commands=(_module("api.v2.build_leaderboards"),),
         outputs=(
-            "data/derived/v2/exploratory_leaderboards_contract.json",
-            "data/derived/v2/public/insurer_explorer.json",
-            "data/derived/v2/public/explore_index.json",
+            "data/derived/v2/leaderboards/manifest.json",
+            "data/derived/v2/leaderboards/capital_adequacy.json",
+            "data/derived/v2/leaderboards/liquidity.json",
+            "data/derived/v2/leaderboards/conduct.json",
         ),
     ),
     PipelineStage(
         stage_id="sandbox_brand_conduct",
         kind="derive",
         dependencies=("eligibility", "consumer_conduct"),
-        commands=(_module("api.v2.build_sandbox_brand_conduct_evidence"),),
-        outputs=("data/derived/v2/sandbox_brand_conduct_evidence.json",),
+        commands=(_module("api.v2.build_sandbox_brand_conduct_profiles"),),
+        outputs=("data/derived/v2/sandbox_brand_conduct_profiles.json",),
     ),
     PipelineStage(
         stage_id="public_profiles",
         kind="derive",
         dependencies=("lifecycle", "leaderboards", "sandbox_brand_conduct"),
-        commands=(_module("api.v2.public_profile_regulatory_semantics"),),
+        commands=(_module("api.v2.build_public_profiles"),),
         outputs=(
-            "data/derived/v2/public_search_profile_contract.json",
-            "data/derived/v2/public/search_index.json",
-            "data/derived/v2/public/profile_manifest.json",
+            "data/derived/v2/public/search-index.json",
+            "data/derived/v2/public/manifest.json",
+            "data/derived/v2/public/profiles/manifest.json",
         ),
     ),
     PipelineStage(
@@ -289,70 +298,88 @@ STAGES: tuple[PipelineStage, ...] = (
 )
 
 
-class PipelineDefinitionError(RuntimeError):
-    """Raised when the Gate 4 dependency graph is inconsistent."""
+class PipelineDefinitionError(ValueError):
+    """Raised when the Gate 4 DAG contract is invalid."""
 
 
 class PipelineExecutionError(RuntimeError):
-    """Raised when a Gate 4 stage cannot be executed safely."""
+    """Raised when a Gate 4 stage cannot execute against its declared dependencies."""
 
 
 def stage_map(stages: tuple[PipelineStage, ...] = STAGES) -> dict[str, PipelineStage]:
-    mapping = {stage.stage_id: stage for stage in stages}
-    if len(mapping) != len(stages):
-        raise PipelineDefinitionError("duplicate Gate 4 stage_id")
+    mapping: dict[str, PipelineStage] = {}
+    for stage in stages:
+        if stage.stage_id in mapping:
+            raise PipelineDefinitionError(f"duplicate stage_id: {stage.stage_id}")
+        mapping[stage.stage_id] = stage
     return mapping
 
 
 def validate_pipeline(stages: tuple[PipelineStage, ...] = STAGES) -> None:
     mapping = stage_map(stages)
-    produced_by: dict[str, str] = {}
+    output_owner: dict[str, str] = {}
     for stage in stages:
         for dependency in stage.dependencies:
             if dependency not in mapping:
                 raise PipelineDefinitionError(
-                    f"unknown dependency {dependency!r} for stage {stage.stage_id!r}"
+                    f"stage {stage.stage_id!r} references unknown dependency {dependency!r}"
                 )
         for output in stage.outputs:
-            previous = produced_by.get(output)
-            if previous is not None:
+            owner = output_owner.get(output)
+            if owner is not None:
                 raise PipelineDefinitionError(
-                    f"output {output!r} produced by both {previous!r} and {stage.stage_id!r}"
+                    f"output {output!r} produced by both {owner!r} and {stage.stage_id!r}"
                 )
-            produced_by[output] = stage.stage_id
-    topological_order(stages)
+            output_owner[output] = stage.stage_id
+
+    indegree = {stage_id: 0 for stage_id in mapping}
+    dependents: dict[str, list[str]] = defaultdict(list)
+    for stage in stages:
+        for dependency in stage.dependencies:
+            indegree[stage.stage_id] += 1
+            dependents[dependency].append(stage.stage_id)
+
+    queue = deque(stage.stage_id for stage in stages if indegree[stage.stage_id] == 0)
+    visited: list[str] = []
+    while queue:
+        current = queue.popleft()
+        visited.append(current)
+        for dependent in dependents[current]:
+            indegree[dependent] -= 1
+            if indegree[dependent] == 0:
+                queue.append(dependent)
+    if len(visited) != len(mapping):
+        raise PipelineDefinitionError("Gate 4 pipeline contains a cycle")
 
 
 def topological_order(stages: tuple[PipelineStage, ...] = STAGES) -> tuple[str, ...]:
+    validate_pipeline(stages)
     mapping = stage_map(stages)
     indegree = {stage_id: 0 for stage_id in mapping}
-    downstream: dict[str, list[str]] = defaultdict(list)
+    dependents: dict[str, list[str]] = defaultdict(list)
     for stage in stages:
         for dependency in stage.dependencies:
-            if dependency not in mapping:
-                raise PipelineDefinitionError(
-                    f"unknown dependency {dependency!r} for stage {stage.stage_id!r}"
-                )
             indegree[stage.stage_id] += 1
-            downstream[dependency].append(stage.stage_id)
+            dependents[dependency].append(stage.stage_id)
 
     queue = deque(stage.stage_id for stage in stages if indegree[stage.stage_id] == 0)
-    ordered: list[str] = []
+    order: list[str] = []
     while queue:
-        stage_id = queue.popleft()
-        ordered.append(stage_id)
-        for child in downstream.get(stage_id, []):
-            indegree[child] -= 1
-            if indegree[child] == 0:
-                queue.append(child)
-
-    if len(ordered) != len(stages):
-        unresolved = sorted(stage_id for stage_id, degree in indegree.items() if degree)
-        raise PipelineDefinitionError(f"Gate 4 pipeline contains a cycle: {unresolved}")
-    return tuple(ordered)
+        current = queue.popleft()
+        order.append(current)
+        for dependent in dependents[current]:
+            indegree[dependent] -= 1
+            if indegree[dependent] == 0:
+                queue.append(dependent)
+    if len(order) != len(mapping):
+        raise PipelineDefinitionError("Gate 4 pipeline contains a cycle")
+    return tuple(order)
 
 
-def ancestors(stage_id: str, stages: tuple[PipelineStage, ...] = STAGES) -> set[str]:
+def ancestors(
+    stage_id: str,
+    stages: tuple[PipelineStage, ...] = STAGES,
+) -> set[str]:
     mapping = stage_map(stages)
     if stage_id not in mapping:
         raise PipelineDefinitionError(f"unknown stage: {stage_id}")
@@ -412,6 +439,11 @@ def run_stage(stage_id: str, stages: tuple[PipelineStage, ...] = STAGES) -> None
 
 def run_all(stages: tuple[PipelineStage, ...] = STAGES) -> None:
     validate_pipeline(stages)
+    blockers = publication_blockers(stages)
+    if blockers:
+        raise PipelineExecutionError(
+            f"Gate 4 publication blockers remain: {list(blockers)}"
+        )
     for stage_id in topological_order(stages):
         run_stage(stage_id, stages)
 
@@ -453,21 +485,18 @@ def _parse_args() -> argparse.Namespace:
 def main() -> None:
     args = _parse_args()
     contract = pipeline_contract()
-    if args.run_all:
-        if not contract["publication_ready"]:
-            raise PipelineExecutionError(
-                f"Gate 4 full run blocked by: {contract['publication_blockers']}"
-            )
-        run_all()
-    elif args.run_stage:
-        run_stage(args.run_stage)
     if args.write_contract:
         args.write_contract.parent.mkdir(parents=True, exist_ok=True)
         args.write_contract.write_text(
-            json.dumps(contract, ensure_ascii=False, indent=2) + "\n",
+            json.dumps(contract, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
         )
-    print(json.dumps(contract, ensure_ascii=False, indent=2))
+    if args.run_stage:
+        run_stage(args.run_stage)
+    elif args.run_all:
+        run_all()
+    elif not args.write_contract:
+        print(json.dumps(contract, ensure_ascii=False, indent=2, sort_keys=True))
 
 
 if __name__ == "__main__":
