@@ -66,11 +66,12 @@ def _load_relationships(
         relation_id = str(relation.get("relationship_id") or "").strip()
         subject = normalize_cnpj_v2(relation.get("subject_cnpj"))
         target_cnpjs = [
-            normalize_cnpj_v2(value)
-            for value in relation.get("target_cnpjs") or []
+            normalize_cnpj_v2(value) for value in relation.get("target_cnpjs") or []
         ]
         if not relation_id or not subject:
-            raise ConductCoverageReconciliationError("relationship_id and subject_cnpj are required")
+            raise ConductCoverageReconciliationError(
+                "relationship_id and subject_cnpj are required"
+            )
         if subject not in by_cnpj:
             raise ConductCoverageReconciliationError(
                 f"Conduct relationship subject is not in eligible universe: {relation_id}"
@@ -93,6 +94,26 @@ def _load_relationships(
     return subjects, targets
 
 
+def _complaint_count(evidence: dict[str, Any]) -> tuple[dict[str, Any], int]:
+    totals = evidence.get("totals")
+    if not isinstance(totals, dict) or "complaints" not in totals:
+        raise ConductCoverageReconciliationError(
+            "Conduct evidence totals.complaints is required; missing is not zero"
+        )
+    raw = totals.get("complaints")
+    try:
+        number = float(raw)
+    except (TypeError, ValueError) as exc:
+        raise ConductCoverageReconciliationError(
+            f"invalid Conduct complaints count: {raw!r}"
+        ) from exc
+    if not math.isfinite(number) or number < 0 or not number.is_integer():
+        raise ConductCoverageReconciliationError(
+            f"invalid Conduct complaints count: {raw!r}"
+        )
+    return dict(totals), int(number)
+
+
 def _insurance_exposure_12m(
     ses_entity: dict[str, Any],
     periods: list[int],
@@ -101,6 +122,8 @@ def _insurance_exposure_12m(
     earned = 0.0
     row_count = 0
     months_with_rows = 0
+    direct_missing_rows = 0
+    earned_missing_rows = 0
     branches: Counter[str] = Counter()
     months = ses_entity.get("months") or {}
 
@@ -113,9 +136,19 @@ def _insurance_exposure_12m(
             raise ConductCoverageReconciliationError("non-finite SES insurance exposure")
         direct += direct_value
         earned += earned_value
+        direct_missing_rows += int(
+            month.get("insurance_premium_direct_missing_rows") or 0
+        )
+        earned_missing_rows += int(
+            month.get("insurance_premium_earned_missing_rows") or 0
+        )
         for branch, values in (month.get("insurance_branches") or {}).items():
             rows = int(float((values or {}).get("rows") or 0))
             amount = float((values or {}).get("premium_direct") or 0.0)
+            if not math.isfinite(amount):
+                raise ConductCoverageReconciliationError(
+                    "non-finite SES branch insurance exposure"
+                )
             month_rows += rows
             if amount != 0.0:
                 branches[str(branch)] += amount
@@ -127,6 +160,9 @@ def _insurance_exposure_12m(
         "insurance_premium_earned_diagnostic": float(earned),
         "insurance_rows": row_count,
         "insurance_months_with_rows": months_with_rows,
+        "insurance_premium_direct_missing_rows": direct_missing_rows,
+        "insurance_premium_earned_missing_rows": earned_missing_rows,
+        "insurance_premium_direct_complete": direct_missing_rows == 0,
         "insurance_branch_premium_direct": {
             key: float(value) for key, value in sorted(branches.items())
         },
@@ -179,7 +215,8 @@ def _pressure_state(
     relationship_ids = sorted(
         {
             str(relation.get("relationship_id") or "")
-            for relation in ([subject_relation] if subject_relation else []) + target_relations
+            for relation in ([subject_relation] if subject_relation else [])
+            + target_relations
             if str(relation.get("relationship_id") or "")
         }
     )
@@ -188,7 +225,9 @@ def _pressure_state(
         state = str(subject_relation.get("reconciliation_state") or "").strip()
         policy = str(subject_relation.get("pressure_policy") or "").strip()
         if not state or not policy:
-            raise ConductCoverageReconciliationError("Conduct subject relationship lacks policy/state")
+            raise ConductCoverageReconciliationError(
+                "Conduct subject relationship lacks policy/state"
+            )
         return {
             "state": state,
             "pressure_eligible_candidate": False,
@@ -230,6 +269,13 @@ def _pressure_state(
             "state": "no_current_insurance_activity_observed",
             "pressure_eligible_candidate": False,
             "reason_code": "no_ses_insurance_activity_observed_requires_reconciliation",
+            "relationship_ids": relationship_ids,
+        }
+    if int(exposure.get("insurance_premium_direct_missing_rows") or 0) > 0:
+        return {
+            "state": "insurance_premium_direct_incomplete",
+            "pressure_eligible_candidate": False,
+            "reason_code": "missing_direct_premium_rows_in_comparison_window",
             "relationship_ids": relationship_ids,
         }
     if direct < 0:
@@ -281,14 +327,22 @@ def build_reconciliation(
 ) -> dict[str, Any]:
     eligible = _eligible_entities(eligibility)
     if not eligible:
-        raise ConductCoverageReconciliationError("eligibility artifact has no eligible insurers")
+        raise ConductCoverageReconciliationError(
+            "eligibility artifact has no eligible insurers"
+        )
 
     conduct_months = [
         str(month) for month in (conduct.get("source") or {}).get("months") or []
     ]
     if not conduct_months:
-        raise ConductCoverageReconciliationError("Conduct evidence has no comparison months")
+        raise ConductCoverageReconciliationError(
+            "Conduct evidence has no comparison months"
+        )
     periods = [_period(month) for month in conduct_months]
+    if len(periods) != len(set(periods)):
+        raise ConductCoverageReconciliationError(
+            "Conduct evidence contains duplicate comparison months"
+        )
     ses_periods = {int(period) for period in ses.get("periods") or []}
     missing = [period for period in periods if period not in ses_periods]
     if missing:
@@ -321,34 +375,34 @@ def build_reconciliation(
             totals = None
             film = None
         else:
-            totals = dict(evidence.get("totals") or {})
-            complaints = int(totals.get("complaints") or 0)
-            conduct_state = "observed" if complaints > 0 else "no_observed_complaints"
+            totals, complaints = _complaint_count(evidence)
+            conduct_state = (
+                "observed" if complaints > 0 else "no_observed_complaints"
+            )
             film = evidence.get("film")
 
         exposure = _insurance_exposure_12m(
-            ses_entities.get(fip) or {"months": {}},
-            periods,
+            ses_entities.get(fip) or {"months": {}}, periods
         )
         subject_relation = subjects.get(cnpj or "")
         target_relations = targets.get(cnpj or "", [])
         pressure = _pressure_state(
-            entity,
-            exposure,
-            subject_relation,
-            target_relations,
+            entity, exposure, subject_relation, target_relations
         )
         widget_state = _widget_coverage_state(
-            conduct_state,
-            bool(pressure["pressure_eligible_candidate"]),
+            conduct_state, bool(pressure["pressure_eligible_candidate"])
         )
 
         activities = dict(entity.get("activities") or {})
         audit_flags: list[str] = []
         if not bool(activities.get("insurance")) and bool(activities.get("pension")):
-            audit_flags.append("licensed_insurer_without_observed_insurance_activity_pension_present")
+            audit_flags.append(
+                "licensed_insurer_without_observed_insurance_activity_pension_present"
+            )
         elif not bool(activities.get("insurance")):
             audit_flags.append("licensed_insurer_without_observed_insurance_activity")
+        if int(exposure.get("insurance_premium_direct_missing_rows") or 0) > 0:
+            audit_flags.append("incomplete_insurance_premium_direct")
         if float(exposure["insurance_premium_direct"]) < 0:
             audit_flags.append("negative_insurance_premium_direct")
         for flag in audit_flags:
@@ -392,13 +446,17 @@ def build_reconciliation(
         )
 
     if len(rows) != len(eligible):
-        raise ConductCoverageReconciliationError("eligible universe did not reconcile")
+        raise ConductCoverageReconciliationError(
+            "eligible universe did not reconcile"
+        )
 
     pressure_unavailable = sorted(
         [
             row
             for row in rows
-            if not (row.get("pressure_comparability") or {}).get("pressure_eligible_candidate")
+            if not (row.get("pressure_comparability") or {}).get(
+                "pressure_eligible_candidate"
+            )
         ],
         key=lambda row: (
             -(int(row.get("complaints_12m") or 0)),
@@ -419,6 +477,7 @@ def build_reconciliation(
             "consumer_subject": "complaints_remain_attached_to_consumer_facing_subject",
             "carrier_context": "verified_carrier_relationships_are_context_not_complaint_transfer",
             "insurance_exposure": "Ses_seguros_premio_direto_only_candidate",
+            "insurance_exposure_missingness": "missing_direct_premium_is_not_zero_and_blocks_pressure",
             "private_pension": "excluded_from_insurance_pressure_denominator",
             "capitalization": "excluded_from_insurance_pressure_denominator",
             "zero_complaints": "no_observed_complaints_is_not_a_favorable_conduct_finding",
@@ -441,7 +500,11 @@ def build_reconciliation(
             "pressure_comparability_state_counts": dict(sorted(pressure_counts.items())),
             "widget_coverage_state_counts": dict(sorted(widget_counts.items())),
             "pressure_candidate_entities": sum(
-                bool((row.get("pressure_comparability") or {}).get("pressure_eligible_candidate"))
+                bool(
+                    (row.get("pressure_comparability") or {}).get(
+                        "pressure_eligible_candidate"
+                    )
+                )
                 for row in rows
             ),
             "pressure_unavailable_entities": len(pressure_unavailable),
@@ -487,8 +550,7 @@ def main() -> None:
     payload = build_from_files()
     OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
     OUTPUT_PATH.write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2),
-        encoding="utf-8",
+        json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
     )
     print(
         json.dumps(
@@ -496,7 +558,9 @@ def main() -> None:
                 "artifact": payload["artifact"],
                 "version": payload["version"],
                 "summary": payload["summary"],
-                "top_pressure_unavailable": payload["pressure_unavailable_by_complaints_desc"][:20],
+                "top_pressure_unavailable": payload[
+                    "pressure_unavailable_by_complaints_desc"
+                ][:20],
             },
             ensure_ascii=False,
             indent=2,
