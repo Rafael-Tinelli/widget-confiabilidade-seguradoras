@@ -288,7 +288,10 @@ STAGES: tuple[PipelineStage, ...] = (
         stage_id="public_profiles",
         kind="derive",
         dependencies=("lifecycle", "leaderboards", "sandbox_brand_conduct"),
-        commands=(_module("api.v2.build_public_search_profile_contract"),),
+        commands=(
+            _module("api.v2.public_profile_regulatory_semantics"),
+            _module("api.v2.validate_public_search_profile_contract"),
+        ),
         outputs=(
             "data/derived/v2/public_search_profile_contract.json",
             "data/derived/v2/public/search_index.json",
