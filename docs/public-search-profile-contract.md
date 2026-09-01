@@ -2,217 +2,95 @@
 
 Status: **fechado para identidade, busca e renderização pública; ranking geral continua bloqueado**.
 
-Este contrato separa duas superfícies que não devem ser confundidas:
+A busca de identidade é mais ampla que o universo de assessment. Ser pesquisável não significa ser elegível ao comparador.
 
-1. **busca de identidade**, ampla, que permite encontrar entidades supervisionadas, históricas, Sandbox, SSPEs e marcas verificadas;
-2. **assessment/comparação ordinária**, restrita às seguradoras que passam pelo universo regulatório de consumo da v2.
-
-## Princípio central
+## Invariantes
 
 ```text
 search universe > ordinary assessment universe
+brand_inherits_entity_assessment = false
+group_membership_implies_succession_or_joint_venture = false
+missing_value_may_be_coerced_to_zero = false
+zero_complaints_is_automatically_favorable = false
+sandbox_enters_ordinary_ranking = false
+sspe_enters_ordinary_assessment = false
+sspe_enters_ordinary_ranking = false
+php_may_recompute_methodology = false
 ```
 
-Ser pesquisável não significa ser elegível ao comparador.
+Fuzzy search pode ordenar candidatos de busca, mas nunca decidir identidade, sucessão, grupo, risk carrier ou atribuição de reclamações.
 
-A interface pode usar fuzzy search para **ordenar candidatos de busca**, mas nunca para decidir identidade, sucessão, grupo, risk carrier ou atribuição de reclamações.
+## SSPE
 
-## Separação de identidades
-
-O perfil público preserva:
-
-- pessoa jurídica regulada;
-- marca;
-- grupo econômico;
-- relações verificadas;
-- lifecycle/sucessão;
-- contexto Sandbox;
-- contexto de Conduta.
-
-Regras permanentes:
-
-```text
-brand_inherits_entity_assessment                     false
-group_membership_implies_succession_or_joint_venture false
-missing_value_may_be_coerced_to_zero                 false
-raw_zero_may_be_relabelled_as_missing                false
-zero_complaints_is_automatically_favorable           false
-sandbox_enters_ordinary_ranking                      false
-php_may_recompute_methodology                        false
-```
-
-PHP/JS renderiza artifacts pré-computados; não refaz metodologia.
-
-## SSPE — semântica pública explícita
-
-Uma Sociedade Seguradora de Propósito Específico continua pertencendo à superclasse jurídica `insurer` e pode ter `regulatory_regime = ordinary`. Isso **não** a transforma em seguradora ordinária do comparador de consumo.
-
-O discriminador público é o estado regulatório já derivado pelo lifecycle:
+Uma Sociedade Seguradora de Propósito Específico permanece juridicamente uma seguradora, porém está fora do comparador ordinário da v2.
 
 ```text
 query_state = special_purpose_insurer
 filter_bucket = other
+public label = Seguradora de propósito específico (SSPE)
+assessment.availability = not_applicable
+assessment.reason = special_purpose_insurer_outside_consumer_assessment
 ```
 
-A superfície pública deve mostrar:
+A exclusão é de escopo, não conclusão negativa de desempenho.
 
-```text
-Seguradora de propósito específico (SSPE)
-```
+## Universo ordinário
 
-E o assessment deve ser:
+Somente perfis com `query_state = current_ordinary_insurer` correspondem ao `insurer_explorer`. O conjunto de IDs dos perfis ordinários deve ser exatamente igual ao conjunto do explorer.
 
-```text
-availability = not_applicable
-reason = special_purpose_insurer_outside_consumer_assessment
-```
+Assessment pode estar `available` ou `incomplete`; missingness nunca vira resultado neutro.
 
-Políticas:
+## Sandbox, marcas e relações
 
-```text
-sspe_enters_ordinary_assessment false
-sspe_enters_ordinary_ranking    false
-```
+Sandbox permanece pesquisável e fora do benchmark ordinário. Seu conjunto de perfis deve reconciliar com os carriers do artifact de Conduct Sandbox.
 
-A exclusão é de **escopo regulatório/metodológico**, não avaliação negativa de desempenho.
+Marcas têm perfil próprio e nunca herdam assessment da entidade. Relações de marca, risk carrier e sucessão podem ser exibidas quando verificadas, sem autorizar transferência automática de reclamações ou desempenho.
 
-## Seguradora ordinária
-
-Somente perfis com:
-
-```text
-entity_type = insurer
-query_state = current_ordinary_insurer
-```
-
-podem corresponder ao `insurer_explorer` ordinário.
-
-O conjunto de IDs dos perfis ordinários deve ser exatamente igual ao conjunto de IDs do explorer. Essa igualdade é uma invariante mais robusta que qualquer contagem fixa.
-
-Assessment pode estar:
-
-```text
-available
-incomplete
-```
-
-conforme o contrato de elegibilidade, sem converter missingness em resultado.
-
-## Sandbox
-
-Participantes do Sandbox permanecem pesquisáveis com sua natureza experimental explícita. O contexto de reclamações pode ser mostrado, mas não recebe automaticamente a mesma razão de pressão usada no universo ordinário.
-
-O conjunto de perfis Sandbox deve reconciliar exatamente com os carriers do artifact de Conduct Sandbox.
-
-## Marcas
-
-Marca recebe perfil próprio e nunca herda assessment da entidade relacionada.
-
-Relações marca ↔ risk carrier podem ser exibidas quando verificadas, mas não autorizam transferência automática de reclamações, produção ou conclusão de desempenho.
+Toda referência pública a outro perfil deve apontar para um `profile_id` existente no mesmo pacote. Referência pendente é erro de publicação.
 
 ## Null e zero
 
-Métrica pública usa semântica explícita:
+Métricas públicas carregam `value`, `availability`, `public_use`, `meaning` e `zero_semantics`. Se `availability = unavailable`, `value` deve ser `null`. Zero factual não é missing nem selo favorável.
+
+## Auditoria §19.1 — correção do caminho canônico
+
+A Full Generation #44, anterior à correção transversal, produziu 777 entidades lifecycle, 13 marcas, 790 perfis, 156 perfis ordinários e 12 perfis Sandbox.
+
+A auditoria encontrou uma divergência real: as 3 SSPEs estavam classificadas internamente como `special_purpose_insurer`, mas o stage canônico `public_profiles` chamava apenas o builder-base. A finalização regulatória e o validator existiam, porém não eram executados pelo DAG que montava o pacote. Por isso o JSON público ainda mostrava headline genérico `Seguradora` e reason genérico de ausência de assessment.
+
+O Gate 4 foi corrigido para executar obrigatoriamente, na mesma geração:
 
 ```text
-value
-availability
-public_use
-meaning
-zero_semantics
+api.v2.public_profile_regulatory_semantics
+→ api.v2.validate_public_search_profile_contract
 ```
 
-Se `availability = unavailable`, `value` deve ser `null`.
-
-Zero literal preservado da fonte não pode ser silenciosamente reinterpretado como missing e também não pode virar selo favorável.
-
-## Snapshot validado — 30/08/2026
-
-Run:
-
-```text
-V2 Public Search Profile Contract
-run 33323343760
-head 35e509d31de68a9311ede57ac245de6b7d3c0e11
-artifact 9735527221
-SHA256 ZIP ec6562d88af95f5a0bad6b256e2d10b359b82486113c91efd9a98a304aed367f
-```
-
-População pública:
-
-```text
-lifecycle_entities                         492
-brands                                      13
-profiles                                   505
-search_entries                             505
-ordinary_current_insurer_profiles          156
-ordinary_profiles_with_assessment_payload  156
-special_purpose_insurer_profiles             3
-sandbox_entity_profiles                     12
-sandbox_profiles_with_conduct_context       12
-```
-
-SSPEs observadas e corretamente segregadas:
-
-```text
-fip:002747  GALÁPAGOS CAPITAL SOCIEDADE SEGURADORA DE PROPÓSITO ESPECÍFICO S.A.
-fip:003191  BTG PACTUAL SOCIEDADE SEGURADORA DE PROPÓSITO ESPECÍFICO S.A.
-fip:003221  ANDRINA SOCIEDADE SEGURADORA DE PROPOSITO ESPECIFICO S.A
-```
-
-Nas três:
-
-```text
-entity_type       insurer
-regime            ordinary
-query_state       special_purpose_insurer
-filter_bucket     other
-public label      Seguradora de propósito específico (SSPE)
-assessment        not_applicable
-```
-
-Assim, a v2 preserva simultaneamente a natureza jurídica de seguradora e a exclusão correta do comparador ordinário.
+O validator agora também rejeita referências de perfil sem destino no mesmo pacote.
 
 ## Validação estrutural
 
-O validador real não congela mais casos individuais ou números temporais de reclamações. Ele exige:
+O contrato público exige:
 
-- IDs de perfil únicos;
+- IDs de perfil e paths únicos;
 - um search entry por perfil;
-- paths públicos únicos;
 - `profiles = lifecycle_entities + brands`;
-- conjunto ordinário = conjunto do explorer;
-- conjunto Sandbox = conjunto de carriers Sandbox;
-- SSPE disjunto do universo ordinário;
+- conjunto ordinário igual ao explorer;
+- conjunto Sandbox igual ao artifact Sandbox Conduct;
+- SSPE disjunto do universo ordinário e explicitamente rotulado;
 - marca sem assessment herdado;
-- SSPE explicitamente rotulada e `not_applicable`;
-- null semantics preservadas;
-- ausência de `score`, `overall_score`, `ranking_position` e `winner`;
-- quantidade de arquivos públicos igual à quantidade de perfis.
-
-Casos como Youse, Loovi/LTI ou HDI podem continuar sendo usados em testes específicos de relacionamento quando necessário, mas seus números correntes não são boundaries do contrato público.
+- referências entre perfis resolvidas;
+- null/zero semantics preservadas;
+- ausência de score, posição de ranking geral ou winner;
+- quantidade de arquivos públicos igual à população de perfis.
 
 ## Implementação
 
-Builder base:
-
 ```text
 api/v2/build_public_search_profile_contract.py
-```
-
-Finalização semântica regulatória do Gate 3:
-
-```text
 api/v2/public_profile_regulatory_semantics.py
-```
-
-Validação:
-
-```text
 api/v2/validate_public_search_profile_contract.py
 tests/test_v2_public_search_profile_contract.py
 tests/test_v2_public_profile_regulatory_semantics.py
-.github/workflows/v2-public-search-profile-contract.yml
 ```
 
 Outputs:
@@ -224,8 +102,4 @@ data/derived/v2/public/profile_manifest.json
 data/derived/v2/public/profiles/*.json
 ```
 
-A camada `public_profile_regulatory_semantics.py` é uma finalização de contrato público sobre o builder existente, não uma metodologia paralela. A consolidação física desse código pode ser feita na limpeza de repositório sem alterar o contrato.
-
-## Próxima etapa operacional
-
-Os contratos públicos agora falham corretamente quando recebem gerações incompatíveis de artifacts. O Gate 4 deve eliminar a dependência operacional de “latest successful” por meio de uma orquestração transversal com geração/build ID, proveniência, freshness e fallback explícitos.
+A consolidação física entre builder-base e finalizador pode ser avaliada no §19.5. O contrato semântico já está integrado ao caminho canônico de publicação.
