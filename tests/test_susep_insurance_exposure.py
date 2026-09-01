@@ -137,6 +137,22 @@ def test_malformed_premium_cell_fails_closed_instead_of_becoming_missing(tmp_pat
         load_susep_insurance_exposure(["000001"], path)
 
 
+def test_valid_historical_aaaamm_period_is_preserved(tmp_path: Path) -> None:
+    path = tmp_path / "BaseCompleta.zip"
+    insurance = (
+        "damesano;coenti;coramo;premio_direto;premio_ganho\n"
+        "199501;1;1001;100,00;90,00\n"
+    )
+    with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as z:
+        z.writestr("Ses_seguros.csv", insurance.encode("latin1"))
+
+    payload = load_susep_insurance_exposure(["000001"], path)
+
+    assert payload["periods"] == [199501]
+    assert payload["reference_period"] == 199501
+    assert 199501 in payload["entities"]["000001"]["months"]
+
+
 def test_malformed_period_or_branch_fails_closed(tmp_path: Path) -> None:
     for row, field in (
         ("202613;1;1001;100,00;90,00\n", "damesano"),
