@@ -14,6 +14,7 @@ on:
       - "data/reference/v2/**"
       - "requirements.txt"
       - "requirements-dev.txt"
+      - "tests/test_v2_gate4_pipeline_static_contract.py"
 
 permissions:
   contents: read
@@ -88,11 +89,13 @@ jobs:
             api/v2/install_public_generation.py \
             api/v2/build_ranking_eligibility_preflight.py \
             tests/test_v2_gate4_pipeline.py \
+            tests/test_v2_gate4_pipeline_static_contract.py \
             tests/test_v2_generation.py \
             tests/test_v2_financial_publication_audit.py \
             tests/test_v2_public_generation_install.py
           python -m pytest -q \
             tests/test_v2_gate4_pipeline.py \
+            tests/test_v2_gate4_pipeline_static_contract.py \
             tests/test_v2_generation.py \
             tests/test_v2_financial_publication_audit.py \
             tests/test_v2_public_generation_install.py
@@ -236,6 +239,7 @@ jobs:
               Path("data/derived/v2/ranking_eligibility_preflight.json").read_text(
                   encoding="utf-8"
               )
+          )
           if int((ranking.get("population") or {}).get("ranking_eligible") or 0) != 0:
               raise SystemExit("ranking_eligible must remain zero")
           decision = ranking.get("closure_decision") or {}
