@@ -1,26 +1,6 @@
 name: V2 Lifecycle Relationships Validation
 
 on:
-  pull_request:
-    branches: ["main"]
-    paths:
-      - "api/sources/receita_cnpj.py"
-      - "api/sources/susep_groups.py"
-      - "api/v2/lifecycle.py"
-      - "api/v2/relationships.py"
-      - "api/v2/sandbox_semantics.py"
-      - "api/v2/build_classification_inventory.py"
-      - "api/v2/build_lifecycle_relationship_inventory.py"
-      - "data/reference/v2/receita_lifecycle_verified.json"
-      - "data/reference/v2/verified_relationships.json"
-      - "tests/test_v2_receita_cnpj.py"
-      - "tests/test_v2_lifecycle.py"
-      - "tests/test_v2_relationships.py"
-      - "tests/test_v2_canonical_brand_registry.py"
-      - "tests/test_v2_susep_groups.py"
-      - "tests/test_v2_sandbox_semantics.py"
-      - "tests/test_v2_lifecycle_relationship_inventory.py"
-      - ".github/workflows/v2-lifecycle-relationships-validation.yml"
   workflow_dispatch:
 
 permissions:
