@@ -68,6 +68,20 @@ def _validated_periods(months: list[str]) -> list[int]:
     return periods
 
 
+def _nonnegative_int(value: Any, *, field: str) -> int:
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ConductCoverageReconciliationError(
+            f"invalid non-negative integer {field}: {value!r}"
+        ) from exc
+    if not math.isfinite(numeric) or numeric < 0 or not numeric.is_integer():
+        raise ConductCoverageReconciliationError(
+            f"invalid non-negative integer {field}: {value!r}"
+        )
+    return int(numeric)
+
+
 def _eligible_entities(payload: dict[str, Any]) -> list[dict[str, Any]]:
     return [
         entity
@@ -165,14 +179,19 @@ def _insurance_exposure_12m(
             raise ConductCoverageReconciliationError("non-finite SES insurance exposure")
         direct += direct_value
         earned += earned_value
-        direct_missing_rows += int(
-            month.get("insurance_premium_direct_missing_rows") or 0
+        direct_missing_rows += _nonnegative_int(
+            month.get("insurance_premium_direct_missing_rows") or 0,
+            field="insurance_premium_direct_missing_rows",
         )
-        earned_missing_rows += int(
-            month.get("insurance_premium_earned_missing_rows") or 0
+        earned_missing_rows += _nonnegative_int(
+            month.get("insurance_premium_earned_missing_rows") or 0,
+            field="insurance_premium_earned_missing_rows",
         )
         for branch, values in (month.get("insurance_branches") or {}).items():
-            rows = int(float((values or {}).get("rows") or 0))
+            rows = _nonnegative_int(
+                (values or {}).get("rows") or 0,
+                field=f"insurance_branches[{branch}].rows",
+            )
             amount = float((values or {}).get("premium_direct") or 0.0)
             if not math.isfinite(amount):
                 raise ConductCoverageReconciliationError(
@@ -300,7 +319,10 @@ def _pressure_state(
             "reason_code": "no_ses_insurance_activity_observed_requires_reconciliation",
             "relationship_ids": relationship_ids,
         }
-    if int(exposure.get("insurance_premium_direct_missing_rows") or 0) > 0:
+    if _nonnegative_int(
+        exposure.get("insurance_premium_direct_missing_rows") or 0,
+        field="insurance_premium_direct_missing_rows",
+    ) > 0:
         return {
             "state": "insurance_premium_direct_incomplete",
             "pressure_eligible_candidate": False,
@@ -422,7 +444,10 @@ def build_reconciliation(
             )
         elif not bool(activities.get("insurance")):
             audit_flags.append("licensed_insurer_without_observed_insurance_activity")
-        if int(exposure.get("insurance_premium_direct_missing_rows") or 0) > 0:
+        if _nonnegative_int(
+            exposure.get("insurance_premium_direct_missing_rows") or 0,
+            field="insurance_premium_direct_missing_rows",
+        ) > 0:
             audit_flags.append("incomplete_insurance_premium_direct")
         if float(exposure["insurance_premium_direct"]) < 0:
             audit_flags.append("negative_insurance_premium_direct")
@@ -480,7 +505,10 @@ def build_reconciliation(
             )
         ],
         key=lambda row: (
-            -(int(row.get("complaints_12m") or 0)),
+            -_nonnegative_int(
+                row.get("complaints_12m") or 0,
+                field="complaints_12m",
+            ),
             str(row.get("legal_name") or ""),
         ),
     )
