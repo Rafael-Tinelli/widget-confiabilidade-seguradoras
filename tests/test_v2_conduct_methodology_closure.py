@@ -8,6 +8,7 @@ from api.v2.build_conduct_methodology_closure import (
     _baselines,
     _final_pressure_state,
     _series,
+    _validate_unit_contract,
 )
 
 
@@ -69,17 +70,55 @@ def test_temporal_alignment_excludes_complaints_without_positive_exposure() -> N
         monthly_alpha=0.05 / 12,
     )
 
-    assert series["temporal_coverage"]["comparable_months"] == 11
-    assert (
-        series["temporal_coverage"][
-            "complaints_excluded_from_pressure_in_non_comparable_months"
-        ]
-        == 5
-    )
+    coverage = series["temporal_coverage"]
+    assert coverage["comparable_months"] == 11
+    assert coverage["missing_exposure_months"] == 0
+    assert coverage["non_positive_exposure_months"] == 1
+    assert coverage["complaints_excluded_non_positive_exposure"] == 5
+    assert coverage["complaints_excluded_from_pressure_in_non_comparable_months"] == 5
     assert series["annual"]["observed_complaints"] == 0
     assert series["annual"]["expected_complaints"] > 0
     assert series["annual"]["ratio"] == pytest.approx(0.0)
     assert series["monthly"][0]["state"] == "unavailable_non_positive_comparable_exposure"
+
+
+def test_missing_earned_exposure_remains_missing_not_zero() -> None:
+    target = _entity(
+        "fip:target",
+        complaints=[5] + [1] * 11,
+        direct=[10.0] * 12,
+        earned=[None] + [10.0] * 11,
+    )
+    peer = _entity(
+        "fip:peer",
+        complaints=[5] + [1] * 11,
+        direct=[100.0] * 12,
+        earned=[100.0] * 12,
+    )
+    baselines = _baselines([target, peer], "premium_earned_diagnostic")
+
+    assert baselines["2025-07"]["missing_exposure_entities"] == 1
+    assert baselines["2025-07"]["non_positive_exposure_entities"] == 0
+    assert baselines["2025-07"]["comparable_entities"] == 1
+
+    series = _series(
+        target,
+        "premium_earned_diagnostic",
+        baselines,
+        annual_alpha=0.05 / 2,
+        monthly_alpha=0.05 / 12,
+    )
+
+    first = series["monthly"][0]
+    coverage = series["temporal_coverage"]
+    assert first["state"] == "unavailable_missing_comparable_exposure"
+    assert first["reason_code"] == "missing_entity_premium"
+    assert first["premium"] is None
+    assert coverage["missing_exposure_months"] == 1
+    assert coverage["non_positive_exposure_months"] == 0
+    assert coverage["complaints_excluded_missing_exposure"] == 5
+    assert coverage["complaints_excluded_non_positive_exposure"] == 0
+    assert coverage["complaints_excluded_from_pressure_in_non_comparable_months"] == 5
 
 
 def test_zero_market_complaint_month_is_unavailable_not_neutral() -> None:
@@ -111,9 +150,23 @@ def test_zero_market_complaint_month_is_unavailable_not_neutral() -> None:
     assert series["monthly"][0]["uncertainty"] is None
     assert series["temporal_coverage"]["comparable_months"] == 11
     assert series["temporal_coverage"]["zero_market_complaint_months"] == 1
+    assert series["temporal_coverage"]["complaints_excluded_zero_market_complaints"] == 0
     assert series["annual"]["observed_complaints"] == 11
     assert series["annual"]["expected_complaints"] == pytest.approx(11.0)
     assert series["annual"]["ratio"] == pytest.approx(1.0)
+
+
+def test_baselines_reject_fractional_complaint_count() -> None:
+    entity = _entity(
+        "fip:fractional",
+        complaints=[1] * 12,
+        direct=[10.0] * 12,
+        earned=[10.0] * 12,
+    )
+    entity["monthly"][0]["complaints"] = 1.5
+
+    with pytest.raises(ConductMethodologyClosureError, match="non-integer complaints"):
+        _baselines([entity], "premium_direct")
 
 
 def test_baselines_reject_gapped_twelve_month_window() -> None:
@@ -130,6 +183,37 @@ def test_baselines_reject_gapped_twelve_month_window() -> None:
         match="consecutive calendar months",
     ):
         _baselines([entity], "premium_direct")
+
+
+def test_unit_contract_requires_brl_raw_ses_scale() -> None:
+    calibration = {
+        "denominator": {
+            "currency": "BRL",
+            "source_unit_label": "R$",
+            "scale_factor_applied": 1.0,
+        },
+        "source": {
+            "ses_currency": "BRL",
+            "ses_source_unit_label": "R$",
+            "ses_scale_factor_applied": 1.0,
+            "ses_source_documentation_url": "https://example.invalid/official.rtf",
+        },
+    }
+
+    contract = _validate_unit_contract(calibration)
+    assert contract == {
+        "currency": "BRL",
+        "source_unit_label": "R$",
+        "scale_factor_applied": 1.0,
+        "source_documentation_url": "https://example.invalid/official.rtf",
+    }
+
+    calibration["denominator"]["scale_factor_applied"] = 1000.0
+    with pytest.raises(
+        ConductMethodologyClosureError,
+        match="scale factor must be 1.0",
+    ):
+        _validate_unit_contract(calibration)
 
 
 def test_final_pressure_state_blocks_material_denominator_disagreement() -> None:
