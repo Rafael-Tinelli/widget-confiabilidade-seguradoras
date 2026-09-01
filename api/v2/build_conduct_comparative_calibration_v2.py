@@ -11,6 +11,7 @@ import numpy as np
 
 from api.sources.susep_insurance_exposure import (
     DEFAULT_SES_ZIP,
+    SES_TABLE_DOCUMENTATION_URL,
     load_susep_insurance_exposure,
 )
 from api.v2.conduct_comparative import (
@@ -29,7 +30,7 @@ from api.v2.conduct_monthly_pressure import (
 CONDUCT_PATH = Path("data/derived/v2/consumer_gov_conduct_evidence.json")
 RECONCILIATION_PATH = Path("data/derived/v2/conduct_coverage_reconciliation.json")
 OUTPUT_PATH = Path("data/derived/v2/conduct_comparative_calibration_v2.json")
-VERSION = "2.0-draft-conduct-comparative-calibration-4"
+VERSION = "2.0-draft-conduct-comparative-calibration-5"
 CANDIDATE_STATE = "direct_one_to_one_candidate"
 ALIGNED_POLICY = "sum_monthly_expected_then_observed_divided_by_expected"
 
@@ -92,11 +93,16 @@ def _finite(value: Any, *, field: str) -> float:
 
 def _nonnegative_int(value: Any, *, field: str) -> int:
     try:
-        number = int(value)
+        numeric = float(value)
     except (TypeError, ValueError) as exc:
         raise ConductComparativeCalibrationV2Error(
             f"non-integer {field}: {value!r}"
         ) from exc
+    if not math.isfinite(numeric) or not numeric.is_integer():
+        raise ConductComparativeCalibrationV2Error(
+            f"non-integer {field}: {value!r}"
+        )
+    number = int(numeric)
     if number < 0:
         raise ConductComparativeCalibrationV2Error(f"negative {field}: {number}")
     return number
@@ -127,7 +133,10 @@ def _candidate_rows(
         state = str(pressure.get("state") or "")
         if state == CANDIDATE_STATE and bool(pressure.get("pressure_eligible_candidate")):
             exposure = row.get("insurance_exposure_12m") or {}
-            if int(exposure.get("insurance_premium_direct_missing_rows") or 0) > 0:
+            if _nonnegative_int(
+                exposure.get("insurance_premium_direct_missing_rows") or 0,
+                field="insurance_premium_direct_missing_rows",
+            ) > 0:
                 raise ConductComparativeCalibrationV2Error(
                     "direct one-to-one candidate has incomplete direct-premium exposure: "
                     f"{row.get('entity_id')}"
@@ -224,7 +233,10 @@ def _portfolio_diagnostics(
 def _satisfaction_diagnostics(entity: dict[str, Any]) -> dict[str, Any]:
     totals = entity.get("totals") or {}
     return {
-        "sample_count": int(totals.get("satisfaction_count") or 0),
+        "sample_count": _nonnegative_int(
+            totals.get("satisfaction_count") or 0,
+            field="satisfaction_count",
+        ),
         "average": totals.get("average_satisfaction"),
         "trend": (entity.get("film") or {}).get("satisfaction_trend"),
         "sample_aware": True,
@@ -244,11 +256,20 @@ def _small_sample_bucket(observed: int) -> str:
 def _small_sample_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
     buckets = {key: [] for key in ("0_4", "5_19", "20_99", "100_plus")}
     for row in rows:
-        buckets[_small_sample_bucket(int(row["complaints_12m"]))].append(row)
+        aligned_observed = int(row["pressure_12m"]["observed_complaints"])
+        buckets[_small_sample_bucket(aligned_observed)].append(row)
     return {
         key: {
             "entities": len(items),
-            "complaints_total": sum(int(item["complaints_12m"]) for item in items),
+            "sample_basis": "pressure_12m.observed_complaints",
+            "complaints_total": sum(
+                int(item["pressure_12m"]["observed_complaints"])
+                for item in items
+            ),
+            "total_evidence_complaints": sum(
+                int(item["complaints_12m"])
+                for item in items
+            ),
             "expected_complaints_quantiles": _quantiles(
                 [float(item["pressure_12m"]["expected_complaints"]) for item in items]
             ),
@@ -484,7 +505,7 @@ def _aligned_entity(
             "branch_premium_direct": raw["branch_totals"],
             **_portfolio_diagnostics(raw["branch_totals"], market_branches),
         },
-        "small_sample_bucket": _small_sample_bucket(raw["complaints_12m"]),
+        "small_sample_bucket": _small_sample_bucket(aligned_observed),
     }
 
 
@@ -558,6 +579,7 @@ def build_calibration_v2(
             "entity_id": row["entity_id"],
             "legal_name": row.get("legal_name"),
             "complaints_12m": row["complaints_12m"],
+            "aligned_observed_complaints": row["pressure_12m"]["observed_complaints"],
             "expected_complaints": row["pressure_12m"]["expected_complaints"],
             "pressure_ratio": row["pressure_12m"]["ratio"],
             "premium_direct_12m": row["premium_direct_12m"],
@@ -574,6 +596,9 @@ def build_calibration_v2(
         "denominator": {
             "candidate": "insurance_premium_direct",
             "source_field": "premio_direto",
+            "currency": "BRL",
+            "source_unit_label": "R$",
+            "scale_factor_applied": 1.0,
             "selected_for_scoring": False,
             "final_denominator_approved": False,
             "diagnostic_companion": "insurance_premium_earned",
@@ -588,6 +613,10 @@ def build_calibration_v2(
             "reconciliation_artifact": str(RECONCILIATION_PATH),
             "ses_source": str(DEFAULT_SES_ZIP),
             "ses_component_file": "Ses_seguros.csv",
+            "ses_currency": "BRL",
+            "ses_source_unit_label": "R$",
+            "ses_scale_factor_applied": 1.0,
+            "ses_source_documentation_url": SES_TABLE_DOCUMENTATION_URL,
             "months": months,
             "periods": periods,
             "series_policy": "no_cross_source_stitching",
@@ -603,6 +632,8 @@ def build_calibration_v2(
         "market_12m": {
             "complaints": int(annual_market_complaints),
             "premium_direct": float(annual_market_premium),
+            "premium_currency": "BRL",
+            "premium_source_unit_label": "R$",
             "role": "annual_aggregate_context_not_pressure_baseline",
             "branch_premium_direct": market_branch_dict,
             "branch_mix_positive_only": branch_mix(market_branch_dict),
@@ -614,6 +645,9 @@ def build_calibration_v2(
             ),
             "complaint_count_quantiles": _quantiles(
                 [float(row["complaints_12m"]) for row in rows]
+            ),
+            "aligned_complaint_count_quantiles": _quantiles(
+                [float(row["pressure_12m"]["observed_complaints"]) for row in rows]
             ),
             "premium_direct_quantiles": _quantiles(
                 [float(row["premium_direct_12m"]) for row in rows]
