@@ -92,7 +92,9 @@ def _validate_common_months(entities: list[dict[str, Any]]) -> list[str]:
             "Conduct entities do not share one identical comparison window"
         )
     periods = [_period(month) for month in months]
-    for previous, current in zip(periods, periods[1:], strict=False):
+    for index in range(1, len(periods)):
+        previous = periods[index - 1]
+        current = periods[index]
         if current != _next_period(previous):
             raise ConductMethodologyClosureError(
                 "Conduct comparison window must contain consecutive calendar months"
