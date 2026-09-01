@@ -153,6 +153,52 @@ def test_valid_historical_aaaamm_period_is_preserved(tmp_path: Path) -> None:
     assert 199501 in payload["entities"]["000001"]["months"]
 
 
+def test_unclassified_historical_zero_premium_row_is_ignored_and_audited(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "BaseCompleta.zip"
+    insurance = (
+        "damesano;coenti;coramo;premio_direto;premio_ganho\n"
+        "199503;5321;;0;0\n"
+        "199503;5321;0111;100,00;90,00\n"
+    )
+    with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as z:
+        z.writestr("Ses_seguros.csv", insurance.encode("latin1"))
+
+    payload = load_susep_insurance_exposure(["005321"], path)
+    month = payload["entities"]["005321"]["months"][199503]
+
+    assert month["insurance_premium_direct"] == pytest.approx(100.0)
+    assert month["insurance_premium_earned"] == pytest.approx(90.0)
+    assert set(month["insurance_branches"]) == {111}
+    assert payload["source"]["ignored_unclassified_zero_premium_rows"] == 1
+    assert payload["source"]["unclassified_branch_policy"] == (
+        "ignore_only_when_direct_and_earned_premiums_are_explicit_zero;"
+        "otherwise_fail_closed"
+    )
+
+
+@pytest.mark.parametrize(
+    ("direct", "earned"),
+    [("1", "0"), ("0", "1"), ("", "0"), ("0", "")],
+)
+def test_missing_branch_with_value_or_missingness_fails_closed(
+    tmp_path: Path,
+    direct: str,
+    earned: str,
+) -> None:
+    path = tmp_path / "BaseCompleta.zip"
+    insurance = (
+        "damesano;coenti;coramo;premio_direto;premio_ganho\n"
+        f"199503;5321;;{direct};{earned}\n"
+    )
+    with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as z:
+        z.writestr("Ses_seguros.csv", insurance.encode("latin1"))
+
+    with pytest.raises(InsuranceExposureSourceError, match="missing coramo"):
+        load_susep_insurance_exposure(["005321"], path)
+
+
 def test_malformed_period_or_branch_fails_closed(tmp_path: Path) -> None:
     for row, field in (
         ("202613;1;1001;100,00;90,00\n", "damesano"),
