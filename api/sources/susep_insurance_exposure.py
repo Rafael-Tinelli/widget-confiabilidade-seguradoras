@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import os
 import zipfile
 from collections import defaultdict
@@ -36,9 +37,10 @@ def _number(value: Any) -> float | None:
     if "," in text:
         text = text.replace(".", "").replace(",", ".")
     try:
-        return float(text)
+        number = float(text)
     except ValueError:
         return None
+    return number if math.isfinite(number) else None
 
 
 def _insurance_member(z: zipfile.ZipFile) -> str:
@@ -88,7 +90,11 @@ def load_susep_insurance_exposure(
     fip_codes: Iterable[str],
     zip_path: Path | None = None,
 ) -> dict[str, Any]:
-    """Load insurance premiums only; never reads pension or capitalization files."""
+    """Load insurance premiums only; never reads pension or capitalization files.
+
+    Missing cells in the approved direct-premium denominator are preserved as
+    missingness metadata. They are never silently converted to economic zero.
+    """
     fips = {_canon_fip(value) for value in fip_codes}
     fips.discard("")
     if not fips:
@@ -100,7 +106,13 @@ def load_susep_insurance_exposure(
         raise InsuranceExposureSourceError(f"SES insurance exposure unavailable: {probe}")
 
     aggregate: dict[tuple[str, int, int], dict[str, float]] = defaultdict(
-        lambda: {"premium_direct": 0.0, "premium_earned": 0.0, "rows": 0.0}
+        lambda: {
+            "premium_direct": 0.0,
+            "premium_earned": 0.0,
+            "rows": 0.0,
+            "premium_direct_missing_rows": 0.0,
+            "premium_earned_missing_rows": 0.0,
+        }
     )
     periods: set[int] = set()
 
@@ -129,9 +141,16 @@ def load_susep_insurance_exposure(
                 if direct is None and earned is None:
                     continue
                 key = (fip, period, branch)
-                aggregate[key]["premium_direct"] += direct or 0.0
-                aggregate[key]["premium_earned"] += earned or 0.0
-                aggregate[key]["rows"] += 1.0
+                values = aggregate[key]
+                values["rows"] += 1.0
+                if direct is None:
+                    values["premium_direct_missing_rows"] += 1.0
+                else:
+                    values["premium_direct"] += direct
+                if earned is None:
+                    values["premium_earned_missing_rows"] += 1.0
+                else:
+                    values["premium_earned"] += earned
                 periods.add(period)
 
     entities: dict[str, Any] = {fip: {"months": {}} for fip in sorted(fips)}
@@ -141,11 +160,19 @@ def load_susep_insurance_exposure(
             {
                 "insurance_premium_direct": 0.0,
                 "insurance_premium_earned": 0.0,
+                "insurance_premium_direct_missing_rows": 0,
+                "insurance_premium_earned_missing_rows": 0,
                 "insurance_branches": {},
             },
         )
         month["insurance_premium_direct"] += values["premium_direct"]
         month["insurance_premium_earned"] += values["premium_earned"]
+        month["insurance_premium_direct_missing_rows"] += int(
+            values["premium_direct_missing_rows"]
+        )
+        month["insurance_premium_earned_missing_rows"] += int(
+            values["premium_earned_missing_rows"]
+        )
         month["insurance_branches"][branch] = dict(values)
 
     return {
@@ -157,6 +184,7 @@ def load_susep_insurance_exposure(
             "exposure_domain": "insurance_only",
             "primary_candidate": "insurance_premium_direct",
             "diagnostic_only": "insurance_premium_earned",
+            "missingness_policy": "missing_premium_cells_are_not_economic_zero",
             "explicitly_excluded_domains": ["private_pension", "capitalization"],
             "scoring": "forbidden_in_source_artifact",
         },
