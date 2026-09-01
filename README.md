@@ -1,17 +1,19 @@
 # Ranking de Seguradoras Sanida — Pipeline de Dados e Metodologia v2
 
-> **Status do projeto:** fundação metodológica concluída em Draft; início da fase de **consolidação, auditoria e operacionalização evergreen**.  
+> **Status do projeto:** fundação metodológica concluída em Draft; **§19.1 — Auditoria geral de metodologia e dados formalmente fechada em 01/09/2026**; fase atual da consolidação: **§19.2 — auditoria do potencial informacional do frontend**.  
 > **Branch de trabalho:** `refactor/v2-data-foundation`.  
 > **PR:** #1 permanece **Draft**. Não fazer merge em `main` antes do fechamento da consolidação.  
 > **Produto principal:** consulta de identidade + avaliação semântica individual + comparação lado a lado; leaderboards unidimensionais e coleções semânticas são exploração secundária.  
 > **Ranking geral:** continua bloqueado (`ranking_eligible = 0`).  
 > **Frontend:** PHP/HTML/CSS/JS no HostGator consome contratos públicos prontos; **não recalcula metodologia**.  
-> **Marco crítico de 29/08/2026:** corrigido o numerador de `PLA/CMR`. O pipeline deve usar `NovoPla` (`new_pla`) como PLA prudencial final; `plajustado` (`pla_adjusted`) permanece somente como evidência intermediária da fonte. Artifacts gerados antes dessa correção não devem ser tratados como atuais para capital, assessment combinado ou leaderboards dependentes de capital.
+> **Marco crítico de 29/08/2026:** corrigido o numerador de `PLA/CMR`. O pipeline deve usar `NovoPla` (`new_pla`) como PLA prudencial final; `plajustado` (`pla_adjusted`) permanece somente como evidência intermediária da fonte. Artifacts gerados antes dessa correção não devem ser tratados como atuais para capital, assessment combinado ou leaderboards dependentes de capital.  
+> **Prova de fechamento do §19.1:** Full Generation Proof #49, run `33567550092`, head `7993dbabd1cf3cd21181c88d072aed4ce5573538`, concluída com sucesso; artifact `9824434275`, SHA-256 `d0ccb6ce274542015431ae9fde0084c12941d1983ce06527bf6872e442244431`.
 
 Este README é o **contrato operacional do projeto**. A partir daqui, o objetivo deixa de ser abrir novas frentes metodológicas e passa a ser consolidar o que já foi construído, eliminar inconsistências, automatizar publicação e garantir que o frontend use corretamente os contratos existentes.
 
 Documentação principal:
 
+- `docs/section-19-1-methodology-data-audit-closure.md`;
 - `docs/financial-methodology-closure.md`;
 - `docs/conduct-methodology-closure.md`;
 - `docs/cross-pillar-calibration-stage-1.md`;
@@ -267,7 +269,7 @@ com payload de assessment daquele snapshot        157
 participantes Sandbox                              12
 ```
 
-Esses números são snapshot, não constantes metodológicas.
+Esses números são snapshot histórico, não constantes metodológicas. O contrato público corrente é validado pelo Gate 4 e sua fotografia atual deve ser lida nos artifacts da geração correspondente.
 
 `search_index.json` resolve busca e desambiguação. `profile_manifest.json` resolve perfil → arquivo. Cada arquivo de `profiles/` contém identidade, relações, sinais disponíveis, semântica de ausência e contexto suficiente para o frontend não inventar lógica.
 
@@ -382,9 +384,9 @@ Artifacts anteriores a essa correção que contenham:
 - leaderboard `highest_pla_cmr_ratio`;
 - semântica pública derivada do capital;
 
-**devem ser regenerados antes de qualquer publicação considerada atual.**
+**não devem ser tratados como atuais.** A cadeia dependente foi posteriormente regenerada e validada durante o §19.1, inclusive pela Full Generation Proof #49.
 
-Contagens históricas como “14 seguradoras abaixo do CMR” pertencem ao build anterior e ficam **invalidada(s) para uso corrente** até rebuild integral da cadeia.
+Contagens históricas como “14 seguradoras abaixo do CMR” pertencem ao build anterior e permanecem **invalidadas para uso corrente**.
 
 ## 7.3. Competência financeira madura
 
@@ -568,11 +570,11 @@ capital_shortfall_and_conduct_pressure
 evidence_incomplete_for_joint_assessment
 ```
 
-### Atenção após correção do PLA
+### Estado após a auditoria de capital
 
-As **categorias de capital e as contagens de estados combinados precisam ser regeneradas** com `new_pla / CMR` antes de serem tratadas como snapshot atual.
+A cadeia dependente de capital foi **regenerada e validada** com `new_pla / CMR`. As contagens correntes devem ser lidas nos artifacts da geração integrada; contagens anteriores à correção permanecem históricas/invalidadas para uso corrente.
 
-O desenho semântico continua válido; as contagens concretas anteriores podem mudar.
+O desenho semântico não compensatório permaneceu válido após a auditoria.
 
 ---
 
@@ -606,7 +608,7 @@ lowest_conduct_pressure_ratio
 highest_conduct_pressure_ratio
 ```
 
-O leaderboard de PLA/CMR deve ser reconstruído após a correção de `new_pla`.
+O leaderboard de PLA/CMR já foi reconstruído e validado após a correção de `new_pla`.
 
 Coleções semânticas permanecem `ordered = false`.
 
@@ -786,9 +788,14 @@ workflow parcial
 
 # 16. Workflows e dependências
 
-Workflows relevantes incluem:
+Autoridades automáticas da consolidação:
 
 - `CI`;
+- `V2 Gate 4 Evergreen Contract`;
+- `V2 Gate 4 Full Generation Proof`.
+
+Workflows especializados permanecem úteis como validação diagnóstica/manual quando necessário, incluindo:
+
 - `V2 Foundation Validation`;
 - `V2 Classification Validation`;
 - `V2 Lifecycle Relationships Validation`;
@@ -836,6 +843,8 @@ O pipeline deve falhar diante de situações como:
 - `entity_id` duplicado;
 - CNPJ incompatível duplicado;
 - marca apontando para entidade inexistente;
+- referência pública (`*_profile_id`) apontando para perfil inexistente;
+- SSPE recebendo semântica ou assessment de seguradora ordinária;
 - Sandbox vazando para benchmark ordinário;
 - previdência/capitalização vazando para exposição de seguros;
 - reclamações transferidas silenciosamente de subject para carrier;
@@ -854,7 +863,8 @@ O pipeline deve falhar diante de situações como:
 - `PLA/CMR` calculado com campo diferente de `new_pla`;
 - fallback silencioso de `new_pla` para `pla_adjusted`;
 - competência madura calculada com regra de capital diferente da usada no assessment;
-- artifact público dependente de capital gerado com versão anterior do Financial Evidence.
+- artifact público dependente de capital gerado com versão anterior do Financial Evidence;
+- reconstrução do pacote final misturando artifacts de gerações diferentes.
 
 ---
 
@@ -879,7 +889,7 @@ O conjunto de testes inclui regressão onde `plajustado` indicaria falsamente ra
 
 # 19. Fase atual — CONSOLIDAÇÃO DO WIDGET
 
-A próxima fase oficial do projeto é:
+A fase oficial do projeto é:
 
 ```text
 consolidation_audit_evergreen_publication_and_frontend_polish
@@ -887,16 +897,72 @@ consolidation_audit_evergreen_publication_and_frontend_polish
 
 Objetivos obrigatórios:
 
-## 19.1. Auditoria geral de metodologia e dados
+## 19.1. Auditoria geral de metodologia e dados — **FECHADO**
 
-- revisar fórmulas desde a fonte até o JSON público;
-- confrontar amostras relevantes com dados brutos;
-- testar casos intuitivamente suspeitos;
-- procurar erros de unidade, campo, sinal, período, denominador e missingness;
-- verificar consistência entre documentação, código, testes e artifacts;
-- adicionar regressões para todo bug real encontrado.
+Status formal:
 
-A descoberta `plajustado` × `NovoPla` é o precedente: aparência de plausibilidade não substitui auditoria da semântica da fonte.
+```text
+SECTION_19_1_STATUS = CLOSED
+closed_at = 2026-09-01
+methodology_recalibration_required = false
+ranking_gate_opened = false
+production_cutover_authorized_by_19_1 = false
+```
+
+Documento de encerramento:
+
+`docs/section-19-1-methodology-data-audit-closure.md`
+
+A auditoria percorreu a cadeia **fonte → parsing → identidade/período → unidade/sinal/missingness → denominador/fórmula → artifacts → contratos semânticos → JSON público → pacote Gate 4**.
+
+Critérios cumpridos:
+
+- fórmulas críticas revisadas desde a fonte até o JSON público;
+- amostras e casos suspeitos confrontados com a cadeia real;
+- erros de unidade, campo, sinal, período, denominador, missingness e parsing investigados explicitamente;
+- bugs reais corrigidos na camada de origem adequada;
+- regressões adicionadas para impedir retorno das falhas;
+- documentação corrente reconciliada com artifacts atuais;
+- contrato público final incorporado ao caminho canônico do Gate 4;
+- lineage/freshness/cache preservados sem fingir que cache antigo é fonte fresca;
+- pacote público validado como geração única e com rollback verificável.
+
+Principais correções consolidadas no §19.1:
+
+- `PLA/CMR = new_pla / CMR`, sem fallback para `pla_adjusted`;
+- ingestão financeira SES fail-closed para valores/IDs/períodos/quadros malformados;
+- pressão de Conduta anual alinhada mês a mês em Calibration, Credibility, Portfolio Mix e Closure;
+- missingness, zero, negativo e mercado sem reclamações preservados como estados distintos;
+- períodos consecutivos e contadores inteiros validados sem truncamento silencioso;
+- finalização regulatória de SSPE incorporada ao Gate 4 canônico;
+- validator público incorporado ao empacotamento;
+- referências públicas para perfis inexistentes passam a falhar fechado;
+- política de `latest successful artifacts` removida do contrato corrente em favor de `same-generation workspace`/`build_id` único.
+
+Prova canônica final:
+
+```text
+V2 Gate 4 Full Generation Proof #49
+run        33567550092
+head       7993dbabd1cf3cd21181c88d072aed4ce5573538
+conclusion success
+artifact   9824434275
+sha256     d0ccb6ce274542015431ae9fde0084c12941d1983ce06527bf6872e442244431
+```
+
+Snapshot operacional pós-auditoria, apenas como fotografia:
+
+```text
+regulatory_universe     156
+conduct_comparable      101
+conduct_not_comparable   55
+assessment_eligible      82
+ranking_eligible          0
+```
+
+A descoberta `plajustado` × `NovoPla` permanece o precedente operacional: aparência de plausibilidade não substitui auditoria da semântica da fonte.
+
+**O próximo item ativo é o §19.2.**
 
 ## 19.2. Auditoria do potencial informacional do frontend
 
@@ -1056,13 +1122,11 @@ E eliminar o que era frágil:
 O próximo estágio é:
 
 ```text
-AUDITAR
-→ RECONSTRUIR ARTIFACTS AFETADOS
-→ CONSOLIDAR WORKFLOWS
-→ AUTOMATIZAR PUBLICAÇÃO
-→ AUDITAR FRONTEND
-→ POLIR UX/SEO
-→ LIMPAR LEGACY/EXPERIMENTOS
+AUDITAR FRONTEND / POTENCIAL INFORMACIONAL (§19.2)
+→ CONSOLIDAR EVERGREEN / ZERO MANUTENÇÃO (§19.3)
+→ FECHAR CRON JOBS E PUBLICAÇÃO (§19.4)
+→ LIMPAR E CLASSIFICAR REPOSITÓRIO (§19.5)
+→ REVISAR FRONTEND E SEO (§19.6, fora do escopo deste ciclo quando aplicável)
 → VALIDAR STAGING
 → SOMENTE DEPOIS PREPARAR MERGE/PRODUÇÃO
 ```
