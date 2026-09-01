@@ -203,6 +203,29 @@ def _validate_profile_semantics(
             )
 
 
+def _validate_profile_references(
+    profiles: dict[str, dict[str, Any]],
+) -> None:
+    valid_profile_ids = set(profiles)
+
+    def walk(value: Any, path: str) -> None:
+        if isinstance(value, dict):
+            for key, child in value.items():
+                if key == "profile_id" or key.endswith("_profile_id"):
+                    if child is not None:
+                        _require(
+                            isinstance(child, str) and child in valid_profile_ids,
+                            f"dangling public profile reference at {path}.{key}: {child!r}",
+                        )
+                walk(child, f"{path}.{key}")
+        elif isinstance(value, list):
+            for index, child in enumerate(value):
+                walk(child, f"{path}[{index}]")
+
+    for profile_id, profile in profiles.items():
+        walk(profile, f"$.profiles[{profile_id}]")
+
+
 def _validate_search_index(
     contract: dict[str, Any],
     profiles: dict[str, dict[str, Any]],
@@ -276,6 +299,7 @@ def validate_real_public_search_profile_contract() -> dict[str, Any]:
     counts = _validate_population(contract, explorer, sandbox, entity_by_id)
     _validate_policy(contract)
     _validate_profile_semantics(profiles)
+    _validate_profile_references(profiles)
     _validate_search_index(contract, profiles)
     _walk_public(contract.get("profiles") or [])
     _validate_public_files(counts["profiles"])
