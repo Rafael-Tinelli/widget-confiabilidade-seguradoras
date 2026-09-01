@@ -8,10 +8,12 @@ from api.v2.build_eligibility_inventory import LIFECYCLE_ARTIFACT
 from api.v2.gate4_pipeline import (
     STAGES,
     PipelineDefinitionError,
+    PipelineExecutionError,
     PipelineStage,
     ancestors,
     pipeline_contract,
     publication_blockers,
+    run_all,
     stage_map,
     topological_order,
     validate_pipeline,
@@ -189,6 +191,26 @@ def test_financial_evidence_uses_materialized_gate4_inputs():
     assert "financial_evidence" not in publication_blockers()
 
 
+def test_liquidity_and_operating_use_materialized_gate4_inputs():
+    mapping = stage_map(STAGES)
+
+    for stage_id in ("liquidity", "operating"):
+        stage = mapping[stage_id]
+        assert stage.kind == "derive"
+        assert stage.dependencies == ("source_snapshot", "eligibility")
+        command = stage.commands[0]
+        assert "--eligibility-input" in command
+        eligibility_index = command.index("--eligibility-input") + 1
+        assert (
+            command[eligibility_index]
+            == "data/derived/v2/entity_eligibility_inventory.json"
+        )
+        assert "--ses-zip" in command
+        ses_index = command.index("--ses-zip") + 1
+        assert command[ses_index] == "data/raw/ses/BaseCompleta.zip"
+        assert stage_id not in publication_blockers()
+
+
 def test_lifecycle_uses_materialized_gate4_inputs():
     mapping = stage_map(STAGES)
     lifecycle = mapping["lifecycle"]
@@ -272,3 +294,26 @@ def test_consumer_cache_bootstrap_remains_outside_the_publication_dag():
 
     assert "conduct_consumer_bootstrap" not in mapping
     assert publication_blockers() == ()
+
+
+def test_run_all_refuses_any_future_publication_blocker():
+    blocked = (
+        PipelineStage(
+            stage_id="source_snapshot",
+            kind="source",
+            dependencies=(),
+            commands=(),
+            outputs=(),
+            evergreen_ready=False,
+        ),
+        PipelineStage(
+            stage_id="distribution_manifest",
+            kind="package",
+            dependencies=("source_snapshot",),
+            commands=(),
+            outputs=(),
+        ),
+    )
+
+    with pytest.raises(PipelineExecutionError, match="publication blockers remain"):
+        run_all(blocked)
