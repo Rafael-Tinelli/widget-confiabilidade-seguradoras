@@ -9,6 +9,8 @@ on:
       - ".github/workflows/v2-gate4-full-generation-proof.yml"
       - "api/v2/gate4_pipeline.py"
       - "api/v2/generation.py"
+      - "api/v2/build_liquidity_experiment.py"
+      - "api/v2/build_operating_experiment.py"
       - "api/v2/build_public_distribution_manifest.py"
       - "api/v2/install_public_generation.py"
       - "api/v2/build_ranking_eligibility_preflight.py"
@@ -82,6 +84,8 @@ jobs:
           ruff check \
             api/v2/gate4_pipeline.py \
             api/v2/generation.py \
+            api/v2/build_liquidity_experiment.py \
+            api/v2/build_operating_experiment.py \
             api/v2/build_public_distribution_manifest.py \
             api/v2/install_public_generation.py \
             api/v2/build_ranking_eligibility_preflight.py \
@@ -128,6 +132,13 @@ jobs:
           source_commands = (stages.get("source_snapshot") or {}).get("commands") or []
           if not source_commands:
               raise SystemExit("source_snapshot must be executable by the canonical DAG")
+          for stage_id in ("financial_evidence", "liquidity", "operating"):
+              commands = (stages.get(stage_id) or {}).get("commands") or []
+              flattened = [part for command in commands for part in command]
+              if "--eligibility-input" not in flattened or "--ses-zip" not in flattened:
+                  raise SystemExit(
+                      f"{stage_id} must consume same-generation eligibility and SES inputs"
+                  )
           PY
 
       - name: Remove prior public-package materialization
