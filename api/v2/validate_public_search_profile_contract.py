@@ -211,12 +211,14 @@ def _validate_profile_references(
     def walk(value: Any, path: str) -> None:
         if isinstance(value, dict):
             for key, child in value.items():
-                if key == "profile_id" or key.endswith("_profile_id"):
-                    if child is not None:
-                        _require(
-                            isinstance(child, str) and child in valid_profile_ids,
-                            f"dangling public profile reference at {path}.{key}: {child!r}",
-                        )
+                if (
+                    (key == "profile_id" or key.endswith("_profile_id"))
+                    and child is not None
+                ):
+                    _require(
+                        isinstance(child, str) and child in valid_profile_ids,
+                        f"dangling public profile reference at {path}.{key}: {child!r}",
+                    )
                 walk(child, f"{path}.{key}")
         elif isinstance(value, list):
             for index, child in enumerate(value):
