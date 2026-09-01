@@ -6,6 +6,8 @@ from typing import Any
 import numpy as np
 from scipy.stats import pearsonr, spearmanr
 
+from api.v2.financial_capital_semantics import capital_pla_cmr_ratio
+
 DESCRIPTIVE_BANDS: tuple[tuple[str, float | None, float | None], ...] = (
     ("below_0_50", None, 0.50),
     ("from_0_50_below_0_75", 0.50, 0.75),
@@ -104,12 +106,7 @@ def _capital_ratio(source_entity: dict[str, Any], reference_period: int | None) 
     if not reference_period:
         return None
     current = (source_entity.get("capital_history") or {}).get(reference_period) or {}
-    pla = _finite(current.get("pla_adjusted"))
-    cmr = _finite(current.get("cmr"))
-    if pla is None or cmr is None or cmr <= 0:
-        return None
-    ratio = pla / cmr
-    return ratio if math.isfinite(ratio) else None
+    return capital_pla_cmr_ratio(current)
 
 
 def _capital_redundancy(
