@@ -3,7 +3,7 @@ from __future__ import annotations
 import math
 from typing import Any
 
-MATURITY_POLICY_VERSION = "2.0-draft-financial-period-maturity-2"
+MATURITY_POLICY_VERSION = "2.0-draft-financial-period-maturity-3"
 MATURITY_LOOKBACK_PERIODS = 6
 MATURITY_MIN_RELATIVE_COVERAGE = 0.95
 CAPITAL_PLA_SOURCE_FIELD = "new_pla"
@@ -16,12 +16,15 @@ class FinancialPeriodMaturityError(RuntimeError):
 def _as_period_set(values: Any) -> set[int]:
     output: set[int] = set()
     for value in values or []:
-        try:
-            period = int(value)
-        except (TypeError, ValueError):
-            continue
-        if period > 0:
-            output.add(period)
+        text = str(value).strip()
+        if not text.isdigit():
+            raise FinancialPeriodMaturityError(f"invalid financial period: {value!r}")
+        period = int(text)
+        year = period // 100
+        month = period % 100
+        if not 1000 <= year <= 9999 or not 1 <= month <= 12:
+            raise FinancialPeriodMaturityError(f"invalid financial period: {value!r}")
+        output.add(period)
     return output
 
 
@@ -33,9 +36,27 @@ def _capital_metric_derivable(record: dict[str, Any] | None) -> bool:
     if pla is None or cmr is None:
         return False
     try:
-        return float(cmr) > 0.0
+        pla_number = float(pla)
+        cmr_number = float(cmr)
     except (TypeError, ValueError):
         return False
+    return math.isfinite(pla_number) and math.isfinite(cmr_number) and cmr_number > 0.0
+
+
+def _capital_duplicate_rows(source_entity: dict[str, Any], period: int) -> int:
+    by_period = source_entity.get("duplicate_capital_rows_by_period") or {}
+    raw = by_period.get(period, by_period.get(str(period), 0))
+    try:
+        number = float(raw)
+    except (TypeError, ValueError) as exc:
+        raise FinancialPeriodMaturityError(
+            f"invalid capital duplicate row count for {period}: {raw!r}"
+        ) from exc
+    if not math.isfinite(number) or number < 0 or not number.is_integer():
+        raise FinancialPeriodMaturityError(
+            f"invalid capital duplicate row count for {period}: {raw!r}"
+        )
+    return int(number)
 
 
 def _observed_periods(source_payload: dict[str, Any]) -> dict[str, set[int]]:
@@ -98,7 +119,10 @@ def build_financial_period_maturity(
         count = 0
         for source_entity in entities.values():
             record = (source_entity.get("capital_history") or {}).get(period)
-            if _capital_metric_derivable(record):
+            if (
+                _capital_duplicate_rows(source_entity, period) == 0
+                and _capital_metric_derivable(record)
+            ):
                 count += 1
         coverage[period] = count
 

@@ -24,6 +24,7 @@ def _write_zip(
     balance_cmpid: str = "1479",
     premium_period: str = "202606",
     premium_rows: str | None = None,
+    extra_capital_rows: str = "",
 ) -> None:
     with zipfile.ZipFile(path, "w") as z:
         z.writestr(
@@ -34,6 +35,7 @@ def _write_zip(
             f"{capital_fip};{capital_period};-100,50;100;1200;0;"
             "-3,72529029846191E-9;"
             f"{june_new_pla};800\n"
+            f"{extra_capital_rows}"
             "2;202606;;100;1200;0;0;;700\n",
         )
         z.writestr(
@@ -162,6 +164,20 @@ def test_reader_rejects_malformed_requested_fip_instead_of_stripping_it(
 
     with pytest.raises(FinancialEvidenceSourceError, match="requested FIP"):
         load_susep_financial_evidence(["abc000001"], path)
+
+
+def test_reader_tracks_duplicate_capital_rows_by_period(tmp_path: Path) -> None:
+    path = tmp_path / "BaseCompleta.zip"
+    _write_zip(
+        path,
+        extra_capital_rows="1;202606;100;100;1200;0;0;960;800\n",
+    )
+
+    payload = load_susep_financial_evidence(["000001"], path)
+    entity = payload["entities"]["000001"]
+
+    assert entity["duplicate_capital_rows"] == 1
+    assert entity["duplicate_capital_rows_by_period"] == {202606: 1}
 
 
 def test_nonzero_operation_presence_is_aggregated_across_csv_chunks(

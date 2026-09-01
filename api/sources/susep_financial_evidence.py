@@ -251,7 +251,12 @@ def _read_capital_history(
     z: zipfile.ZipFile,
     member: str,
     fips: set[str],
-) -> tuple[dict[str, dict[int, dict[str, Any]]], set[int], dict[str, int]]:
+) -> tuple[
+    dict[str, dict[int, dict[str, Any]]],
+    set[int],
+    dict[str, int],
+    dict[str, dict[int, int]],
+]:
     _, mapping = _header_map(z, member)
     columns = _require_columns(
         mapping,
@@ -271,6 +276,9 @@ def _read_capital_history(
     history: dict[str, dict[int, dict[str, Any]]] = defaultdict(dict)
     periods: set[int] = set()
     duplicate_counts: dict[str, int] = defaultdict(int)
+    duplicate_counts_by_period: dict[str, dict[int, int]] = defaultdict(
+        lambda: defaultdict(int)
+    )
 
     with z.open(member) as handle:
         for chunk in pd.read_csv(
@@ -329,10 +337,19 @@ def _read_capital_history(
                 }
                 if period in history[fip]:
                     duplicate_counts[fip] += 1
+                    duplicate_counts_by_period[fip][period] += 1
                 history[fip][period] = record
                 periods.add(period)
 
-    return dict(history), periods, dict(duplicate_counts)
+    return (
+        dict(history),
+        periods,
+        dict(duplicate_counts),
+        {
+            fip: dict(period_counts)
+            for fip, period_counts in duplicate_counts_by_period.items()
+        },
+    )
 
 
 def _optional_float(value: Any) -> float | None:
@@ -533,9 +550,12 @@ def load_susep_financial_evidence(
             balance_member = _find_member(z, "SES_Balanco.csv")
             operations_member = _find_member(z, "Ses_seguros.csv")
 
-            capital, capital_periods, capital_duplicates = _read_capital_history(
-                z, capital_member, fips
-            )
+            (
+                capital,
+                capital_periods,
+                capital_duplicates,
+                capital_duplicates_by_period,
+            ) = _read_capital_history(z, capital_member, fips)
             (
                 balance_periods_by_fip,
                 balance_values,
@@ -564,6 +584,9 @@ def load_susep_financial_evidence(
             "insurance_operation_periods": operation_periods_by_fip.get(fip, set()),
             "nonzero_premium_periods": nonzero_premium_periods.get(fip, set()),
             "duplicate_capital_rows": capital_duplicates.get(fip, 0),
+            "duplicate_capital_rows_by_period": capital_duplicates_by_period.get(
+                fip, {}
+            ),
             "duplicate_balance_cmpid_rows": balance_duplicates.get(fip, 0),
             "duplicate_balance_cmpid_rows_by_period": balance_duplicates_by_period.get(
                 fip, {}

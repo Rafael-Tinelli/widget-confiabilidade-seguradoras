@@ -348,11 +348,25 @@ Consequências obrigatórias:
 Versões após a correção:
 
 ```text
-FINANCIAL_EVIDENCE_VERSION = 2.0-draft-evidence-profile-3
-MATURITY_POLICY_VERSION     = 2.0-draft-financial-period-maturity-2
+FINANCIAL_EVIDENCE_VERSION = 2.0-draft-evidence-profile-4
+MATURITY_POLICY_VERSION     = 2.0-draft-financial-period-maturity-3
 ```
 
 Testes regressivos foram adicionados para impedir retorno ao numerador antigo.
+
+### Integridade da ingestão financeira SES
+
+O leitor financeiro falha fechado para linha CSV malformada, identificador FIP,
+`damesano` ou `CMPID` não inteiro, competência que não seja `AAAAMM` válida,
+número malformado e valor não finito. Notação científica finita publicada pela
+própria SUSEP continua aceita e preservada; caracteres desconhecidos nunca são
+apagados para fabricar um número aparentemente válido.
+
+Duplicatas de capital são contabilizadas por entidade e competência. Uma
+competência duplicada não participa da cobertura de maturidade nem deriva
+`new_pla / CMR`, pois escolher uma das linhas seria depender da ordem física do
+arquivo. O registro bruto permanece visível para investigação, sem virar score,
+ranking ou conclusão adversa automática.
 
 ### Regra de invalidação
 

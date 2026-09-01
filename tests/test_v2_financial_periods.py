@@ -109,6 +109,49 @@ def test_latest_common_period_is_kept_when_coverage_remains_near_peak() -> None:
     assert maturity["status"] == "latest_common_mature"
 
 
+def test_duplicate_capital_period_is_excluded_from_maturity_coverage() -> None:
+    source = {
+        "reference_periods": {
+            "capital": 202606,
+            "balance": 202606,
+            "insurance_operations": 202606,
+        },
+        "entities": {
+            "000001": _entity({202605: (100.0, 80.0), 202606: (100.0, 80.0)}),
+            "000002": _entity({202605: (100.0, 80.0), 202606: (100.0, 80.0)}),
+        },
+    }
+    source["entities"]["000002"]["duplicate_capital_rows_by_period"] = {
+        202606: 1
+    }
+
+    maturity = build_financial_period_maturity(source, min_relative_coverage=0.95)
+
+    assert maturity["capital_derivable_counts"] == {"202605": 2, "202606": 1}
+    assert maturity["selected_period"] == 202605
+    assert maturity["status"] == "latest_common_immature_rolled_back"
+
+
+def test_fractional_period_is_rejected_instead_of_truncated() -> None:
+    source = {
+        "reference_periods": {
+            "capital": 202606,
+            "balance": 202606,
+            "insurance_operations": 202606,
+        },
+        "entities": {
+            "000001": {
+                "capital_history": {202606: {"new_pla": 100.0, "cmr": 80.0}},
+                "balance_periods": {202606.5},
+                "insurance_operation_periods": {202606},
+            }
+        },
+    }
+
+    with pytest.raises(FinancialPeriodMaturityError, match="invalid financial period"):
+        build_financial_period_maturity(source)
+
+
 def test_period_maturity_requires_common_financial_period() -> None:
     source = {
         "reference_periods": {

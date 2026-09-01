@@ -55,6 +55,7 @@ def _source(
                 "insurance_operation_periods": set(periods),
                 "nonzero_premium_periods": set(periods),
                 "duplicate_capital_rows": 0,
+                "duplicate_capital_rows_by_period": {},
                 "duplicate_balance_cmpid_rows": 0,
             }
         },
@@ -135,6 +136,41 @@ def test_negative_cmr_is_source_investigation_case() -> None:
     assert profile["state"] == "requires_source_investigation"
     assert profile["capital"]["current_metric_state"] == "cmr_negative_invalid"
     assert profile["capital"]["pla_cmr_ratio"] is None
+
+
+def test_duplicate_current_capital_row_blocks_order_dependent_ratio() -> None:
+    source = _source()
+    source_entity = source["entities"]["000001"]
+    source_entity["duplicate_capital_rows"] = 1
+    source_entity["duplicate_capital_rows_by_period"] = {202606: 1}
+
+    entities = apply_financial_evidence([_eligible_entity()], source)
+    validate_financial_evidence(entities)
+    profile = entities[0]["financial_evidence"]
+
+    assert profile["state"] == "requires_source_investigation"
+    assert profile["capital"]["current_metric_state"] == "source_duplicate_rows"
+    assert profile["capital"]["duplicate_rows_current"] == 1
+    assert profile["capital"]["pla_cmr_ratio"] is None
+    assert "capital_source_duplicate_rows" in profile["reason_codes"]
+
+
+def test_duplicate_historical_capital_row_is_not_counted_as_derivable_history() -> None:
+    source = _source()
+    source_entity = source["entities"]["000001"]
+    source_entity["duplicate_capital_rows"] = 1
+    source_entity["duplicate_capital_rows_by_period"] = {202601: 1}
+
+    profile = apply_financial_evidence([_eligible_entity()], source)[0][
+        "financial_evidence"
+    ]
+
+    assert profile["state"] == "limited_core_history"
+    assert profile["capital"]["capital_adequacy_windows"]["12"] == {
+        "expected_months": 12,
+        "derivable_months": 11,
+        "complete": False,
+    }
 
 
 def test_noneligible_entity_is_not_applicable() -> None:

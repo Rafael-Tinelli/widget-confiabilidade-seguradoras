@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from collections import Counter
 from copy import deepcopy
 from typing import Any
@@ -9,7 +10,7 @@ from api.sources.susep_financial_evidence import (
     OPERATING_FORMULA_CMPIDS,
 )
 
-FINANCIAL_EVIDENCE_VERSION = "2.0-draft-evidence-profile-3"
+FINANCIAL_EVIDENCE_VERSION = "2.0-draft-evidence-profile-4"
 CORE_HISTORY_MONTHS = 12
 DESCRIPTIVE_HISTORY_WINDOWS = (12, 24, 36)
 CAPITAL_PLA_SOURCE_FIELD = "new_pla"
@@ -81,12 +82,24 @@ def _is_zero_filled_capital_record(record: dict[str, Any] | None) -> bool:
         return False
     keys = ("pla_adjusted", "cmr", "accounting_equity", "new_pla")
     values = [record.get(key) for key in keys]
-    return all(value is not None and float(value) == 0.0 for value in values)
+    if any(value is None for value in values):
+        return False
+    try:
+        numbers = [float(value) for value in values]
+    except (TypeError, ValueError):
+        return False
+    return all(math.isfinite(value) and value == 0.0 for value in numbers)
 
 
-def _capital_metric_state(record: dict[str, Any] | None) -> str:
+def _capital_metric_state(
+    record: dict[str, Any] | None,
+    *,
+    duplicate_rows: int = 0,
+) -> str:
     if not record:
         return "unavailable"
+    if duplicate_rows > 0:
+        return "source_duplicate_rows"
     if _is_zero_filled_capital_record(record):
         return "zero_filled_record_unusable"
     pla = record.get(CAPITAL_PLA_SOURCE_FIELD)
@@ -95,11 +108,38 @@ def _capital_metric_state(record: dict[str, Any] | None) -> str:
         return "pla_missing"
     if cmr is None:
         return "cmr_missing"
-    if float(cmr) == 0.0:
+    try:
+        pla_number = float(pla)
+        cmr_number = float(cmr)
+    except (TypeError, ValueError):
+        return "non_numeric_capital_value_invalid"
+    if not math.isfinite(pla_number) or not math.isfinite(cmr_number):
+        return "non_finite_capital_value_invalid"
+    if cmr_number == 0.0:
         return "cmr_zero_unusable"
-    if float(cmr) < 0.0:
+    if cmr_number < 0.0:
         return "cmr_negative_invalid"
     return "pla_cmr_derivable"
+
+
+def _capital_duplicate_rows_by_period(evidence: dict[str, Any]) -> dict[int, int]:
+    output: dict[int, int] = {}
+    for raw_period, raw_count in (
+        evidence.get("duplicate_capital_rows_by_period") or {}
+    ).items():
+        try:
+            period = int(raw_period)
+            number = float(raw_count)
+        except (TypeError, ValueError) as exc:
+            raise FinancialEvidenceInvariantError(
+                f"invalid capital duplicate metadata: {raw_period!r}={raw_count!r}"
+            ) from exc
+        if not math.isfinite(number) or number < 0 or not number.is_integer():
+            raise FinancialEvidenceInvariantError(
+                f"invalid capital duplicate metadata: {raw_period!r}={raw_count!r}"
+            )
+        output[period] = int(number)
+    return output
 
 
 def _capital_profile(
@@ -109,6 +149,8 @@ def _capital_profile(
     history = evidence.get("capital_history") or {}
     periods = {int(period) for period in history}
     latest = history.get(reference_period) if reference_period else None
+    duplicate_rows_by_period = _capital_duplicate_rows_by_period(evidence)
+    current_duplicate_rows = duplicate_rows_by_period.get(reference_period or -1, 0)
     windows = {
         months: month_window(reference_period, months)
         for months in DESCRIPTIVE_HISTORY_WINDOWS
@@ -120,10 +162,19 @@ def _capital_profile(
         period = int(raw_period)
         if _is_zero_filled_capital_record(record):
             zero_filled_periods.add(period)
-        if _capital_metric_state(record) == "pla_cmr_derivable":
+        if (
+            _capital_metric_state(
+                record,
+                duplicate_rows=duplicate_rows_by_period.get(period, 0),
+            )
+            == "pla_cmr_derivable"
+        ):
             adequacy_periods.add(period)
 
-    metric_state = _capital_metric_state(latest)
+    metric_state = _capital_metric_state(
+        latest,
+        duplicate_rows=current_duplicate_rows,
+    )
     latest_pla = (latest or {}).get(CAPITAL_PLA_SOURCE_FIELD)
     latest_cmr = (latest or {}).get("cmr")
     ratio = None
@@ -133,7 +184,12 @@ def _capital_profile(
     core_window = windows[CORE_HISTORY_MONTHS]
     if not latest:
         state = "insufficient"
-    elif metric_state == "cmr_negative_invalid":
+    elif metric_state in {
+        "cmr_negative_invalid",
+        "source_duplicate_rows",
+        "non_numeric_capital_value_invalid",
+        "non_finite_capital_value_invalid",
+    }:
         state = "invalid_current_metric"
     elif metric_state != "pla_cmr_derivable":
         state = "metric_unavailable"
@@ -178,12 +234,14 @@ def _capital_profile(
             "derivable" if metric_state == "pla_cmr_derivable" else "unavailable"
         ),
         "duplicate_rows": int(evidence.get("duplicate_capital_rows") or 0),
+        "duplicate_rows_current": current_duplicate_rows,
         "interpretation": (
             "PLA/CMR uses NovoPla (normalized as new_pla) from Ses_pl_margem.csv as the "
             "prudential PLA numerator. The raw plajustado value is retained as intermediate "
             "source evidence but is not used as the numerator. A zero CMR is treated as "
             "unusable evidence, not as a zero capital requirement and not as an adverse "
-            "solvency conclusion."
+            "solvency conclusion. A duplicated entity-period is never used to derive "
+            "PLA/CMR because choosing either source row would be order-dependent."
         ),
     }
 
@@ -302,7 +360,7 @@ def derive_financial_evidence_profile(
         reasons.append("capital_evidence_insufficient")
     elif capital["state"] == "invalid_current_metric":
         state = "requires_source_investigation"
-        reasons.append("capital_cmr_negative_invalid")
+        reasons.append(f"capital_{capital['current_metric_state']}")
     elif capital["state"] == "metric_unavailable":
         state = "capital_metric_unavailable"
         reasons.append("capital_adequacy_metric_unavailable")
