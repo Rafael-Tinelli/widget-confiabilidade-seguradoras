@@ -317,7 +317,7 @@ def build_ranking_eligibility_preflight(
             "coverage_artifact": coverage.get("artifact"),
             "coverage_version": coverage.get("version"),
             "operational_freshness_policy": (
-                "workflow_restores_latest_successful_upstream_artifacts_on_the_same_branch"
+                "single_generation_workspace_cross_run_latest_successful_restore_forbidden"
             ),
         },
         "claim_contract": {
