@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from api.sources.susep_insurance_exposure import (
+    InsuranceExposureSourceError,
     load_susep_insurance_exposure,
     probe_susep_insurance_exposure,
 )
@@ -39,6 +40,8 @@ def test_insurance_exposure_does_not_require_pension_or_capitalization_files(
     assert payload["source"]["missingness_policy"] == (
         "missing_premium_cells_are_not_economic_zero"
     )
+    assert payload["source"]["malformed_value_policy"] == "fail_closed_not_missing"
+    assert payload["source"]["malformed_row_policy"] == "fail_closed_not_skipped"
     assert payload["source"]["explicitly_excluded_domains"] == [
         "private_pension",
         "capitalization",
@@ -79,7 +82,26 @@ def test_missing_direct_premium_is_preserved_not_imputed_as_zero(tmp_path: Path)
     assert jan["insurance_branches"][1001]["premium_direct"] == 0.0
 
 
-def test_non_finite_premium_cell_is_preserved_as_missingness(tmp_path: Path) -> None:
+def test_row_with_both_premiums_missing_is_preserved_as_missingness(tmp_path: Path) -> None:
+    path = tmp_path / "BaseCompleta.zip"
+    insurance = (
+        "damesano;coenti;coramo;premio_direto;premio_ganho\n"
+        "202601;1;1001;;\n"
+    )
+    with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as z:
+        z.writestr("Ses_seguros.csv", insurance.encode("latin1"))
+
+    payload = load_susep_insurance_exposure(["000001"], path)
+    jan = payload["entities"]["000001"]["months"][202601]
+
+    assert jan["insurance_premium_direct"] == 0.0
+    assert jan["insurance_premium_earned"] == 0.0
+    assert jan["insurance_premium_direct_missing_rows"] == 1
+    assert jan["insurance_premium_earned_missing_rows"] == 1
+    assert jan["insurance_branches"][1001]["rows"] == 1.0
+
+
+def test_parser_nan_premium_cell_is_preserved_as_missingness(tmp_path: Path) -> None:
     path = tmp_path / "BaseCompleta.zip"
     insurance = (
         "damesano;coenti;coramo;premio_direto;premio_ganho\n"
@@ -92,6 +114,35 @@ def test_non_finite_premium_cell_is_preserved_as_missingness(tmp_path: Path) -> 
     jan = payload["entities"]["000001"]["months"][202601]
     assert jan["insurance_premium_direct_missing_rows"] == 1
     assert jan["insurance_premium_direct"] == 0.0
+
+
+def test_malformed_premium_cell_fails_closed_instead_of_becoming_missing(tmp_path: Path) -> None:
+    path = tmp_path / "BaseCompleta.zip"
+    insurance = (
+        "damesano;coenti;coramo;premio_direto;premio_ganho\n"
+        "202601;1;1001;not-a-number;90,00\n"
+    )
+    with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as z:
+        z.writestr("Ses_seguros.csv", insurance.encode("latin1"))
+
+    with pytest.raises(InsuranceExposureSourceError, match="premio_direto"):
+        load_susep_insurance_exposure(["000001"], path)
+
+
+def test_malformed_period_or_branch_fails_closed(tmp_path: Path) -> None:
+    for row, field in (
+        ("202613;1;1001;100,00;90,00\n", "damesano"),
+        ("202601;1;bad;100,00;90,00\n", "coramo"),
+    ):
+        path = tmp_path / f"BaseCompleta-{field}.zip"
+        insurance = (
+            "damesano;coenti;coramo;premio_direto;premio_ganho\n" + row
+        )
+        with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as z:
+            z.writestr("Ses_seguros.csv", insurance.encode("latin1"))
+
+        with pytest.raises(InsuranceExposureSourceError, match=field):
+            load_susep_insurance_exposure(["000001"], path)
 
 
 def test_insurance_exposure_filters_requested_fips(tmp_path: Path) -> None:
