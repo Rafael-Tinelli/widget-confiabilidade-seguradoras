@@ -8,6 +8,8 @@ from typing import Any
 import numpy as np
 from scipy.stats import spearmanr
 
+from api.v2.financial_capital_semantics import capital_pla_cmr_ratio
+
 OPERATING_EXPERIMENT_VERSION = "2.0-draft-operating-experiment-1"
 
 OPERATING_BASE_TERMS: tuple[tuple[int, float], ...] = (
@@ -471,12 +473,7 @@ def _capital_ratio(source_entity: dict[str, Any], period: int | None) -> float |
     if not period:
         return None
     row = (source_entity.get("capital_history") or {}).get(period) or {}
-    pla = _finite(row.get("pla_adjusted"))
-    cmr = _finite(row.get("cmr"))
-    if pla is None or cmr is None or cmr <= 0:
-        return None
-    result = pla / cmr
-    return result if math.isfinite(result) else None
+    return capital_pla_cmr_ratio(row)
 
 
 def _ilt_value(source_entity: dict[str, Any], period: int | None) -> float | None:
