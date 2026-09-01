@@ -1,6 +1,6 @@
 # Contrato de elegibilidade de avaliação — v2
 
-Status: **fechado; assessment individual pode ser aberto quando a evidência satisfaz o contrato; ranking permanece independente e bloqueado**.
+Status: **fechado; assessment individual é publicado quando a evidência satisfaz o contrato; ranking permanece independente e bloqueado**.
 
 ## Pergunta do gate
 
@@ -38,11 +38,11 @@ not_eligible_joint_evidence_incomplete
 not_eligible_core_evidence_confidence
 ```
 
-Uma entidade inelegível não recebe nota zero, posição inferior ou classe negativa. O motivo da ineligibilidade deve permanecer explícito.
+Uma entidade inelegível não recebe nota zero, posição inferior ou classe negativa. O motivo da ineligibilidade permanece explícito.
 
 ## População dinâmica
 
-O workflow não exige 157, 156, 85 ou qualquer outra quantidade fixa.
+O contrato não exige quantidade fixa de entidades.
 
 Invariantes executáveis:
 
@@ -54,48 +54,38 @@ eligible rows = assessment_eligible
 semantic_supported >= assessment_eligible
 ```
 
-A distribuição entre classes públicas também é diagnóstico. O único veto semântico estrutural é: `evidence_incomplete` não pode aparecer entre as entidades elegíveis.
+`evidence_incomplete` não pode aparecer entre entidades elegíveis.
 
-## Snapshot validado — 30/08/2026
+## Snapshot integrado corrente
 
-Run:
-
-```text
-V2 Assessment Eligibility Contract
-run 33323343812
-head 35e509d31de68a9311ede57ac245de6b7d3c0e11
-artifact 9735530398
-SHA256 ZIP 237a9444bd373302758c0e1f7f0d9642f30ef0ac6ba2870a83a6a896db2d4d4d
-```
-
-População:
+Na Full Generation #44 (`run_id = 33562392945`, `head = c95e8675f8a2363b325623b2f310886e81f1c027`):
 
 ```text
 regulatory_universe                    156
-semantic_public_assessment_supported    85
-assessment_eligible                     85
-assessment_not_eligible                 71
+semantic_public_assessment_supported    82
+assessment_eligible                     82
+assessment_not_eligible                 74
 ranking_eligible                         0
 ```
 
-Classes entre as 85 elegíveis:
+Classes entre as 82 elegíveis:
 
 ```text
-favorable_reading     48
-attention              36
-prudential_warning      1
+favorable_reading     45
+attention              35
+prudential_warning      2
 ```
 
-Razões principais entre as 71 não elegíveis:
+Razões de evidência entre as 74 não elegíveis:
 
 ```text
-conduta_nao_comparavel_com_seguranca       52
+conduta_nao_comparavel_com_seguranca        51
 conduta_com_cobertura_temporal_insuficiente 11
-conduta_sensivel_ao_denominador              5
-financeiro_central_incompleto                3
+conduta_sensivel_ao_denominador               5
+financeiro_central_incompleto                 7
 ```
 
-Todas as 85 elegíveis têm, no snapshot atual, `historico_estabelecido` como confiança financeira central. Isso é resultado da execução, não requisito de contagem.
+Essas contagens são fotografia da geração, não requisitos do gate.
 
 ## O que este gate não autoriza
 
@@ -108,14 +98,33 @@ Todas as 85 elegíveis têm, no snapshot atual, `historico_estabelecido` como co
 - ausência de alertas;
 - garantia futura.
 
-Uma avaliação adversa pode ser perfeitamente elegível se a evidência for suficiente.
+Uma avaliação adversa pode ser elegível se a evidência for suficiente.
+
+## Operação canônica
+
+O contrato antigo de Gate 3 restaurava artifacts bem-sucedidos de execuções distintas. Esse mecanismo não é mais a política operacional da v2.
+
+No Gate 4 fechado, a política é:
+
+```text
+single_generation_workspace_required = true
+cross_run_latest_successful_restore_forbidden = true
+```
+
+O artifact corrente registra:
+
+```text
+operational_freshness_policy =
+single_generation_workspace_cross_run_latest_successful_restore_forbidden
+```
+
+Assessment, contratos entre pilares e publicação são gerados no mesmo workspace/build; uma recomposição cross-run não é autoridade para publicação.
 
 ## Implementação
 
 ```text
 api/v2/build_assessment_eligibility_contract.py
 tests/test_v2_assessment_eligibility_contract.py
-.github/workflows/v2-assessment-eligibility-contract.yml
 ```
 
 Artifact:
@@ -124,10 +133,6 @@ Artifact:
 data/derived/v2/assessment_eligibility_contract.json
 ```
 
-## Operação atual
+## Encadeamento já concluído
 
-Neste Gate 3, o workflow restaura artifacts bem-sucedidos da branch e os builders reconciliam população/IDs, falhando quando gerações incompatíveis são misturadas. A orquestração transversal por build ID/same-head para toda a cadeia é assunto do Gate 4.
-
-## Próximo gate
-
-O `ranking_eligibility_preflight` pergunta separadamente se existe escopo e regra de ordenação defensáveis para chamar o produto de ranking.
+O `ranking_eligibility_preflight` é o contrato separado que pergunta se existe escopo e regra de ordenação defensáveis. Esse estágio já foi fechado e mantém `ranking_eligible = 0`.
