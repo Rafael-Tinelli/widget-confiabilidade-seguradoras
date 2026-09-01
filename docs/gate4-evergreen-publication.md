@@ -1,43 +1,38 @@
 # Gate 4 — build evergreen, lineage e publicação atômica
 
-Status: **em implementação; `source_snapshot` fechado como evergreen e publicação ainda bloqueada por `conduct_source_snapshot`**.
+Status: **fechado para o contrato de build/publicação da v2; cutover de produção permanece fora deste Gate**.
 
-Este Gate sucede os contratos metodológicos já fechados nos Gates 1–3. Ele não altera universo regulatório, PLA/CMR, ILT, Conduta, assessment, leaderboards ou a decisão de manter o ranking geral bloqueado.
+O Gate 4 resolve a fragilidade operacional dos workflows experimentais sem alterar universo regulatório, metodologia financeira, Conduta, assessment, leaderboards ou a decisão de manter o ranking geral bloqueado.
 
-## 1. Problema operacional
-
-Os workflows v2 nasceram como instrumentos de investigação e validação. Parte deles restaura o último artifact bem-sucedido da branch; outra parte exige artifact do mesmo head. Como os workflows de PR são disparados em paralelo, um downstream pode iniciar antes do upstream correspondente existir.
-
-Consequências observadas:
-
-- falhas por corrida mesmo quando o código é válido;
-- necessidade de reruns manuais em ordem topológica;
-- possibilidade de combinar artifacts de gerações diferentes quando se usa `latest successful`;
-- ausência de uma identidade transversal da geração publicada;
-- ausência de um pacote público único cuja completude possa ser verificada antes da troca em produção.
-
-O Gate 4 trata esses problemas como **problemas de build e publicação**, não como motivo para recalibrar a metodologia.
-
-## 2. Invariantes do Gate 4
+## 1. Contrato final
 
 ```text
 uma publicação = uma geração
 uma geração = um build_id
-um build_id = um source_head_sha + uma execução/attempt identificável
+um build_id = um source_head_sha + run/attempt identificável
 ```
 
-É proibido no caminho evergreen:
+No caminho evergreen é proibido:
 
 ```text
-restaurar "latest successful" de outra geração
+restaurar latest successful de outra geração
 misturar heads em um pacote
 publicar JSON parcialmente atualizado
 usar cache antigo sem declarar stale
 chamar fonte indisponível de fresh
-inferir completude pelo simples fato de arquivos existirem no servidor
+inferir completude apenas pela existência de arquivos
 ```
 
-## 3. Build context
+O contrato final materializado em `api/v2/gate4_pipeline.py` exige:
+
+```text
+publication_ready = true
+publication_blockers = []
+single_generation_workspace_required = true
+cross_run_latest_successful_restore_forbidden = true
+```
+
+## 2. Build context e lineage
 
 `api/v2/generation.py` define o contexto transversal:
 
@@ -49,100 +44,57 @@ workflow_run_id
 workflow_run_attempt
 ```
 
-O `build_id` é propagado à lineage das fontes e ao manifest de distribuição. Um source record cujo `build_id` não coincide com a geração atual é rejeitado.
-
-## 4. Estados de fonte
-
-A política inicial é explícita e fail-closed:
+A lineage de fontes registra, por material utilizado:
 
 ```text
-fetch atual bem-sucedido + snapshot materializado → fresh
-fetch atual falhou + snapshot materializado         → stale
-fetch atual falhou + nenhum snapshot                → unavailable
-fetch declarado como bem-sucedido sem arquivo      → erro
+source_id
+state = fresh | stale | unavailable
+sha256 quando há conteúdo materializado
+build_id
+proveniência e timestamps aplicáveis
 ```
 
-`fresh` e `stale` exigem SHA-256 do conteúdo utilizado. `unavailable` não pode carregar hash como se houvesse conteúdo usado.
+Um source record de outra geração é rejeitado pelo caminho canônico.
 
-O estado `stale` não significa automaticamente que o dado é aceitável para qualquer finalidade. Limites de idade e criticidade devem ser definidos por fonte na etapa de integração. A regra deste contrato é anterior: **fallback nunca pode ser invisível**.
+## 3. DAG canônico de uma geração
 
-## 5. DAG de uma única geração
-
-`api/v2/gate4_pipeline.py` materializa o encadeamento que antes estava implícito nos workflows:
-
-```text
-fontes
-→ lifecycle
-→ eligibility
-→ evidência financeira / liquidez / operação / Conduta
-→ closures Financeiro e Conduta
-→ cross-pillar
-→ contrato semântico
-→ assessment
-→ ranking preflight
-→ leaderboards
-→ busca/perfis
-→ distribution_manifest.json
-```
-
-O DAG é testado para:
-
-- dependências inexistentes;
-- ciclos;
-- dois stages reivindicando o mesmo output;
-- ordem Financeiro;
-- ordem Conduta;
-- ancestralidade completa do pacote público.
-
-O caminho evergreen não deve usar `gh run list` para procurar outputs intermediários. Os builders executam no mesmo workspace e consomem arquivos produzidos anteriormente na própria geração.
-
-### Lifecycle, Eligibility e Financial Evidence separados da aquisição
-
-Os modos legados continuam disponíveis para os workflows de investigação atuais. O Gate 4 usa somente inputs materializados da mesma geração:
+A ordem topológica validada na prova final contém 25 stages:
 
 ```text
 source_snapshot
-→ classification_inventory.json
-→ receita_lifecycle_records.json
-→ BaseCompleta.zip
-→ Lifecycle
-→ Eligibility
-→ Financial Evidence
+→ lifecycle
+→ eligibility
+→ financial_evidence
+→ liquidity
+→ operating
+→ conduct_source_snapshot
+→ financial_closure
+→ relationship_watchdog
+→ sandbox_brand_conduct
+→ consumer_conduct
+→ conduct_coverage
+→ conduct_calibration
+→ conduct_credibility
+→ conduct_portfolio
+→ conduct_closure
+→ cross_stage1
+→ cross_coverage
+→ cross_stage2
+→ semantic_contract
+→ assessment_eligibility
+→ ranking_preflight
+→ leaderboards
+→ public_profiles
+→ distribution_manifest
 ```
 
-`Lifecycle` não abre SUSEP ou Receita no modo Gate 4. Ele recebe Classification e Receita lifecycle já materializados e usa o `BaseCompleta.zip` local apenas para grupos econômicos.
+Os builders do caminho canônico consomem outputs do mesmo workspace. A recomposição por `gh run list` permanece apenas em workflows diagnósticos legados/manualizados e não participa da publicação.
 
-`Eligibility` recebe diretamente o Lifecycle materializado, sem reconstruir Classification/Lifecycle.
+## 4. Fontes e watchdog
 
-`Financial Evidence` recebe diretamente Eligibility e o `BaseCompleta.zip` materializados; não refaz Lifecycle/Classification nem chama fontes regulatórias.
+A geração canônica centraliza os snapshots regulatório/financeiro e de Conduta, com cache explícito, lineage e hash dos materiais utilizados.
 
-Nenhuma regra de classificação, elegibilidade ou evidência financeira mudou com essa separação.
-
-### Relationships: derivação automática, watchdog e fato verificado
-
-O contrato de relationships separa duas responsabilidades:
-
-```text
-fontes estruturadas oficiais
-→ derivação automática de identidade, lifecycle e grupo econômico
-
-marca / risk carrier / sucessão / transferência de carteira
-→ somente fato source-backed materializado no registry verificado
-```
-
-Nomes semelhantes e pertencimento ao mesmo grupo jamais autorizam inferência de incorporação, sucessão ou transferência de reclamações.
-
-O stage evergreen `relationship_watchdog` é executado em toda geração **depois de Lifecycle + `conduct_source_snapshot` e antes de qualquer derivação de Conduta**. Ele produz `data/derived/v2/relationship_watchdog.json` e separa:
-
-```text
-observations
-→ relações já verificadas ou diretamente derivadas de fonte oficial estruturada
-
-candidates
-→ casos novos, ambíguos ou drift que exigem evidência adicional
-```
-
-Candidatos são diagnósticos e possuem contrato explícito:
+O `relationship_watchdog` é obrigatório antes da derivação de Conduta. Ele separa observações verificadas de candidatos que exigem evidência adicional e mantém:
 
 ```text
 assertion_effect = none
@@ -151,96 +103,11 @@ complaint_transfer_effect = none
 automatic_registry_mutation = forbidden
 ```
 
-Portanto, provider Consumer.gov não resolvido, entidade encerrada sem sucessor documentado, ambiguidade temporal de marca ou outro caso novo é automaticamente sinalizado sem virar relacionamento por heurística. Já drift de uma relação que o backend **afirma como verificada** é fail-closed e impede a Conduta de prosseguir.
+Drift em relação afirmada como verificada é fail-closed. Na prova final, `blocking_registry_drift_count = 0`.
 
-O watchdog cruza e protege os contratos centrais de `verified_relationships.json`, `conduct_subject_relationships.json` e `sandbox_brand_relationships.json`. Os testes cobrem explicitamente os padrões Youse → Caixa, Loovi → LTI, BB Seguro Auto → MAPFRE e HDI/HDI Global → Talanx, mantendo as semânticas distintas de risk carrier, subject relationship e economic group.
+## 5. Pacote público único
 
-Nem todo participante Sandbox exige uma marca separada: ausência de brand wrapper, isoladamente, não é tratada como erro. Quando existe wrapper, o watchdog exige coerência com o carrier canônico; quando surge uma marca realmente nova no universo de Conduta, a descoberta ocorre pelo provider não resolvido/ambíguo. Isso evita falsos positivos permanentes sem deixar casos novos invisíveis.
-
-### Ranking Stage 2 sem alias operacional
-
-O Ranking Preflight passou a consumir diretamente o artifact canônico:
-
-```text
-cross_pillar_architecture_experiment.json
-```
-
-O alias legado `cross_pillar_architecture_stage_2.json` deixou de ser necessário no caminho Gate 4. O ranking continua metodologicamente bloqueado (`ranking_eligible = 0`); o que foi removido foi apenas o blocker operacional de nome de arquivo.
-
-## 6. Blocker atual
-
-A publicação permanece propositalmente fechada enquanto este stage ainda não satisfaz o contrato evergreen:
-
-```text
-conduct_source_snapshot
-```
-
-### `source_snapshot` — fechado em 31/08/2026
-
-A aquisição regulatória/financeira foi centralizada em snapshot de uma geração, com lineage e estados verificáveis para os materiais necessários, incluindo:
-
-```text
-BaseCompleta.zip
-LISTAEMPRESAS.csv
-SUSEP licensed entities
-SUSEP special regimes
-SUSEP Sandbox
-Classification snapshot
-Receita lifecycle snapshot
-source_lineage.json
-```
-
-O cache Receita lifecycle possui contrato explícito `v2-receita-lifecycle-1`. Um cache legado sem versão só pode ser promovido quando o período, o universo regulatório e todas as validações estruturais atuais continuam compatíveis; a promoção preserva `fetched_at`. Versões desconhecidas não são reutilizadas silenciosamente, e um cache incompatível não impede nova tentativa de aquisição oficial.
-
-A prova de integração que autorizou o fechamento foi:
-
-```text
-workflow: V2 Gate 4 Source Snapshot Integration
-evento: push
-branch: refactor/v2-data-foundation
-head_sha: f4c2cbbeff80a292a6e5295aefe438a664af66a0
-run_id: 33358623692
-conclusion: success
-```
-
-A execução validou, no mesmo run, restauração do cache da branch, construção do source snapshot, lineage e outputs materializados, salvamento do cache validado e artifact de auditoria. Por isso `source_snapshot.evergreen_ready = true` no DAG.
-
-### `conduct_source_snapshot` — blocker remanescente
-
-A aquisição Consumer.gov e a identidade Receita/Consumer.gov já foram separadas da derivação posterior de Conduta no DAG. O blocker remanescente é provar o mesmo nível de contrato evergreen para esse snapshot misto de fontes: aquisição/cache, chave explícita de validade, lineage e materialização reproduzível em uma única geração.
-
-A chave mínima para o snapshot de identidade Receita/Consumer.gov inclui:
-
-```text
-Receita reference_period
-target_universe_hash
-unresolved_provider/query_hash
-schema_version
-```
-
-A prova integrada foi ampliada para o workflow `V2 Gate 4 Conduct Integration`. Ele restaura caches validados, materializa `source_snapshot`, Lifecycle e Eligibility na mesma geração, constrói `conduct_source_snapshot`, executa `relationship_watchdog` e somente então deriva, no mesmo workspace:
-
-```text
-consumer_conduct
-→ conduct_coverage
-→ conduct_calibration
-→ conduct_credibility
-→ conduct_portfolio
-→ conduct_closure
-```
-
-O blocker só pode ser removido depois que essa execução demonstrar lineage coerente, contratos de cache válidos, zero registry drift bloqueante e `v2_conduct_methodology_closure` materializado com as proibições de scoring/ranking preservadas.
-
-Enquanto `conduct_source_snapshot` permanecer aberto, o contrato retorna:
-
-```text
-publication_ready = false
-publication_blockers = ["conduct_source_snapshot"]
-```
-
-## 7. Pacote público único
-
-O pacote final deve conter, no mínimo:
+A distribuição canônica contém, no mínimo:
 
 ```text
 search_index.json
@@ -253,106 +120,121 @@ collections/*.json
 distribution_manifest.json
 ```
 
-`distribution_manifest.json` registra:
-
-- build context;
-- lineage e estado das fontes;
-- todos os JSONs da distribuição;
-- tamanho de cada arquivo;
-- SHA-256 de cada arquivo;
-- SHA-256 determinístico do pacote lógico;
-- política de publicação atômica e rollback.
+`distribution_manifest.json` registra build context, source lineage, lista de arquivos, tamanho, SHA-256 individual e SHA-256 determinístico do pacote lógico.
 
 O manifest não inclui seu próprio hash na lista, evitando recursão.
 
-## 8. Produção atual e deploy v2
+## 6. Prova canônica de fechamento
 
-A infraestrutura atualmente observada no HostGator pertence ao **widget v1 em `main`** e não é o contrato de deploy da v2.
-
-O cron legado executa `/home1/sanid210/scripts/update-widget.sh`, que:
+A prova integrada que fecha o Gate 4 foi executada em 01/09/2026:
 
 ```text
-REF=main
-→ baixa api/v1/insurers.json
-→ baixa widget-ui/dist/assets/widget.css
-→ baixa widget-ui/dist/assets/widget.js
-→ faz backup desses três arquivos
-→ substitui esses três destinos
+workflow: V2 Gate 4 Full Generation Proof
+run_id: 33471617517
+run_attempt: 1
+head_sha: 4f0b8805c999d40fa820c5a030b49d1b687c1db9
+build_id: v2-gate4-full-33471617517-a1
+conclusion: success
+stage_count: 25
+publication_ready: true
+publication_blockers: []
+regulatory_source_count: 6
+conduct_source_count: 2
+watchdog_blocking_drift: 0
+ranking_eligible: 0
+financial_publication_audit_status: financial_publication_chain_verified
+financial_reference_period: 202606
+package_sha256: c5a68480556a325a041553d56a1a040e1ab205d646243aa98c7b16cdea2f2aad
 ```
 
-Esse mecanismo deve permanecer intocado durante o desenvolvimento do Gate 4 para não afetar a produção atual.
-
-A v2 terá rotina própria. Não se assume que cron, diretórios de backup ou arquivos `widget.js/widget.css` atuais serão reaproveitados. O desenho do novo cron/deploy só será fechado depois que o artifact v2 único e o `distribution_manifest.json` estiverem estáveis.
-
-Arquitetura-alvo da v2:
+Artifact:
 
 ```text
-GitHub Actions
-→ build completo em uma geração
-→ validação de contracts + hashes
-→ artifact v2 único
-→ rotina v2 de instalação no HostGator
-→ staging em diretório temporário/versionado
-→ verificação de distribution_manifest.json
-→ troca atômica da geração ativa
-→ conservação da geração anterior para rollback
+name: v2-gate4-full-generation-33471617517-a1
+artifact_id: 9787285465
+artifact_digest: sha256:a8419e5285386b2ab26fd33bc52cbe71c5152507e4e9286dbfb8b9f9656c7ad1
 ```
 
-A distribuição pública observada hoje em `/ranking-seguradoras/data/v2/public/` é tratada como instalação de desenvolvimento existente, não como prova de que o mecanismo v1 de atualização seja adequado para a v2.
+A mesma execução passou, em sequência:
 
-## 9. Migração dos workflows existentes
+- preflight de código e contratos;
+- aquisição/materialização dos snapshots;
+- DAG completo em um único workspace;
+- validação de `build_id`, `source_head_sha`, estados e hashes das fontes;
+- auditoria financeira ponta a ponta;
+- preservação das proibições de scoring/ranking;
+- `ranking_eligible = 0` e gate metodológico de ranking fechado;
+- verificação do pacote público;
+- instalação em diretório versionado de teste;
+- troca de geração;
+- rollback para a geração anterior;
+- upload do artifact final.
 
-Os workflows de investigação atuais permanecem durante a transição para preservar diagnóstico e não interromper a branch. Eles **não são o desenho final de publicação**.
+## 7. Consolidação dos workflows de PR
 
-A migração ocorre nesta ordem:
+Após a prova canônica, os workflows V2 componentes foram reclassificados como diagnósticos manuais (`workflow_dispatch`). Eles continuam disponíveis para investigação específica, mas não compõem artifacts automaticamente nem são autoridade de publicação.
 
-1. `source_snapshot` + lineage — **concluído**;
-2. watchdog de relationships no caminho evergreen — **implementado e obrigatório antes de Conduta**;
-3. fechar `conduct_source_snapshot` com integração real até `conduct_closure` — **em validação**;
-4. eliminar `latest successful` do caminho de distribuição;
-5. executar o DAG inteiro em um único workspace;
-6. produzir e validar o artifact único;
-7. desenhar e testar a rotina v2 de instalação atômica/rollback no HostGator;
-8. somente então criar/habilitar o cron v2 apropriado.
-
-O cron v1 existente não deve ser alterado como parte desses passos até o cutover deliberado.
-
-## 10. Workflow de contrato
-
-`V2 Gate 4 Evergreen Contract` valida:
-
-- Ruff dos módulos Gate 4;
-- testes de geração/lineage;
-- testes de `fresh/stale/unavailable`;
-- testes do relationship watchdog;
-- DAG, ordem watchdog → Conduta e blockers;
-- materialização de `gate4_pipeline_contract.json`;
-- exatamente `conduct_source_snapshot` como blocker operacional enquanto sua integração não fecha;
-- fail-closed de publicação enquanto a migração não termina.
-
-Esse workflow não busca artifacts de outras execuções.
-
-## 11. Critério de fechamento do Gate 4
-
-O Gate 4 só pode ser declarado fechado quando:
+No HEAD de consolidação operacional:
 
 ```text
-publication_blockers = []
-publication_ready = true
+head_sha: 163e8af70bde993201f28e502f1cdf422b615ab7
 ```
 
-E uma execução completa demonstrar simultaneamente:
+os únicos workflows automáticos de PR são:
 
-- uma única `source_head_sha`;
-- um único `build_id`;
-- source lineage completa;
-- ausência de `latest successful` no caminho evergreen;
-- DAG completo em ordem topológica;
-- todos os contratos dos Gates 1–3 preservados;
-- `ranking_eligible = 0` salvo decisão metodológica futura independente;
-- pacote público completo e hash-verificado;
-- rotina v2 de instalação atômica testada com rollback;
-- execução manual reproduzível;
-- somente após isso, cron v2 habilitado.
+```text
+CI
+V2 Gate 4 Evergreen Contract
+```
 
-Até esse fechamento, PR #1 permanece Draft e `main`/produção permanecem intocados.
+Validação desse HEAD:
+
+```text
+CI                              run 33494102926  success
+V2 Gate 4 Evergreen Contract    run 33494103382  success
+```
+
+A Full Generation permanece a única prova integrada de dados/publicação e é disparada no branch quando mudam as famílias estáveis do caminho canônico (`api/v2/**`, `api/sources/**`, referências e dependências cobertas pelo workflow).
+
+Isso elimina o antigo mesh de dezenas de workflows paralelos que podiam restaurar artifacts de execuções diferentes.
+
+## 8. Papel dos workflows
+
+### Automáticos
+
+```text
+CI
+→ lint + suíte de regressão
+
+V2 Gate 4 Evergreen Contract
+→ valida contrato estrutural do DAG e publication readiness
+
+V2 Gate 4 Full Generation Proof
+→ prova integrada, same-generation, para alterações relevantes do caminho canônico
+```
+
+### Manuais
+
+Os demais workflows `V2 ...` de Foundation, Classification, Lifecycle, Eligibility, Financeiro, Conduta, cross-pillar, assessment, leaderboards, perfis e experimentos permanecem como ferramentas diagnósticas. Seus artifacts não podem substituir a Full Generation como evidência de publicação.
+
+## 9. Produção e cutover
+
+O fechamento deste Gate **não altera `main`, o widget v1 ou o cron de produção**.
+
+O mecanismo v1 observado continua separado da v2. O Gate 4 provou a semântica e o mecanismo de instalação/rollback em ambiente de teste; habilitar rotina/cron v2 no HostGator é uma decisão de cutover posterior e deliberada.
+
+Portanto:
+
+```text
+Gate 4 build/publication contract = fechado
+produção v1 = intocada
+cron v2 em produção = não habilitado por este fechamento
+PR #1 = Draft
+ranking geral = bloqueado
+```
+
+## 10. Critério preservado daqui em diante
+
+Qualquer alteração futura que afete o caminho canônico só pode ser aceita como nova referência após uma Full Generation verde no HEAD correspondente.
+
+Um workflow componente verde, isoladamente, não substitui essa prova.
