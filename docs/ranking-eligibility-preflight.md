@@ -6,11 +6,9 @@ Status: **fechado com o gate de ranking bloqueado**.
 
 > **Existe hoje uma coorte e uma regra de ordenação defensáveis para chamar o resultado de ranking sem esconder exclusões, empates ou escolhas normativas?**
 
-Avaliação individual e ranking são contratos diferentes. Uma seguradora poder receber uma avaliação conjunta não implica que seja possível ordenar o mercado de 1 a N.
+Avaliação individual e ranking são contratos diferentes. Uma seguradora poder receber avaliação conjunta não implica que seja possível ordenar o mercado de 1 a N.
 
 ## Contrato de claims
-
-No estado atual da metodologia:
 
 ```text
 full_market_total_ranking_supported                 false
@@ -25,17 +23,9 @@ arbitrary_coverage_threshold_selected               false
 explicit_subset_scope_disclosure_required           true
 ```
 
-## Duas perguntas independentes
+## Escopo e ordenação
 
-### Escopo
-
-O subset de avaliação cobre todo o universo regulatório? Quanto do prêmio e das reclamações representa? Há materialidade relevante entre os excluídos?
-
-Esses valores são diagnósticos. Não existe threshold arbitrário codificado do tipo “70% já basta”.
-
-### Ordenação
-
-Mesmo dentro do subset elegível, existe uma regra de ordem total aprovada?
+O subset de avaliação não cobre todo o universo e não existe threshold arbitrário do tipo “X% já basta”. Mesmo dentro do subset elegível, não há regra de ordem total aprovada.
 
 O preflight reconcilia:
 
@@ -46,94 +36,69 @@ incomparable_pairs
 normative_tradeoff_pairs
 ```
 
-A soma das três primeiras categorias deve ser igual a `n*(n-1)/2` para `n = assessment_eligible`.
+A soma das três primeiras categorias precisa ser `n*(n-1)/2` para `n = assessment_eligible`.
 
-Enquanto não houver regra normativa aprovada para resolver trade-offs e empates, não existe ranking total.
+## Snapshot integrado corrente
 
-## Blockers estruturais
-
-Para ranking de mercado, podem aparecer:
-
-- avaliação não cobre todo o universo regulatório;
-- representatividade integral não estabelecida;
-- nenhuma regra de ordem total aprovada;
-- trade-offs normativos não resolvidos;
-- ordenação dentro de estados não suportada.
-
-Para ranking apenas do subset elegível, o problema de cobertura integral deixa de ser blocker de escopo, mas permanecem os problemas de ordenação.
-
-## Snapshot validado — 30/08/2026
-
-Run:
-
-```text
-V2 Ranking Eligibility Preflight
-run 33323343747
-head 35e509d31de68a9311ede57ac245de6b7d3c0e11
-artifact 9735520055
-SHA256 ZIP 2affbf1702e7f440a2d53c742aa26054845e1f695dd4196b0a85387ccab8b8e4
-```
-
-População:
+Na Full Generation #44 (`run_id = 33562392945`, `head = c95e8675f8a2363b325623b2f310886e81f1c027`):
 
 ```text
 regulatory_universe             156
-assessment_eligible              85
-assessment_not_eligible          71
-ranking_preflight_candidates     85
+assessment_eligible              82
+assessment_not_eligible          74
+ranking_preflight_candidates     82
 ranking_eligible                  0
 ```
 
 Cobertura do subset elegível:
 
 ```text
-entidades                         54,49%
-prêmio direto positivo            69,94%
-reclamações                       54,40%
+entidades                         52,56%
+prêmio direto positivo            69,69%
+reclamações                       54,27%
 ```
 
-As 71 não elegíveis concentram aproximadamente:
+As 74 não elegíveis concentram aproximadamente:
 
 ```text
-prêmio direto positivo            30,06%
-reclamações                       45,60%
+prêmio direto positivo            30,31%
+reclamações                       45,73%
 ```
 
-As dez maiores não elegíveis por prêmio representam, no snapshot, cerca de 25,92% do prêmio positivo do universo.
+As dez maiores não elegíveis por prêmio representam cerca de 25,91% do prêmio positivo do universo.
 
-Diagnóstico de ordenação entre as 85 candidatas:
+Diagnóstico de ordenação entre as 82 candidatas:
 
 ```text
 unique_semantic_groups             5
-largest_semantic_group            48
-entities_in_tied_semantic_groups  84
-pair_count                      3.570
-strictly_comparable_pairs       2.072
-tied_pairs                      1.333
-incomparable_pairs                165
-normative_tradeoff_pairs          165
+largest_semantic_group            45
+entities_in_tied_semantic_groups  82
+pair_count                      3.321
+strictly_comparable_pairs       1.985
+tied_pairs                      1.182
+incomparable_pairs                154
+normative_tradeoff_pairs          154
 ```
 
-A fotografia atual demonstra duas coisas simultaneamente:
+Classes das candidatas:
 
-1. existe informação suficiente para comparação semântica útil de 85 entidades;
-2. não existe base para convertê-la em ranking total.
+```text
+favorable_reading     45
+attention              35
+prudential_warning      2
+```
 
-A quantidade de grupos e pares **não é constante metodológica**. No snapshot anterior havia 222 trade-offs; a queda para 165 ocorreu sem mudança do contrato, apenas pela evolução da população/evidência.
+A fotografia demonstra simultaneamente que existe comparação semântica útil para 82 entidades e que não existe base para convertê-la em ranking total.
 
 ## Guardrails executáveis
 
-O workflow valida:
-
 - população dinâmica e reconciliada;
-- candidatos de preflight = assessment elegíveis;
+- candidatos = assessment elegíveis;
 - `ranking_eligible = 0`;
-- shares dentro de [0,1], sem exigir valores específicos;
-- contabilidade de pares igual a `nC2`;
-- categorias de pares reconciliadas;
+- shares válidos sem threshold de aceitação inventado;
+- contabilidade de pares = `nC2`;
 - nenhuma regra de ordem total/tiebreaker selecionada;
-- nenhuma posição de ranking criada;
-- nenhum cohort de ranking selecionado;
+- nenhuma posição de ranking geral criada;
 - nenhum score geral, financeiro ou de Conduta criado.
 
 ## Implementação
@@ -141,7 +106,6 @@ O workflow valida:
 ```text
 api/v2/build_ranking_eligibility_preflight.py
 tests/test_v2_ranking_eligibility_preflight.py
-.github/workflows/v2-ranking-eligibility-preflight.yml
 ```
 
 Artifact:
