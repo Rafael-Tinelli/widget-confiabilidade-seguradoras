@@ -2,27 +2,13 @@
 
 Status: **fechado para exploração pública; ranking geral continua bloqueado**.
 
-Este contrato define o que pode ser publicado quando uma pergunta é estritamente unidimensional ou quando o usuário quer explorar uma coleção semântica. Ele não cria score composto nem “melhor seguradora”.
+Este contrato define o que pode ser publicado quando a pergunta é estritamente unidimensional ou quando o usuário quer explorar coleção semântica. Ele não cria score composto nem “melhor seguradora”.
 
 ## Princípio
 
-Uma lista só pode ser ordenada quando a pergunta e a métrica já definem a direção sem necessidade de compensar domínios diferentes.
+Uma lista só pode ser ordenada quando a pergunta e a própria métrica definem a direção, sem compensar domínios diferentes.
 
-Exemplos permitidos:
-
-```text
-maior prêmio direto
-maior PLA/CMR disponível
-maior ILT disponível
-menor razão de pressão de Conduta entre conclusões abaixo do esperado
-maior razão de pressão de Conduta entre conclusões acima do esperado
-```
-
-Esses leaderboards são fatos métricos em escopo explícito. Não são proxies de qualidade geral.
-
-## Leaderboards públicos fechados
-
-IDs estruturais:
+Leaderboards públicos:
 
 ```text
 largest_by_direct_premium
@@ -36,15 +22,15 @@ Regras:
 
 - máximo de dez posições públicas;
 - empate por valor recebe a mesma posição (`competition rank`);
-- nenhum tiebreaker secundário de mérito é inventado;
-- missingness exclui a entidade daquela métrica, não a envia para o fim;
-- Conduta baixa só admite conclusão `below_expected_with_sufficient_evidence`;
-- Conduta alta só admite `above_expected_with_sufficient_evidence`;
+- nenhum tiebreaker secundário de mérito;
+- missingness exclui daquela métrica, não envia para o fim;
+- Conduta baixa exige `below_expected_with_sufficient_evidence`;
+- Conduta alta exige `above_expected_with_sufficient_evidence`;
 - `is_general_ranking = false` em todos os boards.
 
 ## Coleções semânticas
 
-Coleções são **não ordenadas**. IDs estruturais atuais:
+Coleções são não ordenadas:
 
 ```text
 financial_core_without_current_adverse_signal
@@ -54,57 +40,30 @@ conduct_improving_but_still_adverse
 conduct_persistent_above_expected
 ```
 
-A quantidade de membros varia com os dados. `ordered = false` e `is_general_ranking = false` são invariantes.
+`ordered = false` e `is_general_ranking = false` são invariantes.
 
-## Conceitos explicitamente não suportados
+## Conceitos não suportados
 
-O registry mantém bloqueados conceitos que exigiriam julgamento amplo sem contrato próprio, incluindo:
+Continuam bloqueados, entre outros:
 
 ```text
 mais_popular
 emergente_promissora
 consagrada_exemplar
 ranking_geral
+crescimento_de_premio
 ```
 
-A interface não deve transformar um leaderboard factual em “melhor”, “mais confiável” ou “mais recomendada”.
+A interface não pode transformar um leaderboard factual em “melhor”, “mais confiável” ou “mais recomendada”.
 
-## População dinâmica
+## Snapshot integrado corrente
 
-Candidate counts, collection counts e nomes dos líderes são **diagnósticos de uma execução**.
-
-O workflow valida apenas:
-
-- IDs previstos pelo contrato;
-- counts entre zero e o universo;
-- entradas não excedem a população candidata;
-- posições públicas entre 1 e 10;
-- filtros semânticos de Conduta;
-- coleções não ordenadas;
-- explorer com o mesmo universo regulatório;
-- ausência de score geral;
-- ranking geral bloqueado.
-
-Nenhum nome de empresa é um teste de integridade.
-
-## Snapshot validado — 30/08/2026
-
-Run:
-
-```text
-V2 Exploratory Leaderboards Contract
-run 33323343770
-head 35e509d31de68a9311ede57ac245de6b7d3c0e11
-artifact 9735524497
-SHA256 ZIP 5c9ade70aa2b51aecf581f0983c81a0471ce65d566af30051ed6285b046d665b
-```
-
-População:
+Na Full Generation #44 (`run_id = 33562392945`, `head = c95e8675f8a2363b325623b2f310886e81f1c027`):
 
 ```text
 regulatory_universe       156
-assessment_eligible        85
-assessment_not_eligible    71
+assessment_eligible        82
+assessment_not_eligible    74
 ranking_eligible             0
 ```
 
@@ -112,8 +71,8 @@ Candidates observados:
 
 ```text
 largest_by_direct_premium          131
-highest_pla_cmr_ratio              153
-highest_ilt                        154
+highest_pla_cmr_ratio              151
+highest_ilt                        153
 lowest_conduct_pressure_ratio       41
 highest_conduct_pressure_ratio      26
 ```
@@ -121,18 +80,14 @@ highest_conduct_pressure_ratio      26
 Coleções observadas:
 
 ```text
-financial_core_without_current_adverse_signal 123
-favorable_joint_assessment                     48
-favorable_with_below_expected_conduct          35
+financial_core_without_current_adverse_signal 120
+favorable_joint_assessment                     45
+favorable_with_below_expected_conduct          33
 conduct_improving_but_still_adverse             4
 conduct_persistent_above_expected               20
 ```
 
-Cada leaderboard gerou dez linhas públicas na execução atual.
-
-Os líderes atuais podem ser exibidos pelo próprio artifact, mas **não são contrato**. Por exemplo, uma mudança legítima de dados pode trocar o primeiro lugar sem que nenhum teste de metodologia deva falhar.
-
-Essa distinção corrige o padrão anterior, no qual nomes de líderes e counts como 132/155/156 eram tratados como boundaries. Após a exclusão regulatória das SSPEs e atualização dos artifacts, os candidates passaram naturalmente para 131/153/154 em três métricas sem mudança da regra de publicação.
+Cada leaderboard gerou dez linhas públicas. Counts e líderes são fotografia, não contrato.
 
 ## Public outputs
 
@@ -145,12 +100,23 @@ data/derived/v2/public/collections/*.json
 
 O explorer é dataset de comparação das seguradoras ordinárias, não catálogo completo de todas as identidades pesquisáveis.
 
+## Guardrails
+
+O builder valida:
+
+- população reconciliada;
+- `ranking_eligible = 0`;
+- ordem definida exclusivamente pela métrica do board;
+- filtros semânticos de Conduta;
+- coleções não ordenadas;
+- ausência de score/ranking geral;
+- nenhum missing recebe posição inferior artificial.
+
 ## Implementação
 
 ```text
 api/v2/build_exploratory_leaderboards_contract.py
 tests/test_v2_exploratory_leaderboards_contract.py
-.github/workflows/v2-exploratory-leaderboards-contract.yml
 ```
 
 ## Limites públicos obrigatórios
@@ -158,5 +124,5 @@ tests/test_v2_exploratory_leaderboards_contract.py
 - prêmio mede volume econômico, não qualidade;
 - PLA/CMR e ILT respondem perguntas financeiras específicas, não qualidade global;
 - razão de Conduta depende de comparabilidade e não prova causalidade de atendimento;
-- uma empresa ausente de um board por missingness não ocupa automaticamente posição inferior;
-- nenhum leaderboard unidimensional deve ser apresentado como ranking geral de confiabilidade.
+- ausência de uma empresa de um board por missingness não é posição inferior;
+- nenhum leaderboard unidimensional é ranking geral de confiabilidade.
