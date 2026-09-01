@@ -2,18 +2,6 @@ name: V2 Conduct Portfolio Mix Diagnostic
 
 on:
   workflow_dispatch:
-  pull_request:
-    branches: [main]
-    paths:
-      - "api/v2/build_conduct_portfolio_mix_diagnostic.py"
-      - "tests/test_v2_conduct_portfolio_mix_diagnostic.py"
-      - "api/v2/build_conduct_comparative_calibration_v2.py"
-      - "api/v2/build_conduct_credibility_diagnostic.py"
-      - "api/v2/build_conduct_coverage_reconciliation.py"
-      - "api/v2/build_consumer_gov_conduct_evidence.py"
-      - "api/v2/eligibility.py"
-      - "api/v2/regulatory_scope.py"
-      - ".github/workflows/v2-conduct-portfolio-mix-diagnostic.yml"
 
 permissions:
   contents: read
