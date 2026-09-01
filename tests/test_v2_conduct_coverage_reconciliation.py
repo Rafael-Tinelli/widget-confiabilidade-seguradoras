@@ -177,6 +177,34 @@ def test_duplicate_comparison_months_are_rejected() -> None:
         build_reconciliation(eligibility, conduct, ses, {"relationships": []})
 
 
+def test_out_of_order_comparison_months_are_rejected() -> None:
+    entity = _entity("order", "000016", "17171717000147", insurance=True)
+    eligibility, conduct, ses = _payloads(
+        [entity], {"order": 1}, {"order": 500.0}
+    )
+    conduct["source"]["months"] = ["2026-02", "2026-01"]
+
+    with pytest.raises(
+        ConductCoverageReconciliationError,
+        match="comparison months must be chronological",
+    ):
+        build_reconciliation(eligibility, conduct, ses, {"relationships": []})
+
+
+def test_gapped_comparison_months_are_rejected() -> None:
+    entity = _entity("gap", "000017", "18181818000138", insurance=True)
+    eligibility, conduct, ses = _payloads(
+        [entity], {"gap": 1}, {"gap": 500.0}
+    )
+    conduct["source"]["months"] = ["2026-01", "2026-03"]
+
+    with pytest.raises(
+        ConductCoverageReconciliationError,
+        match="comparison months must be consecutive",
+    ):
+        build_reconciliation(eligibility, conduct, ses, {"relationships": []})
+
+
 def test_hybrid_insurance_pension_keeps_conduct_but_blocks_p3_pressure() -> None:
     entities = [
         _entity("hybrid", "000002", "22222222000182", insurance=True, pension=True)
