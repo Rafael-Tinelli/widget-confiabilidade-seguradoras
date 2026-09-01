@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import ast
+import re
 import sys
+import textwrap
+from pathlib import Path
 
 import pytest
 
@@ -11,6 +15,11 @@ from api.v2.gate4_pipeline import (
     pipeline_contract,
     stage_map,
     validate_pipeline,
+)
+
+WORKFLOW_PATH = Path(".github/workflows/v2-gate4-full-generation-proof.yml")
+INLINE_PYTHON_PATTERN = re.compile(
+    r"(?ms)^(?P<indent>[ \t]*)python - <<'PY'\n(?P<body>.*?)(?=^(?P=indent)PY\s*$)"
 )
 
 
@@ -35,6 +44,21 @@ def test_missing_python_module_is_rejected_by_static_preflight():
 
     with pytest.raises(PipelineDefinitionError, match="references missing module"):
         validate_pipeline(broken)
+
+
+def test_full_generation_workflow_inline_python_is_syntax_valid():
+    workflow = WORKFLOW_PATH.read_text(encoding="utf-8")
+    blocks = [
+        textwrap.dedent(match.group("body"))
+        for match in INLINE_PYTHON_PATTERN.finditer(workflow)
+    ]
+
+    assert blocks, "canonical Full Generation workflow must contain inline Python blocks"
+    for index, block in enumerate(blocks, start=1):
+        try:
+            ast.parse(block)
+        except SyntaxError as exc:
+            pytest.fail(f"inline Python block {index} is not syntactically valid: {exc}")
 
 
 def test_late_publication_stages_are_wired_to_real_contract_builders():
