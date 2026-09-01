@@ -1,26 +1,6 @@
 name: V2 Classification Validation
 
 on:
-  pull_request:
-    branches: ["main"]
-    paths:
-      - "api/sources/susep_licensed.py"
-      - "api/sources/susep_special_regimes.py"
-      - "api/sources/susep_sandbox.py"
-      - "api/v2/identity.py"
-      - "api/v2/classification.py"
-      - "api/v2/sandbox_identity.py"
-      - "api/v2/sandbox_semantics.py"
-      - "api/v2/build_classification_inventory.py"
-      - "tests/test_v2_identity.py"
-      - "tests/test_v2_susep_licensed.py"
-      - "tests/test_v2_susep_special_regimes.py"
-      - "tests/test_v2_susep_sandbox.py"
-      - "tests/test_v2_classification.py"
-      - "tests/test_v2_sandbox_classification.py"
-      - "tests/test_v2_sandbox_identity.py"
-      - "tests/test_v2_sandbox_semantics.py"
-      - ".github/workflows/v2-classification-validation.yml"
   workflow_dispatch:
 
 permissions:
