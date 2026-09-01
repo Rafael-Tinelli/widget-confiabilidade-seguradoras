@@ -129,7 +129,11 @@ def test_calibration_v2_aligns_market_population_and_forbids_scoring() -> None:
     assert payload["scoring"] == "forbidden_in_this_artifact"
     assert payload["ranking"] == "forbidden_in_this_artifact"
     assert payload["denominator"]["candidate"] == "insurance_premium_direct"
+    assert payload["denominator"]["currency"] == "BRL"
+    assert payload["denominator"]["source_unit_label"] == "R$"
+    assert payload["denominator"]["scale_factor_applied"] == 1.0
     assert payload["denominator"]["final_denominator_approved"] is False
+    assert payload["source"]["ses_currency"] == "BRL"
     assert payload["population"]["direct_one_to_one_candidates"] == 2
     assert payload["population"]["excluded_from_pressure_experiment"] == 1
     assert payload["market_12m"]["complaints"] == 20
@@ -143,6 +147,7 @@ def test_calibration_v2_aligns_market_population_and_forbids_scoring() -> None:
     assert a["pressure_12m"]["expected_complaints"] == pytest.approx(4.0)
     assert a["pressure_12m"]["ratio"] == pytest.approx(1.25)
     assert a["pressure_12m"]["comparable_months"] == 1
+    assert a["small_sample_bucket"] == "5_19"
     assert b["pressure_12m"]["observed_complaints"] == 10
     assert b["pressure_12m"]["expected_complaints"] == pytest.approx(11.0)
     assert b["pressure_12m"]["ratio"] == pytest.approx(10.0 / 11.0)
@@ -200,6 +205,76 @@ def test_calibration_v2_preserves_earned_missingness_as_unavailable() -> None:
     assert row["premium_earned_diagnostic_complete"] is False
     assert row["monthly"][0]["premium_earned_diagnostic"] is None
     assert row["monthly"][0]["premium_earned_missing_rows"] == 1
+
+
+def test_calibration_v2_rejects_fractional_complaint_count() -> None:
+    conduct = {
+        "source": {
+            "months": ["2026-01", "2026-02"],
+            "core": {"state": "available"},
+            "taxonomy_evidence": {"state": "source_unavailable"},
+        },
+        "entities": [
+            _conduct_entity("fip:000001", [2, 2], 3.0),
+            _conduct_entity("fip:000002", [2, 2], 4.0),
+        ],
+    }
+    conduct["entities"][0]["monthly"][0]["complaints"] = 1.5
+    reconciliation = {
+        "entities": [
+            _candidate("fip:000001", "000001", "A"),
+            _candidate("fip:000002", "000002", "B"),
+        ]
+    }
+    ses = {
+        "periods": [202601, 202602],
+        "entities": {
+            "000001": {"months": {202601: _ses_month(100.0, 1001), 202602: _ses_month(100.0, 1001)}},
+            "000002": {"months": {202601: _ses_month(100.0, 2001), 202602: _ses_month(100.0, 2001)}},
+        },
+    }
+
+    with pytest.raises(ConductComparativeCalibrationV2Error, match="non-integer complaints"):
+        build_calibration_v2(conduct, reconciliation, ses)
+
+
+def test_calibration_v2_small_sample_uses_aligned_complaints_only() -> None:
+    conduct = {
+        "source": {
+            "months": ["2026-01", "2026-02"],
+            "core": {"state": "available"},
+            "taxonomy_evidence": {"state": "source_unavailable"},
+        },
+        "entities": [
+            _conduct_entity("fip:000001", [100, 2], 3.0),
+            _conduct_entity("fip:000002", [1, 2], 4.0),
+        ],
+    }
+    reconciliation = {
+        "entities": [
+            _candidate("fip:000001", "000001", "A"),
+            _candidate("fip:000002", "000002", "B"),
+        ]
+    }
+    ses = {
+        "periods": [202601, 202602],
+        "entities": {
+            "000001": {"months": {202601: _ses_month(0.0, 1001), 202602: _ses_month(100.0, 1001)}},
+            "000002": {"months": {202601: _ses_month(100.0, 2001), 202602: _ses_month(100.0, 2001)}},
+        },
+    }
+
+    payload = build_calibration_v2(conduct, reconciliation, ses)
+    by_id = {row["entity_id"]: row for row in payload["entities"]}
+    target = by_id["fip:000001"]
+
+    assert target["complaints_12m"] == 102
+    assert target["pressure_12m"]["observed_complaints"] == 2
+    assert target["small_sample_bucket"] == "0_4"
+    bucket = payload["diagnostics"]["small_sample"]["0_4"]
+    assert bucket["sample_basis"] == "pressure_12m.observed_complaints"
+    assert bucket["complaints_total"] == 5
+    assert bucket["total_evidence_complaints"] == 105
 
 
 def test_calibration_v2_rejects_gapped_comparison_window() -> None:
