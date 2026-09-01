@@ -368,6 +368,10 @@ competência duplicada não participa da cobertura de maturidade nem deriva
 arquivo. O registro bruto permanece visível para investigação, sem virar score,
 ranking ou conclusão adversa automática.
 
+Os componentes de balanço usados nas fórmulas são aceitos somente no quadro
+oficial correspondente (`22A`, `22P` ou `23`). Um `CMPID` conhecido no quadro
+errado interrompe a geração, em vez de contaminar silenciosamente a fórmula.
+
 ### Regra de invalidação
 
 Artifacts anteriores a essa correção que contenham:

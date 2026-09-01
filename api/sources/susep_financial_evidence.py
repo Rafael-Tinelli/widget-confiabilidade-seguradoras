@@ -86,10 +86,18 @@ OPERATING_FORMULA_CMPIDS: dict[str, set[int]] = {
     },
 }
 
-BALANCE_CMPIDS_OF_INTEREST = set().union(
-    *LIQUIDITY_FORMULA_CMPIDS.values(),
-    *OPERATING_FORMULA_CMPIDS.values(),
-)
+BALANCE_CMPID_EXPECTED_QUADRO: dict[int, str] = {
+    1479: "22A",
+    11160: "22A",
+    351: "22A",
+    331: "22A",
+    11187: "22A",
+    5503: "22A",
+    1040: "22P",
+    6449: "22P",
+    **dict.fromkeys(set().union(*OPERATING_FORMULA_CMPIDS.values()), "23"),
+}
+BALANCE_CMPIDS_OF_INTEREST = set(BALANCE_CMPID_EXPECTED_QUADRO)
 
 
 class FinancialEvidenceSourceError(RuntimeError):
@@ -372,7 +380,7 @@ def _read_balance_history(
     _, mapping = _header_map(z, member)
     columns = _require_columns(
         mapping,
-        ["coenti", "damesano", "cmpid", "valor"],
+        ["coenti", "damesano", "cmpid", "valor", "quadro"],
         "SES_Balanco.csv",
     )
     periods_by_fip: dict[str, set[int]] = defaultdict(set)
@@ -418,6 +426,7 @@ def _read_balance_history(
                 field="valor",
                 table="SES_Balanco.csv",
             )
+            quadros = chunk["quadro"].astype("string").str.strip().str.upper()
 
             for index, fip in chunk["fip"].items():
                 period = int(dates.loc[index])
@@ -427,6 +436,13 @@ def _read_balance_history(
                 cmpid = int(cmpids.loc[index])
                 if cmpid not in BALANCE_CMPIDS_OF_INTEREST:
                     continue
+                expected_quadro = BALANCE_CMPID_EXPECTED_QUADRO[cmpid]
+                actual_quadro = quadros.loc[index]
+                if pd.isna(actual_quadro) or actual_quadro != expected_quadro:
+                    raise FinancialEvidenceSourceError(
+                        f"unexpected quadro for CMPID {cmpid} in SES_Balanco.csv: "
+                        f"expected {expected_quadro!r}, got {actual_quadro!r}"
+                    )
                 amount = amounts.loc[index]
                 if pd.isna(amount):
                     continue
@@ -603,6 +619,7 @@ def load_susep_financial_evidence(
             "malformed_row_policy": "fail_closed_not_skipped",
             "key_parsing_policy": "strict_integer_keys_and_valid_aaaamm_periods",
             "numeric_parsing_policy": "strict_finite_decimal_or_scientific_notation",
+            "balance_quadro_policy": "formula_cmpids_must_match_official_22A_22P_23",
         },
         "reference_periods": {
             "capital": max(capital_periods) if capital_periods else None,

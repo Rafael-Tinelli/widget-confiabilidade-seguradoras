@@ -37,6 +37,13 @@ OUTPUT_PATH = Path("data/derived/v2/financial_publication_audit.json")
 REL_TOL = 1e-12
 ABS_TOL = 1e-12
 
+FINANCIAL_SOURCE_PARSER_CONTRACT = {
+    "malformed_row_policy": "fail_closed_not_skipped",
+    "key_parsing_policy": "strict_integer_keys_and_valid_aaaamm_periods",
+    "numeric_parsing_policy": "strict_finite_decimal_or_scientific_notation",
+    "balance_quadro_policy": "formula_cmpids_must_match_official_22A_22P_23",
+}
+
 
 class FinancialPublicationAuditError(RuntimeError):
     """Raised when financial evidence changes across the publication chain."""
@@ -241,6 +248,15 @@ def _validate_common_contracts(
             "financial maturity has no selected_period"
         )
 
+    financial_source = meta.get("financial_source") or {}
+    for field, expected in FINANCIAL_SOURCE_PARSER_CONTRACT.items():
+        actual = financial_source.get(field)
+        if actual != expected:
+            raise FinancialPublicationAuditError(
+                "financial source parser contract mismatch: "
+                f"{field}={actual!r} != {expected!r}"
+            )
+
     if liquidity.get("artifact") != "v2_liquidity_experiment":
         raise FinancialPublicationAuditError("unexpected liquidity artifact")
     liquidity_summary = liquidity.get("summary") or {}
@@ -388,6 +404,14 @@ def audit_financial_publication_chain(
         ratio_state = financial_capital.get("pla_cmr_ratio_state")
         stored_ratio = _finite(financial_capital.get("pla_cmr_ratio"))
         if ratio_state == "derivable":
+            duplicate_rows_current = int(
+                financial_capital.get("duplicate_rows_current") or 0
+            )
+            if duplicate_rows_current != 0:
+                raise FinancialPublicationAuditError(
+                    f"{entity_id}: derivable PLA/CMR has "
+                    f"{duplicate_rows_current} duplicate source rows"
+                )
             capital_derivable += 1
             if (
                 financial_capital.get("pla_cmr_numerator_field")
@@ -639,6 +663,10 @@ def audit_financial_publication_chain(
             "ilt_leaderboard_entries": ilt_leaderboard_entries,
         },
         "verified_boundaries": [
+            "financial_source_parser_contract_is_fail_closed",
+            "financial_numeric_parser_preserves_decimal_and_scientific_notation",
+            "balance_formula_cmpids_are_scoped_to_official_quadros_22a_22p_23",
+            "duplicate_capital_periods_cannot_derive_pla_cmr",
             "financial_evidence_ratio_equals_new_pla_divided_by_cmr",
             "financial_closure_preserves_capital_ratio_and_state",
             "insurer_explorer_preserves_capital_ratio_and_state",

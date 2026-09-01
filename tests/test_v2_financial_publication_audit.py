@@ -41,6 +41,18 @@ def _payloads() -> tuple[
     financial = {
         "meta": {
             "financial_evidence_version": FINANCIAL_EVIDENCE_VERSION,
+            "financial_source": {
+                "malformed_row_policy": "fail_closed_not_skipped",
+                "key_parsing_policy": (
+                    "strict_integer_keys_and_valid_aaaamm_periods"
+                ),
+                "numeric_parsing_policy": (
+                    "strict_finite_decimal_or_scientific_notation"
+                ),
+                "balance_quadro_policy": (
+                    "formula_cmpids_must_match_official_22A_22P_23"
+                ),
+            },
             "financial_period_maturity": {
                 "policy_version": MATURITY_POLICY_VERSION,
                 "capital_pla_source_field": "new_pla",
@@ -57,6 +69,7 @@ def _payloads() -> tuple[
                         "pla_cmr_numerator_field": "new_pla",
                         "pla_cmr_ratio_state": "derivable",
                         "pla_cmr_ratio": 1.1,
+                        "duplicate_rows_current": 0,
                         "latest": {
                             "new_pla": 110.0,
                             "pla_adjusted": 70.0,
@@ -74,6 +87,7 @@ def _payloads() -> tuple[
                         "pla_cmr_numerator_field": "new_pla",
                         "pla_cmr_ratio_state": "unavailable",
                         "pla_cmr_ratio": None,
+                        "duplicate_rows_current": 0,
                         "latest": {
                             "new_pla": 90.0,
                             "pla_adjusted": 120.0,
@@ -376,6 +390,34 @@ def test_audit_rejects_old_or_tampered_financial_evidence_ratio() -> None:
     payloads[0] = financial
 
     with pytest.raises(FinancialPublicationAuditError, match="new_pla/CMR"):
+        audit_financial_publication_chain(*payloads)
+
+
+def test_audit_rejects_non_fail_closed_source_parser_contract() -> None:
+    payloads = list(_payloads())
+    financial = deepcopy(payloads[0])
+    financial["meta"]["financial_source"]["malformed_row_policy"] = "skip"
+    payloads[0] = financial
+
+    with pytest.raises(
+        FinancialPublicationAuditError,
+        match="financial source parser contract mismatch",
+    ):
+        audit_financial_publication_chain(*payloads)
+
+
+def test_audit_rejects_derivable_capital_with_duplicate_source_period() -> None:
+    payloads = list(_payloads())
+    financial = deepcopy(payloads[0])
+    financial["entities"][0]["financial_evidence"]["capital"][
+        "duplicate_rows_current"
+    ] = 1
+    payloads[0] = financial
+
+    with pytest.raises(
+        FinancialPublicationAuditError,
+        match="derivable PLA/CMR has 1 duplicate source rows",
+    ):
         audit_financial_publication_chain(*payloads)
 
 

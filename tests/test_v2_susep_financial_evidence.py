@@ -22,6 +22,7 @@ def _write_zip(
     capital_period: str = "202606",
     balance_period: str = "202606",
     balance_cmpid: str = "1479",
+    balance_quadro: str = "22A",
     premium_period: str = "202606",
     premium_rows: str | None = None,
     extra_capital_rows: str = "",
@@ -41,7 +42,7 @@ def _write_zip(
         z.writestr(
             "SES_Balanco.csv",
             "coenti;damesano;cmpid;valor;seq;quadro\n"
-            f"1;{balance_period};{balance_cmpid};{balance_value};1;22A\n"
+            f"1;{balance_period};{balance_cmpid};{balance_value};1;{balance_quadro}\n"
             "1;202606;11160;10;2;22A\n"
             "1;202606;351;5;3;22A\n"
             "1;202606;1040;500;4;22P\n"
@@ -79,6 +80,9 @@ def test_reader_preserves_missing_negative_and_formula_components(tmp_path: Path
     )
     assert payload["source"]["numeric_parsing_policy"] == (
         "strict_finite_decimal_or_scientific_notation"
+    )
+    assert payload["source"]["balance_quadro_policy"] == (
+        "formula_cmpids_must_match_official_22A_22P_23"
     )
     assert payload["reference_periods"] == {
         "capital": 202606,
@@ -153,6 +157,16 @@ def test_reader_rejects_malformed_or_fractional_source_keys(
     _write_zip(path, **source_override)
 
     with pytest.raises(FinancialEvidenceSourceError, match=field):
+        load_susep_financial_evidence(["000001"], path)
+
+
+def test_reader_rejects_formula_cmpid_from_unexpected_balance_quadro(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "BaseCompleta.zip"
+    _write_zip(path, balance_quadro="22P")
+
+    with pytest.raises(FinancialEvidenceSourceError, match="unexpected quadro"):
         load_susep_financial_evidence(["000001"], path)
 
 
