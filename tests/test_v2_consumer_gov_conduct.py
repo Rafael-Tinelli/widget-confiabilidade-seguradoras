@@ -11,6 +11,7 @@ from api.v2.consumer_gov_conduct import (
     new_month_evidence,
 )
 from api.v2.consumer_gov_conduct_core import (
+    add_entry_statistics,
     aggregate_entry_to_month,
     build_cached_taxonomy_enrichment,
     taxonomy_cache_state,
@@ -122,6 +123,31 @@ def test_preserved_aggregate_builds_core_without_inventing_evaluated_denominator
     )
     assert month["satisfaction_count"] == 15
     assert month["average_satisfaction"] == pytest.approx(3.8)
+
+
+def test_preserved_core_missing_complaint_total_fails_closed() -> None:
+    entry = {"statistics": {"respondedCount": 3}}
+
+    with pytest.raises(RuntimeError, match="required preserved statistic missing: complaints"):
+        aggregate_entry_to_month(
+            "2026-06",
+            entry,
+            matched_current_insurer_market_complaints=100,
+        )
+
+    with pytest.raises(RuntimeError, match="required preserved statistic missing: complaints"):
+        add_entry_statistics({}, entry)
+
+
+def test_preserved_core_invalid_complaint_total_fails_closed() -> None:
+    for value in (-1, "not-a-count"):
+        entry = {"statistics": {"complaintsCount": value}}
+        with pytest.raises(RuntimeError, match="complaints"):
+            aggregate_entry_to_month(
+                "2026-06",
+                entry,
+                matched_current_insurer_market_complaints=100,
+            )
 
 
 def test_film_uses_preserved_satisfaction_when_resolution_denominator_is_unavailable() -> None:
