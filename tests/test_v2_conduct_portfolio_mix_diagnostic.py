@@ -171,7 +171,7 @@ def test_local_pressure_excludes_target_non_positive_month_instead_of_annual_agg
     point = next(
         row
         for row in first["peer_distance_curve"]
-        if row["max_total_variation_distance"] == 0.05
+        if row["max_total_variation_distance"] == 0.10
     )
     local = point["local_aligned_pressure"]
 
@@ -198,10 +198,16 @@ def test_high_volume_diagnostic_uses_aligned_complaints_not_total_evidence() -> 
             aligned_complaints=2,
             monthly=[("2026-01", 118, 0.0), ("2026-02", 2, 20.0)],
         ),
-        _entity("fip:000002", 110, 100.0, 11.0, {"A": 0.9, "B": 0.1}, aligned_complaints=11),
+        _entity(
+            "fip:000002",
+            110,
+            100.0,
+            11.0,
+            {"A": 0.9, "B": 0.1},
+            aligned_complaints=11,
+        ),
         _entity("fip:000003", 10, 100.0, 10.0, {"B": 1.0}),
     ]
-    # Match the comparison window for all entities.
     entities[1]["monthly"] = [
         {"month": "2026-01", "complaints": 5, "premium_direct": 50.0},
         {"month": "2026-02", "complaints": 6, "premium_direct": 50.0},
