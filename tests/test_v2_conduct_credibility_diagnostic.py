@@ -3,138 +3,198 @@ from __future__ import annotations
 import pytest
 
 from api.v2.build_conduct_credibility_diagnostic import (
+    ConductCredibilityDiagnosticError,
     build_credibility_diagnostic,
 )
 
 
 def _entity(
     entity_id: str,
-    complaints: int,
-    direct: float,
-    earned: float,
-    monthly: list[tuple[int, float, float]],
+    complaints: list[int],
+    direct: list[float],
+    earned: list[float | None],
+    *,
+    aligned_observed: int,
+    aligned_expected: float,
+    comparable_months: int,
 ) -> dict:
+    months = [f"2025-{month:02d}" for month in range(1, 13)]
     return {
         "entity_id": entity_id,
         "fip_code": entity_id.split(":", 1)[1],
         "legal_name": entity_id,
-        "complaints_12m": complaints,
-        "premium_direct_12m": direct,
-        "premium_earned_12m_diagnostic": earned,
+        "complaints_12m": sum(complaints),
+        "premium_direct_12m": sum(direct),
+        "premium_earned_12m_diagnostic": (
+            sum(value for value in earned if value is not None)
+            if all(value is not None for value in earned)
+            else None
+        ),
+        "pressure_12m": {
+            "observed_complaints": aligned_observed,
+            "expected_complaints": aligned_expected,
+            "ratio": aligned_observed / aligned_expected,
+            "comparable_months": comparable_months,
+            "aggregation_policy": (
+                "sum_monthly_expected_then_observed_divided_by_expected"
+            ),
+        },
         "monthly": [
             {
-                "month": f"2026-0{index}",
-                "complaints": row[0],
-                "premium_direct": row[1],
-                "premium_earned_diagnostic": row[2],
+                "month": month,
+                "complaints": complaints[index],
+                "premium_direct": direct[index],
+                "premium_earned_diagnostic": earned[index],
             }
-            for index, row in enumerate(monthly, start=1)
+            for index, month in enumerate(months)
         ],
     }
 
 
-def test_credibility_guard_distinguishes_extreme_ratio_from_denominator_sensitivity() -> None:
-    calibration = {
+def _calibration(entities: list[dict]) -> dict:
+    return {
         "version": "upstream-test",
         "scoring": "forbidden_in_this_artifact",
         "ranking": "forbidden_in_this_artifact",
-        "source": {"months": ["2026-01", "2026-02"]},
-        "market_12m": {"complaints": 100, "premium_direct": 100.0},
-        "entities": [
-            _entity(
-                "fip:000001",
-                complaints=5,
-                direct=1.0,
-                earned=10.0,
-                monthly=[(5, 0.0, 5.0), (0, 1.0, 5.0)],
-            ),
-            _entity(
-                "fip:000002",
-                complaints=95,
-                direct=99.0,
-                earned=90.0,
-                monthly=[(45, 49.0, 45.0), (50, 50.0, 45.0)],
-            ),
-        ],
+        "source": {"months": [f"2025-{month:02d}" for month in range(1, 13)]},
+        "market_12m": {
+            "complaints": sum(row["complaints_12m"] for row in entities),
+            "premium_direct": sum(row["premium_direct_12m"] for row in entities),
+        },
+        "entities": entities,
     }
 
-    payload = build_credibility_diagnostic(calibration)
+
+def test_credibility_reuses_monthly_aligned_direct_pressure() -> None:
+    target = _entity(
+        "fip:000001",
+        complaints=[5] + [0] * 11,
+        direct=[0.0] + [10.0] * 11,
+        earned=[10.0] * 12,
+        aligned_observed=0,
+        aligned_expected=2.0,
+        comparable_months=11,
+    )
+    peer = _entity(
+        "fip:000002",
+        complaints=[95] + [10] * 11,
+        direct=[100.0] * 12,
+        earned=[100.0] * 12,
+        aligned_observed=205,
+        aligned_expected=203.0,
+        comparable_months=12,
+    )
+
+    payload = build_credibility_diagnostic(_calibration([target, peer]))
     by_id = {row["entity_id"]: row for row in payload["entities"]}
-    small = by_id["fip:000001"]
-    complement = by_id["fip:000002"]
+    target_out = by_id["fip:000001"]
 
     assert payload["scoring"] == "forbidden_in_this_artifact"
     assert payload["ranking"] == "forbidden_in_this_artifact"
-    assert payload["methodology"]["shrinkage_applied"] is False
-    assert payload["methodology"]["denominator_selected"] is False
-    assert small["direct_candidate"]["expected_complaints"] == pytest.approx(1.0)
-    assert small["direct_candidate"]["ratio"] == pytest.approx(5.0)
-    assert (
-        small["direct_candidate"]["familywise_exact_interval"]["state"]
-        == "above_size_proportional_reference"
+    assert payload["methodology"]["pressure_definition"] == (
+        "sum_monthly_expected_then_observed_divided_by_expected"
     )
-    assert small["earned_diagnostic"]["ratio"] == pytest.approx(0.5)
+    assert target_out["direct_candidate"]["observed_complaints"] == 0
+    assert target_out["direct_candidate"]["expected_complaints"] == pytest.approx(2.0)
+    assert target_out["direct_candidate"]["ratio"] == pytest.approx(0.0)
+    assert target_out["direct_candidate"]["comparable_months"] == 11
+    assert target_out["direct_candidate"]["premium_share"] is None
     assert (
-        small["denominator_sensitivity"]["raw_neutral_side_consistency"]
-        == "crosses_neutral"
-    )
-    assert (
-        complement["denominator_sensitivity"]["raw_neutral_side_consistency"]
-        == "crosses_neutral"
+        target_out["direct_candidate"]["premium_share_state"]
+        == "not_used_under_monthly_aligned_pressure"
     )
     assert (
-        small["temporal_overlap"]["premium_direct"]["state"]
-        == "all_observed_complaints_outside_positive_premium_months"
-    )
-    assert (
-        small["temporal_overlap"]["premium_direct"][
+        target_out["temporal_overlap"]["premium_direct"][
             "complaints_in_non_positive_premium_months"
         ]
         == 5
     )
-    assert payload["diagnostics"]["temporal_overlap"][
-        "entities_with_complaints_in_non_positive_direct_premium_months"
-    ] == 1
-    assert payload["diagnostics"]["denominator_sensitivity"][
-        "raw_neutral_side_changes"
-    ] == 2
 
 
-def test_earned_diagnostic_uses_its_own_aligned_population() -> None:
-    calibration = {
-        "version": "upstream-test",
-        "scoring": "forbidden_in_this_artifact",
-        "ranking": "forbidden_in_this_artifact",
-        "source": {"months": ["2026-01"]},
-        "market_12m": {"complaints": 10, "premium_direct": 100.0},
-        "entities": [
-            _entity(
-                "fip:000001",
-                complaints=10,
-                direct=50.0,
-                earned=100.0,
-                monthly=[(10, 50.0, 100.0)],
-            ),
-            _entity(
-                "fip:000002",
-                complaints=0,
-                direct=50.0,
-                earned=-5.0,
-                monthly=[(0, 50.0, -5.0)],
-            ),
-        ],
-    }
+def test_sparse_or_missing_earned_exposure_cannot_create_sensitivity_veto() -> None:
+    target = _entity(
+        "fip:000001",
+        complaints=[2] * 12,
+        direct=[100.0] * 12,
+        earned=[None] * 8 + [100.0] * 4,
+        aligned_observed=24,
+        aligned_expected=12.0,
+        comparable_months=12,
+    )
+    peer = _entity(
+        "fip:000002",
+        complaints=[2] * 12,
+        direct=[100.0] * 12,
+        earned=[100.0] * 12,
+        aligned_observed=24,
+        aligned_expected=36.0,
+        comparable_months=12,
+    )
 
-    payload = build_credibility_diagnostic(calibration)
+    payload = build_credibility_diagnostic(_calibration([target, peer]))
+    target_out = next(
+        row for row in payload["entities"] if row["entity_id"] == "fip:000001"
+    )
+
+    assert target_out["earned_diagnostic"]["comparable_months"] == 4
+    assert target_out["earned_diagnostic"]["missing_months"] == 8
+    assert target_out["earned_diagnostic"]["eligible_for_sensitivity_guard"] is False
+    assert (
+        target_out["denominator_sensitivity"]["familywise_state_consistency"]
+        == "earned_insufficient_temporal_coverage"
+    )
+    assert (
+        target_out["temporal_overlap"]["premium_earned"]["missing_premium_months"]
+        == 8
+    )
+    assert payload["population"]["earned_diagnostic_entities"] == 1
+
+
+def test_earned_diagnostic_uses_same_month_population_only() -> None:
+    target = _entity(
+        "fip:000001",
+        complaints=[10] + [0] * 11,
+        direct=[50.0] * 12,
+        earned=[100.0] * 12,
+        aligned_observed=10,
+        aligned_expected=5.0,
+        comparable_months=12,
+    )
+    peer = _entity(
+        "fip:000002",
+        complaints=[0] * 12,
+        direct=[50.0] * 12,
+        earned=[-5.0] * 12,
+        aligned_observed=0,
+        aligned_expected=5.0,
+        comparable_months=12,
+    )
+
+    payload = build_credibility_diagnostic(_calibration([target, peer]))
     by_id = {row["entity_id"]: row for row in payload["entities"]}
 
-    assert payload["population"]["direct_candidate_entities"] == 2
-    assert payload["population"]["earned_diagnostic_entities"] == 1
-    assert payload["population"]["earned_unavailable_entities"] == 1
-    assert payload["market"]["earned_diagnostic"]["complaints"] == 10
-    assert payload["market"]["earned_diagnostic"]["premium"] == pytest.approx(100.0)
     assert by_id["fip:000001"]["earned_diagnostic"]["ratio"] == pytest.approx(1.0)
+    assert by_id["fip:000001"]["earned_diagnostic"]["comparable_months"] == 1
     assert (
         by_id["fip:000002"]["earned_diagnostic"]["state"]
-        == "unavailable_non_positive_annual_premium_earned"
+        == "unavailable_no_positive_aligned_premium_earned"
     )
+
+
+def test_credibility_rejects_mismatched_upstream_direct_ratio() -> None:
+    entity = _entity(
+        "fip:000001",
+        complaints=[1] * 12,
+        direct=[10.0] * 12,
+        earned=[10.0] * 12,
+        aligned_observed=12,
+        aligned_expected=12.0,
+        comparable_months=12,
+    )
+    entity["pressure_12m"]["ratio"] = 2.0
+
+    with pytest.raises(
+        ConductCredibilityDiagnosticError,
+        match="upstream direct pressure ratio mismatch",
+    ):
+        build_credibility_diagnostic(_calibration([entity]))
