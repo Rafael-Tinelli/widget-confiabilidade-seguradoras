@@ -21,7 +21,7 @@ permissions:
 
 concurrency:
   group: v2-gate4-full-generation-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   full-generation-proof:
@@ -219,6 +219,13 @@ jobs:
               raise SystemExit("ranking gate must remain methodologically closed")
           if ranking.get("ranking") != "forbidden_in_this_artifact":
               raise SystemExit("ranking preflight must preserve ranking prohibition")
+          freshness_policy = (ranking.get("source_contracts") or {}).get(
+              "operational_freshness_policy"
+          )
+          if freshness_policy != (
+              "single_generation_workspace_cross_run_latest_successful_restore_forbidden"
+          ):
+              raise SystemExit(f"ranking preflight freshness policy mismatch: {freshness_policy}")
 
           manifest = json.loads(
               Path("data/derived/v2/public/distribution_manifest.json").read_text(
@@ -230,7 +237,7 @@ jobs:
               raise SystemExit("distribution manifest build_id mismatch")
           if manifest_build.get("source_head_sha") != source_head:
               raise SystemExit("distribution manifest source_head_sha mismatch")
-          source_rows = manifest.get("sources") or []
+          source_rows = (manifest.get("source_lineage") or {}).get("sources") or []
           expected_source_ids = {
               str(row.get("source_id"))
               for payload in (source_lineage, conduct_lineage)
@@ -279,7 +286,7 @@ jobs:
           payload = json.loads(path.read_text(encoding="utf-8"))
           fixture_id = os.environ["V2_BUILD_ID"] + "-previous-fixture"
           payload.setdefault("build", {})["build_id"] = fixture_id
-          for row in payload.get("sources") or []:
+          for row in (payload.get("source_lineage") or {}).get("sources") or []:
               row["build_id"] = fixture_id
           path.write_text(
               json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
