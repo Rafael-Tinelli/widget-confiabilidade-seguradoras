@@ -93,11 +93,19 @@ def aggregate_entry_to_month(
     matched_current_insurer_market_complaints: int,
 ) -> dict[str, Any]:
     stats = entry.get("statistics") if isinstance(entry.get("statistics"), dict) else {}
-    complaints = _required_nonnegative_int_stat(
-        stats,
-        "complaintsCount",
-        "total_claims",
-        field="complaints",
+    # An internally initialized insurer/month with no matched provider is a
+    # legitimate observed zero after the complete source scan. A non-empty
+    # provider statistics object without its complaint total is malformed and
+    # must fail closed instead of becoming zero.
+    complaints = (
+        0
+        if not stats
+        else _required_nonnegative_int_stat(
+            stats,
+            "complaintsCount",
+            "total_claims",
+            field="complaints",
+        )
     )
     responded = _int_stat(stats, "respondedCount", "responded_claims")
     finalized = _int_stat(stats, "finalizedCount", "finalized_claims")
