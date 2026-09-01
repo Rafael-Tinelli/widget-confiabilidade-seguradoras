@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from api.v2.operating_experiment import (
+    _capital_ratio,
     calculate_operating_observation,
     equivalent_month_periods,
     prior_year_end_periods,
@@ -76,6 +77,20 @@ def test_missing_component_is_not_imputed_to_zero() -> None:
     assert result["state"] == "missing_components"
     assert result["value"] is None
     assert result["missing_cmpids"] == [11237]
+
+
+def test_operating_capital_redundancy_uses_new_pla_not_plajustado() -> None:
+    source = {
+        "capital_history": {
+            202606: {
+                "new_pla": 110.0,
+                "pla_adjusted": 70.0,
+                "cmr": 100.0,
+            }
+        }
+    }
+
+    assert _capital_ratio(source, 202606) == 1.10
 
 
 def test_equivalent_horizons_cross_years_without_monthly_comparison() -> None:
