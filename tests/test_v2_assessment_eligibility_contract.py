@@ -3,6 +3,7 @@ from copy import deepcopy
 import pytest
 
 from api.v2.build_assessment_eligibility_contract import (
+    OPERATIONAL_FRESHNESS_POLICY,
     build_assessment_eligibility_contract,
 )
 
@@ -126,6 +127,12 @@ def test_gate_is_outcome_independent_and_ranking_stays_closed():
     }
     assert all(not row["ranking_eligible"] for row in payload["entities"])
     assert payload["gate_contract"]["performance_result_used_for_eligibility"] is False
+    assert payload["source_contracts"]["operational_freshness_policy"] == (
+        OPERATIONAL_FRESHNESS_POLICY
+    )
+    assert OPERATIONAL_FRESHNESS_POLICY == (
+        "single_generation_workspace_cross_run_latest_successful_restore_forbidden"
+    )
 
 
 def test_limited_history_does_not_block_complete_assessment():
