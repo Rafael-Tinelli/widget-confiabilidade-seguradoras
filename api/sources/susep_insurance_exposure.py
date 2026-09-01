@@ -76,7 +76,7 @@ def _period(value: Any) -> int:
     period = _integer(value, field="damesano")
     year = period // 100
     month = period % 100
-    if year < 2000 or not 1 <= month <= 12:
+    if not 1000 <= year <= 9999 or not 1 <= month <= 12:
         raise InsuranceExposureSourceError(
             f"invalid damesano value in Ses_seguros.csv: {value!r}"
         )
