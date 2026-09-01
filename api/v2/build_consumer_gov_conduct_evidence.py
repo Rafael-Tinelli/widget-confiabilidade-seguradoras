@@ -24,6 +24,7 @@ from api.v2.consumer_gov_conduct import (
     build_conduct_film,
 )
 from api.v2.consumer_gov_conduct_core import (
+    _required_nonnegative_int_stat,
     add_entry_statistics,
     aggregate_entry_to_month,
     build_cached_taxonomy_enrichment,
@@ -264,10 +265,13 @@ def build_conduct_evidence() -> dict[str, Any]:
                 if isinstance(entry.get("statistics"), dict)
                 else {}
             )
-            complaints = int(
-                stats.get("complaintsCount") or stats.get("total_claims") or 0
+            complaints = _required_nonnegative_int_stat(
+                stats,
+                "complaintsCount",
+                "total_claims",
+                field="complaints",
             )
-            if complaints <= 0:
+            if complaints == 0:
                 continue
 
             source_month_totals[month] += complaints
