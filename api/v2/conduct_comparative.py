@@ -16,23 +16,51 @@ def exposure_comparability_state(
 
     Complaints with no positive comparable exposure are an evidence conflict,
     not an adverse conduct signal. They must never be converted into an
-    infinite or extreme pressure ratio.
+    infinite or extreme pressure ratio. Non-finite complaint counts are invalid
+    evidence and must be rejected before they can contaminate market totals.
     """
-    if observed_complaints < 0:
+    try:
+        complaints = float(observed_complaints)
+    except (TypeError, ValueError):
+        return {
+            "state": "invalid_complaint_count",
+            "pressure_eligible": False,
+            "reason_code": "non_numeric_observed_complaints",
+        }
+    if not math.isfinite(complaints):
+        return {
+            "state": "invalid_complaint_count",
+            "pressure_eligible": False,
+            "reason_code": "non_finite_observed_complaints",
+        }
+    if complaints < 0:
         return {
             "state": "invalid_complaint_count",
             "pressure_eligible": False,
             "reason_code": "negative_observed_complaints",
         }
-    if company_exposure is None or not math.isfinite(float(company_exposure)):
+    if company_exposure is None:
         return {
             "state": "exposure_unavailable",
             "pressure_eligible": False,
             "reason_code": "comparable_exposure_unavailable",
         }
-    exposure = float(company_exposure)
+    try:
+        exposure = float(company_exposure)
+    except (TypeError, ValueError):
+        return {
+            "state": "exposure_unavailable",
+            "pressure_eligible": False,
+            "reason_code": "comparable_exposure_unavailable",
+        }
+    if not math.isfinite(exposure):
+        return {
+            "state": "exposure_unavailable",
+            "pressure_eligible": False,
+            "reason_code": "comparable_exposure_unavailable",
+        }
     if exposure <= 0:
-        if observed_complaints > 0:
+        if complaints > 0:
             return {
                 "state": "complaints_without_comparable_exposure",
                 "pressure_eligible": False,
@@ -109,9 +137,18 @@ def expected_complaints(
     market_complaints: float,
     market_exposure: float,
 ) -> float | None:
-    if company_exposure < 0 or market_complaints < 0 or market_exposure <= 0:
+    try:
+        exposure = float(company_exposure)
+        complaints = float(market_complaints)
+        market = float(market_exposure)
+    except (TypeError, ValueError):
         return None
-    return float(market_complaints * company_exposure / market_exposure)
+    if not all(math.isfinite(value) for value in (exposure, complaints, market)):
+        return None
+    if exposure < 0 or complaints < 0 or market <= 0:
+        return None
+    expected = complaints * exposure / market
+    return float(expected) if math.isfinite(expected) else None
 
 
 def pressure_ratio(
@@ -127,7 +164,7 @@ def pressure_ratio(
     expected = expected_complaints(company_exposure, market_complaints, market_exposure)
     if expected is None or expected <= 0:
         return None
-    ratio = observed_complaints / expected
+    ratio = float(observed_complaints) / expected
     return float(ratio) if math.isfinite(ratio) else None
 
 
@@ -141,12 +178,21 @@ def shrunken_pressure_ratio(
     prior_strength is expressed in expected-complaint units. It is deliberately
     configurable and receives no scoring interpretation in this experiment.
     """
-    if observed_complaints < 0 or expected_count <= 0 or prior_strength < 0:
+    try:
+        observed = float(observed_complaints)
+        expected = float(expected_count)
+        strength = float(prior_strength)
+    except (TypeError, ValueError):
         return None
-    denominator = expected_count + prior_strength
-    if denominator <= 0:
+    if not all(math.isfinite(value) for value in (observed, expected, strength)):
         return None
-    return float((observed_complaints + prior_strength) / denominator)
+    if observed < 0 or expected <= 0 or strength < 0:
+        return None
+    denominator = expected + strength
+    if denominator <= 0 or not math.isfinite(denominator):
+        return None
+    result = (observed + strength) / denominator
+    return float(result) if math.isfinite(result) else None
 
 
 def branch_mix(branch_exposure: dict[int | str, float]) -> dict[str, float]:
