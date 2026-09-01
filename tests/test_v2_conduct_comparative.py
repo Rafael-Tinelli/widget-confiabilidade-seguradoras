@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import math
+
 import pytest
 
 from api.v2.conduct_comparative import (
@@ -71,6 +73,49 @@ def test_missing_exposure_is_distinct_from_zero_exposure() -> None:
     state = exposure_comparability_state(10, None)
     assert state["state"] == "exposure_unavailable"
     assert state["pressure_eligible"] is False
+
+
+def test_non_finite_complaints_are_invalid_before_comparability() -> None:
+    for value in (math.nan, math.inf, -math.inf):
+        state = exposure_comparability_state(value, 100)
+        assert state == {
+            "state": "invalid_complaint_count",
+            "pressure_eligible": False,
+            "reason_code": "non_finite_observed_complaints",
+        }
+        assert pressure_ratio(value, 100, 100, 1000) is None
+
+
+def test_market_totals_exclude_non_finite_complaints_without_contamination() -> None:
+    market = comparable_market_totals(
+        [
+            {"entity": "valid", "complaints": 10, "exposure": 100},
+            {"entity": "nan", "complaints": math.nan, "exposure": 200},
+            {"entity": "inf", "complaints": math.inf, "exposure": 300},
+        ]
+    )
+
+    assert market["state"] == "available"
+    assert market["comparable_entities"] == 1
+    assert market["market_complaints"] == pytest.approx(10.0)
+    assert market["market_exposure"] == pytest.approx(100.0)
+    assert math.isfinite(market["market_complaints"])
+    assert math.isfinite(market["market_exposure"])
+    assert market["excluded_by_state"] == {"invalid_complaint_count": 2}
+
+
+def test_expected_and_pressure_reject_non_finite_market_inputs() -> None:
+    assert expected_complaints(100, math.nan, 1000) is None
+    assert expected_complaints(100, 10, math.inf) is None
+    assert expected_complaints(math.inf, 10, 1000) is None
+    assert pressure_ratio(10, 100, math.nan, 1000) is None
+    assert pressure_ratio(10, 100, 10, math.inf) is None
+
+
+def test_shrinkage_rejects_non_finite_inputs() -> None:
+    assert shrunken_pressure_ratio(math.nan, 10, 2) is None
+    assert shrunken_pressure_ratio(10, math.inf, 2) is None
+    assert shrunken_pressure_ratio(10, 2, math.nan) is None
 
 
 def test_market_totals_exclude_complaints_when_matching_exposure_is_unavailable() -> None:
