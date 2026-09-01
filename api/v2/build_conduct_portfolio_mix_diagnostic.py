@@ -12,9 +12,10 @@ from scipy.stats import spearmanr
 CALIBRATION_PATH = Path("data/derived/v2/conduct_comparative_calibration_v2.json")
 CREDIBILITY_PATH = Path("data/derived/v2/conduct_credibility_diagnostic.json")
 OUTPUT_PATH = Path("data/derived/v2/conduct_portfolio_mix_diagnostic.json")
-VERSION = "2.0-draft-conduct-portfolio-mix-1"
+VERSION = "2.0-draft-conduct-portfolio-mix-2"
 DISTANCE_GRID = (0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.40, 0.50, 0.60)
 CONTINUITY_CORRECTION = 0.5
+ALIGNED_POLICY = "sum_monthly_expected_then_observed_divided_by_expected"
 
 
 class ConductPortfolioMixDiagnosticError(RuntimeError):
@@ -34,6 +35,23 @@ def _finite(value: Any, *, field: str) -> float:
         ) from exc
     if not math.isfinite(number):
         raise ConductPortfolioMixDiagnosticError(f"non-finite {field}: {value!r}")
+    return number
+
+
+def _nonnegative_int(value: Any, *, field: str) -> int:
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ConductPortfolioMixDiagnosticError(
+            f"non-integer {field}: {value!r}"
+        ) from exc
+    if not math.isfinite(numeric) or not numeric.is_integer():
+        raise ConductPortfolioMixDiagnosticError(
+            f"non-integer {field}: {value!r}"
+        )
+    number = int(numeric)
+    if number < 0:
+        raise ConductPortfolioMixDiagnosticError(f"negative {field}: {number}")
     return number
 
 
@@ -93,55 +111,180 @@ def _stabilized_log_pressure(observed: int, expected: float) -> float:
     )
 
 
+def _aligned_pressure(entity: dict[str, Any]) -> tuple[int, float, float]:
+    pressure = entity.get("pressure_12m") or {}
+    if pressure.get("aggregation_policy") not in {None, ALIGNED_POLICY}:
+        raise ConductPortfolioMixDiagnosticError(
+            f"entity {entity.get('entity_id')} has non-aligned pressure policy"
+        )
+    observed = _nonnegative_int(
+        pressure.get("observed_complaints"),
+        field="pressure_12m.observed_complaints",
+    )
+    expected = _finite(
+        pressure.get("expected_complaints"),
+        field="pressure_12m.expected_complaints",
+    )
+    ratio = _finite(pressure.get("ratio"), field="pressure_12m.ratio")
+    if expected <= 0:
+        raise ConductPortfolioMixDiagnosticError(
+            f"entity {entity.get('entity_id')} has unavailable aligned expected complaints"
+        )
+    calculated = observed / expected
+    if not math.isclose(ratio, calculated, rel_tol=1e-10, abs_tol=1e-10):
+        raise ConductPortfolioMixDiagnosticError(
+            f"entity {entity.get('entity_id')} has inconsistent aligned pressure ratio"
+        )
+    return observed, expected, ratio
+
+
+def _monthly_index(entity: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    rows = list(entity.get("monthly") or [])
+    by_month = {
+        str(row.get("month") or ""): row
+        for row in rows
+        if str(row.get("month") or "")
+    }
+    if not rows or len(by_month) != len(rows):
+        raise ConductPortfolioMixDiagnosticError(
+            f"entity {entity.get('entity_id')} has missing/duplicate monthly rows"
+        )
+    return by_month
+
+
 def _local_pressure(
     entity: dict[str, Any],
     peers: list[dict[str, Any]],
 ) -> dict[str, Any]:
+    aligned_observed, _aligned_expected, _aligned_ratio = _aligned_pressure(entity)
     if not peers:
         return {
             "state": "unavailable_no_peers_within_distance",
             "group_entity_count": 1,
             "peer_count": 0,
-            "group_complaints": int(entity.get("complaints_12m") or 0),
-            "group_premium_direct": _finite(
-                entity.get("premium_direct_12m") or 0.0,
-                field="premium_direct_12m",
-            ),
+            "group_complaints": None,
+            "group_premium_direct": None,
+            "observed_complaints": aligned_observed,
             "expected_complaints": None,
             "ratio": None,
+            "comparable_months": 0,
+            "aggregation_policy": ALIGNED_POLICY,
         }
 
     group = [entity, *peers]
-    complaints = sum(int(row.get("complaints_12m") or 0) for row in group)
-    premium = sum(
-        _finite(row.get("premium_direct_12m") or 0.0, field="premium_direct_12m")
+    indexes = {
+        str(row.get("entity_id") or ""): _monthly_index(row)
         for row in group
-    )
-    entity_premium = _finite(
-        entity.get("premium_direct_12m") or 0.0,
-        field="premium_direct_12m",
-    )
-    observed = int(entity.get("complaints_12m") or 0)
-    if complaints <= 0 or premium <= 0 or entity_premium <= 0:
+    }
+    target_id = str(entity.get("entity_id") or "")
+    target_months = list(indexes[target_id])
+    target_month_set = set(target_months)
+    for group_id, by_month in indexes.items():
+        if set(by_month) != target_month_set:
+            raise ConductPortfolioMixDiagnosticError(
+                f"local peer window mismatch: {target_id} vs {group_id}"
+            )
+
+    observed = 0
+    expected = 0.0
+    group_complaints_total = 0
+    group_premium_total = 0.0
+    comparable_months = 0
+    non_positive_target_months = 0
+    zero_market_complaint_months = 0
+
+    for month_name in target_months:
+        monthly_group: list[tuple[dict[str, Any], float]] = []
+        for group_id, by_month in indexes.items():
+            row = by_month[month_name]
+            premium = _finite(
+                row.get("premium_direct"),
+                field=f"{group_id}.premium_direct",
+            )
+            if premium > 0:
+                monthly_group.append((row, premium))
+
+        target_row = indexes[target_id][month_name]
+        target_premium = _finite(
+            target_row.get("premium_direct"),
+            field=f"{target_id}.premium_direct",
+        )
+        target_complaints = _nonnegative_int(
+            target_row.get("complaints") or 0,
+            field=f"{target_id}.complaints",
+        )
+        market_premium = sum(premium for _row, premium in monthly_group)
+        market_complaints = sum(
+            _nonnegative_int(row.get("complaints") or 0, field="complaints")
+            for row, _premium in monthly_group
+        )
+
+        if target_premium <= 0 or market_premium <= 0:
+            non_positive_target_months += 1
+            continue
+        if market_complaints <= 0:
+            zero_market_complaint_months += 1
+            continue
+
+        monthly_expected = market_complaints * target_premium / market_premium
+        if monthly_expected <= 0 or not math.isfinite(monthly_expected):
+            raise ConductPortfolioMixDiagnosticError(
+                f"invalid local expected complaints: {target_id} {month_name}"
+            )
+        observed += target_complaints
+        expected += monthly_expected
+        group_complaints_total += market_complaints
+        group_premium_total += market_premium
+        comparable_months += 1
+
+    if expected <= 0:
         return {
-            "state": "unavailable_non_positive_aligned_local_baseline",
+            "state": "unavailable_no_monthly_aligned_local_baseline",
             "group_entity_count": len(group),
             "peer_count": len(peers),
-            "group_complaints": complaints,
-            "group_premium_direct": premium,
+            "group_complaints": group_complaints_total,
+            "group_premium_direct": group_premium_total,
+            "observed_complaints": observed,
             "expected_complaints": None,
             "ratio": None,
+            "comparable_months": comparable_months,
+            "non_positive_target_months": non_positive_target_months,
+            "zero_market_complaint_months": zero_market_complaint_months,
+            "aggregation_policy": ALIGNED_POLICY,
         }
-    expected = complaints * (entity_premium / premium)
+
     return {
         "state": "available_diagnostic_only",
         "group_entity_count": len(group),
         "peer_count": len(peers),
-        "group_complaints": complaints,
-        "group_premium_direct": premium,
+        "group_complaints": group_complaints_total,
+        "group_premium_direct": float(group_premium_total),
+        "observed_complaints": observed,
         "expected_complaints": float(expected),
-        "ratio": float(observed / expected) if expected > 0 else None,
+        "ratio": float(observed / expected),
+        "comparable_months": comparable_months,
+        "non_positive_target_months": non_positive_target_months,
+        "zero_market_complaint_months": zero_market_complaint_months,
+        "aggregation_policy": ALIGNED_POLICY,
     }
+
+
+def _validate_unit_contract(calibration: dict[str, Any]) -> None:
+    denominator = calibration.get("denominator") or {}
+    if denominator.get("currency") != "BRL" or denominator.get("source_unit_label") != "R$":
+        raise ConductPortfolioMixDiagnosticError(
+            "calibration premium unit contract must be BRL/R$"
+        )
+    try:
+        scale = float(denominator.get("scale_factor_applied"))
+    except (TypeError, ValueError) as exc:
+        raise ConductPortfolioMixDiagnosticError(
+            "calibration premium scale factor must be 1.0"
+        ) from exc
+    if not math.isfinite(scale) or not math.isclose(scale, 1.0):
+        raise ConductPortfolioMixDiagnosticError(
+            "calibration premium scale factor must be 1.0"
+        )
 
 
 def build_portfolio_mix_diagnostic(
@@ -161,6 +304,7 @@ def build_portfolio_mix_diagnostic(
                 f"upstream {name} artifact must explicitly forbid ranking"
             )
 
+    _validate_unit_contract(calibration)
     entities = list(calibration.get("entities") or [])
     if not entities:
         raise ConductPortfolioMixDiagnosticError("calibration contains no entities")
@@ -175,6 +319,10 @@ def build_portfolio_mix_diagnostic(
             "calibration and credibility populations are not identical"
         )
 
+    aligned_by_id = {
+        entity_id: _aligned_pressure(entity)
+        for entity_id, entity in by_id.items()
+    }
     mix_by_id: dict[str, dict[str, float]] = {}
     for entity_id, entity in by_id.items():
         raw_mix = (
@@ -198,23 +346,11 @@ def build_portfolio_mix_diagnostic(
     pair_rows: list[dict[str, Any]] = []
     ids = sorted(by_id)
     for index, left_id in enumerate(ids):
-        left = by_id[left_id]
-        left_expected = _finite(
-            (left.get("pressure_12m") or {}).get("expected_complaints") or 0.0,
-            field="expected_complaints",
-        )
-        left_log = _stabilized_log_pressure(
-            int(left.get("complaints_12m") or 0), left_expected
-        )
+        left_observed, left_expected, _left_ratio = aligned_by_id[left_id]
+        left_log = _stabilized_log_pressure(left_observed, left_expected)
         for right_id in ids[index + 1 :]:
-            right = by_id[right_id]
-            right_expected = _finite(
-                (right.get("pressure_12m") or {}).get("expected_complaints") or 0.0,
-                field="expected_complaints",
-            )
-            right_log = _stabilized_log_pressure(
-                int(right.get("complaints_12m") or 0), right_expected
-            )
+            right_observed, right_expected, _right_ratio = aligned_by_id[right_id]
+            right_log = _stabilized_log_pressure(right_observed, right_expected)
             distance = _tvd(mix_by_id[left_id], mix_by_id[right_id])
             pair_distance[(left_id, right_id)] = distance
             pair_distance[(right_id, left_id)] = distance
@@ -226,9 +362,8 @@ def build_portfolio_mix_diagnostic(
                     "absolute_stabilized_log_pressure_difference": abs(
                         left_log - right_log
                     ),
-                    "both_100_plus_complaints": (
-                        int(left.get("complaints_12m") or 0) >= 100
-                        and int(right.get("complaints_12m") or 0) >= 100
+                    "both_100_plus_aligned_complaints": (
+                        left_observed >= 100 and right_observed >= 100
                     ),
                 }
             )
@@ -237,6 +372,7 @@ def build_portfolio_mix_diagnostic(
     for entity_id in ids:
         entity = by_id[entity_id]
         credibility_row = credibility_by_id[entity_id]
+        aligned_observed, _aligned_expected, global_ratio = aligned_by_id[entity_id]
         distances = sorted(
             (
                 (other_id, pair_distance[(entity_id, other_id)])
@@ -250,10 +386,12 @@ def build_portfolio_mix_diagnostic(
                 "entity_id": other_id,
                 "legal_name": by_id[other_id].get("legal_name"),
                 "distance": float(distance),
-                "complaints_12m": int(by_id[other_id].get("complaints_12m") or 0),
-                "global_pressure_ratio": (by_id[other_id].get("pressure_12m") or {}).get(
-                    "ratio"
+                "complaints_12m": _nonnegative_int(
+                    by_id[other_id].get("complaints_12m") or 0,
+                    field="complaints_12m",
                 ),
+                "aligned_observed_complaints": aligned_by_id[other_id][0],
+                "global_pressure_ratio": aligned_by_id[other_id][2],
                 "credibility_state": (
                     credibility_by_id[other_id]
                     .get("direct_candidate", {})
@@ -263,12 +401,6 @@ def build_portfolio_mix_diagnostic(
             }
             for other_id, distance in distances[:5]
         ]
-        raw_global_ratio = (entity.get("pressure_12m") or {}).get("ratio")
-        global_ratio = (
-            _finite(raw_global_ratio, field="pressure_12m.ratio")
-            if raw_global_ratio is not None
-            else None
-        )
 
         curve = []
         for threshold in DISTANCE_GRID:
@@ -291,13 +423,11 @@ def build_portfolio_mix_diagnostic(
                         if _side(global_ratio) == _side(local_ratio)
                         else "changes_side"
                     )
-                    if local_ratio is not None and global_ratio is not None
+                    if local_ratio is not None
                     else "unavailable",
                     "local_to_global_ratio_multiplier": (
                         float(local_ratio / global_ratio)
-                        if local_ratio is not None
-                        and global_ratio is not None
-                        and global_ratio > 0
+                        if local_ratio is not None and global_ratio > 0
                         else None
                     ),
                 }
@@ -314,11 +444,16 @@ def build_portfolio_mix_diagnostic(
                 "fip_code": entity.get("fip_code"),
                 "legal_name": entity.get("legal_name"),
                 "display_name": entity.get("display_name"),
-                "complaints_12m": int(entity.get("complaints_12m") or 0),
+                "complaints_12m": _nonnegative_int(
+                    entity.get("complaints_12m") or 0,
+                    field="complaints_12m",
+                ),
+                "aligned_observed_complaints": aligned_observed,
                 "premium_direct_12m": _finite(
-                    entity.get("premium_direct_12m") or 0.0,
+                    entity.get("premium_direct_12m"),
                     field="premium_direct_12m",
                 ),
+                "premium_currency": "BRL",
                 "global_pressure_ratio": global_ratio,
                 "portfolio": {
                     "positive_branch_count": portfolio.get("positive_branch_count"),
@@ -401,7 +536,9 @@ def build_portfolio_mix_diagnostic(
     all_pair_pressure_difference = [
         float(row["absolute_stabilized_log_pressure_difference"]) for row in pair_rows
     ]
-    high_volume_pairs = [row for row in pair_rows if row["both_100_plus_complaints"]]
+    high_volume_pairs = [
+        row for row in pair_rows if row["both_100_plus_aligned_complaints"]
+    ]
     high_volume_distance = [float(row["distance"]) for row in high_volume_pairs]
     high_volume_pressure_difference = [
         float(row["absolute_stabilized_log_pressure_difference"])
@@ -445,6 +582,9 @@ def build_portfolio_mix_diagnostic(
             "credibility_version": credibility.get("version"),
             "portfolio_field": "coramo_positive_branch_mix",
             "exposure": "insurance_premium_direct",
+            "currency": "BRL",
+            "source_unit_label": "R$",
+            "scale_factor_applied": 1.0,
         },
         "methodology": {
             "portfolio_distance": "total_variation_distance",
@@ -455,12 +595,14 @@ def build_portfolio_mix_diagnostic(
             "peer_groups_selected": False,
             "portfolio_adjustment_applied": False,
             "local_pressure_role": "diagnostic_sensitivity_curve_only",
+            "local_pressure_aggregation": ALIGNED_POLICY,
             "local_population_alignment": (
-                "entity_and_peers_complaints_and_direct_premium_same_entities_only"
+                "monthly_entity_and_peers_complaints_and_direct_premium_same_entities_only"
             ),
             "pairwise_pressure_similarity": {
-                "transform": "log((observed+0.5)/(expected+0.5))",
+                "transform": "log((aligned_observed+0.5)/(aligned_expected+0.5))",
                 "continuity_correction": CONTINUITY_CORRECTION,
+                "sample_basis": "pressure_12m.observed_complaints",
                 "role": "correlation_diagnostic_only_not_shrinkage_not_score",
                 "p_values_reported": False,
                 "reason": "pairwise_observations_are_not_independent",
@@ -471,6 +613,7 @@ def build_portfolio_mix_diagnostic(
                 "five_nearest_entities_are_not_automatically_a_cohort",
                 "distance_grid_is_exploratory_not_policy",
                 "local_ratio_does_not_replace_global_pressure",
+                "local_pressure_must_preserve_monthly_alignment",
                 "prior_credibility_denominator_and_temporal_guards_remain_active",
                 "portfolio_similarity_does_not_prove_same_customer_risk_or_service_journey",
             ],
@@ -478,8 +621,8 @@ def build_portfolio_mix_diagnostic(
         "population": {
             "entities": len(rows),
             "pairwise_comparisons": len(pair_rows),
-            "high_volume_100_plus_complaint_entities": sum(
-                int(row.get("complaints_12m") or 0) >= 100 for row in entities
+            "high_volume_100_plus_aligned_complaint_entities": sum(
+                aligned_by_id[entity_id][0] >= 100 for entity_id in ids
             ),
             "high_volume_pairwise_comparisons": len(high_volume_pairs),
         },
