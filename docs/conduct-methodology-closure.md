@@ -2,11 +2,11 @@
 
 Status: **fechado para desenho do sinal de Conduta; score numérico ainda proibido**.
 
-Este documento complementa o README e registra as decisões tomadas depois da Conduct Comparative Calibration v2, do diagnóstico de credibilidade e do diagnóstico de mix de carteira.
+Este documento complementa o README e registra o contrato corrente da camada de Conduta. As contagens abaixo são fotografia da geração integrada de 01/09/2026; não são constantes metodológicas.
 
 ## 1. Pergunta humana
 
-A camada de Conduta não existe para exibir uma razão bruta. Ela tenta responder, nesta ordem:
+A camada de Conduta tenta responder, nesta ordem:
 
 1. **Reclama muito para o tamanho da operação?**
 2. **Temos dados suficientes para confiar nessa diferença?**
@@ -21,29 +21,25 @@ Regra principal:
 
 ## 2. Denominador aprovado — escopo restrito
 
-Para o universo `direct_one_to_one_candidate`, o denominador operacional de pressão de Conduta passa a ser:
+Para o universo `direct_one_to_one_candidate`, o denominador operacional de pressão de Conduta é:
 
 ```text
 insurance_premium_direct
 Ses_seguros.csv → premio_direto
 ```
 
-A aprovação é **restrita** ao experimento de pressão `insurance_only` e não transforma prêmio em número de clientes, apólices ou contratos.
+A aprovação é restrita ao experimento de pressão `insurance_only` e não transforma prêmio em número de clientes, apólices ou contratos.
 
 Continuam excluídos do denominador:
 
 - previdência complementar aberta;
 - capitalização.
 
-`insurance_premium_earned` permanece como diagnóstico de sensibilidade. Se a conclusão estatística muda de estado entre prêmio direto e prêmio ganho, a ferramenta não publica uma conclusão direcional de pressão.
-
-O precedente oficial é conceitual: o SusepCon utiliza reclamações ponderadas pela arrecadação. Isso sustenta normalização pela escala econômica, mas não significa que a Sanida esteja reproduzindo literalmente o denominador interno do SusepCon.
+`insurance_premium_earned` permanece como diagnóstico de sensibilidade. Se a conclusão estatística muda de estado entre prêmio direto e prêmio ganho, a ferramenta não publica conclusão direcional de pressão.
 
 ## 3. Alinhamento temporal obrigatório
 
-A pressão anual não é calculada pela divisão de dois agregados anuais independentes quando a população comparável varia ao longo dos meses.
-
-A regra final é:
+A pressão anual é mensalmente alinhada:
 
 ```text
 para cada mês comparável:
@@ -54,17 +50,41 @@ observed_12m = soma(reclamações da entidade apenas nos meses comparáveis)
 pressure_12m = observed_12m / expected_12m
 ```
 
-Se o prêmio comparável da entidade é não positivo no mês, as reclamações daquele mês continuam preservadas como evidência de Conduta, mas **não entram na pressão normalizada daquele mês**.
+A população econômica e a população de reclamações precisam ser comparáveis no mesmo mês. Se o prêmio da entidade é não positivo, o mês não entra no denominador normalizado, embora suas reclamações permaneçam preservadas como evidência factual.
 
-Essa correção remove falsos extremos gerados por incompatibilidade temporal. Casos como FAIRWAY e ZENPLA deixam de produzir uma conclusão direcional anual quando a exposição comparável é insuficiente.
+Se o mercado possui prêmio positivo, mas `market_complaints = 0`, não existe baseline de pressão naquele mês. O estado é explicitamente não comparável; `0/0` não vira neutralidade nem sinal favorável.
 
-## 4. Pequenas amostras e credibilidade
+## 4. Missingness, zero e integridade da fonte
+
+O contrato distingue:
+
+```text
+missing ≠ zero
+zero factual ≠ sinal favorável
+malformed ≠ missing
+```
+
+A ingestão SES de exposição:
+
+- preserva linha onde `premio_direto` e/ou `premio_ganho` estão ausentes;
+- falha fechado em token numérico malformado ou não finito;
+- falha fechado em período/ramo malformado;
+- não usa `abs()`, clamp ou fallback de sinal;
+- rejeita contadores fracionários onde o contrato exige inteiros.
+
+Unidade declarada:
+
+```text
+currency = BRL
+source_unit_label = R$
+scale_factor_applied = 1.0
+```
+
+## 5. Pequenas amostras e credibilidade
 
 Razão bruta não é conclusão.
 
-A pressão `observed / expected` usa intervalo exato de Poisson para razão padronizada. A comparação anual controla o erro familiar entre as 103 entidades atualmente comparáveis.
-
-A série mensal também usa incerteza explícita, com controle dentro da janela comum de 12 meses.
+A pressão `observed / expected` usa intervalo exato de Poisson para razão padronizada. O tamanho de amostra estatístico usa somente `pressure_12m.observed_complaints`, isto é, reclamações dos meses realmente comparáveis; reclamações brutas fora desses meses permanecem preservadas como evidência, mas não podem inflar o sample bucket.
 
 Decisão:
 
@@ -73,9 +93,7 @@ shrinkage = não selecionado
 Empirical Bayes = não selecionado
 ```
 
-Motivo: nesta etapa a necessidade é impedir afirmações frágeis, não produzir uma magnitude suavizada pronta para score.
-
-## 5. Cobertura temporal
+## 6. Cobertura temporal
 
 Uma conclusão anual de pressão exige ao menos:
 
@@ -83,18 +101,13 @@ Uma conclusão anual de pressão exige ao menos:
 9 meses comparáveis em 12
 ```
 
-Histórico menor não é desempenho ruim. É simplesmente evidência temporal insuficiente.
+As janelas são validadas quanto a duplicidade, ordem cronológica e consecutividade. Histórico menor não é desempenho ruim; é evidência temporal insuficiente.
 
-## 6. Persistência
+## 7. Persistência e tendência
 
-Persistência é separada da pressão anual.
+Persistência é separada da pressão anual e exige a mesma direção com evidência suficiente em pelo menos metade dos meses comparáveis, além da cobertura mínima.
 
-Uma direção anual só é tratada como persistente quando:
-
-- há pelo menos 9 meses comparáveis; e
-- a mesma direção aparece com evidência suficiente em pelo menos metade dos meses comparáveis.
-
-Estados possíveis incluem:
+Estados de persistência incluem:
 
 ```text
 persistent_above_expected
@@ -105,19 +118,7 @@ not_distinguishable_from_expected
 insufficient_temporal_coverage
 ```
 
-O objetivo não é premiar ou punir; é distinguir sinal repetido de pico ou evidência esparsa.
-
-## 7. Tendência
-
-A tendência compara:
-
-```text
-6 meses recentes
-versus
-6 meses iniciais
-```
-
-com pressão normalizada em cada metade e intervalo exato condicional para a razão entre as duas pressões.
+A tendência compara os 6 meses recentes com os 6 meses iniciais da janela, usando pressão normalizada e incerteza explícita.
 
 Estados:
 
@@ -133,15 +134,7 @@ Tendência não substitui a conclusão anual.
 
 ## 8. Mix de carteira (`coramo`)
 
-A investigação de mix foi encerrada sem seleção de coortes obrigatórias.
-
-Resultados reais:
-
-- Spearman entre distância de carteira e diferença de pressão em todos os pares: aproximadamente **0,184**;
-- entre pares de entidades com 100+ reclamações: aproximadamente **0,137**;
-- peers muito próximos são escassos; aumentar o raio melhora cobertura, mas torna a noção de peer progressivamente menos específica.
-
-Decisão:
+A investigação de mix foi encerrada sem seleção de coortes obrigatórias:
 
 ```text
 portfolio_adjustment = false
@@ -149,43 +142,31 @@ peer_groups_selected = false
 distance_threshold_selected = false
 ```
 
-`coramo` permanece contexto e diagnóstico de sensibilidade. Não encontrar peer adequado nunca significa pressão neutra.
+A pressão local entre peers, quando usada como diagnóstico, também é reconstruída mês a mês com a mesma população econômica. `coramo` permanece contexto e diagnóstico de sensibilidade. Não encontrar peer adequado nunca significa pressão neutra.
 
 ## 9. Satisfação
 
-Satisfação é uma dimensão contextual separada da incidência de reclamações.
+Satisfação é dimensão contextual separada da incidência de reclamações. Ela carrega média, tamanho da amostra e direção somente quando existe amostra suficiente.
 
-Ela deve sempre carregar:
-
-- média observada;
-- tamanho total da amostra;
-- amostra da primeira metade;
-- amostra da segunda metade;
-- direção apenas quando há amostra suficiente.
-
-Política atual para direção:
+Política atual:
 
 ```text
 mínimo 10 avaliações em cada metade
 ```
 
-Satisfação não recebe peso nesta etapa e não corrige a pressão de reclamações.
+Satisfação não recebe peso e não corrige a pressão de reclamações.
 
 ## 10. Remediação
 
-A remediação **não é inferida** com o P3 atual.
-
-Responder ou finalizar uma reclamação não prova que o problema tenha sido solucionado. O core preservado também não mantém de forma suficiente o denominador avaliado necessário para transformar `Resolvida / Não Resolvida` em série robusta.
-
-Portanto:
+A remediação não é inferida com o P3 atual:
 
 ```text
 remediation = not_established_from_current_p3
 ```
 
-Uma futura fonte BDR/SusepCon pode reabrir essa investigação sem alterar o contrato atual.
+Responder ou finalizar uma reclamação não prova solução do problema. Uma fonte futura BDR/SusepCon pode reabrir essa investigação sem alterar o contrato corrente.
 
-## 11. Os 54 casos sem pressão comparável
+## 11. Casos sem pressão comparável
 
 Eles não desaparecem da ferramenta.
 
@@ -197,33 +178,24 @@ Para cada um:
 - a rota de recuperação é preservada;
 - nenhum peso é redistribuído silenciosamente.
 
-Exemplos de rotas:
+## 12. Snapshot integrado corrente
 
-- seguros + previdência → recuperar numerador de reclamações por produto;
-- Zurich → reconciliação temporal da transferência de carteira;
-- Bradesco → separar produto/carrier;
-- Youse/Caixa → exposição específica da marca/subject;
-- prêmio direto negativo → revisão contábil;
-- run-off → contexto próprio, sem pressão corrente.
-
-## 12. Resultado da execução real de fechamento
-
-Universo:
+Na Full Generation #44 (`run_id = 33562392945`, `head = c95e8675f8a2363b325623b2f310886e81f1c027`):
 
 ```text
-seguradoras ordinárias                         157
-candidatas ao cálculo de pressão               103
-pressão indisponível por não comparabilidade    54
+seguradoras ordinárias                         156
+candidatas ao cálculo de pressão               101
+pressão indisponível por não comparabilidade    55
 ```
 
-Entre as 103 candidatas, depois de alinhamento temporal, incerteza e sensibilidade de denominador:
+Conclusão anual entre as 101 candidatas:
 
 ```text
 acima do esperado com evidência suficiente       26
 abaixo do esperado com evidência suficiente       41
 sem diferença suficientemente clara               18
-inconclusivas por sensibilidade do denominador      6
-sem cobertura temporal suficiente                  12
+inconclusivas por sensibilidade do denominador      5
+sem cobertura temporal suficiente                  11
 ```
 
 Persistência:
@@ -233,8 +205,8 @@ persistente acima do esperado                     20
 episódica/esparsa acima                             7
 persistente abaixo do esperado                     29
 episódica/esparsa abaixo                           15
-sem diferença clara                                20
-cobertura temporal insuficiente                    12
+sem diferença clara                                19
+cobertura temporal insuficiente                    11
 ```
 
 Tendência:
@@ -243,20 +215,20 @@ Tendência:
 deteriorating_pressure                            11
 improving_pressure                                 8
 no_clear_change                                   60
-insufficient_events                               13
-insufficient_temporal_coverage                    11
+insufficient_events                               12
+insufficient_temporal_coverage                    10
 ```
 
-Satisfação entre as 103:
+Satisfação entre as 101 candidatas:
 
 ```text
 stable                                             32
 worsening                                           5
 improving                                           1
-insufficient_sample                                65
+insufficient_sample                                63
 ```
 
-Esses números são diagnósticos metodológicos, não ranking.
+Esses números são diagnósticos de uma geração, não ranking nem thresholds metodológicos.
 
 ## 13. Linguagem pública autorizada
 
@@ -284,7 +256,7 @@ Esses números são diagnósticos metodológicos, não ranking.
 
 > Há dados de Conduta, mas não há numerador e denominador comparáveis suficientes para calcular pressão sem inventar atribuições.
 
-## 14. O que está fechado e o que não está
+## 14. Estado do contrato
 
 Fechado:
 
@@ -302,11 +274,11 @@ sensibilidade premio_direto × premio_ganho
 papel do coramo
 papel da satisfação
 limite atual de remediação
-tratamento explícito dos 54 não comparáveis
+tratamento explícito dos não comparáveis
 linguagem pública do sinal
 ```
 
-Ainda não definido:
+Não autorizado por esta camada:
 
 ```text
 conduct_numeric_score
@@ -315,22 +287,10 @@ score composto
 ranking final
 ```
 
-Esses itens pertencem à calibração posterior entre pilares. Não devem ser resolvidos dentro da camada de Conduta.
-
 ## 15. Critério de fechamento
 
-A camada de Conduta é considerada metodologicamente fechada quando sabe:
+A camada de Conduta é considerada metodologicamente fechada porque sabe quando pode comparar, quando não pode, o que está sendo normalizado, quanto confiar na diferença, como tratar persistência/tendência/satisfação e como preservar missingness sem convertê-la em desempenho.
 
-- quando pode comparar;
-- quando não pode comparar;
-- o que está sendo normalizado;
-- quanto confiar na diferença;
-- se o sinal é persistente ou episódico;
-- se há mudança temporal clara;
-- como tratar satisfação sem confundi-la com incidência;
-- como preservar casos sem pressão comparável;
-- e como explicar tudo isso sem dizer mais do que os dados sustentam.
-
-Esse critério está atendido pelo artifact `v2_conduct_methodology_closure`.
+Esse critério é executado pelo artifact `v2_conduct_methodology_closure`.
 
 **Score e ranking permanecem proibidos neste artifact.**
