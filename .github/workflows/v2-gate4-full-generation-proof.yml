@@ -7,16 +7,13 @@ on:
       - refactor/v2-data-foundation
     paths:
       - ".github/workflows/v2-gate4-full-generation-proof.yml"
-      - "api/v2/gate4_pipeline.py"
-      - "api/v2/generation.py"
-      - "api/v2/build_liquidity_experiment.py"
-      - "api/v2/build_operating_experiment.py"
-      - "api/v2/build_public_distribution_manifest.py"
-      - "api/v2/install_public_generation.py"
-      - "api/v2/build_ranking_eligibility_preflight.py"
-      - "tests/test_v2_gate4_pipeline.py"
-      - "tests/test_v2_generation.py"
-      - "tests/test_v2_public_generation_install.py"
+      - "api/v2/**"
+      - "api/sources/**"
+      - "api/build_consumidor_gov.py"
+      - "api/utils/**"
+      - "data/reference/v2/**"
+      - "requirements.txt"
+      - "requirements-dev.txt"
 
 permissions:
   contents: read
@@ -84,6 +81,7 @@ jobs:
           ruff check \
             api/v2/gate4_pipeline.py \
             api/v2/generation.py \
+            api/v2/audit_financial_publication_chain.py \
             api/v2/build_liquidity_experiment.py \
             api/v2/build_operating_experiment.py \
             api/v2/build_public_distribution_manifest.py \
@@ -91,10 +89,12 @@ jobs:
             api/v2/build_ranking_eligibility_preflight.py \
             tests/test_v2_gate4_pipeline.py \
             tests/test_v2_generation.py \
+            tests/test_v2_financial_publication_audit.py \
             tests/test_v2_public_generation_install.py
           python -m pytest -q \
             tests/test_v2_gate4_pipeline.py \
             tests/test_v2_generation.py \
+            tests/test_v2_financial_publication_audit.py \
             tests/test_v2_public_generation_install.py
 
       - name: Ensure versioned Consumer.gov bootstrap is available
@@ -218,11 +218,24 @@ jobs:
           if conduct.get("ranking") != "forbidden_in_this_artifact":
               raise SystemExit("Conduct closure ranking prohibition was lost")
 
+          financial_audit = json.loads(
+              Path("data/derived/v2/financial_publication_audit.json").read_text(
+                  encoding="utf-8"
+              )
+          )
+          if financial_audit.get("status") != "financial_publication_chain_verified":
+              raise SystemExit(f"financial publication audit failed: {financial_audit}")
+          if (financial_audit.get("contracts") or {}).get("capital_pla_source_field") != "new_pla":
+              raise SystemExit("financial publication audit lost new_pla numerator contract")
+          if financial_audit.get("scoring") != "forbidden_in_this_artifact":
+              raise SystemExit("financial publication audit must forbid scoring")
+          if financial_audit.get("ranking") != "forbidden_in_this_artifact":
+              raise SystemExit("financial publication audit must forbid ranking")
+
           ranking = json.loads(
               Path("data/derived/v2/ranking_eligibility_preflight.json").read_text(
                   encoding="utf-8"
               )
-          )
           if int((ranking.get("population") or {}).get("ranking_eligible") or 0) != 0:
               raise SystemExit("ranking_eligible must remain zero")
           decision = ranking.get("closure_decision") or {}
@@ -262,6 +275,7 @@ jobs:
           if any(row.get("build_id") != build_id for row in source_rows):
               raise SystemExit("distribution manifest mixes source generations")
 
+          financial_population = financial_audit.get("population") or {}
           summary = {
               "build_id": build_id,
               "source_head_sha": source_head,
@@ -271,6 +285,11 @@ jobs:
               "watchdog_blocking_drift": 0,
               "ranking_eligible": 0,
               "conduct_status": conduct.get("status"),
+              "financial_publication_audit_status": financial_audit.get("status"),
+              "financial_reference_period": financial_audit.get("reference_period"),
+              "capital_derivable": financial_population.get("capital_derivable"),
+              "capital_unavailable": financial_population.get("capital_unavailable"),
+              "capital_below_cmr": financial_population.get("capital_below_cmr"),
               "package_sha256": (manifest.get("public_package") or {}).get(
                   "package_sha256"
               ),
@@ -353,6 +372,9 @@ jobs:
             data/derived/v2/source_lineage.json
             data/derived/v2/conduct_source_lineage.json
             data/derived/v2/relationship_watchdog.json
+            data/derived/v2/entity_financial_evidence_inventory.json
+            data/derived/v2/financial_methodology_closure.json
+            data/derived/v2/financial_publication_audit.json
             data/derived/v2/conduct_methodology_closure.json
             data/derived/v2/ranking_eligibility_preflight.json
             data/derived/v2/public/distribution_manifest.json
