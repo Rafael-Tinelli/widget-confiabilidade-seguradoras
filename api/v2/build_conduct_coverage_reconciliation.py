@@ -39,6 +39,35 @@ def _period(value: Any) -> int:
     return int(text)
 
 
+def _next_period(period: int) -> int:
+    year, month = divmod(period, 100)
+    return (year + 1) * 100 + 1 if month == 12 else year * 100 + month + 1
+
+
+def _validated_periods(months: list[str]) -> list[int]:
+    if not months:
+        raise ConductCoverageReconciliationError(
+            "Conduct evidence has no comparison months"
+        )
+    periods = [_period(month) for month in months]
+    if len(periods) != len(set(periods)):
+        raise ConductCoverageReconciliationError(
+            "Conduct evidence contains duplicate comparison months"
+        )
+    if periods != sorted(periods):
+        raise ConductCoverageReconciliationError(
+            "Conduct comparison months must be chronological"
+        )
+    if any(
+        periods[index] != _next_period(periods[index - 1])
+        for index in range(1, len(periods))
+    ):
+        raise ConductCoverageReconciliationError(
+            "Conduct comparison months must be consecutive"
+        )
+    return periods
+
+
 def _eligible_entities(payload: dict[str, Any]) -> list[dict[str, Any]]:
     return [
         entity
@@ -334,15 +363,7 @@ def build_reconciliation(
     conduct_months = [
         str(month) for month in (conduct.get("source") or {}).get("months") or []
     ]
-    if not conduct_months:
-        raise ConductCoverageReconciliationError(
-            "Conduct evidence has no comparison months"
-        )
-    periods = [_period(month) for month in conduct_months]
-    if len(periods) != len(set(periods)):
-        raise ConductCoverageReconciliationError(
-            "Conduct evidence contains duplicate comparison months"
-        )
+    periods = _validated_periods(conduct_months)
     ses_periods = {int(period) for period in ses.get("periods") or []}
     missing = [period for period in periods if period not in ses_periods]
     if missing:
