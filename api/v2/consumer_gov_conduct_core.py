@@ -25,6 +25,35 @@ def _int_stat(stats: dict[str, Any], *names: str) -> int:
     return 0
 
 
+def _required_nonnegative_int_stat(
+    stats: dict[str, Any],
+    *names: str,
+    field: str,
+) -> int:
+    """Read a required preserved count without converting missing evidence to zero."""
+    for name in names:
+        if name not in stats:
+            continue
+        value = stats.get(name)
+        if value in (None, ""):
+            continue
+        try:
+            number = int(value)
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError(
+                f"consumer_gov_core_source_invalid: non-integer {field}: {value!r}"
+            ) from exc
+        if number < 0:
+            raise RuntimeError(
+                f"consumer_gov_core_source_invalid: negative {field}: {number}"
+            )
+        return number
+    raise RuntimeError(
+        "consumer_gov_core_source_invalid: required preserved statistic missing: "
+        f"{field}"
+    )
+
+
 def _float_stat(stats: dict[str, Any], *names: str) -> float:
     for name in names:
         value = stats.get(name)
@@ -64,7 +93,12 @@ def aggregate_entry_to_month(
     matched_current_insurer_market_complaints: int,
 ) -> dict[str, Any]:
     stats = entry.get("statistics") if isinstance(entry.get("statistics"), dict) else {}
-    complaints = _int_stat(stats, "complaintsCount", "total_claims")
+    complaints = _required_nonnegative_int_stat(
+        stats,
+        "complaintsCount",
+        "total_claims",
+        field="complaints",
+    )
     responded = _int_stat(stats, "respondedCount", "responded_claims")
     finalized = _int_stat(stats, "finalizedCount", "finalized_claims")
     resolved = _int_stat(stats, "resolvedCount", "resolved_claims")
@@ -119,7 +153,12 @@ def add_entry_statistics(
     entry: dict[str, Any],
 ) -> int:
     stats = entry.get("statistics") if isinstance(entry.get("statistics"), dict) else {}
-    complaints = _int_stat(stats, "complaintsCount", "total_claims")
+    complaints = _required_nonnegative_int_stat(
+        stats,
+        "complaintsCount",
+        "total_claims",
+        field="complaints",
+    )
     target["complaintsCount"] = int(target.get("complaintsCount") or 0) + complaints
     target["respondedCount"] = int(target.get("respondedCount") or 0) + _int_stat(
         stats, "respondedCount", "responded_claims"
