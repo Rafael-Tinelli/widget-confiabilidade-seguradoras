@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import subprocess
 import sys
@@ -261,37 +262,48 @@ STAGES: tuple[PipelineStage, ...] = (
     PipelineStage(
         stage_id="leaderboards",
         kind="derive",
-        dependencies=("assessment_eligibility", "ranking_preflight"),
-        commands=(_module("api.v2.build_leaderboards"),),
+        dependencies=(
+            "assessment_eligibility",
+            "semantic_contract",
+            "financial_closure",
+            "conduct_closure",
+            "conduct_coverage",
+            "ranking_preflight",
+        ),
+        commands=(_module("api.v2.build_exploratory_leaderboards_contract"),),
         outputs=(
-            "data/derived/v2/leaderboards/manifest.json",
-            "data/derived/v2/leaderboards/capital_adequacy.json",
-            "data/derived/v2/leaderboards/liquidity.json",
-            "data/derived/v2/leaderboards/conduct.json",
+            "data/derived/v2/exploratory_leaderboards_contract.json",
+            "data/derived/v2/public/insurer_explorer.json",
+            "data/derived/v2/public/explore_index.json",
         ),
     ),
     PipelineStage(
         stage_id="sandbox_brand_conduct",
         kind="derive",
-        dependencies=("eligibility", "consumer_conduct"),
-        commands=(_module("api.v2.build_sandbox_brand_conduct_profiles"),),
-        outputs=("data/derived/v2/sandbox_brand_conduct_profiles.json",),
+        dependencies=("eligibility", "conduct_source_snapshot"),
+        commands=(_module("api.v2.build_sandbox_brand_conduct_evidence"),),
+        outputs=("data/derived/v2/sandbox_brand_conduct_evidence.json",),
     ),
     PipelineStage(
         stage_id="public_profiles",
         kind="derive",
         dependencies=("lifecycle", "leaderboards", "sandbox_brand_conduct"),
-        commands=(_module("api.v2.build_public_profiles"),),
+        commands=(_module("api.v2.build_public_search_profile_contract"),),
         outputs=(
-            "data/derived/v2/public/search-index.json",
-            "data/derived/v2/public/manifest.json",
-            "data/derived/v2/public/profiles/manifest.json",
+            "data/derived/v2/public_search_profile_contract.json",
+            "data/derived/v2/public/search_index.json",
+            "data/derived/v2/public/profile_manifest.json",
         ),
     ),
     PipelineStage(
         stage_id="distribution_manifest",
         kind="package",
-        dependencies=("source_snapshot", "leaderboards", "public_profiles"),
+        dependencies=(
+            "source_snapshot",
+            "conduct_source_snapshot",
+            "leaderboards",
+            "public_profiles",
+        ),
         commands=(_module("api.v2.build_public_distribution_manifest"),),
         outputs=("data/derived/v2/public/distribution_manifest.json",),
     ),
@@ -315,10 +327,26 @@ def stage_map(stages: tuple[PipelineStage, ...] = STAGES) -> dict[str, PipelineS
     return mapping
 
 
+def _validate_module_commands(stage: PipelineStage) -> None:
+    for command in stage.commands:
+        if len(command) < 3 or command[1] != "-m":
+            continue
+        module_name = command[2]
+        try:
+            spec = importlib.util.find_spec(module_name)
+        except (ImportError, AttributeError, ValueError):
+            spec = None
+        if spec is None:
+            raise PipelineDefinitionError(
+                f"stage {stage.stage_id!r} references missing module {module_name!r}"
+            )
+
+
 def validate_pipeline(stages: tuple[PipelineStage, ...] = STAGES) -> None:
     mapping = stage_map(stages)
     output_owner: dict[str, str] = {}
     for stage in stages:
+        _validate_module_commands(stage)
         for dependency in stage.dependencies:
             if dependency not in mapping:
                 raise PipelineDefinitionError(
@@ -455,9 +483,10 @@ def pipeline_contract(stages: tuple[PipelineStage, ...] = STAGES) -> dict:
     mapping = stage_map(stages)
     return {
         "artifact": "v2_gate4_pipeline_contract",
-        "version": 1,
+        "version": 2,
         "single_generation_workspace_required": True,
         "cross_run_latest_successful_restore_forbidden": True,
+        "module_commands_preflighted": True,
         "topological_order": list(order),
         "publication_ready": not blockers,
         "publication_blockers": list(blockers),
