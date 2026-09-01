@@ -24,7 +24,7 @@ from api.v2.conduct_comparative import (
 CONDUCT_PATH = Path("data/derived/v2/consumer_gov_conduct_evidence.json")
 RECONCILIATION_PATH = Path("data/derived/v2/conduct_coverage_reconciliation.json")
 OUTPUT_PATH = Path("data/derived/v2/conduct_comparative_calibration_v2.json")
-VERSION = "2.0-draft-conduct-comparative-calibration-2"
+VERSION = "2.0-draft-conduct-comparative-calibration-3"
 CANDIDATE_STATE = "direct_one_to_one_candidate"
 
 
@@ -47,6 +47,30 @@ def _period(month: str) -> int:
     return int(text)
 
 
+def _next_period(period: int) -> int:
+    year = period // 100
+    month = period % 100
+    return (year + 1) * 100 + 1 if month == 12 else year * 100 + month + 1
+
+
+def _validated_periods(months: list[str]) -> list[int]:
+    if not months or len(months) != len(set(months)):
+        raise ConductComparativeCalibrationV2Error(
+            "Conduct comparison months are missing or duplicated"
+        )
+    periods = [_period(month) for month in months]
+    if periods != sorted(periods):
+        raise ConductComparativeCalibrationV2Error(
+            "Conduct comparison months must be chronological"
+        )
+    for previous, current in zip(periods, periods[1:], strict=False):
+        if current != _next_period(previous):
+            raise ConductComparativeCalibrationV2Error(
+                "Conduct comparison months must be consecutive"
+            )
+    return periods
+
+
 def _finite(value: Any, *, field: str) -> float:
     try:
         number = float(value)
@@ -56,6 +80,18 @@ def _finite(value: Any, *, field: str) -> float:
         ) from exc
     if not math.isfinite(number):
         raise ConductComparativeCalibrationV2Error(f"non-finite {field}: {value!r}")
+    return number
+
+
+def _nonnegative_int(value: Any, *, field: str) -> int:
+    try:
+        number = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ConductComparativeCalibrationV2Error(
+            f"non-integer {field}: {value!r}"
+        ) from exc
+    if number < 0:
+        raise ConductComparativeCalibrationV2Error(f"negative {field}: {number}")
     return number
 
 
@@ -93,6 +129,12 @@ def _candidate_rows(
         if state == CANDIDATE_STATE and bool(
             pressure.get("pressure_eligible_candidate")
         ):
+            exposure = row.get("insurance_exposure_12m") or {}
+            if int(exposure.get("insurance_premium_direct_missing_rows") or 0) > 0:
+                raise ConductComparativeCalibrationV2Error(
+                    "direct one-to-one candidate has incomplete direct-premium exposure: "
+                    f"{row.get('entity_id')}"
+                )
             candidates.append(row)
         else:
             excluded.append(
@@ -124,15 +166,25 @@ def _conduct_index(conduct: dict[str, Any]) -> dict[str, dict[str, Any]]:
 def _monthly_conduct(
     entity: dict[str, Any], months: list[str]
 ) -> dict[str, dict[str, Any]]:
+    rows = list(entity.get("monthly") or [])
     by_month = {
         str(row.get("month") or ""): row
-        for row in entity.get("monthly") or []
+        for row in rows
         if str(row.get("month") or "")
     }
+    if len(by_month) != len(rows):
+        raise ConductComparativeCalibrationV2Error(
+            f"Conduct entity {entity.get('entity_id')} has duplicate/invalid monthly rows"
+        )
     missing = [month for month in months if month not in by_month]
     if missing:
         raise ConductComparativeCalibrationV2Error(
             f"Conduct entity {entity.get('entity_id')} misses months: {missing}"
+        )
+    extra = sorted(set(by_month) - set(months))
+    if extra:
+        raise ConductComparativeCalibrationV2Error(
+            f"Conduct entity {entity.get('entity_id')} has unexpected months: {extra}"
         )
     return by_month
 
@@ -259,11 +311,7 @@ def build_calibration_v2(
     months = [
         str(value) for value in (conduct.get("source") or {}).get("months") or []
     ]
-    if not months or len(months) != len(set(months)):
-        raise ConductComparativeCalibrationV2Error(
-            "Conduct comparison months are missing or duplicated"
-        )
-    periods = [_period(month) for month in months]
+    periods = _validated_periods(months)
     ses_periods = {int(value) for value in ses.get("periods") or []}
     missing_periods = [period for period in periods if period not in ses_periods]
     if missing_periods:
@@ -298,23 +346,43 @@ def build_calibration_v2(
         conduct_months = _monthly_conduct(conduct_entity, months)
         branch_totals = _branch_totals(ses_entity, periods)
         premium_direct = 0.0
-        premium_earned = 0.0
+        earned_complete_sum = 0.0
+        earned_complete_months = 0
         monthly_raw: list[dict[str, Any]] = []
         complaints_total = 0
 
         for month, period in zip(months, periods, strict=True):
             ses_month = _ses_month(ses_entity, period)
+            direct_missing_rows = _nonnegative_int(
+                ses_month.get("insurance_premium_direct_missing_rows") or 0,
+                field="insurance_premium_direct_missing_rows",
+            )
+            earned_missing_rows = _nonnegative_int(
+                ses_month.get("insurance_premium_earned_missing_rows") or 0,
+                field="insurance_premium_earned_missing_rows",
+            )
+            if direct_missing_rows > 0:
+                raise ConductComparativeCalibrationV2Error(
+                    "direct one-to-one candidate has incomplete monthly direct premium: "
+                    f"{entity_id} {month}"
+                )
             direct = _finite(
                 ses_month.get("insurance_premium_direct") or 0.0,
                 field="premium_direct",
             )
-            earned = _finite(
+            earned_value = _finite(
                 ses_month.get("insurance_premium_earned") or 0.0,
                 field="premium_earned",
             )
-            complaints = int(conduct_months[month].get("complaints") or 0)
+            earned = earned_value if earned_missing_rows == 0 else None
+            complaints = _nonnegative_int(
+                conduct_months[month].get("complaints") or 0,
+                field="complaints",
+            )
             premium_direct += direct
-            premium_earned += earned
+            if earned is not None:
+                earned_complete_sum += earned
+                earned_complete_months += 1
             complaints_total += complaints
             monthly_raw.append(
                 {
@@ -322,7 +390,10 @@ def build_calibration_v2(
                     "period": period,
                     "complaints": complaints,
                     "premium_direct": direct,
+                    "premium_direct_missing_rows": direct_missing_rows,
                     "premium_earned_diagnostic": earned,
+                    "premium_earned_missing_rows": earned_missing_rows,
+                    "premium_earned_diagnostic_complete": earned_missing_rows == 0,
                 }
             )
 
@@ -344,7 +415,15 @@ def build_calibration_v2(
                 "display_name": conduct_entity.get("display_name"),
                 "complaints_12m": complaints_total,
                 "premium_direct_12m": premium_direct,
-                "premium_earned_12m_diagnostic": premium_earned,
+                "premium_earned_12m_diagnostic": (
+                    earned_complete_sum
+                    if earned_complete_months == len(months)
+                    else None
+                ),
+                "premium_earned_complete_months": earned_complete_months,
+                "premium_earned_diagnostic_complete": (
+                    earned_complete_months == len(months)
+                ),
                 "monthly_raw": monthly_raw,
                 "branch_totals": branch_totals,
                 "satisfaction": _satisfaction_diagnostics(conduct_entity),
@@ -396,24 +475,11 @@ def build_calibration_v2(
         key: float(value) for key, value in sorted(market_branches.items())
     }
     for raw in raw_rows:
-        expected = expected_complaints(
-            raw["premium_direct_12m"],
-            annual_market_complaints,
-            annual_market_premium,
-        )
-        ratio = pressure_ratio(
-            raw["complaints_12m"],
-            raw["premium_direct_12m"],
-            annual_market_complaints,
-            annual_market_premium,
-        )
-        if expected is None or ratio is None:
-            raise ConductComparativeCalibrationV2Error(
-                f"annual pressure unavailable: {raw['entity_id']}"
-            )
-
         monthly: list[dict[str, Any]] = []
         monthly_ratios: list[float | None] = []
+        aligned_observed = 0
+        aligned_expected = 0.0
+        aligned_direct = 0.0
         for item in raw["monthly_raw"]:
             month = str(item["month"])
             direct = float(item["premium_direct"])
@@ -439,6 +505,13 @@ def build_calibration_v2(
                 market_complaints,
                 market_premium,
             )
+            if monthly_expected is None or monthly_ratio is None:
+                raise ConductComparativeCalibrationV2Error(
+                    f"monthly pressure unavailable: {raw['entity_id']} {month}"
+                )
+            aligned_observed += complaints
+            aligned_expected += monthly_expected
+            aligned_direct += direct
             monthly.append(
                 {
                     **item,
@@ -448,6 +521,12 @@ def build_calibration_v2(
                 }
             )
             monthly_ratios.append(monthly_ratio)
+
+        if aligned_expected <= 0:
+            raise ConductComparativeCalibrationV2Error(
+                f"aligned annual pressure unavailable: {raw['entity_id']}"
+            )
+        ratio = aligned_observed / aligned_expected
 
         portfolio = {
             "branch_premium_direct": raw["branch_totals"],
@@ -465,17 +544,32 @@ def build_calibration_v2(
                 "premium_earned_12m_diagnostic": raw[
                     "premium_earned_12m_diagnostic"
                 ],
+                "premium_earned_complete_months": raw[
+                    "premium_earned_complete_months"
+                ],
+                "premium_earned_diagnostic_complete": raw[
+                    "premium_earned_diagnostic_complete"
+                ],
                 "pressure_12m": {
-                    "observed_complaints": raw["complaints_12m"],
-                    "expected_complaints": float(expected),
+                    "observed_complaints": aligned_observed,
+                    "total_observed_complaints": raw["complaints_12m"],
+                    "expected_complaints": float(aligned_expected),
                     "ratio": float(ratio),
-                    "complaint_share": (
+                    "comparable_months": sum(
+                        item.get("state") == "available" for item in monthly
+                    ),
+                    "aligned_premium_direct": float(aligned_direct),
+                    "aggregation_policy": (
+                        "sum_monthly_expected_then_observed_divided_by_expected"
+                    ),
+                    "annual_aggregate_complaint_share_diagnostic": (
                         raw["complaints_12m"] / annual_market_complaints
                         if annual_market_complaints > 0
                         else None
                     ),
-                    "premium_share": raw["premium_direct_12m"]
-                    / annual_market_premium,
+                    "annual_aggregate_premium_share_diagnostic": (
+                        raw["premium_direct_12m"] / annual_market_premium
+                    ),
                 },
                 "monthly": monthly,
                 "persistence": persistence_diagnostics(monthly_ratios),
@@ -525,6 +619,9 @@ def build_calibration_v2(
             "selected_for_scoring": False,
             "final_denominator_approved": False,
             "diagnostic_companion": "insurance_premium_earned",
+            "diagnostic_missingness_policy": (
+                "incomplete_premium_earned_is_unavailable_not_zero"
+            ),
             "excluded_domains": ["private_pension", "capitalization"],
         },
         "source": {
@@ -538,6 +635,7 @@ def build_calibration_v2(
             "months": months,
             "periods": periods,
             "series_policy": "no_cross_source_stitching",
+            "period_policy": "chronological_consecutive_months",
         },
         "population": {
             "reconciliation_entities": len(reconciliation.get("entities") or []),
@@ -549,6 +647,7 @@ def build_calibration_v2(
         "market_12m": {
             "complaints": int(annual_market_complaints),
             "premium_direct": float(annual_market_premium),
+            "role": "annual_aggregate_context_not_pressure_baseline",
             "branch_premium_direct": market_branch_dict,
             "branch_mix_positive_only": branch_mix(market_branch_dict),
         },
@@ -563,6 +662,9 @@ def build_calibration_v2(
             "peer_groups_selected": False,
             "portfolio_mix_diagnostic_available": True,
             "monthly_population_can_vary": True,
+            "pressure_aggregation_policy": (
+                "sum_monthly_expected_then_observed_divided_by_expected"
+            ),
             "extremes_are_diagnostic_not_ranking": True,
             "highest_pressure_observations": [
                 {
