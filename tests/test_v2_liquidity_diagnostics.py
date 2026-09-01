@@ -25,7 +25,7 @@ def _entity(index: int) -> dict:
     }
 
 
-def test_diagnostics_publish_descriptive_bands_and_capital_correlation() -> None:
+def test_diagnostics_publish_descriptive_bands_and_use_new_pla_for_capital() -> None:
     experiments = []
     sources = {}
     for index, multiplier in enumerate((0.5, 1.0, 2.0), start=1):
@@ -34,7 +34,9 @@ def test_diagnostics_publish_descriptive_bands_and_capital_correlation() -> None
             "duplicate_balance_cmpid_rows": 0,
             "capital_history": {
                 202606: {
-                    "pla_adjusted": 100.0 * multiplier,
+                    # Deliberately inverse to prove the diagnostic does not use it.
+                    "pla_adjusted": 100.0 / multiplier,
+                    "new_pla": 100.0 * multiplier,
                     "cmr": 80.0,
                 }
             },
@@ -54,8 +56,9 @@ def test_diagnostics_publish_descriptive_bands_and_capital_correlation() -> None
 
     ilc = diagnostics["metrics"]["ILC"]
     assert ilc["descriptive_bands"]["below_1_00_total"] >= 1
-    assert ilc["capital_pla_cmr_redundancy"]["paired_count"] == 3
-    assert ilc["capital_pla_cmr_redundancy"]["raw"]["spearman"] == 1.0
+    redundancy = ilc["capital_pla_cmr_redundancy"]
+    assert redundancy["paired_count"] == 3
+    assert redundancy["raw"]["spearman"] == 1.0
 
 
 def test_zero_denominator_is_described_with_prior_observation() -> None:
