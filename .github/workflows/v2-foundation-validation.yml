@@ -1,14 +1,6 @@
 name: V2 Foundation Validation
 
 on:
-  pull_request:
-    branches: ["main"]
-    paths:
-      - "api/v2/**"
-      - "api/sources/ses.py"
-      - "api/utils/identifiers.py"
-      - "tests/test_v2_*.py"
-      - ".github/workflows/v2-foundation-validation.yml"
   workflow_dispatch:
 
 permissions:
