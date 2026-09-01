@@ -11,6 +11,9 @@ from typing import Any
 import pandas as pd
 
 DEFAULT_SES_ZIP = Path(os.getenv("SES_CACHE_DIR", "data/raw/ses")) / "BaseCompleta.zip"
+SES_TABLE_DOCUMENTATION_URL = (
+    "https://www2.susep.gov.br/menuestatistica/SES/download/Documentacao_das_tabelas.rtf"
+)
 REQUIRED_COLUMNS = {
     "damesano",
     "coenti",
@@ -119,6 +122,10 @@ def probe_susep_insurance_exposure(zip_path: Path | None = None) -> dict[str, An
         "exposure_domain": "insurance_only",
         "primary_candidate": "insurance_premium_direct",
         "diagnostic_only": "insurance_premium_earned",
+        "currency": "BRL",
+        "source_unit_label": "R$",
+        "scale_factor_applied": 1.0,
+        "source_documentation_url": SES_TABLE_DOCUMENTATION_URL,
         "explicitly_excluded_domains": ["private_pension", "capitalization"],
     }
 
@@ -132,6 +139,7 @@ def load_susep_insurance_exposure(
     Missing cells in the approved direct-premium denominator are preserved as
     missingness metadata. They are never silently converted to economic zero.
     Malformed numeric cells and malformed period/branch keys fail closed.
+    Values remain in the source SES unit (R$); no scale conversion is applied.
     """
     fips = {_canon_fip(value) for value in fip_codes}
     fips.discard("")
@@ -218,6 +226,11 @@ def load_susep_insurance_exposure(
             "exposure_domain": "insurance_only",
             "primary_candidate": "insurance_premium_direct",
             "diagnostic_only": "insurance_premium_earned",
+            "currency": "BRL",
+            "source_unit_label": "R$",
+            "scale_factor_applied": 1.0,
+            "unit_policy": "raw_ses_currency_values_no_scale_conversion",
+            "source_documentation_url": SES_TABLE_DOCUMENTATION_URL,
             "missingness_policy": "missing_premium_cells_are_not_economic_zero",
             "malformed_value_policy": "fail_closed_not_missing",
             "malformed_row_policy": "fail_closed_not_skipped",
