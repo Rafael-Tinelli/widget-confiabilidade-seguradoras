@@ -104,6 +104,37 @@ def test_signal_describes_direction_without_creating_a_score() -> None:
     assert build_operating_state(pressure, 202605)["operating_signal"] == "recent_pressure"
 
 
+def test_exact_ica_parity_is_balanced_not_pressure() -> None:
+    entity = _entity(
+        current_ica=_row(202605, value=1.0),
+        prior_ica=_row(202505, value=1.0),
+    )
+
+    state = build_operating_state(entity, 202605)
+
+    assert state["history_state"] == "established"
+    assert state["signal"]["parity_reference"] == 1.0
+    assert state["operating_signal"] == "balanced_persistent"
+
+
+def test_pressure_begins_only_above_ica_parity() -> None:
+    entity = _entity(
+        current_ica=_row(202605, value=1.000001),
+        prior_ica=_row(202505, value=1.0),
+    )
+
+    assert build_operating_state(entity, 202605)["operating_signal"] == "recent_pressure"
+
+
+def test_return_to_exact_parity_counts_as_improvement_from_pressure() -> None:
+    entity = _entity(
+        current_ica=_row(202605, value=1.0),
+        prior_ica=_row(202505, value=1.05),
+    )
+
+    assert build_operating_state(entity, 202605)["operating_signal"] == "improved"
+
+
 def test_negative_financial_result_exceeding_base_has_specific_formula_state() -> None:
     current = _row(
         202605,
