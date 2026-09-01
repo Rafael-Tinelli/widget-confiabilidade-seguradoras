@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import pytest
 
-from api.v2.build_conduct_comparative_calibration_v2 import build_calibration_v2
+from api.v2.build_conduct_comparative_calibration_v2 import (
+    ConductComparativeCalibrationV2Error,
+    build_calibration_v2,
+)
 
 
 def _conduct_entity(entity_id: str, complaints: list[int], satisfaction: float) -> dict:
@@ -34,16 +37,40 @@ def _conduct_entity(entity_id: str, complaints: list[int], satisfaction: float) 
     }
 
 
-def _ses_month(direct: float, branch: int) -> dict:
+def _ses_month(
+    direct: float,
+    branch: int,
+    *,
+    earned_missing_rows: int = 0,
+) -> dict:
     return {
         "insurance_premium_direct": direct,
         "insurance_premium_earned": direct * 0.9,
+        "insurance_premium_direct_missing_rows": 0,
+        "insurance_premium_earned_missing_rows": earned_missing_rows,
         "insurance_branches": {
             branch: {
                 "premium_direct": direct,
                 "premium_earned": direct * 0.9,
                 "rows": 1.0,
             }
+        },
+    }
+
+
+def _candidate(entity_id: str, fip: str, name: str) -> dict:
+    return {
+        "entity_id": entity_id,
+        "fip_code": fip,
+        "cnpj": fip,
+        "legal_name": name,
+        "insurance_exposure_12m": {
+            "insurance_premium_direct_missing_rows": 0,
+        },
+        "pressure_comparability": {
+            "state": "direct_one_to_one_candidate",
+            "pressure_eligible_candidate": True,
+            "reason_code": None,
         },
     }
 
@@ -63,30 +90,8 @@ def test_calibration_v2_aligns_market_population_and_forbids_scoring() -> None:
     }
     reconciliation = {
         "entities": [
-            {
-                "entity_id": "fip:000001",
-                "fip_code": "000001",
-                "cnpj": "1",
-                "legal_name": "A",
-                "complaints_12m": 10,
-                "pressure_comparability": {
-                    "state": "direct_one_to_one_candidate",
-                    "pressure_eligible_candidate": True,
-                    "reason_code": None,
-                },
-            },
-            {
-                "entity_id": "fip:000002",
-                "fip_code": "000002",
-                "cnpj": "2",
-                "legal_name": "B",
-                "complaints_12m": 10,
-                "pressure_comparability": {
-                    "state": "direct_one_to_one_candidate",
-                    "pressure_eligible_candidate": True,
-                    "reason_code": None,
-                },
-            },
+            _candidate("fip:000001", "000001", "A"),
+            _candidate("fip:000002", "000002", "B"),
             {
                 "entity_id": "fip:000003",
                 "fip_code": "000003",
@@ -134,10 +139,14 @@ def test_calibration_v2_aligns_market_population_and_forbids_scoring() -> None:
     a = by_id["fip:000001"]
     b = by_id["fip:000002"]
 
-    assert a["pressure_12m"]["expected_complaints"] == pytest.approx(5.0)
-    assert a["pressure_12m"]["ratio"] == pytest.approx(2.0)
-    assert b["pressure_12m"]["expected_complaints"] == pytest.approx(15.0)
-    assert b["pressure_12m"]["ratio"] == pytest.approx(2.0 / 3.0)
+    # Annual pressure now uses only monthly-aligned comparable exposure.
+    assert a["pressure_12m"]["observed_complaints"] == 5
+    assert a["pressure_12m"]["expected_complaints"] == pytest.approx(4.0)
+    assert a["pressure_12m"]["ratio"] == pytest.approx(1.25)
+    assert a["pressure_12m"]["comparable_months"] == 1
+    assert b["pressure_12m"]["observed_complaints"] == 10
+    assert b["pressure_12m"]["expected_complaints"] == pytest.approx(11.0)
+    assert b["pressure_12m"]["ratio"] == pytest.approx(10.0 / 11.0)
 
     feb_market = payload["monthly_market"][1]
     assert feb_market["comparable_entities"] == 1
@@ -146,6 +155,66 @@ def test_calibration_v2_aligns_market_population_and_forbids_scoring() -> None:
     assert a["monthly"][1]["state"] == "not_comparable_non_positive_monthly_premium"
     assert a["monthly"][1]["pressure_ratio"] is None
     assert b["monthly"][1]["pressure_ratio"] == pytest.approx(1.0)
+
+
+def test_calibration_v2_preserves_earned_missingness_as_unavailable() -> None:
+    conduct = {
+        "source": {
+            "months": ["2026-01", "2026-02"],
+            "core": {"state": "available"},
+            "taxonomy_evidence": {"state": "source_unavailable"},
+        },
+        "entities": [
+            _conduct_entity("fip:000001", [2, 2], 3.0),
+            _conduct_entity("fip:000002", [2, 2], 4.0),
+        ],
+    }
+    reconciliation = {
+        "entities": [
+            _candidate("fip:000001", "000001", "A"),
+            _candidate("fip:000002", "000002", "B"),
+        ]
+    }
+    ses = {
+        "periods": [202601, 202602],
+        "entities": {
+            "000001": {
+                "months": {
+                    202601: _ses_month(100.0, 1001, earned_missing_rows=1),
+                    202602: _ses_month(100.0, 1001),
+                }
+            },
+            "000002": {
+                "months": {
+                    202601: _ses_month(100.0, 2001),
+                    202602: _ses_month(100.0, 2001),
+                }
+            },
+        },
+    }
+
+    payload = build_calibration_v2(conduct, reconciliation, ses)
+    row = {item["entity_id"]: item for item in payload["entities"]}["fip:000001"]
+
+    assert row["premium_earned_12m_diagnostic"] is None
+    assert row["premium_earned_complete_months"] == 1
+    assert row["premium_earned_diagnostic_complete"] is False
+    assert row["monthly"][0]["premium_earned_diagnostic"] is None
+    assert row["monthly"][0]["premium_earned_missing_rows"] == 1
+
+
+def test_calibration_v2_rejects_gapped_comparison_window() -> None:
+    conduct = {
+        "source": {
+            "months": ["2026-01", "2026-03"],
+            "core": {"state": "available"},
+            "taxonomy_evidence": {"state": "source_unavailable"},
+        },
+        "entities": [],
+    }
+
+    with pytest.raises(ConductComparativeCalibrationV2Error, match="must be consecutive"):
+        build_calibration_v2(conduct, {"entities": []}, {"periods": [202601, 202603]})
 
 
 def test_calibration_v2_preserves_mix_and_excluded_reason() -> None:
@@ -164,24 +233,8 @@ def test_calibration_v2_preserves_mix_and_excluded_reason() -> None:
     conduct["entities"][1]["monthly"] = conduct["entities"][1]["monthly"][:1]
     reconciliation = {
         "entities": [
-            {
-                "entity_id": "fip:000001",
-                "fip_code": "000001",
-                "legal_name": "A",
-                "pressure_comparability": {
-                    "state": "direct_one_to_one_candidate",
-                    "pressure_eligible_candidate": True,
-                },
-            },
-            {
-                "entity_id": "fip:000002",
-                "fip_code": "000002",
-                "legal_name": "B",
-                "pressure_comparability": {
-                    "state": "direct_one_to_one_candidate",
-                    "pressure_eligible_candidate": True,
-                },
-            },
+            _candidate("fip:000001", "000001", "A"),
+            _candidate("fip:000002", "000002", "B"),
         ]
     }
     ses = {
