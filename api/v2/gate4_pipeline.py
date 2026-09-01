@@ -41,7 +41,7 @@ STAGES: tuple[PipelineStage, ...] = (
         stage_id="source_snapshot",
         kind="source",
         dependencies=(),
-        commands=(),
+        commands=(_module("api.v2.build_source_snapshot"),),
         outputs=(
             "data/raw/ses/BaseCompleta.zip",
             "data/derived/v2/source/classification_inventory.json",
@@ -127,7 +127,7 @@ STAGES: tuple[PipelineStage, ...] = (
             "data/derived/v2/receita_consumer_gov_identity.json",
             "data/derived/v2/conduct_source_lineage.json",
         ),
-        evergreen_ready=False,
+        evergreen_ready=True,
     ),
     PipelineStage(
         stage_id="relationship_watchdog",
@@ -405,12 +405,15 @@ def run_stage(stage_id: str, stages: tuple[PipelineStage, ...] = STAGES) -> None
         raise PipelineExecutionError(f"unknown stage: {stage_id}") from exc
 
     _verify_dependencies(stage, mapping)
-    if not stage.commands:
-        _verify_outputs(stage)
-        return
     for command in stage.commands:
         subprocess.run(command, check=True)
     _verify_outputs(stage)
+
+
+def run_all(stages: tuple[PipelineStage, ...] = STAGES) -> None:
+    validate_pipeline(stages)
+    for stage_id in topological_order(stages):
+        run_stage(stage_id, stages)
 
 
 def pipeline_contract(stages: tuple[PipelineStage, ...] = STAGES) -> dict:
@@ -432,7 +435,13 @@ def pipeline_contract(stages: tuple[PipelineStage, ...] = STAGES) -> dict:
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Inspect or execute the Gate 4 v2 DAG.")
-    parser.add_argument("--run-stage", choices=[stage.stage_id for stage in STAGES])
+    execution = parser.add_mutually_exclusive_group()
+    execution.add_argument("--run-stage", choices=[stage.stage_id for stage in STAGES])
+    execution.add_argument(
+        "--run-all",
+        action="store_true",
+        help="Execute every Gate 4 stage in canonical topological order.",
+    )
     parser.add_argument(
         "--write-contract",
         type=Path,
@@ -444,7 +453,13 @@ def _parse_args() -> argparse.Namespace:
 def main() -> None:
     args = _parse_args()
     contract = pipeline_contract()
-    if args.run_stage:
+    if args.run_all:
+        if not contract["publication_ready"]:
+            raise PipelineExecutionError(
+                f"Gate 4 full run blocked by: {contract['publication_blockers']}"
+            )
+        run_all()
+    elif args.run_stage:
         run_stage(args.run_stage)
     if args.write_contract:
         args.write_contract.parent.mkdir(parents=True, exist_ok=True)
