@@ -4,6 +4,7 @@ import pytest
 
 from api.v2.build_conduct_methodology_closure import (
     ConductMethodologyClosureError,
+    _assert_calibration_alignment,
     _baselines,
     _final_pressure_state,
     _series,
@@ -81,6 +82,40 @@ def test_temporal_alignment_excludes_complaints_without_positive_exposure() -> N
     assert series["monthly"][0]["state"] == "unavailable_non_positive_comparable_exposure"
 
 
+def test_zero_market_complaint_month_is_unavailable_not_neutral() -> None:
+    target = _entity(
+        "fip:target",
+        complaints=[0] + [1] * 11,
+        direct=[10.0] * 12,
+        earned=[10.0] * 12,
+    )
+    peer = _entity(
+        "fip:peer",
+        complaints=[0] + [1] * 11,
+        direct=[10.0] * 12,
+        earned=[10.0] * 12,
+    )
+    baselines = _baselines([target, peer], "premium_direct")
+
+    series = _series(
+        target,
+        "premium_direct",
+        baselines,
+        annual_alpha=0.05 / 2,
+        monthly_alpha=0.05 / 12,
+    )
+
+    assert series["monthly"][0]["state"] == "not_comparable_zero_market_complaints"
+    assert series["monthly"][0]["expected_complaints"] == pytest.approx(0.0)
+    assert series["monthly"][0]["pressure_ratio"] is None
+    assert series["monthly"][0]["uncertainty"] is None
+    assert series["temporal_coverage"]["comparable_months"] == 11
+    assert series["temporal_coverage"]["zero_market_complaint_months"] == 1
+    assert series["annual"]["observed_complaints"] == 11
+    assert series["annual"]["expected_complaints"] == pytest.approx(11.0)
+    assert series["annual"]["ratio"] == pytest.approx(1.0)
+
+
 def test_baselines_reject_gapped_twelve_month_window() -> None:
     entity = _entity(
         "fip:gapped",
@@ -153,3 +188,36 @@ def test_final_pressure_state_requires_temporal_coverage() -> None:
 
     state, _ = _final_pressure_state(direct, earned)
     assert state == "pressure_unavailable_insufficient_temporal_coverage"
+
+
+def test_calibration_alignment_includes_comparable_and_zero_month_counts() -> None:
+    entity = {
+        "entity_id": "fip:test",
+        "pressure_12m": {
+            "aggregation_policy": "sum_monthly_expected_then_observed_divided_by_expected",
+            "observed_complaints": 11,
+            "expected_complaints": 11.0,
+            "ratio": 1.0,
+            "comparable_months": 11,
+            "zero_market_complaint_months": 1,
+        },
+    }
+    direct = {
+        "annual": {
+            "observed_complaints": 11,
+            "expected_complaints": 11.0,
+            "ratio": 1.0,
+        },
+        "temporal_coverage": {
+            "comparable_months": 11,
+            "zero_market_complaint_months": 1,
+        },
+    }
+
+    _assert_calibration_alignment(entity, direct)
+    direct["temporal_coverage"]["comparable_months"] = 12
+    with pytest.raises(
+        ConductMethodologyClosureError,
+        match="comparable-month mismatch",
+    ):
+        _assert_calibration_alignment(entity, direct)
