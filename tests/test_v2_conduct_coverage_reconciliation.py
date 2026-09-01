@@ -1,6 +1,11 @@
 from __future__ import annotations
 
-from api.v2.build_conduct_coverage_reconciliation import build_reconciliation
+import pytest
+
+from api.v2.build_conduct_coverage_reconciliation import (
+    ConductCoverageReconciliationError,
+    build_reconciliation,
+)
 
 
 def _entity(
@@ -44,13 +49,20 @@ def _conduct(entity_id: str, fip: str, cnpj: str, complaints: int) -> dict:
     }
 
 
-def _ses_entity(direct: float, earned: float | None = None) -> dict:
+def _ses_entity(
+    direct: float,
+    earned: float | None = None,
+    *,
+    direct_missing_rows: int = 0,
+) -> dict:
     earned_value = direct if earned is None else earned
     return {
         "months": {
             202601: {
                 "insurance_premium_direct": direct,
                 "insurance_premium_earned": earned_value,
+                "insurance_premium_direct_missing_rows": direct_missing_rows,
+                "insurance_premium_earned_missing_rows": 0,
                 "insurance_branches": {
                     1001: {
                         "premium_direct": direct,
@@ -63,7 +75,9 @@ def _ses_entity(direct: float, earned: float | None = None) -> dict:
     }
 
 
-def _payloads(entities: list[dict], complaints: dict[str, int], ses_values: dict[str, float]):
+def _payloads(
+    entities: list[dict], complaints: dict[str, int], ses_values: dict[str, float]
+):
     eligibility = {"entities": entities}
     conduct = {
         "source": {"months": ["2026-01"]},
@@ -80,7 +94,9 @@ def _payloads(entities: list[dict], complaints: dict[str, int], ses_values: dict
     ses = {
         "periods": [202601],
         "entities": {
-            entity["fip_code"]: _ses_entity(ses_values.get(entity["entity_id"], 0.0))
+            entity["fip_code"]: _ses_entity(
+                ses_values.get(entity["entity_id"], 0.0)
+            )
             for entity in entities
         },
     }
@@ -93,7 +109,9 @@ def _by_id(payload: dict) -> dict[str, dict]:
 
 def test_pure_insurer_can_be_pressure_candidate_without_noninsurance_amounts() -> None:
     entities = [_entity("pure", "000001", "11111111000191", insurance=True)]
-    eligibility, conduct, ses = _payloads(entities, {"pure": 10}, {"pure": 1000.0})
+    eligibility, conduct, ses = _payloads(
+        entities, {"pure": 10}, {"pure": 1000.0}
+    )
     payload = build_reconciliation(eligibility, conduct, ses, {"relationships": []})
     row = _by_id(payload)["pure"]
 
@@ -106,13 +124,66 @@ def test_pure_insurer_can_be_pressure_candidate_without_noninsurance_amounts() -
     }
     assert row["insurance_exposure_12m"]["private_pension_amount_used"] is False
     assert row["insurance_exposure_12m"]["capitalization_amount_used"] is False
+    assert row["insurance_exposure_12m"]["insurance_premium_direct_complete"] is True
+
+
+def test_missing_direct_premium_blocks_pressure_without_becoming_zero() -> None:
+    entity = _entity("incomplete", "000013", "14141414000174", insurance=True)
+    eligibility, conduct, ses = _payloads(
+        [entity], {"incomplete": 7}, {"incomplete": 500.0}
+    )
+    ses["entities"]["000013"] = _ses_entity(
+        500.0, direct_missing_rows=1
+    )
+
+    payload = build_reconciliation(eligibility, conduct, ses, {"relationships": []})
+    row = _by_id(payload)["incomplete"]
+
+    assert row["insurance_exposure_12m"]["insurance_premium_direct"] == 500.0
+    assert row["insurance_exposure_12m"]["insurance_premium_direct_missing_rows"] == 1
+    assert row["insurance_exposure_12m"]["insurance_premium_direct_complete"] is False
+    assert row["pressure_comparability"] == {
+        "state": "insurance_premium_direct_incomplete",
+        "pressure_eligible_candidate": False,
+        "reason_code": "missing_direct_premium_rows_in_comparison_window",
+        "relationship_ids": [],
+    }
+    assert "incomplete_insurance_premium_direct" in row["universe_audit_flags"]
+
+
+def test_missing_complaint_total_is_not_imputed_to_zero() -> None:
+    entity = _entity("missing", "000014", "15151515000165", insurance=True)
+    eligibility, conduct, ses = _payloads([entity], {"missing": 0}, {"missing": 500.0})
+    del conduct["entities"][0]["totals"]["complaints"]
+
+    with pytest.raises(
+        ConductCoverageReconciliationError,
+        match=r"totals\.complaints is required; missing is not zero",
+    ):
+        build_reconciliation(eligibility, conduct, ses, {"relationships": []})
+
+
+def test_duplicate_comparison_months_are_rejected() -> None:
+    entity = _entity("dup-month", "000015", "16161616000156", insurance=True)
+    eligibility, conduct, ses = _payloads(
+        [entity], {"dup-month": 1}, {"dup-month": 500.0}
+    )
+    conduct["source"]["months"] = ["2026-01", "2026-01"]
+
+    with pytest.raises(
+        ConductCoverageReconciliationError,
+        match="duplicate comparison months",
+    ):
+        build_reconciliation(eligibility, conduct, ses, {"relationships": []})
 
 
 def test_hybrid_insurance_pension_keeps_conduct_but_blocks_p3_pressure() -> None:
     entities = [
         _entity("hybrid", "000002", "22222222000182", insurance=True, pension=True)
     ]
-    eligibility, conduct, ses = _payloads(entities, {"hybrid": 250}, {"hybrid": 5000.0})
+    eligibility, conduct, ses = _payloads(
+        entities, {"hybrid": 250}, {"hybrid": 5000.0}
+    )
     payload = build_reconciliation(eligibility, conduct, ses, {"relationships": []})
     row = _by_id(payload)["hybrid"]
 
@@ -197,7 +268,9 @@ def test_portfolio_transfer_blocks_both_sides_until_temporal_reconciliation() ->
 def test_multi_carrier_subject_does_not_allocate_generic_complaints() -> None:
     subject = _entity("generic", "000007", "77777777000137", insurance=False)
     carrier_a = _entity("carrier-a", "000008", "88888888000128", insurance=True)
-    carrier_b = _entity("carrier-b", "000009", "99999999000119", insurance=True, pension=True)
+    carrier_b = _entity(
+        "carrier-b", "000009", "99999999000119", insurance=True, pension=True
+    )
     eligibility, conduct, ses = _payloads(
         [subject, carrier_a, carrier_b],
         {"generic": 68, "carrier-a": 3305, "carrier-b": 5014},
@@ -232,7 +305,9 @@ def test_multi_carrier_subject_does_not_allocate_generic_complaints() -> None:
 
 def test_runoff_remains_searchable_without_current_premium_pressure() -> None:
     entity = _entity("runoff", "000010", "10101010000101", insurance=False)
-    eligibility, conduct, ses = _payloads([entity], {"runoff": 19}, {"runoff": 0.0})
+    eligibility, conduct, ses = _payloads(
+        [entity], {"runoff": 19}, {"runoff": 0.0}
+    )
     relationships = {
         "relationships": [
             {
@@ -256,7 +331,9 @@ def test_runoff_remains_searchable_without_current_premium_pressure() -> None:
 
 def test_negative_direct_premium_is_review_state_not_pressure() -> None:
     entity = _entity("negative", "000011", "12121212000192", insurance=True)
-    eligibility, conduct, ses = _payloads([entity], {"negative": 32}, {"negative": -50.0})
+    eligibility, conduct, ses = _payloads(
+        [entity], {"negative": 32}, {"negative": -50.0}
+    )
     payload = build_reconciliation(eligibility, conduct, ses, {"relationships": []})
     row = _by_id(payload)["negative"]
 
@@ -269,7 +346,9 @@ def test_negative_direct_premium_is_review_state_not_pressure() -> None:
 
 def test_zero_complaints_is_not_labeled_favorable() -> None:
     entity = _entity("quiet", "000012", "13131313000183", insurance=True)
-    eligibility, conduct, ses = _payloads([entity], {"quiet": 0}, {"quiet": 1000.0})
+    eligibility, conduct, ses = _payloads(
+        [entity], {"quiet": 0}, {"quiet": 1000.0}
+    )
     payload = build_reconciliation(eligibility, conduct, ses, {"relationships": []})
     row = _by_id(payload)["quiet"]
 
