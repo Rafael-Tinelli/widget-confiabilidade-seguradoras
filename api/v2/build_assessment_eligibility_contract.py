@@ -12,7 +12,10 @@ SEMANTIC_PATH = Path(
 )
 OUTPUT_PATH = Path("data/derived/v2/assessment_eligibility_contract.json")
 
-VERSION = "2.0-draft-assessment-eligibility-contract-1"
+VERSION = "2.0-draft-assessment-eligibility-contract-2"
+OPERATIONAL_FRESHNESS_POLICY = (
+    "single_generation_workspace_cross_run_latest_successful_restore_forbidden"
+)
 
 ACCEPTED_FINANCIAL_CONFIDENCE = {
     "historico_estabelecido",
@@ -288,10 +291,7 @@ def build_assessment_eligibility_contract(
             "semantic_artifact": semantic.get("artifact"),
             "semantic_version": semantic.get("version"),
             "semantic_generated_at": semantic.get("generated_at"),
-            "operational_freshness_policy": (
-                "workflow_restores_latest_successful_artifacts_on_the_same_branch; "
-                "no_arbitrary_age_threshold_is_used_as_performance"
-            ),
+            "operational_freshness_policy": OPERATIONAL_FRESHNESS_POLICY,
         },
         "gate_contract": {
             "regulatory_universe_membership_required": True,
