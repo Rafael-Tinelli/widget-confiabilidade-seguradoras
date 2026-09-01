@@ -4,8 +4,9 @@ import argparse
 import json
 import math
 from collections import Counter
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from api.v2.financial_evidence import (
     CAPITAL_PLA_SOURCE_FIELD,
