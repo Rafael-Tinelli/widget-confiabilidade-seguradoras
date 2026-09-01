@@ -225,7 +225,7 @@ def test_credibility_rejects_fractional_complaint_count() -> None:
 
     with pytest.raises(
         ConductCredibilityDiagnosticError,
-        match="non-integer complaints",
+        match=r"non-integer .*\.complaints",
     ):
         build_credibility_diagnostic(_calibration([entity]))
 
