@@ -56,6 +56,13 @@ def _calibration(entities: list[dict]) -> dict:
         "version": "upstream-test",
         "scoring": "forbidden_in_this_artifact",
         "ranking": "forbidden_in_this_artifact",
+        "denominator": {
+            "candidate": "insurance_premium_direct",
+            "source_field": "premio_direto",
+            "currency": "BRL",
+            "source_unit_label": "R$",
+            "scale_factor_applied": 1.0,
+        },
         "source": {"months": [f"2025-{month:02d}" for month in range(1, 13)]},
         "market_12m": {
             "complaints": sum(row["complaints_12m"] for row in entities),
@@ -91,6 +98,9 @@ def test_credibility_reuses_monthly_aligned_direct_pressure() -> None:
 
     assert payload["scoring"] == "forbidden_in_this_artifact"
     assert payload["ranking"] == "forbidden_in_this_artifact"
+    assert payload["source"]["currency"] == "BRL"
+    assert payload["source"]["source_unit_label"] == "R$"
+    assert payload["source"]["scale_factor_applied"] == pytest.approx(1.0)
     assert payload["methodology"]["pressure_definition"] == (
         "sum_monthly_expected_then_observed_divided_by_expected"
     )
@@ -98,6 +108,7 @@ def test_credibility_reuses_monthly_aligned_direct_pressure() -> None:
     assert target_out["direct_candidate"]["expected_complaints"] == pytest.approx(2.0)
     assert target_out["direct_candidate"]["ratio"] == pytest.approx(0.0)
     assert target_out["direct_candidate"]["comparable_months"] == 11
+    assert target_out["direct_candidate"]["premium_currency"] == "BRL"
     assert target_out["direct_candidate"]["premium_share"] is None
     assert (
         target_out["direct_candidate"]["premium_share_state"]
@@ -198,3 +209,50 @@ def test_credibility_rejects_mismatched_upstream_direct_ratio() -> None:
         match="upstream direct pressure ratio mismatch",
     ):
         build_credibility_diagnostic(_calibration([entity]))
+
+
+def test_credibility_rejects_fractional_complaint_count() -> None:
+    entity = _entity(
+        "fip:000001",
+        complaints=[1] * 12,
+        direct=[10.0] * 12,
+        earned=[10.0] * 12,
+        aligned_observed=12,
+        aligned_expected=12.0,
+        comparable_months=12,
+    )
+    entity["monthly"][0]["complaints"] = 1.5
+
+    with pytest.raises(
+        ConductCredibilityDiagnosticError,
+        match="non-integer complaints",
+    ):
+        build_credibility_diagnostic(_calibration([entity]))
+
+
+def test_credibility_rejects_rescaled_or_wrong_currency_upstream() -> None:
+    entity = _entity(
+        "fip:000001",
+        complaints=[1] * 12,
+        direct=[10.0] * 12,
+        earned=[10.0] * 12,
+        aligned_observed=12,
+        aligned_expected=12.0,
+        comparable_months=12,
+    )
+    calibration = _calibration([entity])
+    calibration["denominator"]["scale_factor_applied"] = 1000.0
+
+    with pytest.raises(
+        ConductCredibilityDiagnosticError,
+        match=r"unit contract must be BRL/R\$/1\.0",
+    ):
+        build_credibility_diagnostic(calibration)
+
+    calibration = _calibration([entity])
+    calibration["denominator"]["currency"] = "USD"
+    with pytest.raises(
+        ConductCredibilityDiagnosticError,
+        match=r"unit contract must be BRL/R\$/1\.0",
+    ):
+        build_credibility_diagnostic(calibration)
