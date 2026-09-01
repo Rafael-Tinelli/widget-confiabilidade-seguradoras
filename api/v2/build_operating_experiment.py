@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import json
 import os
 from datetime import datetime, timezone
@@ -29,6 +30,7 @@ from api.v2.operating_states import build_operating_state, operating_state_summa
 from api.v2.relationships import load_verified_relationship_registry
 
 DEFAULT_OUTPUT = Path("data/derived/v2/operating_experiment.json")
+DEFAULT_SES_ZIP = Path("data/raw/ses/BaseCompleta.zip")
 ELIGIBILITY_INPUT_ENV = "V2_ELIGIBILITY_INPUT"
 
 
@@ -109,14 +111,42 @@ def _build_live_eligibility() -> dict[str, Any]:
     return build_eligibility_inventory(lifecycle)
 
 
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Build the v2 operating experiment.")
+    parser.add_argument(
+        "--eligibility-input",
+        type=Path,
+        help=(
+            "Use an already materialized eligibility inventory. Gate 4 passes this "
+            "explicitly so operating never rebuilds live regulatory identity sources."
+        ),
+    )
+    parser.add_argument(
+        "--ses-zip",
+        type=Path,
+        default=DEFAULT_SES_ZIP,
+        help="Validated BaseCompleta.zip snapshot used for operating derivation.",
+    )
+    parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
+    return parser.parse_args()
+
+
 def main() -> None:
-    eligibility_input = os.getenv(ELIGIBILITY_INPUT_ENV, "").strip()
-    if eligibility_input:
-        eligibility = load_validated_eligibility_artifact(Path(eligibility_input))
+    args = _parse_args()
+    eligibility_input = args.eligibility_input
+    if eligibility_input is None:
+        legacy_env_input = os.getenv(ELIGIBILITY_INPUT_ENV, "").strip()
+        if legacy_env_input:
+            eligibility_input = Path(legacy_env_input)
+
+    if eligibility_input is not None:
+        eligibility = load_validated_eligibility_artifact(eligibility_input)
         eligibility_source = f"validated_artifact:{eligibility_input}"
+        financial_zip: Path | None = args.ses_zip
     else:
         eligibility = _build_live_eligibility()
         eligibility_source = "live_upstream_rebuild"
+        financial_zip = None
 
     eligible_fips = [
         str(entity.get("fip_code") or "")
@@ -124,9 +154,12 @@ def main() -> None:
         if (entity.get("eligibility") or {}).get("regulatory_universe_eligible")
         and entity.get("fip_code")
     ]
-    source_payload = load_susep_financial_evidence(eligible_fips)
+    source_payload = load_susep_financial_evidence(
+        eligible_fips,
+        zip_path=financial_zip,
+    )
     payload = build_operating_experiment(eligibility, source_payload)
-    path = write_operating_experiment(payload)
+    path = write_operating_experiment(payload, args.output)
     summary = payload["summary"]
     ic = summary["metrics"]["IC"]
     ica = summary["metrics"]["ICA"]
