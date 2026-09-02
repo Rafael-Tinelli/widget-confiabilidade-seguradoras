@@ -17,6 +17,22 @@ function normalizeSearch(value) {
     .trim();
 }
 
+function compactDigits(value) {
+  return String(value || '').replace(/\D+/g, '');
+}
+
+function entryMatchesQuery(entry, query) {
+  const normalized = normalizeSearch(query);
+  if (!normalized) return true;
+
+  const searchText = String(entry.search_text || '');
+  if (searchText.includes(normalized)) return true;
+
+  const queryDigits = compactDigits(query);
+  if (queryDigits.length < 4) return false;
+  return compactDigits(searchText).includes(queryDigits);
+}
+
 function entryBucketLabel(entry) {
   if (entry.result_kind === 'brand') return 'Marca';
   const labels = {
@@ -114,7 +130,7 @@ export default function App() {
     const normalized = normalizeSearch(query);
     if (!normalized) return ordinaryEntries;
     return searchEntries
-      .filter((entry) => String(entry.search_text || '').includes(normalized))
+      .filter((entry) => entryMatchesQuery(entry, query))
       .sort((a, b) => {
         const aStarts = String(a.search_text || '').startsWith(normalized) ? 0 : 1;
         const bStarts = String(b.search_text || '').startsWith(normalized) ? 0 : 1;
