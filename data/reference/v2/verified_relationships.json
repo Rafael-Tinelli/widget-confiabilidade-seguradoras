@@ -1,6 +1,6 @@
 {
-  "schema_version": "1.1",
-  "note": "Source-backed canonical relationship registry for facts that cannot be derived safely from SES identity alone. Corporate succession records are event-driven and only added with explicit documentary support. Durable brand, trade-name and product-to-risk-carrier relationships belong here so every downstream source can reuse them; source-specific wrappers remain outside this registry.",
+  "schema_version": "1.2",
+  "note": "Source-backed canonical relationship registry for facts that cannot be derived safely from SES identity alone. Corporate succession records are event-driven and only added with explicit documentary support. Durable brand, trade-name, market-identity and product-to-risk-carrier relationships belong here so every downstream source can reuse them; source-specific wrappers remain outside this registry. Optional market_identity metadata describes a separately identifiable consumer-facing company or platform without making it a regulated insurer or transferring the related insurer's assessment.",
   "corporate_relationships": [
     {
       "relationship_type": "incorporated_into",
@@ -270,6 +270,38 @@
             "authority": "MetLife Brasil",
             "url": "https://www.metlife.com.br/content/dam/metlifecom/br/PDFs/Regulamento-Ouvidoria-Vida-e-Previdencia.pdf",
             "fact": "documento oficial identifica Metropolitan Life Seguros e Previdência Privada S.A., CNPJ 02.102.498/0001-29"
+          }
+        }
+      ]
+    },
+    {
+      "brand_id": "brand:azos",
+      "name": "Azos",
+      "aliases": ["Azos Seguros"],
+      "market_identity": {
+        "kind": "insurtech_platform",
+        "public_label": "Insurtech / plataforma de seguros",
+        "legal_name": "AZOS TECNOLOGIA E SERVIÇOS LTDA",
+        "cnpj": "39520039000175",
+        "public_note": "A própria Azos se apresenta como insurtech, não como seguradora. A plataforma pertence à AZOS TECNOLOGIA E SERVIÇOS LTDA., CNPJ 39.520.039/0001-75.",
+        "evidence": {
+          "authority": "Azos",
+          "url": "https://www.azos.com.br/politica-de-privacidade",
+          "supporting_url": "https://www.azos.com.br/vida-segura/empresa-de-seguros",
+          "fact": "A política de privacidade identifica a pessoa jurídica e o CNPJ da plataforma; a própria Azos declara que é uma insurtech e não uma seguradora."
+        }
+      },
+      "relationships": [
+        {
+          "relationship_type": "risk_carrier",
+          "target_cnpj": "33054826000192",
+          "status": "current",
+          "scope": "apólices de seguro de vida comercializadas pela Azos e emitidas pela Companhia Excelsior de Seguros",
+          "evidence": {
+            "authority": "Azos / Companhia Excelsior de Seguros",
+            "url": "https://www.azos.com.br/perguntas-frequentes",
+            "supporting_url": "https://www.excelsiorseguros.com.br/wp-content/uploads/2026/04/CONDICOES-GERAIS-AZOS-PI-BROKER-Vigencia-a-partir-de-07-04-2026.pdf",
+            "fact": "A Azos informa que suas apólices são emitidas pela Excelsior Seguros; condições oficiais EXCELSIOR AZOS identificam Companhia Excelsior de Seguros, CNPJ 33.054.826/0001-92."
           }
         }
       ]
