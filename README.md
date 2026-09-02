@@ -1,19 +1,22 @@
 # Ranking de Seguradoras Sanida — Pipeline de Dados e Metodologia v2
 
-> **Status do projeto:** fundação metodológica concluída em Draft; **§19.1 — Auditoria geral de metodologia e dados formalmente fechada em 01/09/2026**; fase atual da consolidação: **§19.2 — auditoria do potencial informacional do frontend**.  
+> **Status do projeto:** fundação metodológica concluída em Draft; **§19.1–§19.5 formalmente fechados no branch de trabalho**; o cutover de produção permanece deliberadamente não autorizado.  
 > **Branch de trabalho:** `refactor/v2-data-foundation`.  
-> **PR:** #1 permanece **Draft**. Não fazer merge em `main` antes do fechamento da consolidação.  
+> **PR:** #1 permanece **Draft**. Não fazer merge em `main` antes de autorização explícita para staging/cutover.  
 > **Produto principal:** consulta de identidade + avaliação semântica individual + comparação lado a lado; leaderboards unidimensionais e coleções semânticas são exploração secundária.  
 > **Ranking geral:** continua bloqueado (`ranking_eligible = 0`).  
-> **Frontend:** PHP/HTML/CSS/JS no HostGator consome contratos públicos prontos; **não recalcula metodologia**.  
+> **Frontend:** PHP/HTML/CSS/JS no HostGator consome contratos públicos prontos; **não recalcula metodologia**. O build Vite no CI é prova de compilabilidade, não deploy do frontend.  
 > **Marco crítico de 29/08/2026:** corrigido o numerador de `PLA/CMR`. O pipeline deve usar `NovoPla` (`new_pla`) como PLA prudencial final; `plajustado` (`pla_adjusted`) permanece somente como evidência intermediária da fonte. Artifacts gerados antes dessa correção não devem ser tratados como atuais para capital, assessment combinado ou leaderboards dependentes de capital.  
 > **Prova de fechamento do §19.1:** Full Generation Proof #49, run `33567550092`, head `7993dbabd1cf3cd21181c88d072aed4ce5573538`, concluída com sucesso; artifact `9824434275`, SHA-256 `d0ccb6ce274542015431ae9fde0084c12941d1983ce06527bf6872e442244431`.
 
-Este README é o **contrato operacional do projeto**. A partir daqui, o objetivo deixa de ser abrir novas frentes metodológicas e passa a ser consolidar o que já foi construído, eliminar inconsistências, automatizar publicação e garantir que o frontend use corretamente os contratos existentes.
+Este README é o **contrato operacional do projeto**. A consolidação coberta por este ciclo foi concluída até o §19.5: metodologia/dados, potencial informacional do frontend, evergreen, publicação HostGator preparada e limpeza do repositório. Isso **não equivale a merge ou cutover de produção**.
 
 Documentação principal:
 
 - `docs/section-19-1-methodology-data-audit-closure.md`;
+- `docs/section-19-2-frontend-information-audit.md`;
+- `docs/section-19-3-19-4-evergreen-hostgator-publication.md`;
+- `docs/section-19-5-repository-cleanup.md`;
 - `docs/financial-methodology-closure.md`;
 - `docs/conduct-methodology-closure.md`;
 - `docs/cross-pillar-calibration-stage-1.md`;
@@ -651,7 +654,7 @@ No servidor da Sanida, o frontend deve consumir a estrutura consolidada em:
 /ranking-seguradoras/data/v2/public/
 ```
 
-A fase de consolidação deve eliminar o processo manual de baixar e mesclar artifacts sempre que possível.
+A publicação de produção preparada em §19.3–§19.4 sincroniza somente um pacote público validado e inteiro, sem reconstruir metodologia no HostGator.
 
 ---
 
@@ -763,17 +766,19 @@ Princípios:
 9. nenhuma curadoria periódica de números que possa ser derivada automaticamente;
 10. curadoria apenas para fatos relacionais realmente não automatizáveis, como algumas marcas/sucessões documentadas.
 
-A fase de consolidação deve transformar a atualização em algo semelhante a:
+A implementação preparada no §19.3–§19.4 segue:
 
 ```text
 fonte muda
-→ workflow coleta/cacheia
+→ Full Generation coleta/cacheia
 → valida schemas/invariantes
-→ reconstrói contratos
+→ reconstrói contratos na mesma geração
 → valida regressões
-→ publica artifact público aprovado
-→ HostGator sincroniza
-→ troca atômica da versão ativa
+→ produz pacote público único
+→ publicador baixa o artifact exato daquele run
+→ HostGator verifica novamente
+→ troca atômica de current
+→ previous permanece disponível para rollback
 → frontend consome
 ```
 
@@ -784,6 +789,8 @@ workflow parcial
 → JSON incompleto sobrescreve produção
 ```
 
+A automação de produção permanece desabilitada enquanto o Draft não tiver cutover deliberadamente autorizado.
+
 ---
 
 # 16. Workflows e dependências
@@ -793,6 +800,11 @@ Autoridades automáticas da consolidação:
 - `CI`;
 - `V2 Gate 4 Evergreen Contract`;
 - `V2 Gate 4 Full Generation Proof`.
+
+Publicação/cron preparados, porém gated até cutover:
+
+- `V2 HostGator Public Package Sync`;
+- `V2 Production Generation Schedule`.
 
 Workflows especializados permanecem úteis como validação diagnóstica/manual quando necessário, incluindo:
 
@@ -822,16 +834,13 @@ Workflows especializados permanecem úteis como validação diagnóstica/manual 
 - `V2 Exploratory Leaderboards Contract`;
 - `V2 Public Search Profile Contract`.
 
-A consolidação deve revisar dependências e gatilhos para evitar dezenas de workflows redundantes executando por qualquer alteração de documentação ou frontend.
-
-Também deve separar claramente:
+Classificação corrente:
 
 ```text
-produção necessária
-vs
-diagnóstico permanente
-vs
-experimento histórico/manual
+produção/fundação v2 -> KEEP
+diagnóstico v2       -> DIAGNOSTIC
+produção/histórico v1 -> LEGACY enquanto não houver cutover
+redundante/temporário -> DELETE somente após prova de ausência de dependência
 ```
 
 ---
@@ -889,13 +898,17 @@ O conjunto de testes inclui regressão onde `plajustado` indicaria falsamente ra
 
 # 19. Fase atual — CONSOLIDAÇÃO DO WIDGET
 
-A fase oficial do projeto é:
+A consolidação coberta por este ciclo está encerrada até o limite solicitado:
 
 ```text
-consolidation_audit_evergreen_publication_and_frontend_polish
+SECTION_19_1_STATUS = CLOSED
+SECTION_19_2_STATUS = CLOSED
+SECTION_19_3_STATUS = CLOSED_IN_ARCHITECTURE_AND_CODE
+SECTION_19_4_STATUS = CLOSED_IN_ARCHITECTURE_AND_CODE
+SECTION_19_5_STATUS = CLOSED
+production_cutover_authorized = false
+section_19_6_started = false
 ```
-
-Objetivos obrigatórios:
 
 ## 19.1. Auditoria geral de metodologia e dados — **FECHADO**
 
@@ -962,74 +975,125 @@ ranking_eligible          0
 
 A descoberta `plajustado` × `NovoPla` permanece o precedente operacional: aparência de plausibilidade não substitui auditoria da semântica da fonte.
 
-**O próximo item ativo é o §19.2.**
+## 19.2. Auditoria do potencial informacional do frontend — **FECHADO**
 
-## 19.2. Auditoria do potencial informacional do frontend
+Documento:
 
-Verificar se a página efetivamente usa:
+`docs/section-19-2-frontend-information-audit.md`
 
-- identidade;
-- aliases;
-- lifecycle;
-- sucessões;
-- grupos;
-- marcas;
-- risk carriers;
-- relações de Conduta;
-- Sandbox Conduct;
-- sinais financeiros;
-- sinais de reclamações;
-- períodos;
-- comparabilidade;
-- confiança;
-- limites;
-- leaderboards;
-- coleções.
-
-Nenhuma informação útil deve ficar presa no repo por falta de contrato público; se faltar payload, ampliar o backend em vez de reconstruir lógica no JS.
-
-## 19.3. Evergreen / zero manutenção
-
-- revisar fontes e caches;
-- definir dependências reais entre workflows;
-- eliminar necessidade de download manual de artifacts;
-- criar publicação/sincronização segura para o HostGator;
-- manter staging/versão anterior para rollback;
-- documentar recuperação quando fonte oficial estiver temporariamente fora do ar.
-
-## 19.4. Cron jobs e publicação
-
-Definir mecanismo para que `/ranking-seguradoras/data/v2/public/` receba em sincronia somente um **pacote público validado**.
-
-O cron não deve tentar adivinhar que dois artifacts independentes terminaram ao mesmo tempo. A consolidação deve preferir um pacote de distribuição único ou um manifest/versionamento que permita atualização atômica.
-
-## 19.5. Limpeza do repositório
-
-Classificar arquivos como:
+Resultado final:
 
 ```text
-KEEP — produção/fundação atual
-DIAGNOSTIC — auditoria ainda útil
-LEGACY — histórico reprodutível
-DELETE — redundante/obsoleto/temporário
+17 capacidades auditadas
+17 PUBLIC_READY
+17 FRONTEND_USED
+0 PUBLIC_PARTIAL conhecido
+0 BACKEND_GAP conhecido
+0 FRONTEND_GAP conhecido
 ```
 
-Revisar especialmente:
+O caminho ativo foi migrado do endpoint/score v1 para os contratos públicos v2. A auditoria também:
 
-- workflows temporários;
-- scripts de sincronização antigos;
-- artifacts experimentais;
-- código v1 que não é mais referência;
-- helpers duplicados;
-- documentação contraditória;
-- builders substituídos;
-- testes de experimentos invalidados.
+- publicou explicitamente a janela de Conduta `2025-07 → 2026-06` no backend público;
+- manteve aliases na semântica correta de marca, sem contaminar legal entities;
+- ligou lifecycle, sucessões, grupos, marcas, risk carriers, Conduta, Sandbox, sinais financeiros, períodos, comparabilidade, confiança, limites, leaderboards e coleções;
+- corrigiu busca por CNPJ/código SUSEP digitados com pontuação sem fuzzy identity assignment;
+- incorporou build Vite ao CI como prova de compilabilidade.
 
-Excluir somente depois de confirmar que nenhuma dependência atual os usa.
+Provas finais do frontend funcional:
 
-## 19.6. Revisão do frontend e SEO
+```text
+CI #1406                      success
+V2 Gate 4 Evergreen #246      success
+Full Generation #51           success para a projeção pública de período
+```
 
-Comparar o frontend atual com o widget anterior para recuperar somente o que era realmente positivo em:
+## 19.3. Evergreen / zero manutenção — **FECHADO EM ARQUITETURA E CÓDIGO**
+
+Documento conjunto com §19.4:
+
+`docs/section-19-3-19-4-evergreen-hostgator-publication.md`
+
+Implementação consolidada:
+
+- fontes/cache preservam `fresh`, `stale` e `unavailable` sem maquiagem temporal;
+- Full Generation continua sendo a geração canônica única;
+- artifact de publicação é identificado pelo run exato, nunca por “latest successful”;
+- publicação HostGator reaproveita o mesmo `distribution_manifest` e o mesmo instalador verificado;
+- staging/incoming, `current`, `previous` e rollback foram definidos e testados;
+- o instalador de rollback fica persistido no HostGator;
+- falha de fonte ou de nova geração não derruba a geração anterior já servida.
+
+O build Vite no CI continua sendo validação do frontend, não publicação no HostGator.
+
+## 19.4. Cron jobs e publicação — **FECHADO EM ARQUITETURA E CÓDIGO**
+
+Arquivos principais:
+
+```text
+.github/workflows/v2-hostgator-publication.yml
+.github/workflows/v2-production-generation-schedule.yml
+ops/hostgator/install_v2_public_remote.sh
+```
+
+Semântica:
+
+```text
+cron gated
+→ dispara Full Generation canônica em main
+→ somente success em main autoriza publicador
+→ baixa artifact exato daquele run
+→ verifica build_id + source_head_sha + package_sha256
+→ envia geração inteira ao HostGator
+→ verifica novamente
+→ troca current atomicamente
+→ mantém previous
+```
+
+Os gates de produção permanecem desligados no Draft:
+
+```text
+V2_PRODUCTION_AUTOMATION_ENABLED
+V2_HOSTGATOR_DEPLOY_ENABLED
+```
+
+O primeiro cutover ainda exige ação deliberada: merge autorizado em `main`, configuração SSH/known_hosts/paths, provisionamento do symlink público e publicação de teste antes de habilitar o cron.
+
+## 19.5. Limpeza do repositório — **FECHADO**
+
+Documento:
+
+`docs/section-19-5-repository-cleanup.md`
+
+Classificação aplicada:
+
+```text
+KEEP       — produção/fundação atual
+DIAGNOSTIC — auditoria ainda útil
+LEGACY     — histórico reprodutível / produção v1 enquanto não houver cutover
+DELETE     — redundante/obsoleto/temporário com ausência de dependência confirmada
+```
+
+Remoções confirmadas:
+
+- `widget-ui/src/InsurerScoreModal.jsx` — modal de score v1 morto;
+- `widget-ui/dist/` — build antigo e reproduzível, já ignorado;
+- `data/raw/consumidor_gov/tmp68ikpili.csv` — temporário rastreado acidentalmente;
+- `teste_consumidor.py` — scratch manual obsoleto.
+
+Foram preservados deliberadamente:
+
+- workflows e scripts v1 ainda necessários para produção/histórico antes do cutover;
+- experimentos/diagnósticos v2 que preservam a justificativa metodológica;
+- snapshots regulatórios canônicos;
+- `verify_extraction.sh` como LEGACY/manual only;
+- duplicações históricas cujo caminho ainda pode ser consumidor do v1.
+
+A limpeza é protegida por `tests/test_v2_repository_cleanup.py`.
+
+## 19.6. Revisão do frontend e SEO — **FORA DO ESCOPO DESTE CICLO / NÃO INICIADO**
+
+Se houver autorização futura para abrir esta etapa, comparar o frontend atual com o widget anterior para recuperar somente o que era realmente positivo em:
 
 - busca;
 - clareza;
@@ -1048,6 +1112,8 @@ Não restaurar:
 - excesso visual.
 
 A prioridade é experiência do usuário; SEO orienta títulos, headings, arquitetura semântica e cobertura de intenção sem degradar o português.
+
+**Este fechamento não autoriza iniciar §19.6 automaticamente.**
 
 ---
 
@@ -1069,26 +1135,26 @@ Não:
 - publicar artifacts antigos após mudança metodológica;
 - manter processo manual só porque funciona em teste;
 - apagar código experimental antes de confirmar dependências;
-- alterar `main` antes do encerramento da consolidação.
+- alterar `main` antes do encerramento e autorização explícita do cutover.
 
 ---
 
 # 21. Critério de sucesso da consolidação
 
-A fase termina quando:
+Para o escopo §19.1–§19.5, os critérios técnicos foram atendidos no branch Draft:
 
-- fórmulas críticas foram auditadas da fonte à tela;
+- fórmulas críticas foram auditadas da fonte ao JSON público;
 - regressões cobrem bugs materiais conhecidos;
 - artifacts dependentes do novo PLA foram reconstruídos e validados;
-- o frontend apresenta corretamente identidade, relações, avaliação e limites;
-- comparação funciona em desktop e mobile sem sobreposição de elementos;
-- linguagem pública está limpa de jargão interno desnecessário;
-- SEO e UX foram revisados em conjunto;
-- a publicação dos JSONs é automática, versionada e atômica;
-- cron jobs têm dependência clara e falha segura;
-- arquivos experimentais/legacy estão classificados e limpos;
-- documentação não contém “próximo gate” já encerrado nem snapshots contraditórios;
-- `main` recebe somente o que estiver auditado e pronto para produção.
+- o frontend ativo consome identidade, relações, avaliação e limites do contrato v2;
+- linguagem pública e `public_use` são respeitados;
+- a publicação de dados possui mecanismo versionado, exato por run e atômico preparado para HostGator;
+- cron/publicação têm dependência clara e falha segura;
+- arquivos experimentais/legacy foram classificados conservadoramente;
+- documentação deixou de apontar §19.2 como próximo gate;
+- `main` e a produção HostGator não foram alterados por esta consolidação.
+
+Itens de experiência/SEO visual pertencentes ao §19.6 não fazem parte do critério de fechamento deste ciclo.
 
 ---
 
@@ -1119,16 +1185,16 @@ E eliminar o que era frágil:
 - processos manuais permanentes;
 - artifacts experimentais vazando para produto.
 
-O próximo estágio é:
+Estado ao final deste ciclo:
 
 ```text
-AUDITAR FRONTEND / POTENCIAL INFORMACIONAL (§19.2)
-→ CONSOLIDAR EVERGREEN / ZERO MANUTENÇÃO (§19.3)
-→ FECHAR CRON JOBS E PUBLICAÇÃO (§19.4)
-→ LIMPAR E CLASSIFICAR REPOSITÓRIO (§19.5)
-→ REVISAR FRONTEND E SEO (§19.6, fora do escopo deste ciclo quando aplicável)
-→ VALIDAR STAGING
-→ SOMENTE DEPOIS PREPARAR MERGE/PRODUÇÃO
+§19.1 FECHADO
+→ §19.2 FECHADO
+→ §19.3 FECHADO EM ARQUITETURA/CÓDIGO
+→ §19.4 FECHADO EM ARQUITETURA/CÓDIGO
+→ §19.5 FECHADO
+→ PARAR AQUI: §19.6 NÃO INICIADO
+→ CUTOVER/PRODUÇÃO CONTINUA PENDENTE DE AUTORIZAÇÃO DELIBERADA
 ```
 
 ---
