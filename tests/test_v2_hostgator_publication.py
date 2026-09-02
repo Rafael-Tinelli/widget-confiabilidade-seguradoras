@@ -103,6 +103,17 @@ def test_hostgator_remote_installer_keeps_public_path_atomic_and_rollback_ready(
     assert (target / "previous").resolve().name == "v2-build-1"
     assert verify_package(public_path)["build"]["build_id"] == "v2-build-2"
 
+    retained_installer = target / "tools" / "install_public_generation.py"
+    assert retained_installer.is_file()
+    subprocess.run(
+        ["python3", str(retained_installer), "rollback", str(target)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert public_path.resolve().name == "v2-build-1"
+    assert (target / "previous").resolve().name == "v2-build-2"
+
 
 def test_hostgator_remote_installer_refuses_wrong_expected_package_hash(tmp_path: Path):
     package = _package(tmp_path / "source", "v2-build-1", "one")
