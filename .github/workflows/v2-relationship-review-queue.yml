@@ -246,7 +246,7 @@ jobs:
             if [[ -n "$issue_number" ]]; then
               gh issue close "$issue_number" \
                 --repo "$GITHUB_REPOSITORY" \
-                --comment "The latest successful Full Generation on main has no relationship review candidates."
+                --comment "The inspected Full Generation on main has no relationship review candidates."
             fi
             exit 0
           fi
