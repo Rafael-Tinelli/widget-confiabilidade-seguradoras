@@ -7,7 +7,6 @@ from api.v2.public_information_projection import (
     apply_public_information_projection,
 )
 
-
 MONTHS = [f"2025-{month:02d}" for month in range(7, 13)] + [
     f"2026-{month:02d}" for month in range(1, 7)
 ]
