@@ -14,7 +14,8 @@ EXPLORER_PATH = Path("data/derived/v2/public/insurer_explorer.json")
 CONDUCT_PATH = Path("data/derived/v2/conduct_methodology_closure.json")
 SANDBOX_PATH = Path("data/derived/v2/sandbox_brand_conduct_evidence.json")
 RELATIONSHIPS_PATH = Path("data/reference/v2/verified_relationships.json")
-VERSION = "2.0-public-information-projection-2"
+CONDUCT_RELATIONSHIPS_PATH = Path("data/reference/v2/conduct_subject_relationships.json")
+VERSION = "2.0-public-information-projection-3"
 
 
 class PublicInformationProjectionError(RuntimeError):
@@ -205,12 +206,81 @@ def _project_verified_market_identities(
     return count
 
 
+def _conduct_relationship_metadata(
+    relationship_registry: dict[str, Any],
+) -> dict[str, dict[str, Any]]:
+    output: dict[str, dict[str, Any]] = {}
+    for relation in relationship_registry.get("relationships") or []:
+        relationship_id = str(relation.get("relationship_id") or "").strip()
+        if not relationship_id:
+            raise PublicInformationProjectionError(
+                "Conduct relationship registry contains a relationship without id"
+            )
+        if relationship_id in output:
+            raise PublicInformationProjectionError(
+                f"duplicate Conduct relationship id: {relationship_id}"
+            )
+        public_context = relation.get("public_context")
+        if public_context is not None:
+            if not str(public_context).strip():
+                raise PublicInformationProjectionError(
+                    f"empty Conduct public_context: {relationship_id}"
+                )
+            evidence = relation.get("evidence") or []
+            if not evidence:
+                raise PublicInformationProjectionError(
+                    f"Conduct public_context requires evidence: {relationship_id}"
+                )
+        output[relationship_id] = relation
+    return output
+
+
+def _project_verified_conduct_relationship_context(
+    contract: dict[str, Any],
+    relationship_registry: dict[str, Any],
+) -> int:
+    by_id = _conduct_relationship_metadata(relationship_registry)
+    count = 0
+    for profile in contract.get("profiles") or []:
+        relationship_context = profile.get("relationship_context") or {}
+        relationships = relationship_context.get("conduct_reconciliation") or []
+        for public_relation in relationships:
+            relationship_id = str(public_relation.get("relationship_id") or "").strip()
+            source = by_id.get(relationship_id)
+            if source is None:
+                raise PublicInformationProjectionError(
+                    f"public Conduct relationship missing from registry: {relationship_id}"
+                )
+
+            for field in (
+                "effective_to",
+                "verification_state",
+                "verified_as_of",
+                "scope",
+                "public_context",
+            ):
+                if field in source:
+                    public_relation[field] = deepcopy(source.get(field))
+
+            public_context = str(source.get("public_context") or "").strip()
+            if public_context and public_relation.get("role") == "subject":
+                assessment = profile.get("assessment") or {}
+                public_conduct = assessment.get("conduct")
+                if isinstance(public_conduct, dict):
+                    public_conduct["relationship_context"] = public_context
+                    if public_conduct.get("reason_code") == source.get("pressure_policy"):
+                        public_conduct["plain_language"] = public_context
+            count += 1
+    return count
+
+
 def apply_public_information_projection(
     contract: dict[str, Any],
     explorer: dict[str, Any],
     conduct: dict[str, Any],
     sandbox: dict[str, Any],
     relationship_registry: dict[str, Any] | None = None,
+    conduct_relationship_registry: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     if contract.get("artifact") != "v2_public_search_profile_contract":
         raise PublicInformationProjectionError("unexpected public profile contract")
@@ -267,14 +337,22 @@ def apply_public_information_projection(
             projected_contract, relationship_registry
         )
 
+    conduct_relationship_context_count = 0
+    if conduct_relationship_registry is not None:
+        conduct_relationship_context_count = _project_verified_conduct_relationship_context(
+            projected_contract, conduct_relationship_registry
+        )
+
     projected_contract["public_information_projection"] = {
         "version": VERSION,
         "conduct_reference_window": deepcopy(window),
         "policy": {
             "frontend_may_infer_conduct_period": False,
+            "frontend_may_infer_conduct_relationship_context": False,
             "ordinary_and_sandbox_windows_must_match": True,
             "projection_changes_methodology": False,
             "market_identity_may_inherit_related_entity_assessment": False,
+            "conduct_relationship_context_changes_complaint_attribution": False,
         },
         "counts": {
             "explorer_entities": explorer_count,
@@ -282,6 +360,7 @@ def apply_public_information_projection(
             "sandbox_entity_contexts": sandbox_count,
             "sandbox_brand_contexts": brand_sandbox_count,
             "verified_market_identity_profiles": market_identity_count,
+            "verified_conduct_relationship_contexts": conduct_relationship_context_count,
         },
     }
     return projected_contract, projected_explorer
@@ -303,12 +382,16 @@ def project_from_files() -> tuple[dict[str, Any], dict[str, Any]]:
     conduct = json.loads(CONDUCT_PATH.read_text(encoding="utf-8"))
     sandbox = json.loads(SANDBOX_PATH.read_text(encoding="utf-8"))
     relationship_registry = json.loads(RELATIONSHIPS_PATH.read_text(encoding="utf-8"))
+    conduct_relationship_registry = json.loads(
+        CONDUCT_RELATIONSHIPS_PATH.read_text(encoding="utf-8")
+    )
     projected_contract, projected_explorer = apply_public_information_projection(
         contract,
         explorer,
         conduct,
         sandbox,
         relationship_registry,
+        conduct_relationship_registry,
     )
     _write_json_atomic(CONTRACT_PATH, projected_contract)
     _write_json_atomic(EXPLORER_PATH, projected_explorer)
