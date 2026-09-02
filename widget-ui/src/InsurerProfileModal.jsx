@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { X, ExternalLink, ShieldCheck } from 'lucide-react';
+import { ExternalLink, ShieldCheck, X } from 'lucide-react';
 
 function isFiniteNumber(value) {
   return typeof value === 'number' && Number.isFinite(value);
@@ -39,23 +39,120 @@ function formatPeriod(value) {
   return `${text.slice(4, 6)}/${text.slice(0, 4)}`;
 }
 
-function humanize(value) {
-  return String(value || '—').replaceAll('_', ' ');
+function confidenceLabel(value) {
+  const labels = {
+    established_core_history: 'Histórico central estabelecido',
+    limited_core_history: 'Histórico central limitado',
+    insufficient_core_evidence: 'Evidência central insuficiente',
+  };
+  return labels[value] || 'Confiança não classificada';
+}
+
+function entityTypeLabel(value) {
+  const labels = {
+    insurer: 'Seguradora',
+    sandbox_participant: 'Participante do Sandbox regulatório',
+    open_pension: 'Previdência complementar aberta',
+    capitalization: 'Capitalização',
+    reinsurer: 'Resseguradora',
+    brand: 'Marca',
+  };
+  return labels[value] || 'Outra identidade supervisionada/publicada';
+}
+
+function operatingLabel(value) {
+  const labels = {
+    balanced_persistent: 'Operação persistentemente equilibrada na janela analisada',
+    improved: 'Sinal de melhora no contexto operacional',
+    recent_pressure: 'Pressão operacional recente',
+    persistent_pressure: 'Pressão operacional persistente',
+    indeterminate: 'Contexto operacional inconclusivo',
+  };
+  return labels[value] || null;
+}
+
+function comparabilityLabel(value) {
+  const labels = {
+    direct_one_to_one_candidate: 'Comparação direta disponível',
+    consumer_subject_single_carrier_exposure_not_brand_specific:
+      'O sujeito de reclamação não possui exposição específica da marca',
+    hybrid_insurance_pension_requires_product_numerator:
+      'Seguros e previdência exigem separação do numerador por produto',
+    multi_carrier_subject_requires_product_split:
+      'O sujeito de reclamação envolve mais de uma seguradora e exige separação por produto',
+    negative_direct_premium_requires_accounting_review:
+      'O prêmio direto requer revisão contábil antes da normalização',
+    no_current_insurance_activity_observed:
+      'Não foi observada atividade atual de seguros suficiente para a comparação',
+    no_positive_insurance_premium_observed:
+      'Não há prêmio positivo comparável para normalizar as reclamações',
+    portfolio_transfer_counterparty_requires_temporal_reconciliation:
+      'A contraparte de transferência de carteira exige reconciliação temporal',
+    portfolio_transfer_requires_temporal_reconciliation:
+      'A transferência de carteira exige reconciliação temporal',
+    runoff_pressure_not_applicable: 'Pressão corrente não se aplica ao run-off',
+    shared_consumer_subject_requires_product_split:
+      'O mesmo sujeito consumidor exige separação por produto',
+    shared_exposure_with_external_consumer_subject:
+      'A exposição é compartilhada com sujeito consumidor externo e não permite atribuição direta',
+  };
+  return labels[value] || 'Comparabilidade descrita no contrato público';
+}
+
+function persistenceLabel(value) {
+  const labels = {
+    persistent_above_expected: 'Pressão acima do esperado de forma persistente',
+    episodic_or_sparse_above_expected: 'Pressão acima do esperado de forma episódica/esparsa',
+    persistent_below_expected: 'Pressão abaixo do esperado de forma persistente',
+    episodic_or_sparse_below_expected: 'Pressão abaixo do esperado de forma episódica/esparsa',
+    not_distinguishable_from_expected: 'Sem persistência direcional suficientemente clara',
+    insufficient_temporal_coverage: 'Cobertura temporal insuficiente',
+  };
+  return labels[value] || null;
+}
+
+function trendLabel(value) {
+  const labels = {
+    improving_pressure: 'Pressão recente em melhora',
+    deteriorating_pressure: 'Pressão recente em deterioração',
+    no_clear_change: 'Sem mudança recente suficientemente clara',
+    insufficient_events: 'Eventos insuficientes para tendência',
+    insufficient_temporal_coverage: 'Cobertura temporal insuficiente para tendência',
+  };
+  return labels[value] || null;
+}
+
+function relationshipLabel(value) {
+  const labels = {
+    brand_of: 'Marca vinculada a',
+    risk_carrier: 'Risco assumido por',
+    incorporated_into: 'Incorporada por',
+    successor: 'Sucessora',
+    runoff: 'Run-off',
+  };
+  return labels[value] || 'Relação verificada';
 }
 
 function Metric({ label, metric, formatter = formatNumber }) {
   if (!metric || typeof metric !== 'object') return null;
-  const available = metric.availability === 'available' && metric.value !== null;
+  const contractAllowsDisplay = !metric.public_use || metric.public_use === 'displayable';
+  const available =
+    metric.availability === 'available' && metric.value !== null && contractAllowsDisplay;
+
   return (
     <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
       <div className="text-xs font-medium text-slate-500">{label}</div>
       <div className="mt-1 text-base font-semibold text-slate-900">
-        {available ? formatter(metric.value) : '—'}
+        {available
+          ? formatter(metric.value)
+          : contractAllowsDisplay
+            ? '—'
+            : 'Não exibido neste contexto'}
       </div>
       {metric.meaning ? <p className="mt-1 text-xs text-slate-600">{metric.meaning}</p> : null}
-      {metric.public_use && metric.public_use !== 'displayable' ? (
+      {!contractAllowsDisplay ? (
         <p className="mt-1 text-[11px] font-medium text-amber-700">
-          Uso público: {humanize(metric.public_use)}
+          O valor bruto é preservado no backend, mas o contrato não autoriza usá-lo como medida pública neste contexto.
         </p>
       ) : null}
     </div>
@@ -63,7 +160,7 @@ function Metric({ label, metric, formatter = formatNumber }) {
 }
 
 function Evidence({ evidence }) {
-  if (!evidence || typeof evidence !== 'object') return null;
+  if (!evidence || typeof evidence !== 'object' || Array.isArray(evidence)) return null;
   return (
     <div className="mt-2 text-xs text-slate-500">
       {evidence.authority ? <span>Fonte: {evidence.authority}</span> : null}
@@ -78,6 +175,21 @@ function Evidence({ evidence }) {
           abrir fonte <ExternalLink className="h-3 w-3" />
         </a>
       ) : null}
+    </div>
+  );
+}
+
+function EvidenceList({ evidence }) {
+  const rows = Array.isArray(evidence) ? evidence : evidence ? [evidence] : [];
+  if (!rows.length) return null;
+  return (
+    <div className="mt-2 space-y-2">
+      {rows.map((item, index) => (
+        <div key={`${item.reference || item.url || item.fact || 'evidence'}-${index}`}>
+          {item.fact ? <p className="text-xs text-slate-600">{item.fact}</p> : null}
+          <Evidence evidence={item} />
+        </div>
+      ))}
     </div>
   );
 }
@@ -111,9 +223,6 @@ function Assessment({ assessment }) {
       <Section title="Avaliação">
         <div className="rounded-lg bg-slate-50 p-4 text-sm text-slate-700">
           Esta identidade não recebe avaliação conjunta no universo ordinário atual.
-          {assessment.reason ? (
-            <div className="mt-2 text-xs text-slate-500">Motivo: {humanize(assessment.reason)}</div>
-          ) : null}
         </div>
       </Section>
     );
@@ -125,6 +234,9 @@ function Assessment({ assessment }) {
   const liquidityMetric = financial.liquidity?.technical?.ratio;
   const operation = assessment.operation_context?.insurance_premium_direct_12m;
   const conductTechnical = conduct.technical || {};
+  const operating = operatingLabel(financial.operating_context?.signal);
+  const persistence = persistenceLabel(conductTechnical.persistence);
+  const trend = trendLabel(conductTechnical.trend);
 
   return (
     <>
@@ -147,8 +259,8 @@ function Assessment({ assessment }) {
 
       <Section title="Financeiro">
         <div className="mb-3 text-xs text-slate-500">
-          Competência de referência: {formatPeriod(financial.reference_period)} · confiança:{' '}
-          {humanize(financial.evidence_confidence)}
+          Competência de referência: {formatPeriod(financial.reference_period)} ·{' '}
+          {confidenceLabel(financial.evidence_confidence)}
         </div>
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
           <Metric label="PLA/CMR" metric={capitalMetric} formatter={formatRatio} />
@@ -160,10 +272,9 @@ function Assessment({ assessment }) {
         {financial.liquidity?.plain_language ? (
           <p className="mt-2 text-sm text-slate-700">{financial.liquidity.plain_language}</p>
         ) : null}
-        {financial.operating_context?.signal ? (
+        {operating ? (
           <p className="mt-2 text-xs text-slate-500">
-            Contexto operacional: {humanize(financial.operating_context.signal)}. Esse contexto não
-            substitui capital ou liquidez.
+            Contexto operacional: {operating}. Esse contexto não substitui capital ou liquidez.
           </p>
         ) : null}
         {operation ? (
@@ -176,8 +287,7 @@ function Assessment({ assessment }) {
       <Section title="Conduta">
         <p className="text-sm text-slate-700">{conduct.plain_language || 'Sem leitura pública disponível.'}</p>
         <div className="mt-2 text-xs text-slate-500">
-          Comparabilidade: {humanize(conduct.comparability_state)}
-          {conduct.reason_code ? ` · ${humanize(conduct.reason_code)}` : ''}
+          Comparabilidade: {comparabilityLabel(conduct.comparability_state)}
         </div>
         {conduct.reference_window ? (
           <div className="mt-1 text-xs text-slate-500">
@@ -207,11 +317,11 @@ function Assessment({ assessment }) {
             formatter={(value) => formatNumber(value, { maximumFractionDigits: 0 })}
           />
         </div>
-        {(conductTechnical.persistence || conductTechnical.trend) ? (
-          <p className="mt-3 text-xs text-slate-500">
-            Persistência: {humanize(conductTechnical.persistence)} · Tendência:{' '}
-            {humanize(conductTechnical.trend)}
-          </p>
+        {persistence || trend ? (
+          <div className="mt-3 space-y-1 text-xs text-slate-500">
+            {persistence ? <p>{persistence}</p> : null}
+            {trend ? <p>{trend}</p> : null}
+          </div>
         ) : null}
       </Section>
     </>
@@ -310,7 +420,12 @@ export default function InsurerProfileModal({ profile, onClose, onNavigateProfil
 
           <Section title="Identidade e situação">
             <dl className="grid grid-cols-1 gap-2 text-sm md:grid-cols-2">
-              <div><dt className="text-slate-500">Tipo</dt><dd className="font-medium text-slate-900">{humanize(identity.entity_type)}</dd></div>
+              <div>
+                <dt className="text-slate-500">Tipo</dt>
+                <dd className="font-medium text-slate-900">
+                  {isBrand ? 'Marca' : entityTypeLabel(identity.entity_type)}
+                </dd>
+              </div>
               {!isBrand ? <div><dt className="text-slate-500">CNPJ</dt><dd className="font-mono text-slate-900">{identity.cnpj || '—'}</dd></div> : null}
               {!isBrand ? <div><dt className="text-slate-500">Código SUSEP/FIP</dt><dd className="font-mono text-slate-900">{identity.fip_code || '—'}</dd></div> : null}
               {!isBrand ? <div><dt className="text-slate-500">Situação regulatória</dt><dd className="text-slate-900">{profile.regulatory?.label || '—'}</dd></div> : null}
@@ -319,9 +434,9 @@ export default function InsurerProfileModal({ profile, onClose, onNavigateProfil
           </Section>
 
           {!isBrand && profile.lifecycle ? (
-            <Section title="Lifecycle">
+            <Section title="Situação cadastral e sucessão">
               <div className="text-sm text-slate-700">
-                Situação cadastral: {humanize(profile.lifecycle.legal_lifecycle?.cadastral_status)}
+                Situação cadastral: {profile.lifecycle.legal_lifecycle?.cadastral_status || '—'}
                 {profile.lifecycle.legal_lifecycle?.status_date
                   ? ` · desde ${profile.lifecycle.legal_lifecycle.status_date}`
                   : ''}
@@ -365,23 +480,23 @@ export default function InsurerProfileModal({ profile, onClose, onNavigateProfil
               <div className="space-y-3">
                 {brandRelationships.map((relation, index) => (
                   <div key={`${relation.target_profile_id}-${index}`} className="rounded-lg border border-slate-200 p-3 text-sm">
-                    <div>{humanize(relation.relationship_type)} →{' '}
+                    <div>{relationshipLabel(relation.relationship_type)}{' '}
                       <ProfileLink profileId={relation.target_profile_id} onNavigateProfile={onNavigateProfile}>
                         {relation.target_name}
                       </ProfileLink>
                     </div>
                     {relation.scope ? <p className="mt-1 text-xs text-slate-600">{relation.scope}</p> : null}
-                    <Evidence evidence={relation.evidence} />
+                    <EvidenceList evidence={relation.evidence} />
                   </div>
                 ))}
                 {(relationshipContext.direct_relationships || []).map((relation, index) => (
                   <div key={`${relation.target_profile_id}-${index}`} className="rounded-lg border border-slate-200 p-3 text-sm">
-                    <div>{humanize(relation.relationship_type)} →{' '}
+                    <div>{relationshipLabel(relation.relationship_type)}{' '}
                       <ProfileLink profileId={relation.target_profile_id} onNavigateProfile={onNavigateProfile}>
                         {relation.target_name || relation.target_profile_id}
                       </ProfileLink>
                     </div>
-                    <Evidence evidence={relation.evidence} />
+                    <EvidenceList evidence={relation.evidence} />
                   </div>
                 ))}
                 {(relationshipContext.brands || []).map((brand) => (
@@ -391,9 +506,9 @@ export default function InsurerProfileModal({ profile, onClose, onNavigateProfil
                       {brand.name}
                     </ProfileLink>
                     {brand.aliases?.length ? (
-                      <div className="mt-1 text-xs text-slate-500">Aliases: {brand.aliases.join(', ')}</div>
+                      <div className="mt-1 text-xs text-slate-500">Também pesquisável como: {brand.aliases.join(', ')}</div>
                     ) : null}
-                    <Evidence evidence={brand.evidence} />
+                    <EvidenceList evidence={brand.evidence} />
                   </div>
                 ))}
               </div>
@@ -405,11 +520,8 @@ export default function InsurerProfileModal({ profile, onClose, onNavigateProfil
               <div className="space-y-3">
                 {relationshipContext.conduct_reconciliation.map((relation) => (
                   <div key={relation.relationship_id} className="rounded-lg border border-slate-200 p-3 text-sm text-slate-700">
-                    <div>{humanize(relation.relationship_type)}</div>
-                    <div className="mt-1 text-xs text-slate-500">
-                      Política: {humanize(relation.pressure_policy)} · estado:{' '}
-                      {humanize(relation.reconciliation_state)}
-                    </div>
+                    <div>{relationshipLabel(relation.relationship_type)}</div>
+                    <EvidenceList evidence={relation.evidence} />
                   </div>
                 ))}
               </div>
