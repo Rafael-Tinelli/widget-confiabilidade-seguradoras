@@ -1,7 +1,7 @@
-from pathlib import Path
+import pathlib
 
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 
 def test_hostgator_bridge_persists_only_aggregate_query_fields():
