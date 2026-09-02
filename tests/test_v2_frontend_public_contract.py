@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from pathlib import Path
 
 
@@ -47,8 +49,8 @@ def test_active_card_does_not_render_legacy_score_or_open_insurance_pillar():
         assert forbidden not in card
 
     assert "assessment?.public_class" in card
-    assert "financial?.capital?.state" in card
-    assert "conduct?.comparability_state" in card
+    assert "financial?.public_interpretation?.headline" in card
+    assert "conduct?.summary" in card
 
 
 def test_profile_modal_renders_precomputed_public_semantics_only():
