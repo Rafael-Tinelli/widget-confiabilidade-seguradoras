@@ -1,6 +1,5 @@
 from pathlib import Path
 
-
 APP = Path("widget-ui/src/App.jsx")
 CARD = Path("widget-ui/src/components/InsurerCard.jsx")
 DATA_CLIENT = Path("widget-ui/src/v2Data.js")
