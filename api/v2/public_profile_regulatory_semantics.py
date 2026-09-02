@@ -7,10 +7,13 @@ from typing import Any
 import api.v2.build_public_search_profile_contract as base_contract
 from api.v2.public_information_projection import project_from_files
 
-VERSION = "2.0-public-search-profile-contract-2"
+VERSION = "2.0-public-search-profile-contract-3"
 SSPE_QUERY_STATE = "special_purpose_insurer"
 SSPE_LABEL = "Seguradora de propósito específico (SSPE)"
 SSPE_ASSESSMENT_REASON = "special_purpose_insurer_outside_consumer_assessment"
+COOPERATIVE_QUERY_STATE = "insurance_cooperative"
+COOPERATIVE_LABEL = "Sociedade cooperativa de seguros"
+COOPERATIVE_ASSESSMENT_REASON = "insurance_cooperative_outside_ordinary_assessment"
 
 
 def _profile_name(profile: dict[str, Any]) -> str:
@@ -34,10 +37,21 @@ def _sspe_quick_answer(profile: dict[str, Any]) -> str:
     )
 
 
-def _sspe_disambiguation(profile: dict[str, Any]) -> str:
+def _cooperative_quick_answer(profile: dict[str, Any]) -> str:
+    name = _profile_name(profile)
+    return (
+        f"{name} é identificada como sociedade cooperativa de seguros. A identidade "
+        "permanece pesquisável e supervisionada, mas essa forma regulatória é mantida "
+        "separada do benchmark de seguradoras ordinárias. Enquanto o contrato de "
+        "assessment não autorizar comparabilidade específica para cooperativas, a "
+        "ausência de avaliação não representa conclusão favorável nem adversa."
+    )
+
+
+def _subtype_disambiguation(profile: dict[str, Any], label: str) -> str:
     identity = profile.get("identity") or {}
     pieces = [
-        SSPE_LABEL,
+        label,
         f"CNPJ {identity.get('cnpj')}" if identity.get("cnpj") else None,
         f"SUSEP {identity.get('fip_code')}" if identity.get("fip_code") else None,
     ]
@@ -48,9 +62,9 @@ def apply_regulatory_profile_semantics(payload: dict[str, Any]) -> dict[str, Any
     """Apply public subtype semantics without changing identity or methodology.
 
     The base profile builder intentionally keeps the supervised legal superclass
-    (``entity_type=insurer``). Gate 3 adds the public subtype distinction carried by
-    lifecycle ``query_state`` so SSPEs cannot be mistaken for ordinary consumer
-    insurers merely because both share the insurer superclass and ordinary regime.
+    (``entity_type=insurer``). This layer adds public distinctions carried by lifecycle
+    ``query_state`` so SSPEs and insurance cooperatives cannot be mistaken for the
+    ordinary consumer-insurer comparator merely because they share a superclass.
     """
 
     output = deepcopy(payload)
@@ -59,33 +73,49 @@ def apply_regulatory_profile_semantics(payload: dict[str, Any]) -> dict[str, Any
 
     profiles = list(output.get("profiles") or [])
     sspe_ids: set[str] = set()
+    cooperative_ids: set[str] = set()
     for profile in profiles:
         if profile.get("profile_kind") != "entity":
             continue
         regulatory = profile.get("regulatory") or {}
-        if regulatory.get("query_state") != SSPE_QUERY_STATE:
-            continue
-
+        query_state = regulatory.get("query_state")
         profile_id = str(profile.get("profile_id") or "")
+        if query_state not in {SSPE_QUERY_STATE, COOPERATIVE_QUERY_STATE}:
+            continue
         if not profile_id:
-            raise ValueError("SSPE profile without profile_id")
-        sspe_ids.add(profile_id)
+            raise ValueError("regulated subtype profile without profile_id")
 
-        regulatory["label"] = SSPE_LABEL
+        limits = list(profile.get("limits") or [])
+        if query_state == SSPE_QUERY_STATE:
+            sspe_ids.add(profile_id)
+            label = SSPE_LABEL
+            quick_answer = _sspe_quick_answer(profile)
+            reason = SSPE_ASSESSMENT_REASON
+            limit = (
+                "SSPE permanece fora do assessment e do ranking de seguradoras ordinárias; "
+                "a exclusão decorre do escopo regulatório, não de desempenho."
+            )
+        else:
+            cooperative_ids.add(profile_id)
+            label = COOPERATIVE_LABEL
+            quick_answer = _cooperative_quick_answer(profile)
+            reason = COOPERATIVE_ASSESSMENT_REASON
+            limit = (
+                "Cooperativa de seguros permanece fora do assessment e do benchmark "
+                "ordinário até existir contrato metodológico específico de comparabilidade; "
+                "a ausência de avaliação não é evidência adversa."
+            )
+
+        regulatory["label"] = label
         profile["regulatory"] = regulatory
         profile["public_summary"] = {
-            "headline": SSPE_LABEL,
-            "quick_answer": _sspe_quick_answer(profile),
+            "headline": label,
+            "quick_answer": quick_answer,
         }
         profile["assessment"] = {
             "availability": "not_applicable",
-            "reason": SSPE_ASSESSMENT_REASON,
+            "reason": reason,
         }
-        limits = list(profile.get("limits") or [])
-        limit = (
-            "SSPE permanece fora do assessment e do ranking de seguradoras ordinárias; "
-            "a exclusão decorre do escopo regulatório, não de desempenho."
-        )
         if limit not in limits:
             limits.append(limit)
         profile["limits"] = limits
@@ -99,21 +129,26 @@ def apply_regulatory_profile_semantics(payload: dict[str, Any]) -> dict[str, Any
     search_index = list(output.get("search_index") or [])
     for entry in search_index:
         profile_id = str(entry.get("profile_id") or "")
-        if profile_id not in sspe_ids:
+        if profile_id in sspe_ids:
+            label = SSPE_LABEL
+        elif profile_id in cooperative_ids:
+            label = COOPERATIVE_LABEL
+        else:
             continue
         profile = profile_by_id[profile_id]
-        entry["disambiguation"] = _sspe_disambiguation(profile)
-        entry["filter_bucket"] = (profile.get("regulatory") or {}).get(
-            "filter_bucket"
-        )
+        entry["disambiguation"] = _subtype_disambiguation(profile, label)
+        entry["filter_bucket"] = (profile.get("regulatory") or {}).get("filter_bucket")
 
     population = dict(output.get("population") or {})
     population["special_purpose_insurer_profiles"] = len(sspe_ids)
+    population["insurance_cooperative_profiles"] = len(cooperative_ids)
     output["population"] = population
 
     policy = dict(output.get("publication_policy") or {})
     policy["sspe_enters_ordinary_assessment"] = False
     policy["sspe_enters_ordinary_ranking"] = False
+    policy["insurance_cooperative_enters_ordinary_assessment"] = False
+    policy["insurance_cooperative_enters_ordinary_ranking"] = False
     output["publication_policy"] = policy
     output["profiles"] = profiles
     output["search_index"] = search_index
