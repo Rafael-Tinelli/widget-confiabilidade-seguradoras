@@ -5,6 +5,7 @@ from copy import deepcopy
 from typing import Any
 
 import api.v2.build_public_search_profile_contract as base_contract
+from api.v2.public_information_projection import project_from_files
 
 VERSION = "2.0-public-search-profile-contract-2"
 SSPE_QUERY_STATE = "special_purpose_insurer"
@@ -147,6 +148,12 @@ def main() -> None:
         encoding="utf-8",
     )
     written = base_contract.write_public_outputs(payload)
+
+    # §19.2: transport approved source-period context to the public contract.
+    # This projection runs before validate_public_search_profile_contract in Gate 4
+    # and never derives a methodological state in the frontend.
+    payload, _ = project_from_files()
+
     print(
         json.dumps(
             {
@@ -154,6 +161,9 @@ def main() -> None:
                 "status": payload["status"],
                 "version": payload["version"],
                 "population": payload["population"],
+                "public_information_projection": payload.get(
+                    "public_information_projection"
+                ),
                 "public_files": [str(path) for path in written],
             },
             ensure_ascii=False,
