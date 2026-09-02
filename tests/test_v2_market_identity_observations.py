@@ -123,6 +123,31 @@ def test_gsc_resolved_query_is_ignored_and_unknown_query_is_observational():
     assert observations[0]["confidence_semantics"] == "relevance_signal_only"
 
 
+def test_gsc_known_identity_context_query_does_not_become_new_company_candidate():
+    rows = [
+        {"query": "porto seguro e confiavel", "impressions": 80, "clicks": 8},
+        {"query": "reclamacoes azos", "impressions": 12, "clicks": 2},
+        {"query": "emergente seguros e confiavel", "impressions": 9, "clicks": 1},
+    ]
+    observations = gsc_query_observations(rows, _search_index())
+    assert len(observations) == 1
+    assert observations[0]["normalized_query"] == "emergente seguros e confiavel"
+
+
+def test_widget_unknown_search_keeps_recall_for_new_compound_name_containing_known_alias():
+    rows = [
+        {
+            "normalized_query": "Porto Digital",
+            "count": 2,
+            "distinct_day_count": 2,
+        }
+    ]
+    observations = widget_unknown_search_observations(rows, _search_index())
+    assert len(observations) == 1
+    assert observations[0]["normalized_query"] == "porto digital"
+    assert observations[0]["lifecycle_state"] == "review_required"
+
+
 def test_demand_sensor_unavailable_is_explicit_and_does_not_change_candidate_policy():
     registry = candidate_registry_from_observations(
         [], sensor_status={"gsc_query": "unavailable", "widget_unknown_search": "stale"}
