@@ -1,13 +1,18 @@
 import { GitCompareArrows, ShieldCheck } from 'lucide-react';
 
-function humanize(value) {
-  return String(value || '—').replaceAll('_', ' ');
-}
-
 function formatPeriod(value) {
   const text = String(value || '').replace(/\D/g, '');
   if (text.length !== 6) return value || '—';
   return `${text.slice(4, 6)}/${text.slice(0, 4)}`;
+}
+
+function confidenceLabel(value) {
+  const labels = {
+    established_core_history: 'histórico central estabelecido',
+    limited_core_history: 'histórico central limitado',
+    insufficient_core_evidence: 'evidência central insuficiente',
+  };
+  return labels[value] || 'confiança não classificada';
 }
 
 function toneClass(publicClass) {
@@ -61,20 +66,22 @@ export default function InsurerCard({
           <div className="mt-4 grid grid-cols-1 gap-2 text-xs text-slate-600">
             <div className="rounded-lg border border-slate-200 p-3">
               <span className="font-medium text-slate-900">Financeiro</span>
-              <div className="mt-1">Capital: {humanize(financial?.capital?.state)}</div>
-              <div>Liquidez: {humanize(financial?.liquidity?.state)}</div>
+              <p className="mt-1 leading-relaxed">
+                {financial?.public_interpretation?.headline || 'Sem leitura financeira pública.'}
+              </p>
               <div className="mt-1 text-slate-500">
-                Competência: {formatPeriod(financial?.reference_period)} · confiança:{' '}
-                {humanize(financial?.evidence_confidence)}
+                Competência: {formatPeriod(financial?.reference_period)} · {confidenceLabel(financial?.evidence_confidence)}
               </div>
             </div>
 
             <div className="rounded-lg border border-slate-200 p-3">
               <span className="font-medium text-slate-900">Conduta</span>
               <p className="mt-1 leading-relaxed">{conduct?.summary || 'Sem resumo público.'}</p>
-              <div className="mt-1 text-slate-500">
-                Comparabilidade: {humanize(conduct?.comparability_state)}
-              </div>
+              {conduct?.reference_window ? (
+                <div className="mt-1 text-slate-500">
+                  Janela: {conduct.reference_window.start_month} a {conduct.reference_window.end_month}
+                </div>
+              ) : null}
             </div>
           </div>
         </>
