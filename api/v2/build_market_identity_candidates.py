@@ -129,7 +129,9 @@ def build_market_identity_candidates(
             )
         )
     if gsc_rows is not None:
-        observations.extend(gsc_query_observations(gsc_rows, search_index, thresholds=thresholds))
+        observations.extend(
+            gsc_query_observations(gsc_rows, search_index, thresholds=thresholds)
+        )
     if previous_licensed is not None and current_licensed is not None:
         observations.extend(
             regulated_entity_delta_observations(previous_licensed, current_licensed)
@@ -172,7 +174,9 @@ def _parse_args() -> argparse.Namespace:
 def main() -> None:
     args = _parse_args()
     search_payload = _load_json(args.search_index)
-    search_index = _rows(search_payload, "search_index", "records")
+    # The published search_index.json contract uses `entries`; list/search_index/records
+    # remain accepted so the builder can also consume compact fixtures and diagnostics.
+    search_index = _rows(search_payload, "entries", "search_index", "records")
     thresholds = DemandReviewThresholds(
         widget_min_count=args.widget_min_count,
         widget_min_distinct_days=args.widget_min_distinct_days,
