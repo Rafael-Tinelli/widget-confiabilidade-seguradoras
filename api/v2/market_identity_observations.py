@@ -114,6 +114,45 @@ def _exact_search_keys(search_index: Iterable[dict[str, Any]]) -> set[str]:
     return keys
 
 
+def _known_identity_phrases(search_index: Iterable[dict[str, Any]]) -> set[str]:
+    """Return textual identity phrases suitable for high-precision GSC suppression.
+
+    Search Console queries often contain intent around an already-known company,
+    such as ``porto seguro e confiavel``. Those are useful SEO queries, but they are
+    not evidence of a new market identity. The GSC sensor therefore suppresses a
+    query when it contains a known name/alias on token boundaries. This precision
+    rule is deliberately *not* applied to widget zero-result telemetry: the internal
+    search remains the higher-recall sensor for genuinely new compound brand names.
+    """
+    phrases: set[str] = set()
+    for entry in search_index:
+        terms = [entry.get("name"), *(entry.get("aliases") or [])]
+        for term in terms:
+            normalized = normalize_market_query(term)
+            if (
+                normalized
+                and normalized not in NOISE_QUERIES
+                and not normalized.isdigit()
+                and len(normalized) >= 3
+            ):
+                phrases.add(normalized)
+    return phrases
+
+
+def query_mentions_known_identity(
+    value: Any,
+    search_index: Iterable[dict[str, Any]],
+) -> bool:
+    normalized = normalize_market_query(value)
+    if not normalized:
+        return False
+    padded_query = f" {normalized} "
+    return any(
+        f" {phrase} " in padded_query
+        for phrase in _known_identity_phrases(search_index)
+    )
+
+
 def query_resolves_exactly(value: Any, search_index: Iterable[dict[str, Any]]) -> bool:
     normalized = normalize_market_query(value)
     return bool(normalized and normalized in _exact_search_keys(search_index))
@@ -189,12 +228,17 @@ def gsc_query_observations(
     thresholds: DemandReviewThresholds | None = None,
 ) -> list[dict[str, Any]]:
     thresholds = thresholds or DemandReviewThresholds()
-    exact_keys = _exact_search_keys(search_index)
+    search_entries = list(search_index)
+    exact_keys = _exact_search_keys(search_entries)
     observations: list[dict[str, Any]] = []
     for raw in rows:
         row = dict(raw)
         normalized = normalize_market_query(row.get("query"))
-        if not is_eligible_market_query(normalized) or normalized in exact_keys:
+        if (
+            not is_eligible_market_query(normalized)
+            or normalized in exact_keys
+            or query_mentions_known_identity(normalized, search_entries)
+        ):
             continue
         impressions = max(int(row.get("impressions") or 0), 0)
         clicks = max(int(row.get("clicks") or 0), 0)
