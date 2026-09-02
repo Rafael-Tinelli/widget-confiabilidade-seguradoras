@@ -9,7 +9,7 @@
 > **Marco crítico de 29/08/2026:** corrigido o numerador de `PLA/CMR`. O pipeline deve usar `NovoPla` (`new_pla`) como PLA prudencial final; `plajustado` (`pla_adjusted`) permanece somente como evidência intermediária da fonte. Artifacts gerados antes dessa correção não devem ser tratados como atuais para capital, assessment combinado ou leaderboards dependentes de capital.  
 > **Prova de fechamento do §19.1:** Full Generation Proof #49, run `33567550092`, head `7993dbabd1cf3cd21181c88d072aed4ce5573538`, concluída com sucesso; artifact `9824434275`, SHA-256 `d0ccb6ce274542015431ae9fde0084c12941d1983ce06527bf6872e442244431`.
 
-Este README é o **contrato operacional do projeto**. A consolidação coberta por este ciclo foi concluída até o §19.5: metodologia/dados, potencial informacional do frontend, evergreen, publicação HostGator preparada e limpeza do repositório. Isso **não equivale a merge ou cutover de produção**.
+Este README é o **contrato operacional do projeto**. A consolidação coberta por este ciclo foi concluída até o §19.5: metodologia/dados, potencial informacional do frontend, evergreen, publicação HostGator preparada e limpeza do repositório. A competência de **descoberta evergreen de novas identidades de mercado** foi posteriormente auditada e incorporada como extensão do §19.3, ainda sem ativação operacional de produção. Isso **não equivale a merge ou cutover de produção**.
 
 Documentação principal:
 
@@ -17,6 +17,8 @@ Documentação principal:
 - `docs/section-19-2-frontend-information-audit.md`;
 - `docs/section-19-3-19-4-evergreen-hostgator-publication.md`;
 - `docs/section-19-5-repository-cleanup.md`;
+- `docs/emerging-market-identity-coverage.md`;
+- `docs/emerging-market-discovery-audit.md`;
 - `docs/financial-methodology-closure.md`;
 - `docs/conduct-methodology-closure.md`;
 - `docs/cross-pillar-calibration-stage-1.md`;
@@ -36,7 +38,7 @@ Regras marcadas como **EXPERIMENTAL**, **DIAGNÓSTICO**, **LEGACY**, **INVALIDAT
 A ferramenta pública deve ajudar o consumidor a responder, em linguagem progressiva:
 
 1. **Quem é a empresa ou marca pesquisada?**
-2. **É seguradora autorizada, participante Sandbox, marca, entidade histórica ou outro tipo de empresa?**
+2. **É seguradora autorizada, participante Sandbox, cooperativa de seguros, marca, plataforma, corretora, entidade histórica ou outro tipo de empresa?**
 3. **Existe seguradora por trás da marca ou relação societária relevante?**
 4. **Os sinais financeiros disponíveis mostram algum alerta material?**
 5. **As reclamações parecem altas ou baixas em relação ao tamanho da operação quando essa comparação é realmente possível?**
@@ -94,6 +96,7 @@ O repositório é responsável por:
 - classificação regulatória;
 - lifecycle jurídico;
 - relações de marca, sucessão, grupo e `risk_carrier`;
+- descoberta observacional de novas identidades de mercado;
 - elegibilidade;
 - evidência financeira;
 - evidência de Conduta;
@@ -105,7 +108,7 @@ O repositório é responsável por:
 - geração dos JSONs públicos;
 - workflows e artifacts.
 
-O frontend público fica fora da metodologia. Sua função é pesquisar, navegar, formatar e renderizar contratos já fechados.
+O frontend público fica fora da metodologia. Sua função é pesquisar, navegar, formatar e renderizar contratos já fechados. A única exceção operacional é a emissão opcional de **telemetria observacional de busca sem resultado**, sem autoridade metodológica e desabilitada enquanto o endpoint não estiver explicitamente configurado.
 
 ```text
 php_may_recompute_methodology = false
@@ -168,6 +171,33 @@ JSONs PÚBLICOS
 PHP + CSS + JS
 ```
 
+A descoberta evergreen de identidades emergentes funciona em paralelo e **não é autoridade metodológica**:
+
+```text
+SUSEP licensed delta ─┐
+SUSEP Sandbox delta ──┤
+Consumer.gov/watchdog ┤
+widget unknown query ─┼→ observations
+GSC unresolved query ─┘
+                         ↓
+              market candidate registry
+                         ↓
+            assertion_effect = none
+            score_effect = none
+            complaint_transfer_effect = none
+            automatic_registry_mutation = forbidden
+                         ↓
+              relationship_watchdog
+                         ↓
+               review queue única
+                         ↓
+              resolução source-backed
+                         ↓
+                registry canônico
+```
+
+Sensores podem descobrir; somente evidência adequada pode autorizar identidade/relação pública.
+
 ---
 
 # 5. Identidade, busca e relações
@@ -194,8 +224,9 @@ A busca pública pode localizar:
 
 - seguradora autorizada;
 - participante Sandbox;
+- sociedade cooperativa de seguros;
 - marca;
-- plataforma;
+- insurtech/plataforma;
 - corretora;
 - previdência;
 - capitalização;
@@ -212,6 +243,8 @@ Ser pesquisável não significa ser elegível para assessment ordinário.
 fuzzy search → ordenar candidatos
 fuzzy search ≠ decidir identidade
 ```
+
+A mesma regra vale para a descoberta evergreen: similaridade pode sugerir investigação, mas não pode fundir candidates ou resolver identidade automaticamente.
 
 ## 5.4. Relações
 
@@ -237,7 +270,8 @@ risk_carrier_relation ≠ complaint_transfer
 
 Casos públicos importantes já materializados:
 
-- Youse ↔ Caixa Seguradora;
+- Azos ↔ Companhia Excelsior de Seguros, preservando Azos como `insurtech_platform` e a Excelsior como `risk_carrier` documentado;
+- Youse ↔ Caixa Seguradora, sem colapsar a identidade regulatória Youse nem transferir exposição/reclamações automaticamente;
 - Loovi ↔ LTI Seguros;
 - HDI Seguros × HDI Global no grupo TALANX, mantendo identidades distintas;
 - Zurich com necessidade de reconciliação temporal;
@@ -509,7 +543,7 @@ Relações fornecem contexto; não transferem automaticamente reclamações ou p
 
 ### Youse
 
-A relação Youse → Caixa é documentada, mas a produção total da Caixa não pode ser usada automaticamente como denominador das reclamações da Youse.
+Youse permanece uma identidade regulatória atual. Condições contratuais atuais podem identificar a Caixa Seguradora como garantidora/carrier de produtos Youse, mas isso não autoriza usar automaticamente a produção total da Caixa como denominador das reclamações da Youse nem colapsar as duas identidades.
 
 ### Loovi / LTI
 
@@ -546,6 +580,8 @@ Participantes Sandbox podem ser pesquisados e receber contexto próprio de ident
 Loovi ↔ LTI é o caso público mais desenvolvido no contrato atual.
 
 Sandbox não herda assessment ordinário e não contamina baseline ordinário.
+
+Sociedades cooperativas de seguros também possuem semântica própria e não entram no benchmark ordinário por presunção.
 
 ---
 
@@ -656,6 +692,8 @@ No servidor da Sanida, o frontend deve consumir a estrutura consolidada em:
 
 A publicação de produção preparada em §19.3–§19.4 sincroniza somente um pacote público validado e inteiro, sem reconstruir metodologia no HostGator.
 
+Os artifacts de descoberta (`market_identity_candidates`, watchdog aumentado e review queue) são **operacionais/observacionais** e não fazem parte do pacote público apenas por terem sido detectados.
+
 ---
 
 # 13. Frontend público
@@ -753,6 +791,18 @@ Termos de bastidor como `v2`, `active_licensed`, `ordinary`, `snapshot`, `lifecy
 
 A meta operacional é **zero manutenção editorial/técnica recorrente, ou o mais próximo possível disso**.
 
+Essa meta possui duas dimensões que não podem ser confundidas:
+
+```text
+zero manutenção rotineira de descoberta
+≠
+zero intervenção humana para resolver qualquer identidade ambígua
+```
+
+Após configuração/ativação operacional, o sistema não deve depender de alguém lembrar de procurar novas seguradoras, exportar GSC manualmente, comparar listas SUSEP à mão ou revisar semanalmente o mercado. Sensores regulatórios e de demanda devem executar automaticamente e tornar exceções visíveis.
+
+Para relações ambíguas — por exemplo insurtech vs corretora, plataforma vs marca, MGA/distribuidora, `risk_carrier`, sucessão ou transferência de carteira — revisão source-backed continua deliberadamente necessária. Essa revisão é tratamento de exceção material, não manutenção periódica.
+
 Princípios:
 
 1. fonte oficial/pública sempre que possível;
@@ -764,7 +814,9 @@ Princípios:
 7. validação antes de promoção;
 8. rollback simples;
 9. nenhuma curadoria periódica de números que possa ser derivada automaticamente;
-10. curadoria apenas para fatos relacionais realmente não automatizáveis, como algumas marcas/sucessões documentadas.
+10. nenhuma curadoria periódica do catálogo regulado que possa ser descoberta automaticamente;
+11. curadoria apenas para fatos relacionais/identidades realmente não automatizáveis;
+12. detecção nunca equivale a afirmação.
 
 A implementação preparada no §19.3–§19.4 segue:
 
@@ -782,6 +834,28 @@ fonte muda
 → frontend consome
 ```
 
+A descoberta de mercado acrescenta:
+
+```text
+fonte regulatória muda OU demanda desconhecida aparece
+→ observation
+→ candidate não autoritativo
+→ watchdog/review queue
+→ resolução source-backed quando necessária
+→ registry canônico
+→ evergreen nas gerações seguintes
+```
+
+### Potencial por classe
+
+- **nova seguradora licenciada:** alta automação. `apply_licensed_classification()` materializa FIP oficial novo mesmo quando ainda não existe no SES;
+- **novo Sandbox:** alta automação por CNPJ oficial exato e materialização específica;
+- **nova cooperativa de seguros:** automatizável sob o contrato atual quando o nome legal oficial é inequívoco; mudança de taxonomia SUSEP falha fechado e exige modelagem explícita;
+- **insurtech/plataforma/marca/corretora:** descoberta automática orientada por busca sem resultado e GSC; resolução canônica permanece source-backed;
+- **novo tipo regulatório desconhecido:** deve interromper/falhar fechado em vez de ser silenciosamente classificado.
+
+Limite consciente: uma identidade não regulada que nunca aparece nas fontes observadas e nunca produz demanda no widget/GSC pode permanecer desconhecida. O sistema não pretende varrer toda a internet; combina reconhecimento regulatório com relevância demonstrada por demanda real.
+
 Nunca:
 
 ```text
@@ -789,7 +863,15 @@ workflow parcial
 → JSON incompleto sobrescreve produção
 ```
 
-A automação de produção permanece desabilitada enquanto o Draft não tiver cutover deliberadamente autorizado.
+Nem:
+
+```text
+sensor
+→ fuzzy/inferência
+→ registry público
+```
+
+A automação de produção e os sensores de mercado permanecem desabilitados enquanto o Draft não tiver cutover/configuração deliberadamente autorizados.
 
 ---
 
@@ -805,6 +887,19 @@ Publicação/cron preparados, porém gated até cutover:
 
 - `V2 HostGator Public Package Sync`;
 - `V2 Production Generation Schedule`.
+
+Descoberta evergreen preparada, porém gated até configuração operacional:
+
+- `V2 Emerging Market Identity Sensors`;
+- `V2 Relationship Review Queue`.
+
+O workflow de sensores exige:
+
+```text
+vars.V2_MARKET_SENSOR_AUTOMATION_ENABLED == true
+```
+
+quando executado automaticamente após Full Generation bem-sucedida em `main`. GSC e o snapshot HostGator são opcionais e explicitam `not_configured`/`unavailable` sem invalidar Gate 4.
 
 Workflows especializados permanecem úteis como validação diagnóstica/manual quando necessário, incluindo:
 
@@ -855,6 +950,7 @@ O pipeline deve falhar diante de situações como:
 - referência pública (`*_profile_id`) apontando para perfil inexistente;
 - SSPE recebendo semântica ou assessment de seguradora ordinária;
 - Sandbox vazando para benchmark ordinário;
+- cooperativa vazando para benchmark ordinário por presunção;
 - previdência/capitalização vazando para exposição de seguros;
 - reclamações transferidas silenciosamente de subject para carrier;
 - pressão calculada sem denominador comparável;
@@ -862,6 +958,7 @@ O pipeline deve falhar diante de situações como:
 - valores não finitos;
 - queda anormal de cobertura;
 - alteração inesperada de schema;
+- alteração desconhecida da taxonomia de entidades licenciadas SUSEP;
 - `null` convertido em zero;
 - zero bruto exibido com semântica errada;
 - score produzido por artifact que proíbe scoring;
@@ -873,7 +970,13 @@ O pipeline deve falhar diante de situações como:
 - fallback silencioso de `new_pla` para `pla_adjusted`;
 - competência madura calculada com regra de capital diferente da usada no assessment;
 - artifact público dependente de capital gerado com versão anterior do Financial Evidence;
-- reconstrução do pacote final misturando artifacts de gerações diferentes.
+- reconstrução do pacote final misturando artifacts de gerações diferentes;
+- candidate de descoberta com `assertion_effect` diferente de `none`;
+- candidate de descoberta alterando score, reclamações ou registry;
+- fuzzy resolvendo automaticamente identidade emergente;
+- valor observacional não confiável quebrando/injetando markup na review queue.
+
+Sensores de demanda indisponíveis **não** devem invalidar Gate 4; sua ausência precisa aparecer explicitamente como estado do sensor e nunca como evidência negativa de inexistência.
 
 ---
 
@@ -898,15 +1001,17 @@ O conjunto de testes inclui regressão onde `plajustado` indicaria falsamente ra
 
 # 19. Fase atual — CONSOLIDAÇÃO DO WIDGET
 
-A consolidação coberta por este ciclo está encerrada até o limite solicitado:
+A consolidação coberta por este ciclo está encerrada até o limite solicitado, com a competência de descoberta evergreen incorporada posteriormente como extensão operacional do §19.3:
 
 ```text
 SECTION_19_1_STATUS = CLOSED
 SECTION_19_2_STATUS = CLOSED
 SECTION_19_3_STATUS = CLOSED_IN_ARCHITECTURE_AND_CODE
+SECTION_19_3_DISCOVERY_STATUS = CLOSED_IN_ARCHITECTURE_AND_CODE
 SECTION_19_4_STATUS = CLOSED_IN_ARCHITECTURE_AND_CODE
 SECTION_19_5_STATUS = CLOSED
 production_cutover_authorized = false
+market_sensor_production_enabled = false
 section_19_6_started = false
 ```
 
@@ -1026,6 +1131,77 @@ Implementação consolidada:
 
 O build Vite no CI continua sendo validação do frontend, não publicação no HostGator.
 
+### 19.3.1. Descoberta evergreen de novas identidades — **FECHADO EM ARQUITETURA E CÓDIGO**
+
+Documentos:
+
+- `docs/emerging-market-identity-coverage.md`;
+- `docs/emerging-market-discovery-audit.md`.
+
+A auditoria diferenciou atualização das empresas conhecidas de descoberta de empresas ainda desconhecidas.
+
+Resultado:
+
+```text
+new licensed insurer
+→ fonte SUSEP licenciadas
+→ FIP novo pode ser materializado mesmo sem presença prévia no SES
+→ perfil pesquisável sob taxonomia conhecida
+
+new Sandbox participant
+→ CNPJ oficial exato
+→ identidade Sandbox própria
+→ fora do benchmark ordinário
+
+new cooperative
+→ subtype insurance_cooperative sob contrato atual
+→ pesquisável
+→ fora do ordinary benchmark
+→ nova taxonomia SUSEP desconhecida falha fechado
+
+new insurtech / platform / brand / broker
+→ unknown widget query e/ou GSC
+→ candidate observacional
+→ source-backed review
+→ canonical registry somente após resolução
+```
+
+Todo candidate emergente preserva:
+
+```text
+assertion_effect = none
+score_effect = none
+complaint_transfer_effect = none
+automatic_registry_mutation = forbidden
+blocking = false
+```
+
+A expectativa de manutenção é:
+
+```text
+routine_discovery_maintenance = zero_after_setup
+human_exception_review = required_when_identity_or_relationship_is_ambiguous
+```
+
+Isso significa que o sistema pode automatizar a **observação** de novas empresas sem automatizar afirmações arriscadas.
+
+Full Generation integrada posterior à implementação regulatória/cooperativa:
+
+```text
+V2 Gate 4 Full Generation Proof #66
+run        33666689092
+head       1a14bab84c85ba88919f5e5b2e6e8221e6cbd212
+build_id   v2-gate4-full-33666689092-a1
+conclusion success
+stage_count 25
+watchdog_blocking_drift 0
+ranking_eligible 0
+artifact   9861836318
+digest     sha256:f45ce9b8b1cb8bbd7ec09734bad77189e2ded4b1aa0ce8aeee43f717de84bff8
+```
+
+A ativação operacional ainda depende de configuração deliberada do endpoint HostGator, GSC/WIF e `V2_MARKET_SENSOR_AUTOMATION_ENABLED`; isso não reabre a arquitetura.
+
 ## 19.4. Cron jobs e publicação — **FECHADO EM ARQUITETURA E CÓDIGO**
 
 Arquivos principais:
@@ -1055,9 +1231,10 @@ Os gates de produção permanecem desligados no Draft:
 ```text
 V2_PRODUCTION_AUTOMATION_ENABLED
 V2_HOSTGATOR_DEPLOY_ENABLED
+V2_MARKET_SENSOR_AUTOMATION_ENABLED
 ```
 
-O primeiro cutover ainda exige ação deliberada: merge autorizado em `main`, configuração SSH/known_hosts/paths, provisionamento do symlink público e publicação de teste antes de habilitar o cron.
+O primeiro cutover ainda exige ação deliberada: merge autorizado em `main`, configuração SSH/known_hosts/paths, provisionamento do symlink público e publicação de teste antes de habilitar o cron. A ativação dos sensores de demanda exige adicionalmente provisionamento do endpoint de unknown query e, para GSC, credenciais WIF/service account e configuração da propriedade/URL.
 
 ## 19.5. Limpeza do repositório — **FECHADO**
 
@@ -1130,8 +1307,11 @@ Não:
 - misturar seguros, previdência e capitalização;
 - transferir reclamações por semelhança de nome;
 - incluir Sandbox no baseline ordinário;
+- incluir cooperativa no baseline ordinário por presunção;
 - aplicar fuzzy matching decisório;
 - permitir PHP/JS corrigir backend;
+- transformar demanda desconhecida em identidade pública automaticamente;
+- permitir candidate observacional mutar o registry;
 - publicar artifacts antigos após mudança metodológica;
 - manter processo manual só porque funciona em teste;
 - apagar código experimental antes de confirmar dependências;
@@ -1141,7 +1321,7 @@ Não:
 
 # 21. Critério de sucesso da consolidação
 
-Para o escopo §19.1–§19.5, os critérios técnicos foram atendidos no branch Draft:
+Para o escopo §19.1–§19.5 e a extensão de descoberta evergreen do §19.3, os critérios técnicos foram atendidos no branch Draft:
 
 - fórmulas críticas foram auditadas da fonte ao JSON público;
 - regressões cobrem bugs materiais conhecidos;
@@ -1150,9 +1330,17 @@ Para o escopo §19.1–§19.5, os critérios técnicos foram atendidos no branch
 - linguagem pública e `public_use` são respeitados;
 - a publicação de dados possui mecanismo versionado, exato por run e atômico preparado para HostGator;
 - cron/publicação têm dependência clara e falha segura;
+- nova seguradora licenciada pode ser materializada automaticamente mesmo sem presença prévia no SES;
+- novo Sandbox pode ser materializado por identidade oficial própria;
+- cooperativas possuem subtipo explícito e não entram no benchmark ordinário por presunção;
+- buscas desconhecidas/GSC podem alimentar candidates sem efeito público;
+- candidates são operacionalmente visíveis sem permitir assertion/score/complaint transfer/registry mutation;
+- valores observacionais não confiáveis são neutralizados antes de renderização na fila de revisão;
 - arquivos experimentais/legacy foram classificados conservadoramente;
-- documentação deixou de apontar §19.2 como próximo gate;
+- documentação central incorpora a diferença entre evergreen de dados conhecidos e evergreen de descoberta;
 - `main` e a produção HostGator não foram alterados por esta consolidação.
+
+A cobertura evergreen operacional em produção só passa a existir após configuração/ativação deliberada dos sensores; isso é uma etapa operacional separada da arquitetura já fechada.
 
 Itens de experiência/SEO visual pertencentes ao §19.6 não fazem parte do critério de fechamento deste ciclo.
 
@@ -1183,6 +1371,7 @@ E eliminar o que era frágil:
 - falsa precisão de uma ordem total;
 - jargão antes da resposta humana;
 - processos manuais permanentes;
+- catálogo que só conhece empresas porque alguém lembrou de cadastrá-las;
 - artifacts experimentais vazando para produto.
 
 Estado ao final deste ciclo:
@@ -1191,8 +1380,10 @@ Estado ao final deste ciclo:
 §19.1 FECHADO
 → §19.2 FECHADO
 → §19.3 FECHADO EM ARQUITETURA/CÓDIGO
+   ↳ DESCOBERTA EVERGREEN FECHADA EM ARQUITETURA/CÓDIGO
 → §19.4 FECHADO EM ARQUITETURA/CÓDIGO
 → §19.5 FECHADO
+→ SENSORES DE MERCADO EM PRODUÇÃO AINDA NÃO CONFIGURADOS/ATIVADOS
 → PARAR AQUI: §19.6 NÃO INICIADO
 → CUTOVER/PRODUÇÃO CONTINUA PENDENTE DE AUTORIZAÇÃO DELIBERADA
 ```
