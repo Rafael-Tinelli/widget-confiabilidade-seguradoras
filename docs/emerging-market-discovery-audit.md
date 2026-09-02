@@ -182,6 +182,28 @@ O collector usa a Search Analytics API com:
 
 GSC é complementar, não exaustivo. Uma marca totalmente ausente do conteúdo da página pode não gerar impressão para essa página; portanto GSC não substitui a telemetria de busca interna.
 
+### 8.1. Redução de falsos candidates de intenção
+
+A auditoria encontrou uma diferença relevante entre `query de empresa desconhecida` e `query sobre empresa já conhecida`.
+
+Exemplo:
+
+```text
+porto seguro e confiavel
+```
+
+não deve gerar candidate apenas porque a string completa não coincide exatamente com o alias `Porto Seguro`.
+
+O sensor GSC agora suprime queries que contenham nome/alias textual conhecido em limites de tokens, mantendo-as fora da fila de descoberta.
+
+Essa heurística de supressão é aplicada **somente ao GSC**. Ela não é aplicada à busca sem resultado do widget, para preservar recall de possíveis nomes compostos novos, por exemplo:
+
+```text
+Porto Digital
+```
+
+A regra continua não decisória: ela reduz ruído do sensor GSC; não resolve identidade nova por fuzzy matching.
+
 ## 9. Busca sem resultado
 
 Depois de instalado/configurado, o frontend envia somente a query normalizada quando:
@@ -230,9 +252,9 @@ O endpoint HostGator usa statements preparados; texto de consulta nunca é conca
 
 A normalização elimina markup/pontuação antes da persistência da busca interna.
 
-Como defesa adicional, a review queue também trata valores observacionais como texto não confiável e neutraliza HTML/Markdown antes de renderizá-los em GitHub Markdown. Isso cobre inclusive queries GSC, que podem chegar do lado externo sem passar pelo normalizador do frontend.
+Como defesa adicional, a review queue trata valores observacionais como texto não confiável e neutraliza caracteres de controle, HTML e construções Markdown capazes de alterar a estrutura da issue. Isso cobre inclusive queries GSC, que podem chegar do lado externo sem passar pelo normalizador do frontend.
 
-O objetivo não é presumir que usuários normais pesquisarão e-mail/CPF ou payloads de ataque. É garantir que um endpoint público de telemetria continue inerte mesmo diante de tráfego não normal.
+O objetivo não é presumir que usuários normais pesquisarão e-mail, CPF ou payloads de ataque. É garantir que um endpoint público de telemetria e uma fila alimentada por dados externos continuem inertes diante de tráfego não normal.
 
 ## 12. Automação operacional
 
@@ -258,6 +280,31 @@ V2_MARKET_SENSOR_AUTOMATION_ENABLED == true
 ```
 
 Nenhum `latest successful Full Generation` é usado como autoridade de publicação/revisão.
+
+### 12.1. Proprietário único da issue operacional
+
+A auditoria também encontrou uma condição de corrida potencial: o workflow relacional original e o workflow de sensores poderiam editar a mesma issue singleton após a mesma Full Generation.
+
+O contrato foi corrigido:
+
+```text
+V2_MARKET_SENSOR_AUTOMATION_ENABLED != true
+→ V2 Relationship Review Queue é o atualizador automático
+
+V2_MARKET_SENSOR_AUTOMATION_ENABLED == true
+→ V2 Emerging Market Identity Sensors é o atualizador automático
+→ usa watchdog relacional + candidates de mercado
+```
+
+O workflow relacional original continua disponível por `workflow_dispatch` para diagnóstico manual.
+
+Assim, a issue:
+
+```text
+[v2] Relationship review queue
+```
+
+possui exatamente um proprietário automático em cada modo operacional e não pode perder candidates de mercado por sobrescrita concorrente.
 
 ## 13. Manutenção residual real
 
