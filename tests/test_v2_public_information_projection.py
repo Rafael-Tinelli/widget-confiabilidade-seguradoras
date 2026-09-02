@@ -5,8 +5,8 @@ import copy
 import pytest
 
 from api.v2.public_information_projection import (
-    PublicInformationProjectionError,
     apply_public_information_projection,
+    PublicInformationProjectionError,
 )
 
 
