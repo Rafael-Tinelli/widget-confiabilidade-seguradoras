@@ -58,7 +58,11 @@ if actual_package_sha != expected_package_sha:
     )
 PY
 
-mkdir -p "$TARGET_ROOT/generations" "$TARGET_ROOT/incoming"
+mkdir -p "$TARGET_ROOT/generations" "$TARGET_ROOT/incoming" "$TARGET_ROOT/tools"
+install -m 600 "$INSTALLER_PY" "$TARGET_ROOT/tools/.install_public_generation.py.tmp"
+mv -f \
+  "$TARGET_ROOT/tools/.install_public_generation.py.tmp" \
+  "$TARGET_ROOT/tools/install_public_generation.py"
 
 python3 - "$PUBLIC_PATH" "$TARGET_ROOT/current" <<'PY'
 import os
