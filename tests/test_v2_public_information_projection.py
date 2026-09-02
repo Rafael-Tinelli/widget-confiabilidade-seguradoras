@@ -1,12 +1,10 @@
-from __future__ import annotations
-
 import copy
 
 import pytest
 
 from api.v2.public_information_projection import (
-    apply_public_information_projection,
     PublicInformationProjectionError,
+    apply_public_information_projection,
 )
 
 
