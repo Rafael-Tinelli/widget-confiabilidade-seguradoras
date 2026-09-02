@@ -12,6 +12,8 @@ const NOISE_QUERIES = new Set([
   'confiabilidade',
 ]);
 
+const EMAIL_LIKE = /[^\s@]+@[^\s@]+\.[^\s@]+/;
+
 export function normalizeUnknownMarketQuery(value) {
   const text = String(value || '').trim();
   if (!text) return '';
@@ -29,7 +31,9 @@ export function normalizeUnknownMarketQuery(value) {
 }
 
 function isEligibleUnknownQuery(value) {
-  const normalized = normalizeUnknownMarketQuery(value);
+  const raw = String(value || '').trim();
+  if (!raw || raw.includes('@') || EMAIL_LIKE.test(raw)) return false;
+  const normalized = normalizeUnknownMarketQuery(raw);
   if (!normalized || NOISE_QUERIES.has(normalized)) return false;
   if (/^\d+$/.test(normalized)) return normalized.length === 14;
   return normalized.length >= 3;
@@ -51,11 +55,9 @@ export function useUnknownMarketQueryTelemetry(query, resultCount, ready) {
   const sent = useRef(new Set());
 
   useEffect(() => {
-    if (!ready || resultCount !== 0) return undefined;
+    if (!ready || resultCount !== 0 || !isEligibleUnknownQuery(query)) return undefined;
     const normalized = normalizeUnknownMarketQuery(query);
-    if (!isEligibleUnknownQuery(normalized) || sent.current.has(normalized)) {
-      return undefined;
-    }
+    if (sent.current.has(normalized)) return undefined;
     const endpoint = configuredSameOriginEndpoint();
     if (!endpoint) return undefined;
 
