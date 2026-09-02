@@ -24,11 +24,15 @@ concurrency:
 
 jobs:
   update-review-queue:
+    # When emerging-market sensors are enabled, their workflow owns the automatic
+    # singleton issue update because it renders the superset: base relationship
+    # candidates + market candidates. Manual dispatch remains available here.
     if: >-
       github.event_name == 'workflow_dispatch' ||
       (
         github.event.workflow_run.conclusion == 'success' &&
-        github.event.workflow_run.head_branch == 'main'
+        github.event.workflow_run.head_branch == 'main' &&
+        vars.V2_MARKET_SENSOR_AUTOMATION_ENABLED != 'true'
       )
     runs-on: ubuntu-24.04
     timeout-minutes: 15
