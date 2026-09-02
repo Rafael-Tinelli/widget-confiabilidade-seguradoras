@@ -4,8 +4,9 @@ import hashlib
 import re
 import unicodedata
 from collections import defaultdict
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Any, Iterable
+from typing import Any
 
 from api.utils.identifiers import normalize_cnpj_v2
 
@@ -129,7 +130,7 @@ def _assert_privacy_minimized_mapping(row: dict[str, Any]) -> None:
 
 
 def _candidate_key(namespace: str, anchor: str) -> str:
-    digest = hashlib.sha256(f"{namespace}:{anchor}".encode("utf-8")).hexdigest()[:20]
+    digest = hashlib.sha256(f"{namespace}:{anchor}".encode()).hexdigest()[:20]
     return f"market:{namespace}:{digest}"
 
 
