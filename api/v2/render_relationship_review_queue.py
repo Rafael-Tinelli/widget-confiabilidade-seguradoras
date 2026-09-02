@@ -2,13 +2,29 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from collections import Counter
 from pathlib import Path
 from typing import Any
 
 
 def _safe(value: Any, limit: int = 240) -> str:
-    return str(value if value is not None else "—").replace("|", "\\|").replace("\n", " ")[:limit]
+    """Render untrusted observational text as inert Markdown table content.
+
+    Sensor values can originate from user-entered widget queries or Search Console.
+    They are evidence labels only and must never be able to inject Markdown/HTML or
+    break the review queue layout. SQL injection is separately prevented at the
+    HostGator bridge by prepared statements; this guard protects the GitHub surface.
+    """
+    text = str(value if value is not None else "—")
+    text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", " ", text)
+    text = text.replace("\r", " ").replace("\n", " ")
+    text = text.replace("\\", "\\\\")
+    text = text.replace("|", "\\|")
+    text = text.replace("`", "\\`")
+    text = text.replace("[", "\\[").replace("]", "\\]")
+    text = text.replace("<", "&lt;").replace(">", "&gt;")
+    return text[:limit]
 
 
 def render_review_queue(
