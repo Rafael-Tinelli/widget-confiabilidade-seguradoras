@@ -1,0 +1,268 @@
+name: V2 Relationship Review Queue
+
+on:
+  workflow_run:
+    workflows:
+      - V2 Gate 4 Full Generation Proof
+    types:
+      - completed
+  workflow_dispatch:
+    inputs:
+      source_run_id:
+        description: Exact successful Full Generation run id to inspect
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+  issues: write
+
+concurrency:
+  group: v2-relationship-review-queue
+  cancel-in-progress: false
+
+jobs:
+  update-review-queue:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.head_branch == 'main'
+      )
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+
+    steps:
+      - name: Resolve exact successful main Full Generation
+        id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MANUAL_SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_run" ]]; then
+            source_run_id=$(jq -r '.workflow_run.id' "$GITHUB_EVENT_PATH")
+          else
+            source_run_id="$MANUAL_SOURCE_RUN_ID"
+          fi
+          [[ "$source_run_id" =~ ^[0-9]+$ ]] || {
+            echo "invalid source run id: $source_run_id" >&2
+            exit 1
+          }
+
+          run_json=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$source_run_id")
+          workflow_name=$(jq -r '.name' <<<"$run_json")
+          conclusion=$(jq -r '.conclusion' <<<"$run_json")
+          head_branch=$(jq -r '.head_branch' <<<"$run_json")
+          run_attempt=$(jq -r '.run_attempt' <<<"$run_json")
+          html_url=$(jq -r '.html_url' <<<"$run_json")
+
+          [[ "$workflow_name" == "V2 Gate 4 Full Generation Proof" ]] || {
+            echo "source run is not the canonical Full Generation workflow" >&2
+            exit 1
+          }
+          [[ "$conclusion" == "success" ]] || {
+            echo "source Full Generation did not conclude successfully" >&2
+            exit 1
+          }
+          [[ "$head_branch" == "main" ]] || {
+            echo "relationship review queue accepts only a Full Generation from main" >&2
+            exit 1
+          }
+          [[ "$run_attempt" =~ ^[0-9]+$ ]] || {
+            echo "invalid run attempt" >&2
+            exit 1
+          }
+
+          artifact_name="v2-gate4-full-generation-${source_run_id}-a${run_attempt}"
+          {
+            echo "run_id=$source_run_id"
+            echo "run_attempt=$run_attempt"
+            echo "artifact_name=$artifact_name"
+            echo "html_url=$html_url"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Download exact source-run artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN_ID: ${{ steps.source.outputs.run_id }}
+          ARTIFACT_NAME: ${{ steps.source.outputs.artifact_name }}
+        run: |
+          set -euo pipefail
+          rm -rf "$RUNNER_TEMP/v2-relationship-review-source"
+          mkdir -p "$RUNNER_TEMP/v2-relationship-review-source"
+          gh run download "$SOURCE_RUN_ID" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name "$ARTIFACT_NAME" \
+            --dir "$RUNNER_TEMP/v2-relationship-review-source"
+
+      - name: Build non-authoritative review queue
+        id: queue
+        env:
+          SOURCE_RUN_ID: ${{ steps.source.outputs.run_id }}
+          SOURCE_RUN_URL: ${{ steps.source.outputs.html_url }}
+        run: |
+          set -euo pipefail
+          mapfile -t watchdogs < <(
+            find "$RUNNER_TEMP/v2-relationship-review-source" \
+              -type f -name relationship_watchdog.json -print
+          )
+          if [[ ${#watchdogs[@]} -ne 1 ]]; then
+            printf 'expected exactly one relationship_watchdog.json, found %s\n' "${#watchdogs[@]}" >&2
+            printf '%s\n' "${watchdogs[@]:-}" >&2
+            exit 1
+          fi
+
+          python - "${watchdogs[0]}" "$RUNNER_TEMP/relationship-review-queue.md" \
+            "$SOURCE_RUN_ID" "$SOURCE_RUN_URL" "$GITHUB_OUTPUT" <<'PY'
+          import json
+          import sys
+          from collections import Counter
+          from pathlib import Path
+
+          watchdog_path = Path(sys.argv[1])
+          output_path = Path(sys.argv[2])
+          run_id = sys.argv[3]
+          run_url = sys.argv[4]
+          github_output = Path(sys.argv[5])
+
+          payload = json.loads(watchdog_path.read_text(encoding="utf-8"))
+          summary = payload.get("summary") or {}
+          policy = payload.get("policy") or {}
+          candidates = list(payload.get("candidates") or [])
+          review_candidates = [
+              row
+              for row in candidates
+              if row.get("review_state") in {"review_required", "registry_drift"}
+          ]
+          review_count = len(review_candidates)
+          blocking_count = sum(bool(row.get("blocking")) for row in review_candidates)
+          by_type = Counter(str(row.get("candidate_type") or "unknown") for row in review_candidates)
+
+          if policy.get("candidate_assertion_effect") != "none":
+              raise SystemExit("watchdog review queue unexpectedly has assertion effect")
+          if policy.get("candidate_complaint_transfer_effect") != "none":
+              raise SystemExit("watchdog review queue unexpectedly allows complaint transfer")
+          if policy.get("automatic_registry_mutation") != "forbidden":
+              raise SystemExit("watchdog review queue unexpectedly allows registry mutation")
+
+          lines = [
+              "# Relationship review queue",
+              "",
+              f"Source Full Generation: [{run_id}]({run_url})",
+              "",
+              f"Current review candidates: **{review_count}**  ",
+              f"Blocking registry drift: **{blocking_count}**",
+              "",
+              "> This queue is observational. `assertion_effect = none`, complaint transfer is forbidden, and no canonical registry mutation is automatic.",
+              "",
+              "## Counts by candidate type",
+              "",
+              "| Candidate type | Count |",
+              "|---|---:|",
+          ]
+          if by_type:
+              for candidate_type, count in sorted(by_type.items()):
+                  lines.append(f"| `{candidate_type}` | {count} |")
+          else:
+              lines.append("| — | 0 |")
+
+          if review_candidates:
+              lines.extend(
+                  [
+                      "",
+                      "<details>",
+                      f"<summary>Show {review_count} current candidates</summary>",
+                      "",
+                      "| Candidate | Type | State | Priority | Observed identity/context |",
+                      "|---|---|---|---|---|",
+                  ]
+              )
+              for row in review_candidates:
+                  candidate_id = str(row.get("candidate_id") or "—").replace("|", "\\|")
+                  candidate_type = str(row.get("candidate_type") or "—").replace("|", "\\|")
+                  review_state = str(row.get("review_state") or "—").replace("|", "\\|")
+                  priority = str(row.get("priority") or "—").replace("|", "\\|")
+                  signals = row.get("signals") or {}
+                  observed = (
+                      row.get("provider_label")
+                      or row.get("brand_id")
+                      or row.get("entity_id")
+                      or row.get("relationship_id")
+                      or signals.get("provider_label")
+                      or signals.get("display_name")
+                      or row.get("reason")
+                      or "—"
+                  )
+                  observed = str(observed).replace("|", "\\|").replace("\n", " ")[:240]
+                  lines.append(
+                      f"| `{candidate_id}` | `{candidate_type}` | `{review_state}` | {priority} | {observed} |"
+                  )
+              lines.extend(["", "</details>"])
+
+          lines.extend(
+              [
+                  "",
+                  "## Review rule",
+                  "",
+                  "A candidate may suggest investigation or evidence collection. It must not create a public relationship, transfer complaints, or mutate the canonical registry until source-backed human review resolves it.",
+                  "",
+                  f"Artifact summary candidate_count: `{summary.get('candidate_count')}`.",
+              ]
+          )
+          output_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+          with github_output.open("a", encoding="utf-8") as handle:
+              handle.write(f"review_count={review_count}\n")
+              handle.write(f"blocking_count={blocking_count}\n")
+          PY
+
+          cat "$RUNNER_TEMP/relationship-review-queue.md" >> "$GITHUB_STEP_SUMMARY"
+          if [[ "${{ steps.queue.outputs.review_count }}" != "0" ]]; then
+            :
+          fi
+
+      - name: Emit visible review warning
+        if: steps.queue.outputs.review_count != '0'
+        env:
+          REVIEW_COUNT: ${{ steps.queue.outputs.review_count }}
+          BLOCKING_COUNT: ${{ steps.queue.outputs.blocking_count }}
+        run: |
+          echo "::warning title=Relationship review queue::${REVIEW_COUNT} relationship candidates require review (${BLOCKING_COUNT} blocking registry drift). Candidates have assertion_effect=none."
+
+      - name: Create or update the single relationship review issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REVIEW_COUNT: ${{ steps.queue.outputs.review_count }}
+        run: |
+          set -euo pipefail
+          title='[v2] Relationship review queue'
+          issue_number=$(gh issue list \
+            --repo "$GITHUB_REPOSITORY" \
+            --state all \
+            --limit 100 \
+            --json number,title \
+            --jq ".[] | select(.title == \"$title\") | .number" \
+            | head -n 1)
+
+          if [[ "$REVIEW_COUNT" == "0" ]]; then
+            if [[ -n "$issue_number" ]]; then
+              gh issue close "$issue_number" \
+                --repo "$GITHUB_REPOSITORY" \
+                --comment "The latest successful Full Generation on main has no relationship review candidates."
+            fi
+            exit 0
+          fi
+
+          if [[ -n "$issue_number" ]]; then
+            gh issue reopen "$issue_number" --repo "$GITHUB_REPOSITORY" || true
+            gh issue edit "$issue_number" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "$title" \
+              --body-file "$RUNNER_TEMP/relationship-review-queue.md"
+          else
+            gh issue create \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "$title" \
+              --body-file "$RUNNER_TEMP/relationship-review-queue.md"
+          fi
