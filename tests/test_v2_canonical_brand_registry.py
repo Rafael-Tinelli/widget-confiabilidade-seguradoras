@@ -34,6 +34,22 @@ def test_loovi_is_canonical_sandbox_risk_carrier_relationship():
     assert relation["evidence"]["authority"] == "Loovi"
 
 
+def test_azos_is_canonical_market_identity_with_excelsior_risk_carrier():
+    brand = _brands_by_id()["brand:azos"]
+    assert brand["name"] == "Azos"
+    market = brand["market_identity"]
+    assert market["kind"] == "insurtech_platform"
+    assert market["cnpj"] == "39520039000175"
+    assert "insurtech" in market["public_note"].lower()
+    assert market["evidence"]["authority"] == "Azos"
+
+    relation = brand["relationships"][0]
+    assert relation["relationship_type"] == "risk_carrier"
+    assert relation["target_cnpj"] == "33054826000192"
+    assert relation["status"] == "current"
+    assert "Excelsior" in relation["evidence"]["authority"]
+
+
 def test_sandbox_brand_wrapper_cannot_drift_from_canonical_relationship():
     canonical = _brands_by_id()["brand:loovi"]
     canonical_relation = canonical["relationships"][0]
