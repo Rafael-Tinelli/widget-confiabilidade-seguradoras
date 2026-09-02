@@ -33,6 +33,16 @@ def test_active_app_consumes_public_v2_contracts_instead_of_v1_score_endpoint():
         assert output in client
 
 
+def test_search_accepts_formatted_regulatory_identifiers_without_fuzzy_identity_logic():
+    app = _text(APP)
+
+    assert "function compactDigits(value)" in app
+    assert "function entryMatchesQuery(entry, query)" in app
+    assert "queryDigits.length < 4" in app
+    assert "compactDigits(searchText).includes(queryDigits)" in app
+    assert ".filter((entry) => entryMatchesQuery(entry, query))" in app
+
+
 def test_active_card_does_not_render_legacy_score_or_open_insurance_pillar():
     card = _text(CARD)
     for forbidden in (
