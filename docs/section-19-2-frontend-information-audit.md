@@ -1,28 +1,21 @@
 # §19.2 — Auditoria do potencial informacional do frontend
 
-Status: **EM ANDAMENTO**.
+Status: **FECHADO**.
 
-Início: 01/09/2026.
+Início: 01/09/2026.  
+Fechamento: 02/09/2026.
 
-Este documento registra a auditoria entre o que a v2 já sabe, o que o pacote público efetivamente expõe e o que o frontend versionado realmente consome.
+Este documento registra a auditoria entre o que a v2 sabe, o que o pacote público expõe e o que o frontend versionado efetivamente consome.
 
-O objetivo do §19.2 não é redesenhar UX/SEO. Essa revisão pertence ao §19.6. Aqui a pergunta é mais básica e contratual:
+A pergunta contratual do §19.2 foi:
 
 > **A informação metodologicamente aprovada chega ao frontend sem ser perdida, reinterpretada ou recalculada?**
 
-## 1. Regra de auditoria
+A resposta final é **sim para as 17 capacidades exigidas pelo README**, com os gaps encontrados durante a auditoria corrigidos no backend público ou no wiring do frontend.
 
-Cada capacidade recebe uma destas classificações:
+---
 
-```text
-PUBLIC_READY   — backend já publica informação suficiente para renderização
-PUBLIC_PARTIAL — existe informação útil, mas o contrato público ainda está incompleto
-FRONTEND_USED  — frontend consome o contrato v2 corretamente
-FRONTEND_GAP   — contrato v2 existe, mas a UI atual não o usa
-BACKEND_GAP    — informação útil permanece presa em artifact interno e deve ser projetada ao público
-```
-
-Regra permanente:
+## 1. Regra permanente
 
 ```text
 frontend_gap -> corrigir wiring/renderização
@@ -30,9 +23,23 @@ backend_gap  -> ampliar payload público
 nunca        -> recomputar metodologia em React/PHP/JS
 ```
 
-## 2. Baseline empírico usado na auditoria
+Continuam proibidos no frontend:
 
-A inspeção parte da Full Generation Proof #49:
+- score composto;
+- ranking geral;
+- pesos ou contribuições de pilares;
+- recálculo de PLA/CMR, ILT ou observed/expected;
+- inferência de missingness/comparabilidade;
+- transferência de reclamações entre marca e risk carrier;
+- decisão de identidade por fuzzy matching;
+- inferência de sucessão, aquisição ou grupo;
+- transformação de `null` em `0`.
+
+---
+
+## 2. Baseline da auditoria
+
+A fotografia inicial foi a Full Generation Proof #49:
 
 ```text
 run        33567550092
@@ -42,7 +49,7 @@ sha256     d0ccb6ce274542015431ae9fde0084c12941d1983ce06527bf6872e442244431
 conclusion success
 ```
 
-Fotografia do pacote público:
+Snapshot público observado:
 
 ```text
 profiles                                      790
@@ -64,105 +71,58 @@ explorer entities in >=1 leaderboard           47
 explorer entities in >=1 semantic collection  131
 ```
 
-Esses números são snapshot, não constantes metodológicas.
+Essas contagens são fotografia da geração, não constantes metodológicas.
 
-## 3. Diagnóstico do frontend versionado
+---
 
-O frontend atual em `widget-ui/src/` ainda é a implementação v1.
+## 3. Diagnóstico inicial e migração realizada
 
-### `App.jsx`
-
-Estado observado:
+No início do §19.2 o frontend ativo ainda era v1:
 
 ```text
-API principal       /api/v1/insurers.json
-ordenação padrão    score_desc
-rótulo              Melhor Nota
-ordenação adicional Maior Faturamento
-copy                solvência + reputação + Open Insurance + nota
-```
-
-Ele não lê atualmente:
-
-```text
-/ranking-seguradoras/data/v2/public/search_index.json
-/ranking-seguradoras/data/v2/public/profile_manifest.json
-/ranking-seguradoras/data/v2/public/insurer_explorer.json
-/ranking-seguradoras/data/v2/public/explore_index.json
-/ranking-seguradoras/data/v2/public/profiles/*.json
-/ranking-seguradoras/data/v2/public/leaderboards/*.json
-/ranking-seguradoras/data/v2/public/collections/*.json
-```
-
-### `InsurerCard.jsx`
-
-A superfície ainda representa a arquitetura antiga:
-
-```text
+/api/v1/insurers.json
+score_desc
+Melhor Nota
 Nota
-Solvência
-Reputação
-Open Insurance
+Solvência + Reputação + Open Insurance
+weights/contributions
+fallback de score em React
 ```
 
-Também infere participação em Open Insurance por score quando a flag não está disponível. Isso não pertence ao contrato metodológico v2.
+O gargalo, portanto, era principalmente **migração do contrato de dados**, não ausência generalizada de informação no backend.
 
-### `InsurerScoreModal.jsx`
-
-O modal ainda trabalha com pesos e contribuições da nota v1 e contém fallback de recomposição no React.
-
-Mesmo que o backend seja tratado como autoridade quando disponível, o fallback continua incompatível com a v2 porque:
+O caminho ativo foi migrado para os contratos públicos v2:
 
 ```text
-score composto               proibido
-peso Financeiro x Conduta    não selecionado
-frontend recomputa método    proibido
-Open Insurance como pilar    não faz parte do contrato v2 fechado
+search_index.json
+profile_manifest.json
+insurer_explorer.json
+explore_index.json
+profiles/*.json
+leaderboards/*.json
+collections/*.json
 ```
 
-Conclusão da baseline:
-
-> **o gargalo principal do §19.2 é uma migração de contrato de dados, não falta generalizada de informação no backend.**
-
-## 4. Matriz backend público → frontend
-
-| Informação exigida pelo §19.2 | Onde já existe na v2 | Estado do payload | Frontend atual | Decisão |
-|---|---|---|---|---|
-| identidade | `search_index.json` + `profiles/*.json` | PUBLIC_READY | FRONTEND_GAP | migrar busca/perfil para v2 |
-| aliases | `search_index.entries[].aliases` | PUBLIC_PARTIAL | FRONTEND_GAP | marcas possuem aliases; investigar aliases de entidades antes de ampliar |
-| lifecycle | `profile.lifecycle.legal_lifecycle` | PUBLIC_READY | FRONTEND_GAP | renderizar contexto, sem inferência |
-| sucessões | `profile.lifecycle.successor_*` + `direct_relationships` | PUBLIC_READY | FRONTEND_GAP | permitir navegação ao sucessor |
-| grupos | `profile.relationship_context.economic_group` | PUBLIC_READY | FRONTEND_GAP | mostrar como contexto, nunca como sucessão |
-| marcas | perfis `profile_kind=brand` + `relationship_context.brands` | PUBLIC_READY | FRONTEND_GAP | busca deve encontrar marca e preservar identidade separada |
-| risk carriers | `brand.relationships` / `relationship_context.brands` | PUBLIC_READY | FRONTEND_GAP | renderizar relação verificada |
-| relações de Conduta | `relationship_context.conduct_reconciliation` | PUBLIC_READY | FRONTEND_GAP | mostrar reconciliação e limite de atribuição |
-| Sandbox Conduct | `sandbox_conduct` / `sandbox_conduct_context` | PUBLIC_READY | FRONTEND_GAP | superfície própria, fora do benchmark ordinário |
-| sinais financeiros | `assessment.financial` / `explorer.financial` | PUBLIC_READY | FRONTEND_GAP | renderizar estado + valor + significado |
-| sinais de reclamações | `assessment.conduct` / `explorer.conduct` | PUBLIC_READY | FRONTEND_GAP | renderizar estado + observada/esperada quando disponível |
-| períodos | `financial.reference_period`; janela mensal existe no artifact de Conduta | PUBLIC_PARTIAL | FRONTEND_GAP | **BACKEND_GAP: publicar janela de Conduta explicitamente** |
-| comparabilidade | `assessment.conduct.comparability_state` | PUBLIC_READY | FRONTEND_GAP | nunca inferir a partir de números brutos |
-| confiança | `assessment.financial.evidence_confidence` | PUBLIC_READY | FRONTEND_GAP | disclosure, não penalidade |
-| limites | `assessment.mandatory_limit` + `profile.limits` + metric `meaning/public_use/zero_semantics` | PUBLIC_READY | FRONTEND_GAP | renderizar progressivamente |
-| leaderboards | `explore_index.json` + `leaderboards/*.json` | PUBLIC_READY | FRONTEND_GAP | somente métrica declarada; nunca relabelar como ranking geral |
-| coleções | `explore_index.json` + `collections/*.json` | PUBLIC_READY | FRONTEND_GAP | manter não ordenadas |
-
-Resumo:
+Arquivos centrais da implementação:
 
 ```text
-17 capacidades auditadas
-15 PUBLIC_READY
- 2 PUBLIC_PARTIAL
-17 FRONTEND_GAP em relação ao contrato v2
+widget-ui/src/App.jsx
+widget-ui/src/v2Data.js
+widget-ui/src/components/InsurerCard.jsx
+widget-ui/src/InsurerProfileModal.jsx
+widget-ui/src/ComparisonPanel.jsx
+widget-ui/src/ExplorePanel.jsx
 ```
 
-Os dois `PUBLIC_PARTIAL` não têm a mesma gravidade:
+O antigo `InsurerScoreModal.jsx` deixou de participar do caminho ativo. Sua remoção física é assunto de limpeza do §19.5, não condição metodológica do §19.2.
 
-1. **período de Conduta** — gap confirmado; a janela está nos artifacts internos e precisa ser materializada no contrato público;
-2. **aliases de entidades** — o contrato público possui aliases para marcas, mas nenhuma das 777 entidades do snapshot possui aliases no `search_index`; antes de inventar aliases, é necessário verificar se existe fonte canônica upstream que os sustente.
+---
 
-## 5. Janela de Conduta — gap público confirmado
+## 4. Gap de período de Conduta — corrigido no backend
 
-Na geração #49, as 101 entidades comparáveis possuem a mesma janela mensal preservada:
+A auditoria encontrou um gap público real: a janela de Conduta existia nos artifacts internos, mas o perfil público expunha somente contagem de meses comparáveis.
+
+A janela preservada era:
 
 ```text
 start_month 2025-07
@@ -170,96 +130,217 @@ end_month   2026-06
 months      12
 ```
 
-O perfil público informa hoje apenas `comparable_months`; não informa explicitamente o início/fim da janela.
+Foi criado:
 
-O frontend não deve deduzir a janela a partir de `generated_at`, competência financeira ou contagem de meses.
+`api/v2/public_information_projection.py`
 
-Decisão:
+A projeção passa a publicar explicitamente:
 
-```text
-publicar conduct.reference_window no backend
-frontend apenas renderiza
+```json
+{
+  "start_month": "2025-07",
+  "end_month": "2026-06",
+  "months": 12,
+  "semantics": "preserved_consumer_gov_window_not_inferred_by_frontend"
+}
 ```
 
-A regra deve continuar válida também para entidades não comparáveis, pois as reclamações observadas pertencem à mesma janela preservada do snapshot de Conduta.
+Ela é aplicada a:
 
-## 6. Arquitetura de consumo recomendada para a migração v2
+- `conduct.reference_window` no Explorer;
+- `assessment.conduct.reference_window` nos perfis ordinários;
+- `sandbox_conduct.reference_window` nos perfis Sandbox;
+- `sandbox_conduct_context.reference_window` em marcas Sandbox.
 
-A migração deve evitar carregar 790 perfis completos de uma vez.
+O backend falha fechado se a janela ordinária e a janela Sandbox divergirem. O frontend apenas renderiza esse contexto e não infere período a partir de `generated_at`, competência financeira ou contagem de meses.
 
-Fluxo recomendado:
+A integração entrou antes da validação final do contrato público em `api/v2/public_profile_regulatory_semantics.py`.
 
-```text
-1. search_index.json
-   -> busca, aliases, CNPJ, FIP, tipo e profile_path
-
-2. profiles/<id>.json sob demanda
-   -> resposta individual completa
-   -> identidade, lifecycle, relações, assessment, Sandbox, limites
-
-3. insurer_explorer.json
-   -> lista/comparação das 156 seguradoras ordinárias
-   -> estados semânticos e métricas já calculados
-
-4. explore_index.json
-   -> registry de leaderboards/coleções e caveats
-
-5. leaderboards/*.json / collections/*.json sob demanda
-   -> exploração secundária
-```
-
-`profile_manifest.json` permanece disponível para resolução/validação de paths quando necessário.
-
-## 7. O que pode ser reaproveitado do frontend atual
-
-Sem entrar ainda em UX/SEO do §19.6, podem ser preservados como infraestrutura neutra:
-
-- shell React/Vite;
-- campo de busca;
-- paginação, se ainda fizer sentido após a migração;
-- tratamento de loading/erro;
-- integração com header WordPress;
-- acessibilidade básica de teclado/modal;
-- componentes visuais genéricos que não carreguem semântica v1.
-
-Não devem ser tratados como fundação metodológica reutilizável:
+Prova integrada relevante:
 
 ```text
-score_desc
-Melhor Nota
-Nota
-solvencyScore/reputationScore/innovationScore
-weights/contributions
-Open Insurance como terceiro pilar
-fallback de score no React
-inferência de participação OPIN por score
+V2 Gate 4 Full Generation Proof #51
+run_id      33574721819
+head        dd36b3dd54ea285dc48e8f5264bbc5eacdaa25c6
+conclusion  success
+artifact    9826811502
+name        v2-gate4-full-generation-33574721819-a1
+artifact sha256
+7ac6776542ac1af56ffdf48c6023e612ab21640f3788643a78d3d8651cf21cc0
 ```
 
-## 8. Próximas ações do §19.2
+Commits posteriores à prova #51 até o fechamento desta seção afetaram somente frontend, testes e documentação, sem alterar a lógica de geração que ela comprovou.
 
-Ordem de execução:
+---
+
+## 5. Aliases — resolução sem contaminar identidade jurídica
+
+A investigação de aliases confirmou que o registro canônico os associa principalmente aos **perfis de marca**, juntamente com relações verificadas marca → entidade/risk carrier.
+
+Decisão final:
 
 ```text
-A. materializar janela de Conduta no payload público
-B. criar camada de acesso v2 no widget sem lógica metodológica
-C. migrar busca para search_index/profile_path
-D. migrar perfil individual para profiles/*.json
-E. migrar lista/comparação para insurer_explorer.json
-F. ligar leaderboards e coleções ao explore_index
-G. auditar aliases de entidades upstream
-H. executar regressão: nenhum score/peso/metodologia v1 no caminho ativo
-I. fechar matriz 17/17 e formalizar §19.2
+alias de marca -> encontra perfil de marca
+perfil de marca -> mostra relação verificada
+alias de marca != alias automático da entidade jurídica
 ```
 
-## 9. Limites desta etapa
+Não foi criado espelhamento artificial de aliases de marca sobre legal entities, pois isso violaria:
 
-O §19.2 não autoriza:
+```text
+brand != legal_entity
+```
 
-- escolher nova estética;
-- reabrir SEO;
-- definir layout final mobile/desktop;
-- restaurar score antigo;
-- inventar ordem default de mérito;
-- mudar metodologia para facilitar o frontend.
+Portanto, aliases ficam **PUBLIC_READY e FRONTEND_USED pela semântica de marca**, sem criar nova decisão de identidade no navegador.
 
-Esses assuntos pertencem a outras etapas, sobretudo §19.6 para polimento de frontend/SEO.
+---
+
+## 6. Busca por CNPJ e código SUSEP — aresta final corrigida
+
+O `search_index` preserva identificadores em forma compacta. A primeira migração do frontend normalizava pontuação como espaços, de modo que um CNPJ digitado como:
+
+```text
+39.999.619/0001-97
+```
+
+poderia deixar de casar com:
+
+```text
+39999619000197
+```
+
+A correção em `App.jsx` adicionou correspondência estritamente determinística por dígitos compactos, sem fuzzy identity assignment:
+
+```text
+texto normalizado -> busca textual
+OU
+>= 4 dígitos informados -> comparação com dígitos compactos do search_text
+```
+
+Isso cobre CNPJ formatado e códigos regulatórios digitados com separadores sem transformar o frontend em resolvedor de identidade.
+
+Regressão adicionada em:
+
+`tests/test_v2_frontend_public_contract.py`
+
+Commits:
+
+```text
+9adc37c42f69c574523b7e94cc24fb72a53c318d
+  fix(v2-ui): match punctuated regulatory identifiers
+
+7e5100120f4661ec81bb1b411fe18340257c3f69
+  test(v2-ui): guard formatted identifier search
+```
+
+---
+
+## 7. Matriz final backend → público → frontend
+
+| Capacidade | Payload público | Uso ativo | Resultado |
+|---|---|---|---|
+| identidade | `search_index` + profiles | busca + perfil | OK |
+| aliases | perfis/entradas de marca | busca de marca + relação verificada | OK |
+| lifecycle | `profile.lifecycle` | perfil | OK |
+| sucessões | lifecycle + relações diretas | perfil + navegação | OK |
+| grupos | `economic_group` | contexto de perfil | OK |
+| marcas | brand profiles + relationship context | busca + perfil | OK |
+| risk carriers | relações verificadas | perfil | OK |
+| relações de Conduta | `conduct_reconciliation` | perfil/evidências | OK |
+| Sandbox Conduct | `sandbox_conduct*` | perfil/contexto próprio | OK |
+| sinais financeiros | assessment/explorer | card + perfil + comparação | OK |
+| sinais de reclamações | assessment/explorer | card + perfil + comparação | OK |
+| períodos | financeiro + `reference_window` de Conduta | perfil + comparação | OK |
+| comparabilidade | contrato de Conduta | linguagem pública | OK |
+| confiança | evidência financeira | card + perfil + comparação | OK |
+| limites | assessment/profile/metric semantics | perfil | OK |
+| leaderboards | explore index + leaderboard files | exploração sob demanda | OK |
+| coleções | explore index + collection files | exploração sob demanda | OK |
+
+Resumo final:
+
+```text
+17 capacidades auditadas
+17 PUBLIC_READY
+17 FRONTEND_USED
+ 0 PUBLIC_PARTIAL conhecido
+ 0 BACKEND_GAP conhecido nesta seção
+ 0 FRONTEND_GAP conhecido nesta seção
+```
+
+---
+
+## 8. Semântica da experiência ativa
+
+O frontend ativo agora preserva:
+
+- lista ordinária inicial em ordem alfabética, não por mérito;
+- busca mais ampla que o universo de assessment;
+- perfis de marca separados de entidades jurídicas;
+- comparação lado a lado sem vencedor universal;
+- leaderboards somente por métrica explicitamente declarada;
+- coleções explicitamente não ordenadas quando o contrato assim determina;
+- `public_use` antes de exibir valor bruto;
+- linguagem pública para confidence, comparabilidade, persistência e tendências;
+- períodos explícitos;
+- ausência de score geral, pesos e recomposição metodológica no caminho ativo.
+
+O `npm run build` incorporado ao CI serve como **prova de compilabilidade/integridade do React/Vite**. Ele não significa que GitHub Actions faça deploy do frontend para o HostGator.
+
+---
+
+## 9. Evidência de fechamento
+
+No HEAD que concluiu a aresta funcional final:
+
+```text
+head 7e5100120f4661ec81bb1b411fe18340257c3f69
+```
+
+os checks automáticos terminaram verdes:
+
+```text
+CI #1406
+run 33587333608
+conclusion success
+- Ruff: success
+- pytest: success
+- Node setup: success
+- Vite build: success
+
+V2 Gate 4 Evergreen Contract #246
+run 33587333609
+conclusion success
+```
+
+A projeção backend específica de período público já havia sido comprovada pela Full Generation #51, descrita na seção 4.
+
+Não é necessária nova Full Generation apenas para os commits de frontend/teste, pois eles não alteram o DAG nem os artifacts públicos gerados pelo Gate 4.
+
+---
+
+## 10. Decisão de fechamento
+
+O §19.2 está **formalmente fechado**.
+
+O próximo trabalho é operacional:
+
+```text
+§19.3 Evergreen / zero manutenção
+→ fontes e caches
+→ dependências reais
+→ eliminar download manual de artifacts
+→ sincronização segura com HostGator
+→ staging/rollback
+→ recuperação com fonte oficial indisponível
+```
+
+A etapa seguinte deve manter a separação:
+
+```text
+GitHub/Gate 4 -> gera e valida um pacote público único
+HostGator     -> hospeda/serve frontend e dados públicos
+Vite no CI    -> valida compilabilidade; não é deploy por si só
+```
+
+O escopo desta consolidação termina no §19.5; não há avanço automático para itens posteriores.
