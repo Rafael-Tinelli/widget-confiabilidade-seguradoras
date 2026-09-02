@@ -1,6 +1,7 @@
 from pathlib import Path
 
 WORKFLOW = Path(".github/workflows/v2-relationship-review-queue.yml")
+MARKET_WORKFLOW = Path(".github/workflows/v2-emerging-market-identity-sensors.yml")
 
 
 def test_relationship_review_queue_is_exact_run_main_only_and_non_authoritative():
@@ -35,3 +36,14 @@ def test_review_candidates_do_not_block_full_generation_or_publication():
     assert "gh issue create" in workflow
     assert "gh issue edit" in workflow
     assert "gh issue close" in workflow
+
+
+def test_singleton_issue_has_one_automatic_owner_when_market_sensors_are_enabled():
+    base_workflow = WORKFLOW.read_text(encoding="utf-8")
+    market_workflow = MARKET_WORKFLOW.read_text(encoding="utf-8")
+
+    assert "vars.V2_MARKET_SENSOR_AUTOMATION_ENABLED != 'true'" in base_workflow
+    assert "vars.V2_MARKET_SENSOR_AUTOMATION_ENABLED == 'true'" in market_workflow
+    assert "[v2] Relationship review queue" in base_workflow
+    assert "[v2] Relationship review queue" in market_workflow
+    assert "relationship_watchdog_with_market_sensors.json" in market_workflow
