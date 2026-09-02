@@ -1,412 +1,319 @@
-import React, { useLayoutEffect, useMemo, useState, useEffect } from "react";
-import InsurerCard from "./components/InsurerCard";
-import InsurerScoreModal from "./InsurerScoreModal";
-import { Search, SlidersHorizontal, ShieldCheck, ChevronLeft, ChevronRight } from "lucide-react";
+import React, { useEffect, useLayoutEffect, useMemo, useState } from 'react';
+import { ChevronLeft, ChevronRight, Search, ShieldCheck } from 'lucide-react';
+import ComparisonPanel from './ComparisonPanel';
+import ExplorePanel from './ExplorePanel';
+import InsurerProfileModal from './InsurerProfileModal';
+import InsurerCard from './components/InsurerCard';
+import { loadPrimaryV2Catalog, loadProfile } from './v2Data';
 
-const API_URL = '/api/v1/insurers.json';
+const ITEMS_PER_PAGE = 24;
 
-function safeNumber(value, fallback = 0) {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : fallback;
+function normalizeSearch(value) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLocaleLowerCase('pt-BR')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
 }
 
-function digitsOnly(value) {
-  return String(value || '').replace(/\D/g, '');
+function entryBucketLabel(entry) {
+  if (entry.result_kind === 'brand') return 'Marca';
+  const labels = {
+    insurers: 'Seguradora',
+    sandbox: 'Sandbox',
+    historical: 'Histórica',
+    other: 'Outra identidade',
+  };
+  return labels[entry.filter_bucket] || entry.disambiguation || 'Identidade';
 }
 
 export default function App() {
-  const [insurersData, setInsurers] = useState([]);
+  const [catalog, setCatalog] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [query, setQuery] = useState("");
-  const [sortBy, setSortBy] = useState("score_desc");
-  const [selectedInsurer, setSelectedInsurer] = useState(null);
-  const [sources, setSources] = useState(null);
-  
-  // Paginação
+  const [error, setError] = useState('');
+  const [query, setQuery] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
-  const itemsPerPage = 24;
+  const [selectedProfile, setSelectedProfile] = useState(null);
+  const [profileLoading, setProfileLoading] = useState(false);
+  const [profileError, setProfileError] = useState('');
+  const [compareIds, setCompareIds] = useState([]);
 
   useEffect(() => {
+    let active = true;
     setLoading(true);
-    fetch(API_URL)
-      .then((response) => {
-        if (!response.ok) {
-          throw new Error(`Falha ao carregar ${API_URL} (${response.status})`);
-        }
-        return response.json();
+    loadPrimaryV2Catalog()
+      .then((next) => {
+        if (!active) return;
+        setCatalog(next);
+        setError('');
       })
-      .then((data) => {
-        const rawList = data.insurers || [];
-        // 1. CORREÇÃO DE DUPLICATAS (Usa ID em vez de CNPJ)
-        const uniqueList = Array.from(new Map(rawList.map(item => [item.id, item])).values());
-        setInsurers(uniqueList);
-        setSources({
-          ...(data.sources || {}),
-          rankingGeneratedAt: data.generatedAt || data.meta?.generatedAt || null,
-        });
-        setLoading(false);
+      .catch((err) => {
+        if (!active) return;
+        setError(err instanceof Error ? err.message : String(err));
+        setCatalog(null);
       })
-      .catch(err => {
-        console.error("Erro carregando dados:", err);
-        setInsurers([]);
-        setLoading(false);
+      .finally(() => {
+        if (active) setLoading(false);
       });
-  }, []);
-
-  // --- Sticky abaixo do header do site (WordPress / Sanida) ---
-  // Ajusta automaticamente o top do sticky para não sobrepor o header fixo/sticky do site.
-  useLayoutEffect(() => {
-    const root = document.getElementById("widget-root");
-    if (!root) return;
-
-    const header = document.getElementById("menu");
-    const adminBar = document.getElementById("wpadminbar");
-
-    // ----------------------------
-    // (A) SAFE padding (estável)
-    // ----------------------------
-    let safeMax = 0;
-    const computeSafe = () =>
-      (adminBar ? adminBar.offsetHeight : 0) +
-      (header ? header.offsetHeight : 0);
-    const setHeaderSafeMax = (force = false) => {
-      const v = computeSafe();
-      if (force || v > safeMax) {
-        safeMax = v;
-        root.style.setProperty("--sanida-header-safe", `${safeMax}px`);
-      }
-    };
-
-    // ----------------------------
-    // (B) Sticky top (dinâmico)
-    // ----------------------------
-    let enabled = false;          // só calcula quando widget está no viewport (ou perto)
-    let scheduled = false;
-    let rafCommit = 0;
-    let lastSticky = Number.NaN;
-
-    const readStickyTop = () => {
-      let offset = 0;
-      if (adminBar) offset = Math.max(offset, adminBar.getBoundingClientRect().bottom);
-      if (header)   offset = Math.max(offset, header.getBoundingClientRect().bottom);
-      return Math.max(0, Math.round(offset));
-    };
-
-    const commit = () => {
-      scheduled = false;
-      if (!enabled) return;
-      const next = readStickyTop();
-      if (!Number.isFinite(lastSticky) || next !== lastSticky) {
-        lastSticky = next;
-        root.style.setProperty("--sanida-sticky-top", `${next}px`);
-      }
-    };
-
-    const schedule = () => {
-      if (!enabled) return;
-      if (scheduled) return;
-      scheduled = true;
-      cancelAnimationFrame(rafCommit);
-      rafCommit = requestAnimationFrame(commit);
-    };
-
-    // ----------------------------
-    // (C) Range do widget (sem sentinelas)
-    // ----------------------------
-    let widgetTop = 0;
-    let widgetBottom = 0;
-    const margin = 240; // tolerância: liga antes de entrar e desliga pouco depois de sair
-
-    const measureRange = () => {
-      const y = window.scrollY || window.pageYOffset || 0;
-      const rect = root.getBoundingClientRect();
-      widgetTop = rect.top + y;
-      widgetBottom = widgetTop + root.offsetHeight;
-    };
-
-    const isInRange = () => {
-      const y = window.scrollY || window.pageYOffset || 0;
-      const vh = window.innerHeight || document.documentElement.clientHeight || 0;
-      const viewTop = y;
-      const viewBottom = y + vh;
-      return viewBottom > (widgetTop - margin) && viewTop < (widgetBottom + margin);
-    };
-
-    const setEnabled = (nextEnabled) => {
-      if (nextEnabled === enabled) return;
-      enabled = nextEnabled;
-      if (!enabled) {
-        lastSticky = Number.NaN;
-        scheduled = false;
-        cancelAnimationFrame(rafCommit);
-        root.style.setProperty("--sanida-sticky-top", "0px");
-        return;
-      }
-      // Entrou em range: garante valor correto imediatamente (evita ficar em 0)
-      schedule();
-    };
-
-    const onScroll = () => {
-      setEnabled(isInRange());
-      if (enabled) schedule();
-    };
-
-    // ----------------------------
-    // (D) Observa mudanças reais sem “observer barulhento”
-    // ----------------------------
-    const ro = new ResizeObserver(() => {
-      // muda conteúdo do widget / header / admin bar
-      measureRange();
-      setHeaderSafeMax(); // só sobe (max), não causa shift
-      onScroll();
-    });
-    ro.observe(root);
-    if (header) ro.observe(header);
-    if (adminBar) ro.observe(adminBar);
-
-    // init
-    setHeaderSafeMax(true);
-    measureRange();
-    setEnabled(isInRange());
-    schedule();
-
-    window.addEventListener("scroll", onScroll, { passive: true });
-   const onResize = () => {
-      safeMax = 0;              // resize é o único momento em que o safe pode “recalcular pra baixo”
-      setHeaderSafeMax(true);
-      measureRange();
-      onScroll();
-    };
-   window.addEventListener("resize", onResize, { passive: true });
-    const vv = window.visualViewport;
-    if (vv) vv.addEventListener("resize", onResize, { passive: true });
-
-    // settle rápido pra capturar layout tardio (sem MutationObserver global)
-    const timers = [200, 700, 1400].map((t) =>
-      setTimeout(() => {
-        setHeaderSafeMax();
-        measureRange();
-        onScroll();
-      }, t)
-    );
-
     return () => {
-      timers.forEach(clearTimeout);
-      ro.disconnect();
-      window.removeEventListener("scroll", onScroll);
-      window.removeEventListener("resize", onResize);
-      if (vv) vv.removeEventListener("resize", onResize);
-      cancelAnimationFrame(rafCommit);
+      active = false;
     };
   }, []);
 
-  const insurers = insurersData;
+  // Preserve only the neutral WordPress-header integration from the previous widget.
+  useLayoutEffect(() => {
+    const root = document.getElementById('widget-root');
+    if (!root) return undefined;
+    const header = document.getElementById('menu');
+    const adminBar = document.getElementById('wpadminbar');
 
-  const filtered = useMemo(() => {
-    const textQuery = query.trim().toLocaleLowerCase('pt-BR');
-    if (!textQuery) return insurers;
+    const update = () => {
+      let bottom = 0;
+      if (adminBar) bottom = Math.max(bottom, adminBar.getBoundingClientRect().bottom);
+      if (header) bottom = Math.max(bottom, header.getBoundingClientRect().bottom);
+      root.style.setProperty('--sanida-sticky-top', `${Math.max(0, Math.round(bottom))}px`);
+    };
 
-    const digitQuery = digitsOnly(query);
-    return insurers.filter((insurer) => {
-      const name = String(insurer.name || '').toLocaleLowerCase('pt-BR');
-      const id = String(insurer.id || '').toLocaleLowerCase('pt-BR');
-      const formattedCnpj = String(insurer.cnpj || '').toLocaleLowerCase('pt-BR');
-      const cnpjDigits = digitsOnly(insurer.cnpjKey || insurer.cnpj);
+    update();
+    window.addEventListener('scroll', update, { passive: true });
+    window.addEventListener('resize', update, { passive: true });
+    const observer = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(update) : null;
+    if (observer) {
+      if (header) observer.observe(header);
+      if (adminBar) observer.observe(adminBar);
+    }
+    return () => {
+      window.removeEventListener('scroll', update);
+      window.removeEventListener('resize', update);
+      observer?.disconnect();
+    };
+  }, []);
 
-      return (
-        name.includes(textQuery) ||
-        id.includes(textQuery) ||
-        formattedCnpj.includes(textQuery) ||
-        (digitQuery.length > 0 && cnpjDigits.includes(digitQuery))
-      );
-    });
-  }, [insurers, query]);
+  const searchEntries = catalog?.searchIndex?.entries || [];
+  const explorerEntities = catalog?.insurerExplorer?.entities || [];
+  const exploreIndex = catalog?.exploreIndex || null;
 
-  const sorted = useMemo(() => {
-    const list = [...filtered];
-    list.sort((a, b) => {
-      const dataA = a.data || {};
-      const dataB = b.data || {};
+  const entryByProfileId = useMemo(
+    () => new Map(searchEntries.map((entry) => [entry.profile_id, entry])),
+    [searchEntries]
+  );
+  const explorerByEntityId = useMemo(
+    () => new Map(explorerEntities.map((entity) => [entity.entity_id, entity])),
+    [explorerEntities]
+  );
 
-      // A nota publicada em data.score é a fonte canônica.
-      const scoreA = safeNumber(
-        dataA.score ?? dataA.final_score ?? dataA.financial_score,
-        0
-      );
-      const scoreB = safeNumber(
-        dataB.score ?? dataB.final_score ?? dataB.financial_score,
-        0
-      );
+  const ordinaryEntries = useMemo(() => {
+    return explorerEntities
+      .map((entity) => entryByProfileId.get(`entity:${entity.entity_id}`))
+      .filter(Boolean)
+      .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'pt-BR'));
+  }, [entryByProfileId, explorerEntities]);
 
-      const premA = safeNumber(dataA.premiums, 0);
-      const premB = safeNumber(dataB.premiums, 0);
-
-      switch (sortBy) {
-        case "score_desc":
-          if (scoreB !== scoreA) return scoreB - scoreA;
-          return premB - premA;
-        case "name_asc":
-          return (a.name || "").localeCompare(b.name || "");
-        case "premiums_desc":
-          return premB - premA;
-        default:
-          return 0;
-      }
-    });
-    return list;
-  }, [filtered, sortBy]);
-
-  const totalPages = Math.max(1, Math.ceil(sorted.length / itemsPerPage));
-  const safeCurrentPage = Math.min(currentPage, totalPages);
-
-  const paginatedData = useMemo(() => {
-    const startIndex = (safeCurrentPage - 1) * itemsPerPage;
-    return sorted.slice(startIndex, startIndex + itemsPerPage);
-  }, [sorted, safeCurrentPage, itemsPerPage]);
+  const visibleEntries = useMemo(() => {
+    const normalized = normalizeSearch(query);
+    if (!normalized) return ordinaryEntries;
+    return searchEntries
+      .filter((entry) => String(entry.search_text || '').includes(normalized))
+      .sort((a, b) => {
+        const aStarts = String(a.search_text || '').startsWith(normalized) ? 0 : 1;
+        const bStarts = String(b.search_text || '').startsWith(normalized) ? 0 : 1;
+        if (aStarts !== bStarts) return aStarts - bStarts;
+        return String(a.name || '').localeCompare(String(b.name || ''), 'pt-BR');
+      });
+  }, [ordinaryEntries, query, searchEntries]);
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [query, sortBy]);
+  }, [query]);
 
-  const openScoreModal = (insurer) => setSelectedInsurer(insurer);
-  const closeScoreModal = () => setSelectedInsurer(null);
-
-  if (loading) return (
-    <div className="flex justify-center items-center h-64">
-      <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-[#3498db]"></div>
-    </div>
+  const totalPages = Math.max(1, Math.ceil(visibleEntries.length / ITEMS_PER_PAGE));
+  const safePage = Math.min(currentPage, totalPages);
+  const pageEntries = visibleEntries.slice(
+    (safePage - 1) * ITEMS_PER_PAGE,
+    safePage * ITEMS_PER_PAGE
   );
 
+  const maxCompare = exploreIndex?.publication_policy?.recommended_max_side_by_side_cards || 4;
+  const compareEntities = compareIds.map((id) => explorerByEntityId.get(id)).filter(Boolean);
+
+  const toggleCompare = (entityId) => {
+    setCompareIds((current) => {
+      if (current.includes(entityId)) return current.filter((id) => id !== entityId);
+      if (current.length >= maxCompare) return current;
+      return [...current, entityId];
+    });
+  };
+
+  const openEntry = async (entry) => {
+    if (!entry?.profile_path) return;
+    setProfileLoading(true);
+    setProfileError('');
+    try {
+      const profile = await loadProfile(entry.profile_path);
+      setSelectedProfile(profile);
+    } catch (err) {
+      setProfileError(err instanceof Error ? err.message : String(err));
+      setSelectedProfile(null);
+    } finally {
+      setProfileLoading(false);
+    }
+  };
+
+  const openProfileId = (profileId) => {
+    const entry = entryByProfileId.get(profileId);
+    if (entry) openEntry(entry);
+  };
+
+  const openEntityId = (entityId) => openProfileId(`entity:${entityId}`);
+
+  if (loading) {
+    return (
+      <div className="flex h-64 items-center justify-center text-sm text-slate-500">
+        Carregando contratos públicos v2…
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="mx-auto max-w-3xl rounded-xl border border-red-200 bg-red-50 p-5 text-sm text-red-800">
+        <div className="font-semibold">Não foi possível carregar o pacote público v2.</div>
+        <div className="mt-1">{error}</div>
+      </div>
+    );
+  }
+
   return (
-      <div 
-        className="min-h-screen bg-white"
-        style={{ paddingTop: "calc(var(--sanida-header-safe, var(--sanida-sticky-top, 0px)) + 24px)" }}
-      >
-      {/* HEADER DO WIDGET */}
-      <div className="max-w-6xl mx-auto px-4 pt-6 pb-6">
+    <div className="min-h-screen bg-white">
+      <div className="mx-auto max-w-6xl px-4 pb-6 pt-8">
         <div className="max-w-3xl">
-          <div className="flex items-center gap-2 mb-3">
-            <ShieldCheck className="w-5 h-5 text-[#3498db] shrink-0" />
-            <span className="text-sm font-semibold text-[#3498db]">
-              Consulta de seguradoras
-            </span>
+          <div className="mb-3 flex items-center gap-2">
+            <ShieldCheck className="h-5 w-5 shrink-0 text-sky-600" />
+            <span className="text-sm font-semibold text-sky-700">Consulta e comparação de seguradoras</span>
           </div>
-      
-          <h1 className="text-xl md:text-2xl font-bold text-[#1f2937] leading-tight">
-            Ranking de Seguradoras SUSEP: consulte lista, CNPJ e critérios
+          <h1 className="text-xl font-bold leading-tight text-slate-900 md:text-2xl">
+            Consulte seguradoras, marcas e relações verificadas
           </h1>
-      
-          <p className="text-sm md:text-base text-gray-600 mt-2">
-            Pesquise por nome, CNPJ ou código SUSEP e compare sinais públicos de solvência, reputação e Open Insurance. Use a nota como ponto de partida para analisar a seguradora e o produto contratado.
+          <p className="mt-2 text-sm text-slate-600 md:text-base">
+            Pesquise uma identidade conhecida, leia os sinais públicos disponíveis e compare seguradoras ordinárias sem nota composta ou ranking geral.
           </p>
         </div>
       </div>
 
-      {/* BARRA DE FERRAMENTAS STICKY */}
-      {/* Fica grudada logo abaixo do header do site ao rolar */}
       <div
-        className="sticky z-30 border-y border-gray-200 bg-[#f4f5f5]/95 backdrop-blur shadow-sm"
-        style={{ top: "var(--sanida-sticky-top, 0px)" }}
+        className="sticky z-30 border-y border-slate-200 bg-white/95 shadow-sm backdrop-blur"
+        style={{ top: 'var(--sanida-sticky-top, 0px)' }}
       >
-        <div className="max-w-6xl mx-auto px-4 py-3">
-          <div className="flex flex-col md:flex-row gap-3 items-center justify-between">
-            
-            {/* Contador de resultados: Texto ajustado e apenas visível em Desktop */}
-            <div className="hidden md:block text-sm text-gray-500 font-medium whitespace-nowrap">
-               {filtered.length} <span className="font-normal">seguradoras encontradas</span>
-            </div>
-
-            <div className="flex flex-col sm:flex-row gap-3 w-full md:w-auto">
-              {/* Campo de Busca */}
-              <div className="relative w-full sm:w-72">
-                <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                <input
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                  placeholder="Buscar nome, CNPJ ou SUSEP..."
-                  className="w-full pl-9 pr-3 py-2 rounded-lg border border-gray-300 bg-white text-sm outline-none focus:ring-2 focus:ring-[#3498db] focus:border-transparent transition-all"
-                />
-              </div>
-
-              {/* Select de Ordenação */}
-              <div className="relative w-full sm:w-auto">
-                <SlidersHorizontal className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-                <select
-                  value={sortBy}
-                  onChange={(e) => setSortBy(e.target.value)}
-                  className="w-full sm:w-auto pl-9 pr-8 py-2 rounded-lg border border-gray-300 bg-white text-sm outline-none focus:ring-2 focus:ring-[#3498db] focus:border-transparent appearance-none cursor-pointer transition-all hover:bg-gray-50"
-                >
-                  <option value="score_desc">Melhor Nota</option>
-                  <option value="name_asc">Nome (A-Z)</option>
-                  <option value="premiums_desc">Maior Faturamento</option>
-                </select>
-                <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none border-l border-gray-200 pl-2">
-                   <span className="text-[10px] text-gray-400">▼</span>
-                </div>
-              </div>
-            </div>
-
+        <div className="mx-auto flex max-w-6xl flex-col gap-2 px-4 py-3 md:flex-row md:items-center md:justify-between">
+          <div className="text-xs text-slate-500">
+            {query.trim()
+              ? `${visibleEntries.length} identidades encontradas`
+              : `${ordinaryEntries.length} seguradoras ordinárias no comparador`}
+          </div>
+          <div className="relative w-full md:w-96">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            <input
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Buscar nome, marca, CNPJ ou código SUSEP…"
+              className="w-full rounded-lg border border-slate-300 bg-white py-2 pl-9 pr-3 text-sm outline-none focus:border-transparent focus:ring-2 focus:ring-sky-300"
+            />
           </div>
         </div>
       </div>
 
-      <main className="bg-[#f4f5f5]">
-        <div className="max-w-6xl mx-auto px-4 py-8">
-        {/* Contagem removida daqui para evitar duplicidade. Só aparece na barra sticky (Desktop). */}
-
-        {paginatedData.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-20 text-gray-500 bg-white rounded-xl border border-gray-200 border-dashed">
-            <Search className="w-12 h-12 text-gray-300 mb-3" />
-            <p className="text-lg font-medium">Nenhuma entidade encontrada</p>
-            <p className="text-sm">Tente buscar por outro termo ou CNPJ</p>
-          </div>
-        ) : (
-          <>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {paginatedData.map((insurer) => (
-                <InsurerCard
-                  key={insurer.id}
-                  insurer={insurer}
-                  onOpenScoreModal={openScoreModal}
-                />
-              ))}
+      <main className="bg-slate-50">
+        <div className="mx-auto max-w-6xl space-y-6 px-4 py-8">
+          {profileLoading ? (
+            <div className="rounded-lg border border-slate-200 bg-white p-3 text-sm text-slate-500">
+              Carregando perfil…
             </div>
+          ) : null}
+          {profileError ? (
+            <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+              {profileError}
+            </div>
+          ) : null}
 
-            {/* Paginação */}
-            {totalPages > 1 && (
-              <div className="flex justify-center items-center gap-4 mt-12">
-                <button
-                  onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-                  disabled={safeCurrentPage <= 1}
-                  className="flex items-center gap-1 px-4 py-2 rounded-lg bg-white border border-gray-200 text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-sm font-medium text-sm"
-                >
-                  <ChevronLeft className="w-4 h-4" /> Anterior
-                </button>
-                
-                <span className="text-sm font-medium text-gray-600 bg-white px-4 py-2 rounded-lg border border-gray-100">
-                  Página <strong className="text-gray-900">{safeCurrentPage}</strong> de {totalPages}
-                </span>
+          <ComparisonPanel
+            entities={compareEntities}
+            onRemove={toggleCompare}
+            onOpenEntity={openEntityId}
+          />
 
-                <button
-                  onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
-                  disabled={safeCurrentPage >= totalPages}
-                  className="flex items-center gap-1 px-4 py-2 rounded-lg bg-white border border-gray-200 text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-sm font-medium text-sm"
-                >
-                  Próxima <ChevronRight className="w-4 h-4" />
-                </button>
+          {pageEntries.length === 0 ? (
+            <div className="rounded-xl border border-dashed border-slate-300 bg-white py-16 text-center text-slate-500">
+              <Search className="mx-auto mb-3 h-10 w-10 text-slate-300" />
+              <div className="font-medium">Nenhuma identidade encontrada</div>
+              <div className="mt-1 text-sm">Tente outro nome, marca, CNPJ ou código SUSEP.</div>
+            </div>
+          ) : (
+            <>
+              {query.trim() ? (
+                <div className="text-xs text-slate-500">
+                  A busca inclui seguradoras, marcas, Sandbox, identidades históricas e outras entidades publicadas. Ser pesquisável não significa ser elegível ao assessment ordinário.
+                </div>
+              ) : null}
+              <div className="grid grid-cols-1 gap-5 md:grid-cols-2 lg:grid-cols-3">
+                {pageEntries.map((entry) => {
+                  const entityId = entry.profile_id?.startsWith('entity:')
+                    ? entry.profile_id.slice('entity:'.length)
+                    : null;
+                  const explorer = entityId ? explorerByEntityId.get(entityId) : null;
+                  return (
+                    <div key={entry.profile_id}>
+                      {query.trim() && !explorer ? (
+                        <div className="mb-1 px-1 text-[11px] font-medium uppercase tracking-wide text-slate-400">
+                          {entryBucketLabel(entry)}
+                        </div>
+                      ) : null}
+                      <InsurerCard
+                        entry={entry}
+                        explorer={explorer}
+                        onOpen={openEntry}
+                        compareSelected={Boolean(entityId && compareIds.includes(entityId))}
+                        compareDisabled={compareIds.length >= maxCompare}
+                        onToggleCompare={toggleCompare}
+                      />
+                    </div>
+                  );
+                })}
               </div>
-            )}
-          </>
-        )}
+
+              {totalPages > 1 ? (
+                <div className="flex items-center justify-center gap-4 pt-4">
+                  <button
+                    type="button"
+                    disabled={safePage <= 1}
+                    onClick={() => setCurrentPage((page) => Math.max(1, page - 1))}
+                    className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    <ChevronLeft className="h-4 w-4" /> Anterior
+                  </button>
+                  <span className="text-sm text-slate-500">{safePage} de {totalPages}</span>
+                  <button
+                    type="button"
+                    disabled={safePage >= totalPages}
+                    onClick={() => setCurrentPage((page) => Math.min(totalPages, page + 1))}
+                    className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    Próxima <ChevronRight className="h-4 w-4" />
+                  </button>
+                </div>
+              ) : null}
+            </>
+          )}
+
+          <ExplorePanel exploreIndex={exploreIndex} onOpenEntity={openEntityId} />
         </div>
       </main>
 
-      <InsurerScoreModal
-        insurer={selectedInsurer}
-        sources={sources}
-        onClose={closeScoreModal}
+      <InsurerProfileModal
+        profile={selectedProfile}
+        onClose={() => setSelectedProfile(null)}
+        onNavigateProfile={openProfileId}
       />
     </div>
   );
 }
-
