@@ -35,6 +35,18 @@ function json_response(int $status, array $payload): never
     exit;
 }
 
+function looks_like_forbidden_personal_query(string $value): bool
+{
+    $value = trim($value);
+    if ($value === '') {
+        return false;
+    }
+    if (str_contains($value, '@')) {
+        return true;
+    }
+    return preg_match('/[^\s@]+@[^\s@]+\.[^\s@]+/', $value) === 1;
+}
+
 function normalize_market_query(string $value): string
 {
     $value = trim($value);
@@ -53,7 +65,7 @@ function normalize_market_query(string $value): string
         if ($transliterator !== null) {
             $value = $transliterator->transliterate($value);
         }
-    } else {
+    } elseif (function_exists('iconv')) {
         $converted = iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', $value);
         if ($converted !== false) {
             $value = $converted;
@@ -133,6 +145,9 @@ if ($method === 'POST') {
     $payload = json_decode($body, true);
     if (!is_array($payload) || array_keys($payload) !== ['query'] || !is_string($payload['query'])) {
         json_response(400, ['status' => 'ignored', 'reason' => 'query_only_contract_required']);
+    }
+    if (looks_like_forbidden_personal_query($payload['query'])) {
+        json_response(202, ['status' => 'ignored', 'reason' => 'personal_query_rejected']);
     }
 
     $normalized = normalize_market_query($payload['query']);
