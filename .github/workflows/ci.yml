@@ -81,3 +81,15 @@ jobs:
         run: |
           set -euo pipefail
           python -m pytest -q
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Build widget frontend
+        working-directory: widget-ui
+        run: |
+          set -euo pipefail
+          npm install --no-audit --no-fund --package-lock=false
+          npm run build
