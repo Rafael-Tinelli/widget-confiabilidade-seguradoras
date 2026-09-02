@@ -1,10 +1,9 @@
-#!/usr/bin/env python3
 from __future__ import annotations
 
 import argparse
 import json
 import os
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from urllib.parse import quote
 
@@ -102,8 +101,8 @@ def fetch_queries(
             output.append(
                 {
                     "query": keys[0],
-                    "clicks": int(round(float(row.get("clicks") or 0))),
-                    "impressions": int(round(float(row.get("impressions") or 0))),
+                    "clicks": round(float(row.get("clicks") or 0)),
+                    "impressions": round(float(row.get("impressions") or 0)),
                 }
             )
 
@@ -119,7 +118,7 @@ def main() -> None:
         raise SystemExit("--days must be positive")
     # Finalized Search Console data can lag. Default to yesterday rather than today;
     # callers can pin an explicit end date for reproducible review runs.
-    end_date = args.end_date or (date.today() - timedelta(days=1))
+    end_date = args.end_date or (datetime.now(UTC).date() - timedelta(days=1))
     start_date = end_date - timedelta(days=args.days - 1)
     token = os.getenv("GSC_ACCESS_TOKEN", "")
     rows = fetch_queries(
