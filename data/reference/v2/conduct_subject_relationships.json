@@ -1,6 +1,6 @@
 {
-  "schema_version": "1.0",
-  "note": "Source-backed Conduct reconciliation facts. These relationships preserve the consumer-facing complaint subject separately from the insurance risk carrier or portfolio holder. They provide context and recovery routes only: they never transfer Consumer.gov complaints, create exposure, or authorize a pressure ratio by themselves.",
+  "schema_version": "1.1",
+  "note": "Source-backed Conduct reconciliation facts. These relationships preserve the consumer-facing complaint subject separately from the insurance risk carrier or portfolio holder. They provide context and recovery routes only: they never transfer Consumer.gov complaints, create exposure, or authorize a pressure ratio by themselves. Public context may describe coexistence between a current regulatory identity and a distinct product-level carrier when both are source-backed; that context does not collapse either identity into the other.",
   "relationships": [
     {
       "relationship_id": "conduct:youse-to-caixa-seguradora",
@@ -8,18 +8,33 @@
       "subject_cnpj": "24856160000103",
       "target_cnpjs": ["34020354000110"],
       "effective_from": null,
+      "effective_to": null,
+      "verification_state": "current_product_carrier_context_verified",
+      "verified_as_of": "2026-09-02",
+      "scope": "Produtos Youse Auto, Residencial e Vida cujas condições gerais vigentes publicadas pela Youse identificam a Caixa Seguradora S.A. como garantidora do plano.",
+      "public_context": "Youse Seguradora S.A. é preservada como identidade regulatória própria no cadastro atual do projeto. Ao mesmo tempo, condições gerais Youse vigentes em 2026 para Auto, Residencial e Vida continuam identificando a Caixa Seguradora S.A. como garantidora desses planos. Por isso, o widget mantém as identidades separadas: essa relação explica o contexto de produto e de Conduta, mas não autoriza transferir automaticamente reclamações nem usar toda a produção da Caixa como exposição específica da Youse.",
       "pressure_policy": "brand_specific_exposure_required",
       "reconciliation_state": "consumer_subject_single_carrier_exposure_not_brand_specific",
       "evidence": [
         {
           "authority": "Youse",
-          "url": "https://cdn.youse.com.br/docs/v2/condicoes-gerais-plano-auto.pdf",
-          "fact": "As condições gerais identificam a Caixa Seguradora S.A., CNPJ 34.020.354/0001-10, como garantidora do plano de seguro comercializado pela Youse."
+          "url": "https://www.youse.com.br/termos-e-condicoes-gerais/",
+          "fact": "A página de Termos & Condições lista como vigentes, a partir de 24/07/2026, versões Jun/2026 das condições gerais dos seguros Auto, Residencial e Vida Youse."
         },
         {
-          "authority": "Youse Ouvidoria",
-          "url": "https://ouvidoria.youse.com.br/",
-          "fact": "A página institucional informa que os produtos comercializados pela plataforma Youse são garantidos pela Caixa Seguradora S.A."
+          "authority": "Youse — Seguro Auto",
+          "url": "https://www.datocms-assets.com/16903/1786457088-1766510176-cg_auto_jun2026.pdf",
+          "fact": "As condições gerais vigentes do Seguro Auto Youse, versão Junho/2026, identificam a Caixa Seguradora S.A., CNPJ 34.020.354/0001-10, como garantidora do plano."
+        },
+        {
+          "authority": "Youse — Seguro Residencial",
+          "url": "https://www.datocms-assets.com/16903/1786457403-1766510247-cg-reside_jun2026.pdf",
+          "fact": "As condições gerais vigentes do Seguro Residencial Youse, versão Junho/2026, identificam a Caixa Seguradora S.A., CNPJ 34.020.354/0001-10, como garantidora do plano."
+        },
+        {
+          "authority": "Youse — Seguro Vida",
+          "url": "https://www.datocms-assets.com/16903/1786457870-1766510733-cg-vida_jun2026.pdf",
+          "fact": "As condições gerais vigentes do Seguro Vida Youse, versão Junho/2026, identificam a Caixa Seguradora S.A., CNPJ 34.020.354/0001-10, como garantidora do plano."
         }
       ]
     },
