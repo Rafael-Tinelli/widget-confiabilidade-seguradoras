@@ -218,9 +218,6 @@ jobs:
           PY
 
           cat "$RUNNER_TEMP/relationship-review-queue.md" >> "$GITHUB_STEP_SUMMARY"
-          if [[ "${{ steps.queue.outputs.review_count }}" != "0" ]]; then
-            :
-          fi
 
       - name: Emit visible review warning
         if: steps.queue.outputs.review_count != '0'
