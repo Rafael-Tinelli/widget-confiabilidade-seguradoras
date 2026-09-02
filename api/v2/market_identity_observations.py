@@ -23,8 +23,6 @@ CANDIDATE_LIFECYCLE_STATES = {
     "dismissed_non_market_query",
 }
 
-# Narrow noise list only. It is intentionally not a semantic classifier: a specific
-# unknown market name must survive even if it contains words such as "seguros".
 NOISE_QUERIES = {
     "seguro",
     "seguros",
@@ -57,13 +55,7 @@ FORBIDDEN_TELEMETRY_KEYS = {
 
 @dataclass(frozen=True)
 class DemandReviewThresholds:
-    """Configurable promotion thresholds for demand-only observations.
-
-    Widget searches require recurrence on at least two distinct days by default. This
-    avoids creating operational review work from one typo while requiring no personal
-    or session identifier. GSC can promote from either repeated impressions or a click;
-    both are relevance signals only and never identity evidence.
-    """
+    """Configurable promotion thresholds for demand-only observations."""
 
     widget_min_count: int = 2
     widget_min_distinct_days: int = 2
@@ -244,6 +236,32 @@ def _regulated_identity_anchor(row: dict[str, Any]) -> str | None:
     return None
 
 
+def _regulated_observation(
+    *,
+    anchor: str,
+    row: dict[str, Any],
+    candidate_type: str,
+    observed_value: Any,
+    previous_value: Any = None,
+) -> dict[str, Any]:
+    observation = {
+        "candidate_key": _candidate_key("regulated", anchor),
+        "candidate_anchor": anchor,
+        "source": "susep_licensed_delta",
+        "sensor_class": "regulatory",
+        "confidence_semantics": "official_regulatory_existence",
+        "candidate_type": candidate_type,
+        "observed_value": observed_value,
+        "fip_code": row.get("fip_code"),
+        "cnpj": normalize_cnpj_v2(row.get("cnpj")),
+        "entity_type": row.get("entity_type"),
+        "lifecycle_state": "review_required",
+    }
+    if previous_value is not None:
+        observation["previous_value"] = previous_value
+    return observation
+
+
 def regulated_entity_delta_observations(
     previous_rows: Iterable[dict[str, Any]],
     current_rows: Iterable[dict[str, Any]],
@@ -264,58 +282,52 @@ def regulated_entity_delta_observations(
         before = previous.get(anchor)
         if before is None:
             observations.append(
-                {
-                    "candidate_key": _candidate_key("regulated", anchor),
-                    "candidate_anchor": anchor,
-                    "source": "susep_licensed_delta",
-                    "sensor_class": "regulatory",
-                    "confidence_semantics": "official_regulatory_existence",
-                    "candidate_type": "new_regulated_entity",
-                    "observed_value": row.get("legal_name"),
-                    "fip_code": row.get("fip_code"),
-                    "cnpj": normalize_cnpj_v2(row.get("cnpj")),
-                    "entity_type": row.get("entity_type"),
-                    "lifecycle_state": "review_required",
-                }
+                _regulated_observation(
+                    anchor=anchor,
+                    row=row,
+                    candidate_type="new_regulated_entity",
+                    observed_value=row.get("legal_name"),
+                )
             )
             continue
+
+        before_cnpj = normalize_cnpj_v2(before.get("cnpj"))
+        current_cnpj = normalize_cnpj_v2(row.get("cnpj"))
+        if before_cnpj and current_cnpj and before_cnpj != current_cnpj:
+            observations.append(
+                _regulated_observation(
+                    anchor=anchor,
+                    row=row,
+                    candidate_type="regulated_cnpj_change",
+                    observed_value=current_cnpj,
+                    previous_value=before_cnpj,
+                )
+            )
 
         before_name = normalize_market_query(before.get("legal_name"))
         current_name = normalize_market_query(row.get("legal_name"))
         if before_name and current_name and before_name != current_name:
             observations.append(
-                {
-                    "candidate_key": _candidate_key("regulated", anchor),
-                    "candidate_anchor": anchor,
-                    "source": "susep_licensed_delta",
-                    "sensor_class": "regulatory",
-                    "confidence_semantics": "official_regulatory_existence",
-                    "candidate_type": "regulated_name_change",
-                    "observed_value": row.get("legal_name"),
-                    "previous_value": before.get("legal_name"),
-                    "fip_code": row.get("fip_code"),
-                    "cnpj": normalize_cnpj_v2(row.get("cnpj")),
-                    "lifecycle_state": "review_required",
-                }
+                _regulated_observation(
+                    anchor=anchor,
+                    row=row,
+                    candidate_type="regulated_name_change",
+                    observed_value=row.get("legal_name"),
+                    previous_value=before.get("legal_name"),
+                )
             )
 
         before_status = str(before.get("regulatory_status") or "")
         current_status = str(row.get("regulatory_status") or "")
         if before_status and current_status and before_status != current_status:
             observations.append(
-                {
-                    "candidate_key": _candidate_key("regulated", anchor),
-                    "candidate_anchor": anchor,
-                    "source": "susep_licensed_delta",
-                    "sensor_class": "regulatory",
-                    "confidence_semantics": "official_regulatory_existence",
-                    "candidate_type": "regulated_status_change",
-                    "observed_value": current_status,
-                    "previous_value": before_status,
-                    "fip_code": row.get("fip_code"),
-                    "cnpj": normalize_cnpj_v2(row.get("cnpj")),
-                    "lifecycle_state": "review_required",
-                }
+                _regulated_observation(
+                    anchor=anchor,
+                    row=row,
+                    candidate_type="regulated_status_change",
+                    observed_value=current_status,
+                    previous_value=before_status,
+                )
             )
     return observations
 
@@ -386,7 +398,9 @@ def candidate_registry_from_observations(
             {
                 "candidate_id": candidate_key,
                 "candidate_type": (
-                    candidate_types[0] if len(candidate_types) == 1 else "multi_signal_market_candidate"
+                    candidate_types[0]
+                    if len(candidate_types) == 1
+                    else "multi_signal_market_candidate"
                 ),
                 "candidate_types": candidate_types,
                 "candidate_anchor": rows[0].get("candidate_anchor"),
