@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import argparse
 import json
+from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from api.v2.market_identity_observations import (
     DemandReviewThresholds,
@@ -174,8 +175,6 @@ def _parse_args() -> argparse.Namespace:
 def main() -> None:
     args = _parse_args()
     search_payload = _load_json(args.search_index)
-    # The published search_index.json contract uses `entries`; list/search_index/records
-    # remain accepted so the builder can also consume compact fixtures and diagnostics.
     search_index = _rows(search_payload, "entries", "search_index", "records")
     thresholds = DemandReviewThresholds(
         widget_min_count=args.widget_min_count,
