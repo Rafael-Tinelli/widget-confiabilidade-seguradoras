@@ -371,6 +371,7 @@ export default function InsurerProfileModal({ profile, onClose, onNavigateProfil
 
   const identity = profile.identity || {};
   const isBrand = profile.profile_kind === 'brand';
+  const marketIdentity = isBrand ? identity.market_identity || null : null;
   const name = isBrand
     ? identity.name || profile.profile_id
     : identity.display_name || identity.legal_name || profile.profile_id;
@@ -423,14 +424,29 @@ export default function InsurerProfileModal({ profile, onClose, onNavigateProfil
               <div>
                 <dt className="text-slate-500">Tipo</dt>
                 <dd className="font-medium text-slate-900">
-                  {isBrand ? 'Marca' : entityTypeLabel(identity.entity_type)}
+                  {isBrand
+                    ? marketIdentity?.public_label || 'Marca / identidade de mercado'
+                    : entityTypeLabel(identity.entity_type)}
                 </dd>
               </div>
+              {isBrand && marketIdentity?.legal_name ? (
+                <div>
+                  <dt className="text-slate-500">Pessoa jurídica da identidade de mercado</dt>
+                  <dd className="text-slate-900">{marketIdentity.legal_name}</dd>
+                </div>
+              ) : null}
+              {isBrand && marketIdentity?.cnpj ? (
+                <div>
+                  <dt className="text-slate-500">CNPJ da identidade de mercado</dt>
+                  <dd className="font-mono text-slate-900">{marketIdentity.cnpj}</dd>
+                </div>
+              ) : null}
               {!isBrand ? <div><dt className="text-slate-500">CNPJ</dt><dd className="font-mono text-slate-900">{identity.cnpj || '—'}</dd></div> : null}
               {!isBrand ? <div><dt className="text-slate-500">Código SUSEP/FIP</dt><dd className="font-mono text-slate-900">{identity.fip_code || '—'}</dd></div> : null}
               {!isBrand ? <div><dt className="text-slate-500">Situação regulatória</dt><dd className="text-slate-900">{profile.regulatory?.label || '—'}</dd></div> : null}
               {isBrand && identity.aliases?.length ? <div className="md:col-span-2"><dt className="text-slate-500">Também pesquisável como</dt><dd className="text-slate-900">{identity.aliases.join(', ')}</dd></div> : null}
             </dl>
+            {marketIdentity?.evidence ? <EvidenceList evidence={marketIdentity.evidence} /> : null}
           </Section>
 
           {!isBrand && profile.lifecycle ? (
