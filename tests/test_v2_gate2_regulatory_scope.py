@@ -7,9 +7,11 @@ from api.sources.susep_licensed import (
 from api.v2.build_lifecycle_relationship_inventory import _derive_query_context
 from api.v2.classification import apply_licensed_classification
 from api.v2.regulatory_scope import (
+    INSURANCE_COOPERATIVE_SUBTYPE,
     SPECIAL_PURPOSE_INSURER_SUBTYPE,
     infer_regulatory_subtype,
     is_current_ordinary_consumer_insurer,
+    is_insurance_cooperative,
 )
 
 
@@ -32,6 +34,21 @@ def test_sspe_subtype_is_derived_from_official_legal_name_not_fip_allowlist():
     assert infer_regulatory_subtype(entity) == SPECIAL_PURPOSE_INSURER_SUBTYPE
 
 
+def test_insurance_cooperative_subtype_requires_explicit_official_legal_name_marker():
+    entity = {
+        "entity_type": "insurer",
+        "legal_name": "COOPERATIVA TESTE DE SEGUROS",
+    }
+    assert infer_regulatory_subtype(entity) == INSURANCE_COOPERATIVE_SUBTYPE
+    assert is_insurance_cooperative(entity) is True
+
+    non_insurance = {
+        "entity_type": "insurer",
+        "legal_name": "COOPERATIVA TESTE DE SERVIÇOS FINANCEIROS",
+    }
+    assert infer_regulatory_subtype(non_insurance) is None
+
+
 def test_qi_style_new_ordinary_insurer_missing_from_ses_enters_naturally():
     result = apply_licensed_classification(
         [],
@@ -43,6 +60,19 @@ def test_qi_style_new_ordinary_insurer_missing_from_ses_enters_naturally():
     assert result["evidence"]["ses_present"] is False
     assert result.get("regulatory_subtype") is None
     assert is_current_ordinary_consumer_insurer(result) is True
+
+
+def test_new_cooperative_is_retained_but_not_presumed_ordinary_benchmark_member():
+    result = apply_licensed_classification(
+        [],
+        [_licensed("009999", "12345678000199", "COOPERATIVA TESTE DE SEGUROS")],
+    )[0]
+
+    assert result["entity_type"] == "insurer"
+    assert result["regulatory_status"] == "active_licensed"
+    assert result["regulatory_subtype"] == INSURANCE_COOPERATIVE_SUBTYPE
+    assert result["evidence"]["identity_origin"] == "susep_licensed_entities"
+    assert is_current_ordinary_consumer_insurer(result) is False
 
 
 def test_btg_style_new_sspe_missing_from_ses_is_retained_but_outside_comparator():
@@ -106,6 +136,24 @@ def test_sspe_gets_searchable_non_comparator_query_context():
     assert context["entity_state"] == "special_purpose_insurer"
     assert context["filter_bucket"] == "other"
     assert context["score_behavior"] == "outside_consumer_insurer_comparator"
+
+
+def test_cooperative_gets_searchable_non_comparator_query_context():
+    entity = {
+        "entity_id": "fip:009999",
+        "fip_code": "009999",
+        "cnpj": "12345678000199",
+        "legal_name": "COOPERATIVA TESTE DE SEGUROS",
+        "entity_type": "insurer",
+        "regulatory_subtype": INSURANCE_COOPERATIVE_SUBTYPE,
+        "regulatory_regime": "ordinary",
+        "regulatory_status": "active_licensed",
+        "relationships": [],
+    }
+    context = _derive_query_context([entity])[0]["query_context"]
+    assert context["entity_state"] == "insurance_cooperative"
+    assert context["filter_bucket"] == "other"
+    assert context["score_behavior"] == "outside_ordinary_insurer_comparator"
 
 
 def test_new_official_susep_type_fails_closed_instead_of_being_ignored():
