@@ -21,6 +21,16 @@ function formatMetric(entry, metric, unit) {
   return value.toLocaleString('pt-BR', { maximumFractionDigits: 3 });
 }
 
+function publicClassLabel(value) {
+  const labels = {
+    favorable_reading: 'Leitura favorável no escopo avaliado',
+    attention: 'Atenção',
+    prudential_warning: 'Alerta prudencial',
+    evidence_incomplete: 'Evidência incompleta',
+  };
+  return labels[value] || 'Ver perfil';
+}
+
 export default function ExplorePanel({ exploreIndex, onOpenEntity }) {
   const options = useMemo(() => [
     ...(exploreIndex?.leaderboards || []).map((item) => ({ ...item, kind: 'leaderboard' })),
@@ -105,7 +115,7 @@ export default function ExplorePanel({ exploreIndex, onOpenEntity }) {
                     {entry.display_name || entry.legal_name || entry.entity_id}
                   </div>
                   <div className="mt-0.5 text-xs text-slate-500">
-                    {entry.public_class ? entry.public_class.replaceAll('_', ' ') : 'ver perfil'}
+                    {publicClassLabel(entry.public_class)}
                   </div>
                 </div>
                 {payload.type === 'public_numeric_leaderboard' ? (
