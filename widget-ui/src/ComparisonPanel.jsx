@@ -1,9 +1,5 @@
 import { GitCompareArrows, X } from 'lucide-react';
 
-function humanize(value) {
-  return String(value || '—').replaceAll('_', ' ');
-}
-
 function formatRatio(value) {
   return typeof value === 'number' && Number.isFinite(value)
     ? value.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
@@ -13,6 +9,15 @@ function formatRatio(value) {
 function formatPeriod(value) {
   const text = String(value || '').replace(/\D/g, '');
   return text.length === 6 ? `${text.slice(4, 6)}/${text.slice(0, 4)}` : value || '—';
+}
+
+function confidenceLabel(value) {
+  const labels = {
+    established_core_history: 'Histórico central estabelecido',
+    limited_core_history: 'Histórico central limitado',
+    insufficient_core_evidence: 'Evidência central insuficiente',
+  };
+  return labels[value] || 'Confiança não classificada';
 }
 
 export default function ComparisonPanel({ entities, onRemove, onOpenEntity }) {
@@ -25,7 +30,7 @@ export default function ComparisonPanel({ entities, onRemove, onOpenEntity }) {
         <h2 className="text-base font-semibold text-slate-900">Comparação lado a lado</h2>
       </div>
       <p className="mt-1 text-xs text-slate-600">
-        A comparação preserva os estados e métricas já calculados pelo backend. Não produz vencedor nem nota composta.
+        A comparação preserva a linguagem e as métricas já calculadas pelo backend. Não produz vencedor nem nota composta.
       </p>
 
       <div className="mt-4 overflow-x-auto">
@@ -53,12 +58,16 @@ export default function ComparisonPanel({ entities, onRemove, onOpenEntity }) {
               {entities.map((entity) => <td key={entity.entity_id} className="border-b border-slate-200 p-2 align-top">{entity.assessment?.title || '—'}</td>)}
             </tr>
             <tr>
-              <td className="border-b border-slate-200 p-2 font-medium text-slate-600">Capital</td>
-              {entities.map((entity) => <td key={entity.entity_id} className="border-b border-slate-200 p-2 align-top">{humanize(entity.financial?.capital?.state)}<div className="text-xs text-slate-500">PLA/CMR {formatRatio(entity.financial?.capital?.pla_cmr_ratio)}</div></td>)}
+              <td className="border-b border-slate-200 p-2 font-medium text-slate-600">Financeiro</td>
+              {entities.map((entity) => <td key={entity.entity_id} className="border-b border-slate-200 p-2 align-top">{entity.financial?.public_interpretation?.headline || 'Sem leitura financeira pública.'}</td>)}
             </tr>
             <tr>
-              <td className="border-b border-slate-200 p-2 font-medium text-slate-600">Liquidez</td>
-              {entities.map((entity) => <td key={entity.entity_id} className="border-b border-slate-200 p-2 align-top">{humanize(entity.financial?.liquidity?.state)}<div className="text-xs text-slate-500">ILT {formatRatio(entity.financial?.liquidity?.value)}</div></td>)}
+              <td className="border-b border-slate-200 p-2 font-medium text-slate-600">PLA/CMR</td>
+              {entities.map((entity) => <td key={entity.entity_id} className="border-b border-slate-200 p-2">{formatRatio(entity.financial?.capital?.pla_cmr_ratio)}</td>)}
+            </tr>
+            <tr>
+              <td className="border-b border-slate-200 p-2 font-medium text-slate-600">ILT</td>
+              {entities.map((entity) => <td key={entity.entity_id} className="border-b border-slate-200 p-2">{formatRatio(entity.financial?.liquidity?.value)}</td>)}
             </tr>
             <tr>
               <td className="border-b border-slate-200 p-2 font-medium text-slate-600">Período financeiro</td>
@@ -66,11 +75,21 @@ export default function ComparisonPanel({ entities, onRemove, onOpenEntity }) {
             </tr>
             <tr>
               <td className="border-b border-slate-200 p-2 font-medium text-slate-600">Confiança financeira</td>
-              {entities.map((entity) => <td key={entity.entity_id} className="border-b border-slate-200 p-2">{humanize(entity.financial?.evidence_confidence)}</td>)}
+              {entities.map((entity) => <td key={entity.entity_id} className="border-b border-slate-200 p-2">{confidenceLabel(entity.financial?.evidence_confidence)}</td>)}
             </tr>
             <tr>
               <td className="border-b border-slate-200 p-2 font-medium text-slate-600">Conduta</td>
-              {entities.map((entity) => <td key={entity.entity_id} className="border-b border-slate-200 p-2 align-top">{entity.conduct?.summary || humanize(entity.conduct?.state)}<div className="mt-1 text-xs text-slate-500">Comparabilidade: {humanize(entity.conduct?.comparability_state)}</div></td>)}
+              {entities.map((entity) => <td key={entity.entity_id} className="border-b border-slate-200 p-2 align-top">{entity.conduct?.summary || 'Sem leitura pública de Conduta.'}</td>)}
+            </tr>
+            <tr>
+              <td className="border-b border-slate-200 p-2 font-medium text-slate-600">Janela de Conduta</td>
+              {entities.map((entity) => (
+                <td key={entity.entity_id} className="border-b border-slate-200 p-2">
+                  {entity.conduct?.reference_window
+                    ? `${entity.conduct.reference_window.start_month} a ${entity.conduct.reference_window.end_month}`
+                    : '—'}
+                </td>
+              ))}
             </tr>
             <tr>
               <td className="p-2 font-medium text-slate-600">Razão reclamações</td>
