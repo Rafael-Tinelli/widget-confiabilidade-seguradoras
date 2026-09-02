@@ -15,7 +15,7 @@ from api.sources.susep_sandbox import fetch_sandbox_participants
 from api.sources.susep_special_regimes import fetch_special_regime_records
 from api.v2.build_classification_inventory import build_classification_inventory
 from api.v2.lifecycle import apply_legal_lifecycle, lifecycle_summary
-from api.v2.regulatory_scope import is_special_purpose_insurer
+from api.v2.regulatory_scope import is_insurance_cooperative, is_special_purpose_insurer
 from api.v2.relationships import (
     RelationshipConflictError,
     apply_corporate_relationships,
@@ -125,6 +125,13 @@ def _derive_query_context(entities: list[dict[str, Any]]) -> list[dict[str, Any]
                 "guidance_code": "explain_sandbox_scope_and_limits",
                 "score_behavior": "never_compare_with_ordinary_insurers",
             }
+        elif is_insurance_cooperative(entity):
+            entity["query_context"] = {
+                "entity_state": "insurance_cooperative",
+                "filter_bucket": "other",
+                "guidance_code": "explain_insurance_cooperative_scope",
+                "score_behavior": "outside_ordinary_insurer_comparator",
+            }
         elif is_special_purpose_insurer(entity):
             entity["query_context"] = {
                 "entity_state": "special_purpose_insurer",
@@ -233,9 +240,10 @@ def build_lifecycle_relationship_inventory(
                 "relationships; common names or economic groups never imply succession. "
                 "Documented successor chains are resolved in the backend so historical "
                 "queries can reach the terminal known successor without frontend logic. "
-                "Query filter buckets separate ordinary consumer insurers, SSPEs, Sandbox, "
-                "pension, capitalization, special-regime and other entities without creating "
-                "additional rankings. Brands are resolver objects and never inherit an entity score."
+                "Query filter buckets separate ordinary consumer insurers, insurance "
+                "cooperatives, SSPEs, Sandbox, pension, capitalization, special-regime and "
+                "other entities without creating additional rankings. Brands are resolver "
+                "objects and never inherit an entity score."
             ),
             "receita_ingestion_status": (
                 "official_open_data_bulk_filtered"
