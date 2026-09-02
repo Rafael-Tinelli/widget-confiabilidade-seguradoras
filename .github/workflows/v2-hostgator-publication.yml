@@ -1,0 +1,242 @@
+name: V2 HostGator Public Package Sync
+
+on:
+  workflow_run:
+    workflows:
+      - V2 Gate 4 Full Generation Proof
+    types:
+      - completed
+  workflow_dispatch:
+    inputs:
+      source_run_id:
+        description: Exact successful Full Generation run id to republish
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: v2-hostgator-publication
+  cancel-in-progress: false
+
+jobs:
+  publish-hostgator:
+    if: >-
+      vars.V2_HOSTGATOR_DEPLOY_ENABLED == 'true' &&
+      (
+        github.event_name == 'workflow_dispatch' ||
+        (
+          github.event.workflow_run.conclusion == 'success' &&
+          github.event.workflow_run.head_branch == 'main'
+        )
+      )
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Resolve and validate exact source run
+        id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MANUAL_SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_run" ]]; then
+            source_run_id=$(jq -r '.workflow_run.id' "$GITHUB_EVENT_PATH")
+          else
+            source_run_id="$MANUAL_SOURCE_RUN_ID"
+          fi
+          if [[ ! "$source_run_id" =~ ^[0-9]+$ ]]; then
+            echo "invalid source run id: $source_run_id" >&2
+            exit 1
+          fi
+
+          run_json=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$source_run_id")
+          workflow_name=$(jq -r '.name' <<<"$run_json")
+          conclusion=$(jq -r '.conclusion' <<<"$run_json")
+          head_branch=$(jq -r '.head_branch' <<<"$run_json")
+          head_sha=$(jq -r '.head_sha' <<<"$run_json")
+          run_attempt=$(jq -r '.run_attempt' <<<"$run_json")
+
+          [[ "$workflow_name" == "V2 Gate 4 Full Generation Proof" ]] || {
+            echo "source run is not the canonical Full Generation workflow" >&2
+            exit 1
+          }
+          [[ "$conclusion" == "success" ]] || {
+            echo "source Full Generation did not conclude successfully" >&2
+            exit 1
+          }
+          [[ "$head_branch" == "main" ]] || {
+            echo "HostGator publication accepts only a Full Generation from main" >&2
+            exit 1
+          }
+          [[ "$head_sha" =~ ^[0-9a-f]{40}$ ]] || {
+            echo "invalid source head sha" >&2
+            exit 1
+          }
+          [[ "$run_attempt" =~ ^[0-9]+$ ]] || {
+            echo "invalid run attempt" >&2
+            exit 1
+          }
+
+          build_id="v2-gate4-full-${source_run_id}-a${run_attempt}"
+          artifact_name="v2-gate4-full-generation-${source_run_id}-a${run_attempt}"
+          {
+            echo "run_id=$source_run_id"
+            echo "run_attempt=$run_attempt"
+            echo "head_sha=$head_sha"
+            echo "build_id=$build_id"
+            echo "artifact_name=$artifact_name"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Checkout exact generation source head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.source.outputs.head_sha }}
+
+      - name: Download exact artifact from source run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN_ID: ${{ steps.source.outputs.run_id }}
+          ARTIFACT_NAME: ${{ steps.source.outputs.artifact_name }}
+        run: |
+          set -euo pipefail
+          rm -rf "$RUNNER_TEMP/v2-source-artifact"
+          mkdir -p "$RUNNER_TEMP/v2-source-artifact"
+          gh run download "$SOURCE_RUN_ID" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name "$ARTIFACT_NAME" \
+            --dir "$RUNNER_TEMP/v2-source-artifact"
+
+      - name: Verify exact public package and lineage
+        id: package
+        env:
+          EXPECTED_BUILD_ID: ${{ steps.source.outputs.build_id }}
+          EXPECTED_HEAD_SHA: ${{ steps.source.outputs.head_sha }}
+        run: |
+          set -euo pipefail
+          mapfile -t manifests < <(
+            find "$RUNNER_TEMP/v2-source-artifact" -type f \
+              -path '*/public/distribution_manifest.json' -print
+          )
+          if [[ ${#manifests[@]} -ne 1 ]]; then
+            printf 'expected exactly one public distribution manifest, found %s\n' "${#manifests[@]}" >&2
+            printf '%s\n' "${manifests[@]:-}" >&2
+            exit 1
+          fi
+          package_dir=$(dirname "${manifests[0]}")
+          python -m api.v2.install_public_generation verify "$package_dir" >/dev/null
+
+          package_sha=$(python - "$package_dir/distribution_manifest.json" \
+            "$EXPECTED_BUILD_ID" "$EXPECTED_HEAD_SHA" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          path = Path(sys.argv[1])
+          expected_build_id = sys.argv[2]
+          expected_head_sha = sys.argv[3]
+          payload = json.loads(path.read_text(encoding="utf-8"))
+          build = payload.get("build") or {}
+          if build.get("build_id") != expected_build_id:
+              raise SystemExit("distribution manifest build_id differs from source run")
+          if build.get("source_head_sha") != expected_head_sha:
+              raise SystemExit("distribution manifest source_head_sha differs from source run")
+          package_sha = str((payload.get("public_package") or {}).get("package_sha256") or "")
+          if len(package_sha) != 64:
+              raise SystemExit("distribution manifest has no valid logical package sha256")
+          print(package_sha)
+          PY
+          )
+          {
+            echo "dir=$package_dir"
+            echo "sha256=$package_sha"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Validate HostGator publication configuration
+        env:
+          SSH_HOST: ${{ secrets.V2_HOSTGATOR_HOST }}
+          SSH_USER: ${{ secrets.V2_HOSTGATOR_USER }}
+          SSH_PRIVATE_KEY: ${{ secrets.V2_HOSTGATOR_SSH_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.V2_HOSTGATOR_KNOWN_HOSTS }}
+          SSH_PORT: ${{ vars.V2_HOSTGATOR_SSH_PORT }}
+          PUBLICATION_ROOT: ${{ vars.V2_HOSTGATOR_PUBLICATION_ROOT }}
+          PUBLIC_PATH: ${{ vars.V2_HOSTGATOR_PUBLIC_PATH }}
+        run: |
+          set -euo pipefail
+          : "${SSH_HOST:?missing V2_HOSTGATOR_HOST secret}"
+          : "${SSH_USER:?missing V2_HOSTGATOR_USER secret}"
+          : "${SSH_PRIVATE_KEY:?missing V2_HOSTGATOR_SSH_KEY secret}"
+          : "${SSH_KNOWN_HOSTS:?missing V2_HOSTGATOR_KNOWN_HOSTS secret}"
+          : "${PUBLICATION_ROOT:?missing V2_HOSTGATOR_PUBLICATION_ROOT variable}"
+          : "${PUBLIC_PATH:?missing V2_HOSTGATOR_PUBLIC_PATH variable}"
+          SSH_PORT=${SSH_PORT:-22}
+          [[ "$SSH_HOST" =~ ^[A-Za-z0-9.-]+$ ]] || exit 1
+          [[ "$SSH_USER" =~ ^[A-Za-z0-9._-]+$ ]] || exit 1
+          [[ "$SSH_PORT" =~ ^[0-9]+$ ]] || exit 1
+          [[ "$PUBLICATION_ROOT" =~ ^/[A-Za-z0-9._/-]+$ ]] || exit 1
+          [[ "$PUBLIC_PATH" =~ ^/[A-Za-z0-9._/-]+$ ]] || exit 1
+
+      - name: Configure pinned SSH trust
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.V2_HOSTGATOR_SSH_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.V2_HOSTGATOR_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          install -d -m 700 "$HOME/.ssh"
+          printf '%s\n' "$SSH_PRIVATE_KEY" > "$HOME/.ssh/v2_hostgator"
+          chmod 600 "$HOME/.ssh/v2_hostgator"
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+
+      - name: Upload and atomically install exact generation
+        env:
+          SSH_HOST: ${{ secrets.V2_HOSTGATOR_HOST }}
+          SSH_USER: ${{ secrets.V2_HOSTGATOR_USER }}
+          SSH_PORT: ${{ vars.V2_HOSTGATOR_SSH_PORT }}
+          PUBLICATION_ROOT: ${{ vars.V2_HOSTGATOR_PUBLICATION_ROOT }}
+          PUBLIC_PATH: ${{ vars.V2_HOSTGATOR_PUBLIC_PATH }}
+          BUILD_ID: ${{ steps.source.outputs.build_id }}
+          PACKAGE_SHA: ${{ steps.package.outputs.sha256 }}
+          PACKAGE_DIR: ${{ steps.package.outputs.dir }}
+        run: |
+          set -euo pipefail
+          SSH_PORT=${SSH_PORT:-22}
+          remote="$SSH_USER@$SSH_HOST"
+          incoming="$PUBLICATION_ROOT/incoming/$BUILD_ID"
+          ssh_opts=(
+            -i "$HOME/.ssh/v2_hostgator"
+            -p "$SSH_PORT"
+            -o BatchMode=yes
+            -o StrictHostKeyChecking=yes
+            -o UserKnownHostsFile="$HOME/.ssh/known_hosts"
+          )
+          scp_opts=(
+            -i "$HOME/.ssh/v2_hostgator"
+            -P "$SSH_PORT"
+            -o BatchMode=yes
+            -o StrictHostKeyChecking=yes
+            -o UserKnownHostsFile="$HOME/.ssh/known_hosts"
+          )
+
+          ssh "${ssh_opts[@]}" "$remote" \
+            "rm -rf '$incoming' && mkdir -p '$incoming/package'"
+          scp "${scp_opts[@]}" -r "$PACKAGE_DIR"/* "$remote:$incoming/package/"
+          scp "${scp_opts[@]}" \
+            api/v2/install_public_generation.py \
+            ops/hostgator/install_v2_public_remote.sh \
+            "$remote:$incoming/"
+
+          ssh "${ssh_opts[@]}" "$remote" \
+            "chmod 700 '$incoming/install_v2_public_remote.sh' && \
+             bash '$incoming/install_v2_public_remote.sh' \
+               '$incoming/package' \
+               '$PUBLICATION_ROOT' \
+               '$PUBLIC_PATH' \
+               '$BUILD_ID' \
+               '$PACKAGE_SHA' \
+               '$incoming/install_public_generation.py'"
+
+          ssh "${ssh_opts[@]}" "$remote" "rm -rf '$incoming'"
