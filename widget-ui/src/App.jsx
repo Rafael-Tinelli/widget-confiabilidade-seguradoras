@@ -4,6 +4,7 @@ import ComparisonPanel from './ComparisonPanel';
 import ExplorePanel from './ExplorePanel';
 import InsurerProfileModal from './InsurerProfileModal';
 import InsurerCard from './components/InsurerCard';
+import { useUnknownMarketQueryTelemetry } from './unknownMarketTelemetry';
 import { loadPrimaryV2Catalog, loadProfile } from './v2Data';
 
 const ITEMS_PER_PAGE = 24;
@@ -138,6 +139,8 @@ export default function App() {
         return String(a.name || '').localeCompare(String(b.name || ''), 'pt-BR');
       });
   }, [ordinaryEntries, query, searchEntries]);
+
+  useUnknownMarketQueryTelemetry(query, visibleEntries.length, Boolean(catalog) && !loading && !error);
 
   useEffect(() => {
     setCurrentPage(1);
