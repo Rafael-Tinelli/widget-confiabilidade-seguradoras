@@ -36,9 +36,11 @@ def test_untrusted_sensor_text_cannot_inject_html_or_markdown_links():
     )
 
     assert summary["market_count"] == 1
-    assert "</details>" not in markdown
+    # The renderer itself legitimately closes one <details> block. The injected
+    # closing tag must be encoded, so there can be only that canonical closer.
+    assert markdown.count("</details>") == 1
     assert "[click](https://evil.example)" not in markdown
-    assert "&lt;/details&gt;" in markdown
+    assert "&lt;/details&gt;\\|" in markdown
     assert "\\[click\\](https://evil.example)" in markdown
     assert "\\`code\\`" in markdown
     assert "\x00" not in markdown
