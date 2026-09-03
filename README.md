@@ -1,6 +1,6 @@
 # Ranking de Seguradoras Sanida — Pipeline de Dados e Metodologia v2
 
-> **Status do projeto:** fundação metodológica concluída em Draft; **§19.1–§19.5 formalmente fechados no branch de trabalho**; o cutover de produção permanece deliberadamente não autorizado.  
+> **Status do projeto:** fundação metodológica e revisão de frontend/SEO concluídas em Draft; **§19.1–§19.6 formalmente fechados no branch de trabalho**; **§19.7 aberto para lapidação final e consolidação da v2**; o cutover de produção permanece deliberadamente não autorizado.  
 > **Branch de trabalho:** `refactor/v2-data-foundation`.  
 > **PR:** #1 permanece **Draft**. Não fazer merge em `main` antes de autorização explícita para staging/cutover.  
 > **Produto principal:** consulta de identidade + avaliação semântica individual + comparação lado a lado; leaderboards unidimensionais e coleções semânticas são exploração secundária.  
@@ -9,7 +9,7 @@
 > **Marco crítico de 29/08/2026:** corrigido o numerador de `PLA/CMR`. O pipeline deve usar `NovoPla` (`new_pla`) como PLA prudencial final; `plajustado` (`pla_adjusted`) permanece somente como evidência intermediária da fonte. Artifacts gerados antes dessa correção não devem ser tratados como atuais para capital, assessment combinado ou leaderboards dependentes de capital.  
 > **Prova de fechamento do §19.1:** Full Generation Proof #49, run `33567550092`, head `7993dbabd1cf3cd21181c88d072aed4ce5573538`, concluída com sucesso; artifact `9824434275`, SHA-256 `d0ccb6ce274542015431ae9fde0084c12941d1983ce06527bf6872e442244431`.
 
-Este README é o **contrato operacional do projeto**. A consolidação coberta por este ciclo foi concluída até o §19.5: metodologia/dados, potencial informacional do frontend, evergreen, publicação HostGator preparada e limpeza do repositório. A competência de **descoberta evergreen de novas identidades de mercado** foi posteriormente auditada e incorporada como extensão do §19.3, ainda sem ativação operacional de produção. Isso **não equivale a merge ou cutover de produção**.
+Este README é o **contrato operacional do projeto**. A consolidação coberta por este ciclo foi concluída até o §19.6: metodologia/dados, potencial informacional do frontend, evergreen, publicação HostGator preparada, limpeza do repositório, revisão funcional/UX, comunicação pública, SEO técnico/semântico e acabamento visual. A competência de **descoberta evergreen de novas identidades de mercado** foi auditada e incorporada como extensão do §19.3, ainda sem ativação operacional de produção. A fase seguinte é a **lapidação final e consolidação da v2** antes de qualquer decisão de cutover. Isso **não equivale a merge ou cutover de produção**.
 
 Documentação principal:
 
@@ -999,9 +999,9 @@ O conjunto de testes inclui regressão onde `plajustado` indicaria falsamente ra
 
 ---
 
-# 19. Fase atual — CONSOLIDAÇÃO DO WIDGET
+# 19. Fase atual — CONSOLIDAÇÃO FINAL DA V2
 
-A consolidação coberta por este ciclo está encerrada até o limite solicitado, com a competência de descoberta evergreen incorporada posteriormente como extensão operacional do §19.3:
+A consolidação metodológica, informacional, operacional e de frontend está formalmente encerrada até o §19.6. A etapa ativa passa a ser a lapidação final e a reconciliação de tudo o que será necessário para declarar a v2 pronta para uma decisão explícita de cutover:
 
 ```text
 SECTION_19_1_STATUS = CLOSED
@@ -1010,9 +1010,10 @@ SECTION_19_3_STATUS = CLOSED_IN_ARCHITECTURE_AND_CODE
 SECTION_19_3_DISCOVERY_STATUS = CLOSED_IN_ARCHITECTURE_AND_CODE
 SECTION_19_4_STATUS = CLOSED_IN_ARCHITECTURE_AND_CODE
 SECTION_19_5_STATUS = CLOSED
+SECTION_19_6_STATUS = CLOSED
+SECTION_19_7_STATUS = ACTIVE_FINAL_POLISH_AND_V2_CONSOLIDATION
 production_cutover_authorized = false
 market_sensor_production_enabled = false
-section_19_6_started = false
 ```
 
 ## 19.1. Auditoria geral de metodologia e dados — **FECHADO**
@@ -1268,29 +1269,106 @@ Foram preservados deliberadamente:
 
 A limpeza é protegida por `tests/test_v2_repository_cleanup.py`.
 
-## 19.6. Revisão do frontend e SEO — **FORA DO ESCOPO DESTE CICLO / NÃO INICIADO**
+## 19.6. Revisão do frontend e SEO — **FECHADO**
 
-Se houver autorização futura para abrir esta etapa, comparar o frontend atual com o widget anterior para recuperar somente o que era realmente positivo em:
+Status formal:
 
-- busca;
-- clareza;
-- feedback de interação;
-- densidade de informação;
-- navegação;
-- capacidade de descoberta;
-- semântica SEO.
+```text
+SECTION_19_6_STATUS = CLOSED
+closed_at = 2026-09-03
+methodology_reopened = false
+ranking_gate_opened = false
+production_cutover_authorized_by_19_6 = false
+```
 
-Não restaurar:
+O §19.6 comparou o frontend v2 com os pontos úteis da experiência anterior e consolidou somente o que continuava compatível com a metodologia atual. O trabalho foi executado sobre a superfície de teste do HostGator, sem substituir `index.php` de produção.
 
-- score antigo;
-- ranking geral antigo;
-- lógica metodológica em React/JS;
-- linguagem enganosa;
-- excesso visual.
+Foram consolidados:
 
-A prioridade é experiência do usuário; SEO orienta títulos, headings, arquitetura semântica e cobertura de intenção sem degradar o português.
+- busca com desambiguação e precedência adequada para seguradoras ordinárias sem apagar marcas, históricas, Sandbox ou outras identidades;
+- perfis adaptativos para seguradora ordinária, marca, `market_identity`, participante Sandbox e entidade histórica;
+- navegação reversível e preservação de comparação, filtros, paginação e contexto sem barras persistentes de estado;
+- compartilhamento de perfil e comparação;
+- comparação entre 2–4 seguradoras sem vencedor artificial;
+- acessibilidade por teclado/ARIA nas buscas e controles principais;
+- tratamento explícito de indisponibilidade, dados incompletos e `null ≠ 0`;
+- interpretação progressiva: resposta humana → sinais → identificação/regulação → números explicados → metodologia e fontes;
+- helper de números restrito a **o que é / por que importa / como interpretar**, deixando fórmulas, variáveis, fontes, fundamentos e salvaguardas para a seção metodológica;
+- organização de Conduta em reclamações observadas, tamanho comparável da operação e referência proporcional para interpretação;
+- linguagem pública sem vazamento desnecessário de nomes de backend, arquivos, fields ou states internos.
 
-**Este fechamento não autoriza iniciar §19.6 automaticamente.**
+### SEO e arquitetura de estado
+
+A investigação cruzou GSC, oportunidades de palavras-chave, capacidade real da ferramenta e risco de expansão artificial. A decisão final é conservadora:
+
+```text
+/ranking-seguradoras/
+→ documento SEO principal
+→ canonical próprio
+→ território genérico de consulta, confiabilidade, SUSEP, comparação e rankings objetivos
+
+#consulta=...
+#perfil=...
+#comparar=...
+→ estado funcional/compartilhável
+→ não tratado como inventário de páginas SEO
+```
+
+Decisões consolidadas:
+
+- não criar automaticamente uma URL indexável por seguradora;
+- não transformar volume de busca por marca em justificativa suficiente para página;
+- páginas editoriais futuras sobre marcas exigem **tese própria**, valor independente e diferença material em relação a outras páginas do site e à SERP;
+- parâmetros antigos de estado devem ser consolidados no cutover, sem criar superfície indexável paralela;
+- SEO orienta `title`, meta description, headings, arquitetura semântica e cobertura de intenção sem degradar o português;
+- não criar ranking geral ou linguagem absoluta para satisfazer palavra-chave.
+
+### Direção visual consolidada
+
+A direção de acabamento ficou definida como:
+
+> **tecnologia aplicada + inteligência sobre dados + confiança + clareza**, com aparência editorial/profissional e linguagem visual sóbria.
+
+Evitar:
+
+- estética genérica de dashboard SaaS;
+- roxo/gradiente “IA” como linguagem principal;
+- neon e glassmorphism gratuito;
+- excesso de cards, badges, sombras e elementos flutuantes;
+- densidade visual que concorra com a interpretação dos dados.
+
+O acabamento final do §19.6 consolidou hierarquia, alinhamento, densidade, responsividade e os componentes novos de identificação, números explicados e metodologia sem alterar o contrato metodológico.
+
+O fechamento do §19.6 **não autoriza cutover, merge em `main`, ativação de cron nem publicação automática**.
+
+## 19.7. Lapidação final e consolidação da v2 — **ETAPA ATIVA**
+
+Objetivo: produzir a última revisão integrada antes de decidir se a v2 está pronta para cutover. Esta etapa não reabre os §§19.1–19.6 por preferência ou por existência de alternativas; somente regressão objetiva, inconsistência concreta ou falha de integração justifica correção em área já fechada.
+
+Escopo prioritário:
+
+1. reconciliar o estado atual do branch, a superfície de teste no HostGator e os arquivos finais do frontend, eliminando drift entre o que foi validado e o que será versionado;
+2. executar QA visual e funcional ponta a ponta em desktop e mobile, incluindo busca, desambiguação, perfis complexos, helpers, comparação, lista, leaderboards, coleções, compartilhamento, Back/Forward, loading e erros;
+3. revisar acessibilidade real dos controles e ordem de foco, sem transformar a etapa em redesign;
+4. consolidar CSS/JS/PHP finais, removendo apenas dívida objetiva e overrides comprovadamente redundantes, sem reescrever por preferência;
+5. confirmar que o frontend final consome somente o pacote público v2 e continua sem recalcular metodologia;
+6. verificar a integração com uma geração pública v2 corrente e os casos representativos/limítrofes antes do cutover;
+7. executar a última auditoria técnica de SEO para produção: canonical, robots, `noindex` de teste, estados por fragmento, parâmetros legados, redirects, crawlability, headings, links internos e ausência de explosão de URLs;
+8. preparar checklist de cutover, rollback e aposentadoria segura da superfície v1/cron legado, sem executar essas ações antes de autorização explícita;
+9. reconciliar documentação, testes, deployment helpers e estrutura final do widget para que a v2 não dependa de arquivos temporários ou conhecimento desta conversa;
+10. ao final, produzir uma recomendação binária e fundamentada: **READY FOR CUTOVER** ou **NOT READY**, com blockers objetivos se houver.
+
+Invariantes da etapa:
+
+```text
+reopen_methodology_without_concrete_bug = false
+frontend_may_recompute_methodology = false
+general_score_allowed = false
+general_ranking_allowed = false
+mass_brand_seo_pages_allowed = false
+production_cutover_authorized = false
+main_may_change_without_explicit_authorization = false
+```
 
 ---
 
@@ -1321,7 +1399,7 @@ Não:
 
 # 21. Critério de sucesso da consolidação
 
-Para o escopo §19.1–§19.5 e a extensão de descoberta evergreen do §19.3, os critérios técnicos foram atendidos no branch Draft:
+Para o escopo §19.1–§19.6 e a extensão de descoberta evergreen do §19.3, os critérios técnicos, informacionais e de experiência foram atendidos no branch Draft/superfície de teste:
 
 - fórmulas críticas foram auditadas da fonte ao JSON público;
 - regressões cobrem bugs materiais conhecidos;
@@ -1338,11 +1416,16 @@ Para o escopo §19.1–§19.5 e a extensão de descoberta evergreen do §19.3, o
 - valores observacionais não confiáveis são neutralizados antes de renderização na fila de revisão;
 - arquivos experimentais/legacy foram classificados conservadoramente;
 - documentação central incorpora a diferença entre evergreen de dados conhecidos e evergreen de descoberta;
+- busca, navegação, comparação e estados compartilháveis foram estabilizados no frontend v2;
+- identidades complexas são apresentadas sem colapsar marca, pessoa jurídica, sucessão, Sandbox ou `risk_carrier`;
+- números técnicos receberam interpretação progressiva sem deslocar a metodologia para o JavaScript;
+- a arquitetura SEO concentra a superfície indexável no hub e evita geração massiva de páginas por marca;
+- a linguagem visual foi consolidada em tecnologia aplicada, inteligência de dados, confiança e clareza, sem estética de dashboard genérico;
 - `main` e a produção HostGator não foram alterados por esta consolidação.
 
 A cobertura evergreen operacional em produção só passa a existir após configuração/ativação deliberada dos sensores; isso é uma etapa operacional separada da arquitetura já fechada.
 
-Itens de experiência/SEO visual pertencentes ao §19.6 não fazem parte do critério de fechamento deste ciclo.
+O §19.7 é o gate final de integração e preparação de cutover. Seu encerramento deve dizer explicitamente se existem blockers objetivos. **Fechar §19.7 não autoriza, por si só, merge ou produção.**
 
 ---
 
@@ -1374,7 +1457,7 @@ E eliminar o que era frágil:
 - catálogo que só conhece empresas porque alguém lembrou de cadastrá-las;
 - artifacts experimentais vazando para produto.
 
-Estado ao final deste ciclo:
+Estado ao final do §19.6 e início da etapa final:
 
 ```text
 §19.1 FECHADO
@@ -1383,10 +1466,13 @@ Estado ao final deste ciclo:
    ↳ DESCOBERTA EVERGREEN FECHADA EM ARQUITETURA/CÓDIGO
 → §19.4 FECHADO EM ARQUITETURA/CÓDIGO
 → §19.5 FECHADO
+→ §19.6 FECHADO — FRONTEND / UX / COMUNICAÇÃO / SEO
+→ §19.7 ATIVO — LAPIDAÇÃO FINAL E CONSOLIDAÇÃO DA V2
 → SENSORES DE MERCADO EM PRODUÇÃO AINDA NÃO CONFIGURADOS/ATIVADOS
-→ PARAR AQUI: §19.6 NÃO INICIADO
 → CUTOVER/PRODUÇÃO CONTINUA PENDENTE DE AUTORIZAÇÃO DELIBERADA
 ```
+
+Áreas fechadas não devem ser reabertas apenas porque outra abordagem seria possível. Na etapa final, corrigir apenas evidência objetiva de bug, regressão, inconsistência documental, dívida que afete o produto ou risco concreto de cutover.
 
 ---
 
