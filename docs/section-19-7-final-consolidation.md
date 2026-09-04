@@ -120,6 +120,35 @@ sem transformar demanda de busca em justificativa editorial automática.
 
 ## 8. Provas permanentes adicionadas
 
+Evidência executada para esta consolidação:
+
+```text
+commit de implementação         a2fbded4ecffd30fd6095eefd50a982e27846be7
+head do PR após lint mecânico    5ec2b4e6b7e9aa1f6dd551001671bc6535b21e75
+CI #1479                         success
+Evergreen Contract #319         success
+Full Generation #69             success
+workflow run                     33829195597
+artifact                         9921622757
+artifact ZIP SHA-256             0677bd2bf87c2b503c19871972fc9417f453fa548b529c9bb83ecea3bb1a4ad9
+build_id                         v2-gate4-full-33829195597-a1
+logical package SHA-256          be7c1da75a7cbfe14de836c97c2b0ecacb0703eeb89f18ddf647bd80d2bfa502
+public JSON files                805
+search profiles                  791
+ordinary current insurers        156
+ranking_eligible                 0
+watchdog_blocking_drift          0
+```
+
+O commit `5ec2b4e` é descendente direto e altera somente lint mecânico em dois
+scripts de teste estático. Geradores, contratos, PHP, CSS e JavaScript entregues
+são exatamente os de `a2fbded`, que é o `source_head_sha` gravado no manifesto.
+
+A regressão R2 foi executada novamente sobre o `search_index.json` baixado do
+artifact #69: 791 entradas, 156 seguradoras ordinárias e 6 candidatos Allianz.
+O instalador verificou todos os hashes e o hash lógico do pacote. A varredura da
+cópia pública encontrou zero ocorrências de “v2”, “projeto”, “widget” e “snapshot”.
+
 ```text
 ranking-seguradoras/tests/r2-static-check.py
 ranking-seguradoras/tests/r2-regression.mjs
@@ -178,7 +207,8 @@ observação. Aposentadoria do v1/cron é mudança posterior e separada.
 ```text
 implementação do branch       PASS
 contratos e regressões locais PASS
-pacote de instalação          PREPARADO
+Full Generation #69           PASS
+pacote de instalação          VERIFICADO / PREPARADO
 produção/main/cron/sensores   INTOCADOS
 QA real após instalação       PENDENTE
 recomendação de cutover       NOT READY
