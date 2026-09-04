@@ -1,5 +1,6 @@
+import re
 from pathlib import Path
-import re, sys
+
 root=Path(__file__).resolve().parents[1]
 php=(root/'index2.php').read_text(encoding='utf-8')
 js=(root/'assets/ranking-v2.js').read_text(encoding='utf-8')

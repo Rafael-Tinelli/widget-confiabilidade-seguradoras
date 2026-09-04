@@ -1,5 +1,5 @@
-from pathlib import Path
 import re
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 css = (ROOT / 'assets' / 'ranking-v2.css').read_text(encoding='utf-8')
@@ -9,10 +9,10 @@ php = (ROOT / 'index2.php').read_text(encoding='utf-8')
 assert css.count('{') == css.count('}'), 'CSS braces are unbalanced'
 assert 'R11 / §19.6 R4' in css
 assert 'append-only' not in css.lower(), 'R4 must not preserve the old append-only status'
-assert len(re.findall(r'^\.rk2-regulatory-identity\{', css, re.M)) == 1, 'regulatory identity base style should be consolidated'
-assert len(re.findall(r'^\.rk2-tech-help-trigger\{', css, re.M)) == 1, 'technical helper base style should be consolidated'
-assert len(re.findall(r'^\.rk2-tech-help\{', css, re.M)) == 1, 'technical helper base style should be consolidated'
-assert len(re.findall(r'^\.rk2-data-group__head\{', css, re.M)) == 1, 'data-group header base style should be consolidated'
+assert len(re.findall(r'^\.rk2-regulatory-identity\{', css, re.MULTILINE)) == 1, 'regulatory identity base style should be consolidated'
+assert len(re.findall(r'^\.rk2-tech-help-trigger\{', css, re.MULTILINE)) == 1, 'technical helper base style should be consolidated'
+assert len(re.findall(r'^\.rk2-tech-help\{', css, re.MULTILINE)) == 1, 'technical helper base style should be consolidated'
+assert len(re.findall(r'^\.rk2-data-group__head\{', css, re.MULTILINE)) == 1, 'data-group header base style should be consolidated'
 assert 'grid-template-columns:repeat(auto-fit,minmax(180px,1fr))' in css
 assert 'border-left:1px solid #e5edf3' in css
 assert '.rk2-signal{\n  display:flex;\n  flex-direction:column;' in css
