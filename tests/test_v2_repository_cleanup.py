@@ -4,11 +4,14 @@ GITIGNORE = Path(".gitignore")
 
 REMOVED_PATHS = (
     Path("widget-ui/src/InsurerScoreModal.jsx"),
+    Path("data/raw/consumidor_gov/tmp68ikpili.csv"),
+    Path("teste_consumidor.py"),
+)
+
+LEGACY_PRODUCTION_PATHS = (
     Path("widget-ui/dist/index.html"),
     Path("widget-ui/dist/assets/widget.css"),
     Path("widget-ui/dist/assets/widget.js"),
-    Path("data/raw/consumidor_gov/tmp68ikpili.csv"),
-    Path("teste_consumidor.py"),
 )
 
 
@@ -23,3 +26,8 @@ def test_reproducible_outputs_and_raw_temporaries_remain_ignored():
     assert "widget-ui/dist/" in gitignore
     assert "data/raw/*" in gitignore
     assert "*.tmp" in gitignore
+
+
+def test_v1_frontend_bundle_remains_available_until_production_cutover():
+    for path in LEGACY_PRODUCTION_PATHS:
+        assert path.is_file(), f"v1 production dependency disappeared before cutover: {path}"

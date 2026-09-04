@@ -1,6 +1,6 @@
 # Ranking de Seguradoras Sanida — Pipeline de Dados e Metodologia v2
 
-> **Status do projeto:** fundação metodológica e revisão de frontend/SEO concluídas em Draft; **§19.1–§19.6 formalmente fechados no branch de trabalho**; **§19.7 aberto para lapidação final e consolidação da v2**; o cutover de produção permanece deliberadamente não autorizado.  
+> **Status do projeto:** fundação metodológica e revisão de frontend/SEO concluídas em Draft; **§19.1–§19.6 formalmente fechados no branch de trabalho**; **§19.7 implementado no branch e aguardando a prova final no staging HostGator**; recomendação atual **NOT READY** e cutover de produção deliberadamente não autorizado.
 > **Branch de trabalho:** `refactor/v2-data-foundation`.  
 > **PR:** #1 permanece **Draft**. Não fazer merge em `main` antes de autorização explícita para staging/cutover.  
 > **Produto principal:** consulta de identidade + avaliação semântica individual + comparação lado a lado; leaderboards unidimensionais e coleções semânticas são exploração secundária.  
@@ -1255,13 +1255,14 @@ DELETE     — redundante/obsoleto/temporário com ausência de dependência con
 Remoções confirmadas:
 
 - `widget-ui/src/InsurerScoreModal.jsx` — modal de score v1 morto;
-- `widget-ui/dist/` — build antigo e reproduzível, já ignorado;
 - `data/raw/consumidor_gov/tmp68ikpili.csv` — temporário rastreado acidentalmente;
 - `teste_consumidor.py` — scratch manual obsoleto.
 
 Foram preservados deliberadamente:
 
 - workflows e scripts v1 ainda necessários para produção/histórico antes do cutover;
+- `widget-ui/dist/` como LEGACY, após a cópia real do HostGator provar que
+  `widget.js`/`widget.css` de produção correspondem exatamente a esse bundle;
 - experimentos/diagnósticos v2 que preservam a justificativa metodológica;
 - snapshots regulatórios canônicos;
 - `verify_extraction.sh` como LEGACY/manual only;
@@ -1341,7 +1342,7 @@ O acabamento final do §19.6 consolidou hierarquia, alinhamento, densidade, resp
 
 O fechamento do §19.6 **não autoriza cutover, merge em `main`, ativação de cron nem publicação automática**.
 
-## 19.7. Lapidação final e consolidação da v2 — **ETAPA ATIVA**
+## 19.7. Lapidação final e consolidação da v2 — **QA HOSTGATOR PENDENTE**
 
 Objetivo: produzir a última revisão integrada antes de decidir se a v2 está pronta para cutover. Esta etapa não reabre os §§19.1–19.6 por preferência ou por existência de alternativas; somente regressão objetiva, inconsistência concreta ou falha de integração justifica correção em área já fechada.
 
@@ -1369,6 +1370,25 @@ mass_brand_seo_pages_allowed = false
 production_cutover_authorized = false
 main_may_change_without_explicit_authorization = false
 ```
+
+### Consolidação executada
+
+O frontend efetivamente observado no HostGator foi versionado, reconciliado com o
+head global, protegido por manifesto/hash da geração pública e incorporado ao CI.
+A revisão também corrigiu a linguagem pública gerada, preservou o bundle v1 que
+ainda atende produção e preparou arquivos separados de staging, cutover e rollback.
+
+O relatório, a classificação dos drifts e o gate binário estão em:
+
+`docs/section-19-7-final-consolidation.md`
+
+O roteiro copiável de instalação e validação está em:
+
+`ranking-seguradoras/deployment/production-cutover/INSTALLACAO-HOSTGATOR.md`
+
+Recomendação atual: **NOT READY**, exclusivamente porque a mesma entrega ainda
+precisa ser instalada e validada no ambiente real. Não há autorização implícita de
+merge, produção, cron ou sensores.
 
 ---
 

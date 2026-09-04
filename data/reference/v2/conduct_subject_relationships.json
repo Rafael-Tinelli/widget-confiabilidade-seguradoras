@@ -12,7 +12,7 @@
       "verification_state": "current_product_carrier_context_verified",
       "verified_as_of": "2026-09-02",
       "scope": "Produtos Youse Auto, Residencial e Vida cujas condições gerais vigentes publicadas pela Youse identificam a Caixa Seguradora S.A. como garantidora do plano.",
-      "public_context": "Youse Seguradora S.A. é preservada como identidade regulatória própria no cadastro atual do projeto. Ao mesmo tempo, condições gerais Youse vigentes em 2026 para Auto, Residencial e Vida continuam identificando a Caixa Seguradora S.A. como garantidora desses planos. Por isso, o widget mantém as identidades separadas: essa relação explica o contexto de produto e de Conduta, mas não autoriza transferir automaticamente reclamações nem usar toda a produção da Caixa como exposição específica da Youse.",
+      "public_context": "Youse Seguradora S.A. é preservada como identidade regulatória própria no cadastro regulatório consultado. Ao mesmo tempo, condições gerais Youse vigentes em 2026 para Auto, Residencial e Vida continuam identificando a Caixa Seguradora S.A. como garantidora desses planos. Por isso, a ferramenta mantém as identidades separadas: essa relação explica o contexto de produto e de Conduta, mas não autoriza transferir automaticamente reclamações nem usar toda a produção da Caixa como exposição específica da Youse.",
       "pressure_policy": "brand_specific_exposure_required",
       "reconciliation_state": "consumer_subject_single_carrier_exposure_not_brand_specific",
       "evidence": [

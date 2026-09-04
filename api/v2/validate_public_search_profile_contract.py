@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +19,14 @@ PUBLIC_DIR = Path("data/derived/v2/public")
 
 class PublicProfileValidationError(RuntimeError):
     """Raised when public profile outputs violate structural publication contracts."""
+
+
+PUBLIC_COPY_FORBIDDEN = {
+    "internal version label": re.compile(r"\bv2\b", re.IGNORECASE),
+    "internal project wording": re.compile(r"\bprojeto\b", re.IGNORECASE),
+    "implementation label": re.compile(r"\bwidget\b", re.IGNORECASE),
+    "internal snapshot wording": re.compile(r"\bsnapshot\b", re.IGNORECASE),
+}
 
 
 def _load(path: Path) -> dict[str, Any]:
@@ -228,6 +237,29 @@ def _validate_profile_references(
         walk(profile, f"$.profiles[{profile_id}]")
 
 
+def _validate_public_copy(
+    profiles: dict[str, dict[str, Any]],
+) -> None:
+    """Keep implementation vocabulary out of copy shipped to end users."""
+
+    def walk(value: Any, path: str) -> None:
+        if isinstance(value, dict):
+            for key, child in value.items():
+                walk(child, f"{path}.{key}")
+        elif isinstance(value, list):
+            for index, child in enumerate(value):
+                walk(child, f"{path}[{index}]")
+        elif isinstance(value, str):
+            for label, pattern in PUBLIC_COPY_FORBIDDEN.items():
+                _require(
+                    pattern.search(value) is None,
+                    f"{label} leaked into public profile copy at {path}",
+                )
+
+    for profile_id, profile in profiles.items():
+        walk(profile, f"$.profiles[{profile_id}]")
+
+
 def _validate_search_index(
     contract: dict[str, Any],
     profiles: dict[str, dict[str, Any]],
@@ -302,6 +334,7 @@ def validate_real_public_search_profile_contract() -> dict[str, Any]:
     _validate_policy(contract)
     _validate_profile_semantics(profiles)
     _validate_profile_references(profiles)
+    _validate_public_copy(profiles)
     _validate_search_index(contract, profiles)
     _walk_public(contract.get("profiles") or [])
     _validate_public_files(counts["profiles"])

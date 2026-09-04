@@ -599,7 +599,7 @@ def _final_pressure_state(
     if direct_coverage < MIN_TEMPORAL_MONTHS or not direct_interval:
         return (
             "pressure_unavailable_insufficient_temporal_coverage",
-            "Nao ha meses comparaveis suficientes para uma conclusao anual.",
+            "Não há meses comparáveis suficientes para uma conclusão anual.",
         )
 
     direct_state = str(direct_interval["state"])
@@ -613,22 +613,22 @@ def _final_pressure_state(
         if earned_state != direct_state:
             return (
                 "pressure_inconclusive_denominator_sensitivity",
-                "A conclusao muda de estado quando usamos a medida diagnostica de premio ganho.",
+                "A conclusão muda de estado quando usamos a medida diagnóstica de prêmio ganho.",
             )
 
     if direct_state == "above_size_proportional_reference":
         return (
             "above_expected_with_sufficient_evidence",
-            "Ha mais reclamacoes do que esperariamos para o tamanho da operacao nos meses comparaveis.",
+            "Há mais reclamações do que esperaríamos para o tamanho da operação nos meses comparáveis.",
         )
     if direct_state == "below_size_proportional_reference":
         return (
             "below_expected_with_sufficient_evidence",
-            "Ha menos reclamacoes do que esperariamos para o tamanho da operacao nos meses comparaveis; isso nao prova melhor atendimento.",
+            "Há menos reclamações do que esperaríamos para o tamanho da operação nos meses comparáveis; isso não prova melhor atendimento.",
         )
     return (
         "not_distinguishable_from_expected",
-        "Os dados nao mostram diferenca suficientemente clara em relacao ao esperado para o tamanho da operacao.",
+        "Os dados não mostram diferença suficientemente clara em relação ao esperado para o tamanho da operação.",
     )
 
 
@@ -839,8 +839,8 @@ def build_closure(
                         state, "manual_methodology_review"
                     ),
                     "human_summary": (
-                        "Ha dados de Conduta, mas nao ha numerador e denominador "
-                        "comparaveis suficientes para calcular pressao sem inventar atribuicoes."
+                        "Há dados de Conduta, mas não há numerador e denominador "
+                        "comparáveis suficientes para calcular pressão sem inventar atribuições."
                     ),
                 },
             }

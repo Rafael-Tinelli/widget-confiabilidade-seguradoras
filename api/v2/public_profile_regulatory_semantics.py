@@ -32,7 +32,7 @@ def _sspe_quick_answer(profile: dict[str, Any]) -> str:
         f"{name} é identificada como seguradora de propósito específico (SSPE). "
         "Esse subtipo permanece pesquisável e supervisionado, mas sua finalidade "
         "específica não corresponde ao universo de seguradoras ordinárias usado pelo "
-        "comparador de consumo da metodologia v2. Por isso, não recebe avaliação "
+        "comparador voltado ao consumidor. Por isso, não recebe avaliação "
         "conjunta nem posição de ranking nesse universo."
     )
 

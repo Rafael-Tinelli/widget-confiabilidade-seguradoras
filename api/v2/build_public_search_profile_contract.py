@@ -128,18 +128,18 @@ def _entity_intro(entity: dict[str, Any], by_id: dict[str, dict[str, Any]]) -> s
     if state == "historical_closed_entity":
         return (
             f"{name} aparece como pessoa jurídica histórica/baixada no cadastro jurídico "
-            "do projeto e não deve ser confundida com uma seguradora atual."
+            "consultado e não deve ser confundida com uma seguradora atual."
         )
     if entity_type == "sandbox_participant" or regime == "sandbox":
         return (
-            f"{name} aparece no snapshot do projeto como participante do Sandbox "
+            f"{name} aparece no cadastro público consultado como participante do Sandbox "
             "regulatório da SUSEP. Sandbox é um regime experimental e não equivale ao "
-            "universo de seguradoras ordinárias usado nas comparações da v2."
+            "universo de seguradoras ordinárias usado nas comparações da ferramenta."
         )
     if regime == "special":
         return (
             f"{name} aparece em condição regulatória especial. Permanece pesquisável, "
-            "mas fora da comparação ordinária da metodologia v2."
+            "mas fora da comparação entre seguradoras ordinárias."
         )
     if entity_type == "open_pension_entity":
         return (
@@ -163,12 +163,12 @@ def _entity_intro(entity: dict[str, Any], by_id: dict[str, dict[str, Any]]) -> s
         )
     if entity_type == "insurer":
         return (
-            f"{name} é identificada como seguradora no cadastro regulatório usado pela "
-            "v2. Cada sinal só é apresentado quando sua evidência sustenta a afirmação."
+            f"{name} é identificada como seguradora no cadastro regulatório consultado. "
+            "Cada sinal só é apresentado quando sua evidência sustenta a afirmação."
         )
     return (
-        f"{name} foi identificada nas fontes do projeto, mas não é classificada como "
-        "seguradora ordinária no universo comparável."
+        f"{name} foi identificada nas fontes públicas consultadas, mas não é "
+        "classificada como seguradora ordinária no universo comparável."
     )
 
 

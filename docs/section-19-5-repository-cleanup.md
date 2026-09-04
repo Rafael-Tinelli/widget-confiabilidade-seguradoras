@@ -4,6 +4,10 @@ Status: **FECHADO**.
 
 Data: 02/09/2026.
 
+Reconciliação §19.7: 03/09/2026. A cópia real de `public_html` demonstrou que o
+bundle compilado v1 ainda é uma dependência externa de produção. A classificação
+de `widget-ui/dist/` foi corrigida de DELETE para LEGACY até o cutover.
+
 O objetivo desta etapa não foi apagar tudo o que parece antigo. A regra aplicada foi a do README:
 
 ```text
@@ -29,25 +33,6 @@ Motivo:
 - os testes já protegiam a ausência desse modal no caminho ativo.
 
 Classificação: **DELETE**.
-
-### `widget-ui/dist/`
-
-Arquivos removidos:
-
-```text
-widget-ui/dist/index.html
-widget-ui/dist/assets/widget.css
-widget-ui/dist/assets/widget.js
-```
-
-Motivo:
-
-- eram build compilado antigo, anterior à migração v2;
-- `widget-ui/dist/` já estava explicitamente ignorado no `.gitignore`;
-- Vite reconstrói esse diretório a partir das fontes versionadas;
-- o CI compila novamente o frontend e não depende desse snapshot histórico.
-
-Classificação: **DELETE — output reproduzível e obsoleto**.
 
 ### `data/raw/consumidor_gov/tmp68ikpili.csv`
 
@@ -157,9 +142,26 @@ Por isso permanecem como **LEGACY**, e não DELETE:
 - `api/v1/*.json`;
 - módulos e snapshots de Open Insurance/OPIN usados pelo histórico v1;
 - workflows antigos de atualização da produção v1;
+- `widget-ui/dist/`, enquanto os assets v1 ainda forem servidos no HostGator;
 - testes v1 correspondentes;
 - snapshots que sustentam auditabilidade histórica;
 - `verify_extraction.sh`.
+
+### `widget-ui/dist/`
+
+A cópia do HostGator recebida no §19.7 demonstrou que:
+
+- `ranking-seguradoras/assets/widget.js` tem o mesmo SHA-256 do
+  `widget-ui/dist/assets/widget.js` presente em `main`;
+- `ranking-seguradoras/assets/widget.css` tem o mesmo SHA-256 do
+  `widget-ui/dist/assets/widget.css` presente em `main`;
+- `index.php` de produção ainda referencia esses dois arquivos;
+- o workflow v1 `refresh-data.yml` ainda os recompila e versiona com `git add -f`.
+
+Logo, a ausência de consumidor no repositório não provava ausência de dependência
+externa. Os três arquivos de `dist/` foram restaurados e permanecem ignorados para
+novos arquivos acidentais, porém explicitamente rastreados como **LEGACY**. Só podem
+ser removidos depois do cutover e da desativação comprovada do atualizador v1.
 
 ### `verify_extraction.sh`
 
