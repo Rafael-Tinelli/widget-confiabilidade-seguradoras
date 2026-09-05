@@ -6,6 +6,69 @@ ranking = ROOT / 'ranking-seguradoras'
 idx = ranking / 'index2.php'
 cssp = ranking / 'assets' / 'ranking-v2.css'
 
+
+# JS exact R5.1 navigation fix over the R5 source.
+jsp = ranking / 'assets' / 'ranking-v2.js'
+j = jsp.read_text(encoding='utf-8')
+needle = """  function updateURL(profileId, origin = null) {
+    try {
+      persistCurrentViewState({ force: true });
+      const url = pageRouteURL();
+"""
+replacement = """  function normalizeOriginHistoryEntry(origin) {
+    if (!origin?.type) return;
+
+    const url = pageRouteURL();
+    let rk2 = null;
+
+    if (origin.type === "comparison") {
+      const ids = validComparisonIds((origin.compareIds || state.compareIds).join(","));
+      if (ids.length < 2) return;
+      url.hash = routeHash("comparar", ids.join(","));
+      rk2 = { mode: "comparison" };
+    } else if (origin.type === "list") {
+      url.hash = "#lista";
+      rk2 = { mode: "section", section: "lista" };
+    } else if (origin.type === "board") {
+      url.hash = "#explorar";
+      rk2 = { mode: "section", section: "explorar" };
+    } else if (origin.type === "profile" && origin.profileId) {
+      url.hash = routeHash("perfil", origin.profileId);
+      rk2 = { mode: "profile", profileId: origin.profileId };
+    } else {
+      return;
+    }
+
+    const previous = history.state && typeof history.state === "object" ? history.state : {};
+    history.replaceState(
+      { ...previous, rk2, rk2View: currentViewSnapshot() },
+      "",
+      `${url.pathname}${url.search}${url.hash}`,
+    );
+  }
+
+  function updateURL(profileId, origin = null) {
+    try {
+      persistCurrentViewState({ force: true });
+      if (origin) normalizeOriginHistoryEntry(origin);
+      const url = pageRouteURL();
+"""
+if needle not in j:
+    raise SystemExit('JS: updateURL anchor not found')
+j = j.replace(needle, replacement, 1)
+j = j.replace("""    if (element.closest("#rk2-compare-grid")) return { type: "comparison", label: "Voltar à comparação" };
+    if (element.closest("#rk2-list")) return { type: "list", label: "Voltar à lista de seguradoras" };
+    if (element.closest("#rk2-result") && state.currentProfileId) return { type: "profile", label: "Voltar ao perfil anterior" };
+""", """    if (element.closest("#rk2-compare-grid")) {
+      return { type: "comparison", label: "Voltar à comparação", compareIds: [...state.compareIds] };
+    }
+    if (element.closest("#rk2-list")) return { type: "list", label: "Voltar à lista de seguradoras" };
+    if (element.closest("#rk2-result") && state.currentProfileId) {
+      return { type: "profile", label: "Voltar ao perfil anterior", profileId: state.currentProfileId };
+    }
+""", 1)
+jsp.write_text(j, encoding='utf-8')
+
 # index2: preserve all R5 content except the already approved R5.2/R5.3 structural changes.
 s = idx.read_text(encoding='utf-8')
 s = s.replace('/ranking-seguradoras/assets/ranking-v2.css?v=15', '/ranking-seguradoras/assets/ranking-v2.css?v=17')
