@@ -162,6 +162,27 @@ def test_publication_workflow_uses_exact_successful_main_generation_only():
     assert "latest successful" not in workflow.lower()
 
 
+def test_manual_publication_is_explicit_and_independent_from_automatic_gate():
+    workflow = PUBLICATION_WORKFLOW.read_text(encoding="utf-8")
+
+    for required in (
+        "confirm_publication:",
+        "Type PUBLISH to authorize this one manual production publication",
+        "github.event_name == 'workflow_dispatch' ||",
+        "vars.V2_HOSTGATOR_DEPLOY_ENABLED == 'true' &&",
+        "Confirm explicit manual publication",
+        "MANUAL_CONFIRMATION: ${{ inputs.confirm_publication }}",
+        '[[ "$MANUAL_CONFIRMATION" == "PUBLISH" ]]',
+        "manual publication requires confirm_publication=PUBLISH",
+    ):
+        assert required in workflow
+
+    assert (
+        "vars.V2_HOSTGATOR_DEPLOY_ENABLED == 'true' &&\n      (\n        github.event_name == 'workflow_dispatch'"
+        not in workflow
+    )
+
+
 def test_publication_workflow_uses_only_pinned_ephemeral_ssh_trust():
     workflow = PUBLICATION_WORKFLOW.read_text(encoding="utf-8")
 
