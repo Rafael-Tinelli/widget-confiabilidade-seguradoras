@@ -1,0 +1,121 @@
+name: V2 Gate 4 Conduct Cache Bootstrap
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - refactor/v2-data-foundation
+    paths:
+      - ".github/workflows/v2-gate4-conduct-cache-bootstrap.yml"
+      - "api/v2/bootstrap_conduct_consumer_cache.py"
+      - "api/v2/build_conduct_source_snapshot.py"
+      - "tests/test_v2_conduct_consumer_bootstrap.py"
+
+permissions:
+  contents: read
+
+env:
+  V2_SOURCE_HEAD_SHA: ${{ github.sha }}
+
+concurrency:
+  group: v2-gate4-conduct-cache-bootstrap-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  bootstrap-conduct-cache:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout exact source head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install -r requirements-dev.txt
+
+      - name: Validate bootstrap contract
+        run: |
+          set -euo pipefail
+          ruff check \
+            api/v2/bootstrap_conduct_consumer_cache.py \
+            tests/test_v2_conduct_consumer_bootstrap.py
+          python -m pytest -q tests/test_v2_conduct_consumer_bootstrap.py
+
+      - name: Restore existing Gate 4 Conduct cache if any
+        id: conduct-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: data/cache/v2/conduct
+          key: v2-gate4-conduct-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: |
+            v2-gate4-conduct-${{ runner.os }}-
+
+      - name: Seed cache from exact versioned Consumer.gov core
+        run: |
+          set -euo pipefail
+          python -m api.v2.bootstrap_conduct_consumer_cache
+
+      - name: Validate seeded cache provenance and hashes
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          from api.v2.build_conduct_source_snapshot import (
+              CONSUMER_MANIFEST_VERSION,
+              _validate_consumer_manifest,
+          )
+
+          path = Path("data/cache/v2/conduct/consumer_gov_core_manifest.json")
+          payload = _validate_consumer_manifest(path)
+          if payload.get("version") != CONSUMER_MANIFEST_VERSION:
+              raise SystemExit("Consumer.gov bootstrap manifest version mismatch")
+          months = [str(item.get("month") or "") for item in payload.get("months") or []]
+          if len(months) != 12 or months != sorted(months):
+              raise SystemExit(f"invalid Consumer.gov bootstrap month window: {months}")
+          provenance = payload.get("bootstrap_provenance") or {}
+          if provenance:
+              if provenance.get("method") != "versioned_repository_snapshot":
+                  raise SystemExit(f"unexpected bootstrap method: {provenance}")
+              if provenance.get("source_head_sha") != os.environ["V2_SOURCE_HEAD_SHA"]:
+                  raise SystemExit(f"bootstrap source head mismatch: {provenance}")
+              if provenance.get("policy") != "bootstrap_only_when_gate4_cache_absent":
+                  raise SystemExit(f"unexpected bootstrap policy: {provenance}")
+          print(json.dumps({
+              "cache_restore_key": "${{ steps.conduct-cache.outputs.cache-matched-key }}",
+              "months": months,
+              "fetched_at": payload.get("fetched_at"),
+              "bootstrap_provenance": provenance,
+          }, ensure_ascii=False, indent=2))
+          PY
+
+      - name: Save validated Gate 4 Conduct cache
+        if: success()
+        uses: actions/cache/save@v4
+        with:
+          path: data/cache/v2/conduct
+          key: v2-gate4-conduct-${{ runner.os }}-${{ github.run_id }}
+
+      - name: Upload bootstrap evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: v2-gate4-conduct-cache-bootstrap-${{ github.run_id }}
+          retention-days: 14
+          if-no-files-found: error
+          path: data/cache/v2/conduct/consumer_gov_core_manifest.json

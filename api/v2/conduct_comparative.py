@@ -1,0 +1,276 @@
+from __future__ import annotations
+
+import math
+from collections import Counter
+from statistics import median
+from typing import Any
+
+COMPARATIVE_VERSION = "2.0-draft-conduct-comparative-3"
+
+
+def exposure_comparability_state(
+    observed_complaints: float,
+    company_exposure: float | None,
+) -> dict[str, Any]:
+    """Classify whether an exposure denominator can support complaint pressure.
+
+    Complaints with no positive comparable exposure are an evidence conflict,
+    not an adverse conduct signal. They must never be converted into an
+    infinite or extreme pressure ratio. Non-finite complaint counts are invalid
+    evidence and must be rejected before they can contaminate market totals.
+    """
+    try:
+        complaints = float(observed_complaints)
+    except (TypeError, ValueError):
+        return {
+            "state": "invalid_complaint_count",
+            "pressure_eligible": False,
+            "reason_code": "non_numeric_observed_complaints",
+        }
+    if not math.isfinite(complaints):
+        return {
+            "state": "invalid_complaint_count",
+            "pressure_eligible": False,
+            "reason_code": "non_finite_observed_complaints",
+        }
+    if complaints < 0:
+        return {
+            "state": "invalid_complaint_count",
+            "pressure_eligible": False,
+            "reason_code": "negative_observed_complaints",
+        }
+    if company_exposure is None:
+        return {
+            "state": "exposure_unavailable",
+            "pressure_eligible": False,
+            "reason_code": "comparable_exposure_unavailable",
+        }
+    try:
+        exposure = float(company_exposure)
+    except (TypeError, ValueError):
+        return {
+            "state": "exposure_unavailable",
+            "pressure_eligible": False,
+            "reason_code": "comparable_exposure_unavailable",
+        }
+    if not math.isfinite(exposure):
+        return {
+            "state": "exposure_unavailable",
+            "pressure_eligible": False,
+            "reason_code": "comparable_exposure_unavailable",
+        }
+    if exposure <= 0:
+        if complaints > 0:
+            return {
+                "state": "complaints_without_comparable_exposure",
+                "pressure_eligible": False,
+                "reason_code": "complaint_exposure_mismatch_requires_investigation",
+            }
+        return {
+            "state": "no_comparable_exposure",
+            "pressure_eligible": False,
+            "reason_code": "no_positive_exposure_in_comparison_window",
+        }
+    return {
+        "state": "comparable",
+        "pressure_eligible": True,
+        "reason_code": None,
+    }
+
+
+def comparable_market_totals(
+    observations: list[dict[str, Any]],
+    *,
+    complaint_key: str = "complaints",
+    exposure_key: str = "exposure",
+) -> dict[str, Any]:
+    """Build market totals from one aligned comparison population only.
+
+    An entity excluded for missing/non-positive exposure contributes neither
+    complaints nor exposure to the market baseline. This prevents numerator
+    evidence without a matching denominator from making every other insurer
+    appear artificially better.
+    """
+    complaints_total = 0.0
+    exposure_total = 0.0
+    comparable_entities = 0
+    excluded: Counter[str] = Counter()
+
+    for observation in observations:
+        raw_complaints = observation.get(complaint_key, 0.0)
+        raw_exposure = observation.get(exposure_key)
+        try:
+            complaints = float(raw_complaints)
+        except (TypeError, ValueError):
+            excluded["invalid_complaint_count"] += 1
+            continue
+        try:
+            exposure = None if raw_exposure is None else float(raw_exposure)
+        except (TypeError, ValueError):
+            exposure = None
+
+        state = exposure_comparability_state(complaints, exposure)
+        if not state["pressure_eligible"]:
+            excluded[str(state["state"])] += 1
+            continue
+
+        complaints_total += complaints
+        assert exposure is not None
+        exposure_total += exposure
+        comparable_entities += 1
+
+    return {
+        "state": "available" if comparable_entities and exposure_total > 0 else "unavailable",
+        "comparable_entities": comparable_entities,
+        "market_complaints": float(complaints_total),
+        "market_exposure": float(exposure_total),
+        "excluded_entities": int(sum(excluded.values())),
+        "excluded_by_state": dict(sorted(excluded.items())),
+        "population_policy": "complaints_and_exposure_same_entities_only",
+        "scoring": "forbidden_in_diagnostic",
+        "version": COMPARATIVE_VERSION,
+    }
+
+
+def expected_complaints(
+    company_exposure: float,
+    market_complaints: float,
+    market_exposure: float,
+) -> float | None:
+    try:
+        exposure = float(company_exposure)
+        complaints = float(market_complaints)
+        market = float(market_exposure)
+    except (TypeError, ValueError):
+        return None
+    if not all(math.isfinite(value) for value in (exposure, complaints, market)):
+        return None
+    if exposure < 0 or complaints < 0 or market <= 0:
+        return None
+    expected = complaints * exposure / market
+    return float(expected) if math.isfinite(expected) else None
+
+
+def pressure_ratio(
+    observed_complaints: float,
+    company_exposure: float,
+    market_complaints: float,
+    market_exposure: float,
+) -> float | None:
+    """Observed/expected complaint pressure; 1.0 means proportional to exposure."""
+    comparability = exposure_comparability_state(observed_complaints, company_exposure)
+    if not comparability["pressure_eligible"]:
+        return None
+    expected = expected_complaints(company_exposure, market_complaints, market_exposure)
+    if expected is None or expected <= 0:
+        return None
+    ratio = float(observed_complaints) / expected
+    return float(ratio) if math.isfinite(ratio) else None
+
+
+def shrunken_pressure_ratio(
+    observed_complaints: float,
+    expected_count: float,
+    prior_strength: float,
+) -> float | None:
+    """Diagnostic credibility adjustment centered on neutral pressure 1.0.
+
+    prior_strength is expressed in expected-complaint units. It is deliberately
+    configurable and receives no scoring interpretation in this experiment.
+    """
+    try:
+        observed = float(observed_complaints)
+        expected = float(expected_count)
+        strength = float(prior_strength)
+    except (TypeError, ValueError):
+        return None
+    if not all(math.isfinite(value) for value in (observed, expected, strength)):
+        return None
+    if observed < 0 or expected <= 0 or strength < 0:
+        return None
+    denominator = expected + strength
+    if denominator <= 0 or not math.isfinite(denominator):
+        return None
+    result = (observed + strength) / denominator
+    return float(result) if math.isfinite(result) else None
+
+
+def branch_mix(branch_exposure: dict[int | str, float]) -> dict[str, float]:
+    positive = {
+        str(branch): float(value)
+        for branch, value in branch_exposure.items()
+        if value is not None and float(value) > 0 and math.isfinite(float(value))
+    }
+    total = sum(positive.values())
+    if total <= 0:
+        return {}
+    return {branch: value / total for branch, value in sorted(positive.items())}
+
+
+def branch_mix_distance(
+    left: dict[int | str, float],
+    right: dict[int | str, float],
+) -> float | None:
+    """Total-variation distance between two branch mixes, in the [0, 1] range."""
+    left_mix = branch_mix(left)
+    right_mix = branch_mix(right)
+    if not left_mix or not right_mix:
+        return None
+    branches = set(left_mix) | set(right_mix)
+    distance = 0.5 * sum(
+        abs(left_mix.get(branch, 0.0) - right_mix.get(branch, 0.0))
+        for branch in branches
+    )
+    return float(distance)
+
+
+def persistence_diagnostics(monthly_ratios: list[float | None]) -> dict[str, Any]:
+    valid = [
+        float(value)
+        for value in monthly_ratios
+        if value is not None and math.isfinite(float(value))
+    ]
+    if not valid:
+        return {
+            "state": "insufficient_history",
+            "months": 0,
+            "above_neutral_months": 0,
+            "longest_above_neutral_run": 0,
+            "median_ratio": None,
+            "direction": "unavailable",
+        }
+
+    longest = 0
+    current = 0
+    above = 0
+    for value in monthly_ratios:
+        if value is not None and math.isfinite(float(value)) and float(value) > 1.0:
+            above += 1
+            current += 1
+            longest = max(longest, current)
+        else:
+            current = 0
+
+    midpoint = len(valid) // 2
+    direction = "insufficient_for_direction"
+    if midpoint >= 2 and len(valid) - midpoint >= 2:
+        early = median(valid[:midpoint])
+        late = median(valid[midpoint:])
+        tolerance = 0.05
+        if late < early * (1.0 - tolerance):
+            direction = "improving"
+        elif late > early * (1.0 + tolerance):
+            direction = "deteriorating"
+        else:
+            direction = "stable"
+
+    return {
+        "state": "available",
+        "months": len(valid),
+        "above_neutral_months": above,
+        "longest_above_neutral_run": longest,
+        "median_ratio": float(median(valid)),
+        "direction": direction,
+        "scoring": "forbidden_in_diagnostic",
+        "version": COMPARATIVE_VERSION,
+    }

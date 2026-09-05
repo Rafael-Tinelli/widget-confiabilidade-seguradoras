@@ -1,0 +1,184 @@
+name: V2 Cross-Pillar Calibration Stage 1
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: v2-cross-pillar-calibration-stage-1-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  cross-pillar-calibration-stage-1:
+    runs-on: ubuntu-24.04
+    env:
+      GH_TOKEN: ${{ github.token }}
+      V2_SOURCE_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install -r requirements-dev.txt
+
+      - name: Restore same-head Financial methodology closure
+        run: |
+          set -euo pipefail
+          branch="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
+          run_id="$(gh run list \
+            --repo "$GITHUB_REPOSITORY" \
+            --workflow "V2 Financial Methodology Closure" \
+            --branch "$branch" \
+            --status success \
+            --limit 50 \
+            --json databaseId,headSha \
+            --jq '[.[] | select(.headSha == env.V2_SOURCE_HEAD_SHA)][0].databaseId')"
+          if [[ -z "$run_id" || "$run_id" == "null" ]]; then
+            echo "No same-head Financial methodology closure artifact for $V2_SOURCE_HEAD_SHA" >&2
+            exit 1
+          fi
+          rm -rf "$RUNNER_TEMP/financial-closure"
+          mkdir -p "$RUNNER_TEMP/financial-closure"
+          gh run download "$run_id" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name "v2-financial-methodology-closure-$run_id" \
+            --dir "$RUNNER_TEMP/financial-closure"
+          source_file="$(find "$RUNNER_TEMP/financial-closure" -type f -name financial_methodology_closure.json | head -n 1)"
+          test -n "$source_file"
+          mkdir -p data/derived/v2
+          cp "$source_file" data/derived/v2/financial_methodology_closure.json
+          echo "Restored same-head Financial closure from run $run_id"
+
+      - name: Restore same-head Conduct methodology closure
+        run: |
+          set -euo pipefail
+          branch="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
+          run_id="$(gh run list \
+            --repo "$GITHUB_REPOSITORY" \
+            --workflow "V2 Conduct Methodology Closure" \
+            --branch "$branch" \
+            --status success \
+            --limit 50 \
+            --json databaseId,headSha \
+            --jq '[.[] | select(.headSha == env.V2_SOURCE_HEAD_SHA)][0].databaseId')"
+          if [[ -z "$run_id" || "$run_id" == "null" ]]; then
+            echo "No same-head Conduct methodology closure artifact for $V2_SOURCE_HEAD_SHA" >&2
+            exit 1
+          fi
+          rm -rf "$RUNNER_TEMP/conduct-closure"
+          mkdir -p "$RUNNER_TEMP/conduct-closure"
+          gh run download "$run_id" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name "v2-conduct-methodology-closure-$run_id" \
+            --dir "$RUNNER_TEMP/conduct-closure"
+          source_file="$(find "$RUNNER_TEMP/conduct-closure" -type f -name conduct_methodology_closure.json | head -n 1)"
+          test -n "$source_file"
+          mkdir -p data/derived/v2
+          cp "$source_file" data/derived/v2/conduct_methodology_closure.json
+          echo "Restored same-head Conduct closure from run $run_id"
+
+      - name: Lint cross-pillar calibration diagnostic
+        run: |
+          set -euo pipefail
+          ruff check \
+            api/v2/build_cross_pillar_calibration_diagnostic.py \
+            tests/test_v2_cross_pillar_calibration_diagnostic.py
+
+      - name: Run cross-pillar calibration tests
+        run: |
+          set -euo pipefail
+          python -m pytest -q tests/test_v2_cross_pillar_calibration_diagnostic.py
+
+      - name: Build real cross-pillar calibration diagnostic
+        run: |
+          set -euo pipefail
+          python -m api.v2.build_cross_pillar_calibration_diagnostic
+
+      - name: Validate stage-1 boundaries
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          path = Path("data/derived/v2/cross_pillar_calibration_diagnostic.json")
+          payload = json.loads(path.read_text(encoding="utf-8"))
+
+          if payload.get("status") != "cross_pillar_calibration_stage_1_diagnostic":
+              raise SystemExit("unexpected cross-pillar stage-1 status")
+          if payload.get("scoring") != "forbidden_in_this_artifact":
+              raise SystemExit("stage 1 must forbid scoring")
+          if payload.get("ranking") != "forbidden_in_this_artifact":
+              raise SystemExit("stage 1 must forbid ranking")
+
+          population = payload.get("population") or {}
+          universe = population.get("regulatory_universe")
+          conclusive = population.get("joint_core_conclusive")
+          incomplete = population.get("joint_core_not_conclusive")
+          if not isinstance(universe, int) or universe < 100:
+              raise SystemExit(f"unexpectedly small stage-1 universe: {universe}")
+          if not isinstance(conclusive, int) or conclusive < 0:
+              raise SystemExit("invalid joint conclusive population")
+          if not isinstance(incomplete, int) or incomplete < 0:
+              raise SystemExit("invalid joint incomplete population")
+          if conclusive + incomplete != universe:
+              raise SystemExit("stage-1 population accounting mismatch")
+
+          preservation = payload.get("closed_contract_preservation") or {}
+          if preservation.get("financial_excess_magnitude_rewarded") is not False:
+              raise SystemExit("stage 1 cannot reward excess financial magnitude")
+          if preservation.get("conduct_below_expected_rewarded_as_quality") is not False:
+              raise SystemExit("stage 1 cannot reward below-expected pressure as quality")
+          if preservation.get("missing_pillar_treated_as_neutral") is not False:
+              raise SystemExit("missing evidence cannot become neutral")
+          if preservation.get("confidence_used_as_performance") is not False:
+              raise SystemExit("confidence cannot become performance")
+
+          forbidden = {
+              "overall_score",
+              "financial_score",
+              "conduct_score",
+              "ranking_position",
+              "assessment_eligible",
+              "ranking_eligible",
+          }
+          def walk(value):
+              if isinstance(value, dict):
+                  overlap = forbidden & set(value)
+                  if overlap:
+                      raise SystemExit(f"forbidden fields in stage 1: {sorted(overlap)}")
+                  for child in value.values():
+                      walk(child)
+              elif isinstance(value, list):
+                  for child in value:
+                      walk(child)
+          walk(payload)
+
+          print(json.dumps({
+              "population": payload.get("population"),
+              "diagnostics": payload.get("diagnostics"),
+              "architecture_candidates": payload.get("architecture_candidates"),
+              "next_stage": payload.get("next_stage"),
+          }, ensure_ascii=False, indent=2))
+          PY
+
+      - name: Upload cross-pillar calibration diagnostic
+        uses: actions/upload-artifact@v4
+        with:
+          name: v2-cross-pillar-calibration-stage-1-${{ github.run_id }}
+          path: data/derived/v2/cross_pillar_calibration_diagnostic.json
+          retention-days: 14

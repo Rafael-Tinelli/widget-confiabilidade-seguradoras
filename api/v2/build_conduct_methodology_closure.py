@@ -1,0 +1,1038 @@
+from __future__ import annotations
+
+import json
+import math
+from collections import Counter
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+from scipy.stats import beta, chi2
+
+from api.v2.conduct_monthly_pressure import (
+    ZERO_MARKET_COMPLAINTS_POLICY,
+    ZERO_MARKET_COMPLAINTS_STATE,
+    zero_market_complaints_guard,
+)
+
+CALIBRATION_PATH = Path("data/derived/v2/conduct_comparative_calibration_v2.json")
+RECONCILIATION_PATH = Path("data/derived/v2/conduct_coverage_reconciliation.json")
+PORTFOLIO_PATH = Path("data/derived/v2/conduct_portfolio_mix_diagnostic.json")
+OUTPUT_PATH = Path("data/derived/v2/conduct_methodology_closure.json")
+
+VERSION = "2.0-draft-conduct-methodology-closure-5"
+FAMILYWISE_ALPHA = 0.05
+COMMON_MONTHS = 12
+MIN_TEMPORAL_MONTHS = 9
+PERSISTENCE_SHARE = 0.50
+HALF_MIN_COMPARABLE_MONTHS = 3
+MINIMUM_SANITY_POPULATION = 100
+ALIGNED_POLICY = "sum_monthly_expected_then_observed_divided_by_expected"
+
+RECOVERY_ROUTE_BY_STATE = {
+    "hybrid_insurance_pension_requires_product_numerator": "recover_product_specific_complaint_numerator",
+    "no_current_insurance_activity_observed": "audit_current_insurance_activity_and_exposure",
+    "no_current_insurance_activity_observed_pension_activity_present": "audit_insurance_activity_without_using_pension_as_denominator",
+    "insurance_premium_direct_incomplete": "recover_complete_insurance_premium_direct_exposure",
+    "negative_direct_premium_requires_accounting_review": "review_negative_direct_premium_accounting",
+    "shared_consumer_subject_requires_product_split": "recover_product_or_carrier_specific_complaint_numerator",
+    "consumer_subject_single_carrier_exposure_not_brand_specific": "recover_brand_specific_exposure",
+    "multi_carrier_subject_requires_product_split": "recover_carrier_specific_product_numerator",
+    "portfolio_transfer_counterparty_requires_temporal_reconciliation": "reconcile_portfolio_transfer_by_effective_date",
+    "portfolio_transfer_requires_temporal_reconciliation": "reconcile_portfolio_transfer_by_effective_date",
+    "runoff_pressure_not_applicable": "use_runoff_specific_conduct_context_without_current_pressure",
+    "no_positive_insurance_premium_observed": "reconcile_positive_insurance_exposure",
+    "shared_exposure_with_external_consumer_subject": "reconcile_external_subject_and_exposure",
+}
+
+
+class ConductMethodologyClosureError(RuntimeError):
+    """Raised when the Conduct methodology cannot be closed safely."""
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _finite(value: Any, *, field: str) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ConductMethodologyClosureError(f"non-numeric {field}: {value!r}") from exc
+    if not math.isfinite(number):
+        raise ConductMethodologyClosureError(f"non-finite {field}: {value!r}")
+    return number
+
+
+def _optional_finite(value: Any, *, field: str) -> float | None:
+    if value is None:
+        return None
+    return _finite(value, field=field)
+
+
+def _nonnegative_int(value: Any, *, field: str) -> int:
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ConductMethodologyClosureError(f"non-integer {field}: {value!r}") from exc
+    if not math.isfinite(numeric) or not numeric.is_integer():
+        raise ConductMethodologyClosureError(f"non-integer {field}: {value!r}")
+    number = int(numeric)
+    if number < 0:
+        raise ConductMethodologyClosureError(f"negative {field}: {number}")
+    return number
+
+
+def _period(month: str) -> int:
+    text = str(month or "").strip().replace("-", "")
+    if len(text) != 6 or not text.isdigit():
+        raise ConductMethodologyClosureError(f"invalid comparison month: {month!r}")
+    year = int(text[:4])
+    number = int(text[4:])
+    if year < 2000 or not 1 <= number <= 12:
+        raise ConductMethodologyClosureError(f"invalid comparison month: {month!r}")
+    return int(text)
+
+
+def _next_period(period: int) -> int:
+    year = period // 100
+    month = period % 100
+    return (year + 1) * 100 + 1 if month == 12 else year * 100 + month + 1
+
+
+def _validate_common_months(entities: list[dict[str, Any]]) -> list[str]:
+    month_sets: list[list[str]] = []
+    for entity in entities:
+        raw_months = [
+            str(row.get("month") or "") for row in entity.get("monthly") or []
+        ]
+        if len(raw_months) != COMMON_MONTHS or len(set(raw_months)) != COMMON_MONTHS:
+            raise ConductMethodologyClosureError(
+                f"entity {entity.get('entity_id')} does not contain exactly "
+                f"{COMMON_MONTHS} unique months"
+            )
+        month_sets.append(sorted(raw_months))
+    if not month_sets:
+        raise ConductMethodologyClosureError("no Conduct monthly series available")
+    months = month_sets[0]
+    if any(item != months for item in month_sets[1:]):
+        raise ConductMethodologyClosureError(
+            "Conduct entities do not share one identical comparison window"
+        )
+    periods = [_period(month) for month in months]
+    for index in range(1, len(periods)):
+        if periods[index] != _next_period(periods[index - 1]):
+            raise ConductMethodologyClosureError(
+                "Conduct comparison window must contain consecutive calendar months"
+            )
+    return months
+
+
+def _validate_unit_contract(calibration: dict[str, Any]) -> dict[str, Any]:
+    denominator = calibration.get("denominator") or {}
+    currency = denominator.get("currency")
+    unit_label = denominator.get("source_unit_label")
+    scale = denominator.get("scale_factor_applied")
+    if currency != "BRL" or unit_label != "R$":
+        raise ConductMethodologyClosureError(
+            "Conduct calibration premium unit contract must be BRL/R$"
+        )
+    try:
+        scale_number = float(scale)
+    except (TypeError, ValueError) as exc:
+        raise ConductMethodologyClosureError(
+            "Conduct calibration premium scale factor must be 1.0"
+        ) from exc
+    if not math.isfinite(scale_number) or not math.isclose(scale_number, 1.0):
+        raise ConductMethodologyClosureError(
+            "Conduct calibration premium scale factor must be 1.0"
+        )
+    source = calibration.get("source") or {}
+    if source.get("ses_currency") != "BRL" or source.get("ses_source_unit_label") != "R$":
+        raise ConductMethodologyClosureError(
+            "Conduct calibration SES source unit contract must be BRL/R$"
+        )
+    source_scale = source.get("ses_scale_factor_applied")
+    try:
+        source_scale_number = float(source_scale)
+    except (TypeError, ValueError) as exc:
+        raise ConductMethodologyClosureError(
+            "Conduct calibration SES source scale factor must be 1.0"
+        ) from exc
+    if not math.isfinite(source_scale_number) or not math.isclose(source_scale_number, 1.0):
+        raise ConductMethodologyClosureError(
+            "Conduct calibration SES source scale factor must be 1.0"
+        )
+    return {
+        "currency": "BRL",
+        "source_unit_label": "R$",
+        "scale_factor_applied": 1.0,
+        "source_documentation_url": source.get("ses_source_documentation_url"),
+    }
+
+
+def _poisson_ratio_interval(
+    observed: int, expected: float, alpha: float
+) -> dict[str, Any]:
+    """Exact Poisson interval for an observed/expected standardized ratio."""
+    if observed < 0 or expected <= 0 or not 0 < alpha < 1:
+        raise ConductMethodologyClosureError("invalid Poisson ratio interval inputs")
+    lower = 0.0 if observed == 0 else float(
+        0.5 * chi2.ppf(alpha / 2.0, 2 * observed) / expected
+    )
+    upper = float(
+        0.5 * chi2.ppf(1.0 - alpha / 2.0, 2 * (observed + 1)) / expected
+    )
+    if lower > 1.0:
+        state = "above_size_proportional_reference"
+    elif upper < 1.0:
+        state = "below_size_proportional_reference"
+    else:
+        state = "not_distinguishable_from_size_proportional_reference"
+    return {
+        "method": "exact_poisson_standardized_ratio",
+        "alpha": float(alpha),
+        "confidence_level": float(1.0 - alpha),
+        "lower": lower,
+        "upper": upper,
+        "reference": 1.0,
+        "state": state,
+    }
+
+
+def _rate_ratio_interval(
+    early_observed: int,
+    early_expected: float,
+    recent_observed: int,
+    recent_expected: float,
+    alpha: float,
+) -> dict[str, Any] | None:
+    """Exact conditional interval for recent/early standardized pressure."""
+    total = early_observed + recent_observed
+    if (
+        early_observed < 0
+        or recent_observed < 0
+        or early_expected <= 0
+        or recent_expected <= 0
+        or total <= 0
+        or not 0 < alpha < 1
+    ):
+        return None
+
+    lower_p = 0.0 if recent_observed == 0 else float(
+        beta.ppf(alpha / 2.0, recent_observed, early_observed + 1)
+    )
+    upper_p = 1.0 if early_observed == 0 else float(
+        beta.ppf(1.0 - alpha / 2.0, recent_observed + 1, early_observed)
+    )
+
+    def convert(probability: float) -> float | None:
+        if probability <= 0:
+            return 0.0
+        if probability >= 1:
+            return None
+        return probability / (1.0 - probability) * early_expected / recent_expected
+
+    point = (
+        None
+        if early_observed == 0
+        else (recent_observed / recent_expected) / (early_observed / early_expected)
+    )
+    lower = convert(lower_p)
+    upper = convert(upper_p)
+    if lower is not None and lower > 1.0:
+        state = "deteriorating_pressure"
+    elif upper is not None and upper < 1.0:
+        state = "improving_pressure"
+    else:
+        state = "no_clear_change"
+
+    return {
+        "method": "exact_conditional_poisson_rate_ratio",
+        "recent_to_early_pressure_ratio": point,
+        "lower": lower,
+        "upper": upper,
+        "reference": 1.0,
+        "state": state,
+        "alpha": float(alpha),
+        "confidence_level": float(1.0 - alpha),
+    }
+
+
+def _baselines(
+    entities: list[dict[str, Any]], premium_key: str
+) -> dict[str, dict[str, Any]]:
+    months = _validate_common_months(entities)
+    result: dict[str, dict[str, Any]] = {}
+    for month_name in months:
+        comparable: list[tuple[dict[str, Any], float]] = []
+        missing_entities = 0
+        non_positive_entities = 0
+        for entity in entities:
+            month = next(
+                (
+                    item
+                    for item in entity.get("monthly") or []
+                    if str(item.get("month") or "") == month_name
+                ),
+                None,
+            )
+            if month is None:
+                raise ConductMethodologyClosureError(
+                    f"entity {entity.get('entity_id')} misses month {month_name}"
+                )
+            premium = _optional_finite(month.get(premium_key), field=premium_key)
+            if premium is None:
+                missing_entities += 1
+                continue
+            if premium <= 0:
+                non_positive_entities += 1
+                continue
+            comparable.append((month, premium))
+        result[month_name] = {
+            "comparable_entities": len(comparable),
+            "missing_exposure_entities": missing_entities,
+            "non_positive_exposure_entities": non_positive_entities,
+            "market_complaints": sum(
+                _nonnegative_int(item.get("complaints") or 0, field="complaints")
+                for item, _premium in comparable
+            ),
+            "market_premium": float(sum(premium for _item, premium in comparable)),
+        }
+    return result
+
+
+def _longest_run(states: list[str], target: str) -> int:
+    best = 0
+    current = 0
+    for state in states:
+        if state == target:
+            current += 1
+            best = max(best, current)
+        else:
+            current = 0
+    return best
+
+
+def _series(
+    entity: dict[str, Any],
+    premium_key: str,
+    baselines: dict[str, dict[str, Any]],
+    *,
+    annual_alpha: float,
+    monthly_alpha: float,
+) -> dict[str, Any]:
+    points: list[dict[str, Any]] = []
+    aligned_observed = 0
+    aligned_expected = 0.0
+    complaints_missing_exposure = 0
+    complaints_non_positive_exposure = 0
+    complaints_zero_market = 0
+
+    entity_months = list(entity.get("monthly") or [])
+    if len(entity_months) != COMMON_MONTHS:
+        raise ConductMethodologyClosureError(
+            f"entity {entity.get('entity_id')} has unexpected month count"
+        )
+    for month in entity_months:
+        month_name = str(month.get("month") or "")
+        if month_name not in baselines:
+            raise ConductMethodologyClosureError(
+                f"entity {entity.get('entity_id')} has month outside baseline: {month_name}"
+            )
+        complaints = _nonnegative_int(month.get("complaints") or 0, field="complaints")
+        premium = _optional_finite(month.get(premium_key), field=premium_key)
+        baseline = baselines[month_name]
+        market_premium = float(baseline["market_premium"])
+        market_complaints = _nonnegative_int(
+            baseline["market_complaints"], field="market_complaints"
+        )
+
+        if premium is None:
+            complaints_missing_exposure += complaints
+            points.append(
+                {
+                    "month": month_name,
+                    "state": "unavailable_missing_comparable_exposure",
+                    "reason_code": "missing_entity_premium",
+                    "complaints": complaints,
+                    "premium": None,
+                    "expected_complaints": None,
+                    "pressure_ratio": None,
+                    "uncertainty": None,
+                }
+            )
+            continue
+
+        if premium <= 0 or market_premium <= 0:
+            complaints_non_positive_exposure += complaints
+            points.append(
+                {
+                    "month": month_name,
+                    "state": "unavailable_non_positive_comparable_exposure",
+                    "reason_code": "non_positive_entity_or_market_premium",
+                    "complaints": complaints,
+                    "premium": premium,
+                    "expected_complaints": None,
+                    "pressure_ratio": None,
+                    "uncertainty": None,
+                }
+            )
+            continue
+
+        zero_guard = zero_market_complaints_guard(market_complaints, market_premium)
+        if zero_guard is not None:
+            complaints_zero_market += complaints
+            points.append(
+                {
+                    "month": month_name,
+                    "complaints": complaints,
+                    "premium": premium,
+                    **zero_guard,
+                    "uncertainty": None,
+                }
+            )
+            continue
+
+        expected = market_complaints * premium / market_premium
+        interval = _poisson_ratio_interval(complaints, expected, monthly_alpha)
+        aligned_observed += complaints
+        aligned_expected += expected
+        points.append(
+            {
+                "month": month_name,
+                "state": "available",
+                "reason_code": None,
+                "complaints": complaints,
+                "premium": premium,
+                "expected_complaints": float(expected),
+                "pressure_ratio": float(complaints / expected),
+                "uncertainty": interval,
+            }
+        )
+
+    comparable_points = [point for point in points if point["state"] == "available"]
+    if aligned_expected <= 0:
+        annual = {
+            "state": "unavailable",
+            "observed_complaints": aligned_observed,
+            "expected_complaints": None,
+            "ratio": None,
+            "uncertainty": None,
+        }
+    else:
+        interval = _poisson_ratio_interval(aligned_observed, aligned_expected, annual_alpha)
+        annual = {
+            "state": "available",
+            "observed_complaints": aligned_observed,
+            "expected_complaints": float(aligned_expected),
+            "ratio": float(aligned_observed / aligned_expected),
+            "uncertainty": interval,
+        }
+
+    monthly_states = [
+        point["uncertainty"]["state"] if point.get("uncertainty") else "unavailable"
+        for point in points
+    ]
+    above = sum(state == "above_size_proportional_reference" for state in monthly_states)
+    below = sum(state == "below_size_proportional_reference" for state in monthly_states)
+    indeterminate = sum(
+        state == "not_distinguishable_from_size_proportional_reference"
+        for state in monthly_states
+    )
+    available = len(comparable_points)
+    annual_state = (
+        annual["uncertainty"]["state"] if annual.get("uncertainty") else "unavailable"
+    )
+    required_persistent_months = (
+        math.ceil(available * PERSISTENCE_SHARE) if available else None
+    )
+    if available < MIN_TEMPORAL_MONTHS:
+        persistence_state = "insufficient_temporal_coverage"
+    elif annual_state == "above_size_proportional_reference":
+        persistence_state = (
+            "persistent_above_expected"
+            if above >= int(required_persistent_months or 0)
+            else "episodic_or_sparse_above_expected"
+        )
+    elif annual_state == "below_size_proportional_reference":
+        persistence_state = (
+            "persistent_below_expected"
+            if below >= int(required_persistent_months or 0)
+            else "episodic_or_sparse_below_expected"
+        )
+    else:
+        persistence_state = "not_distinguishable_from_expected"
+
+    midpoint = COMMON_MONTHS // 2
+    early_points = points[:midpoint]
+    recent_points = points[midpoint:]
+
+    def half_summary(half: list[dict[str, Any]]) -> tuple[int, float, int]:
+        valid = [point for point in half if point["state"] == "available"]
+        return (
+            sum(_nonnegative_int(point["complaints"], field="complaints") for point in valid),
+            sum(float(point["expected_complaints"]) for point in valid),
+            len(valid),
+        )
+
+    early_observed, early_expected, early_months = half_summary(early_points)
+    recent_observed, recent_expected, recent_months = half_summary(recent_points)
+    if early_months < HALF_MIN_COMPARABLE_MONTHS or recent_months < HALF_MIN_COMPARABLE_MONTHS:
+        trend = {
+            "state": "insufficient_temporal_coverage",
+            "early_comparable_months": early_months,
+            "recent_comparable_months": recent_months,
+            "interval": None,
+        }
+    else:
+        interval = _rate_ratio_interval(
+            early_observed,
+            early_expected,
+            recent_observed,
+            recent_expected,
+            annual_alpha,
+        )
+        trend = {
+            "state": interval["state"] if interval else "insufficient_events",
+            "early_comparable_months": early_months,
+            "recent_comparable_months": recent_months,
+            "early_observed": early_observed,
+            "early_expected": float(early_expected),
+            "recent_observed": recent_observed,
+            "recent_expected": float(recent_expected),
+            "interval": interval,
+        }
+
+    missing_months = sum(
+        point.get("state") == "unavailable_missing_comparable_exposure"
+        for point in points
+    )
+    non_positive_months = sum(
+        point.get("state") == "unavailable_non_positive_comparable_exposure"
+        for point in points
+    )
+    zero_months = sum(
+        point.get("state") == ZERO_MARKET_COMPLAINTS_STATE for point in points
+    )
+    total_excluded_complaints = (
+        complaints_missing_exposure
+        + complaints_non_positive_exposure
+        + complaints_zero_market
+    )
+    return {
+        "premium_field": premium_key,
+        "premium_currency": "BRL",
+        "premium_source_unit_label": "R$",
+        "premium_scale_factor_applied": 1.0,
+        "aggregation_policy": ALIGNED_POLICY,
+        "annual": annual,
+        "monthly": points,
+        "temporal_coverage": {
+            "comparable_months": available,
+            "unavailable_months": COMMON_MONTHS - available,
+            "missing_exposure_months": missing_months,
+            "non_positive_exposure_months": non_positive_months,
+            "zero_market_complaint_months": zero_months,
+            "zero_market_complaints_policy": ZERO_MARKET_COMPLAINTS_POLICY,
+            "complaints_excluded_missing_exposure": complaints_missing_exposure,
+            "complaints_excluded_non_positive_exposure": complaints_non_positive_exposure,
+            "complaints_excluded_zero_market_complaints": complaints_zero_market,
+            "complaints_excluded_from_pressure_in_non_comparable_months": total_excluded_complaints,
+        },
+        "persistence": {
+            "state": persistence_state,
+            "monthly_familywise_within_entity": True,
+            "credible_above_months": above,
+            "credible_below_months": below,
+            "indeterminate_months": indeterminate,
+            "unavailable_months": COMMON_MONTHS - available,
+            "required_persistent_months": required_persistent_months,
+            "longest_credible_above_run": _longest_run(
+                monthly_states, "above_size_proportional_reference"
+            ),
+            "longest_credible_below_run": _longest_run(
+                monthly_states, "below_size_proportional_reference"
+            ),
+        },
+        "trend": trend,
+    }
+
+
+def _satisfaction_context(entity: dict[str, Any]) -> dict[str, Any]:
+    satisfaction = entity.get("satisfaction") or {}
+    trend = satisfaction.get("trend") or {}
+    early_sample = _nonnegative_int(
+        trend.get("early_half_sample") or 0, field="early_half_sample"
+    )
+    recent_sample = _nonnegative_int(
+        trend.get("recent_half_sample") or 0, field="recent_half_sample"
+    )
+    direction = str(trend.get("direction") or "insufficient")
+    return {
+        "role": "context_only_not_pressure_weight",
+        "sample_count": _nonnegative_int(
+            satisfaction.get("sample_count") or 0, field="satisfaction.sample_count"
+        ),
+        "average": satisfaction.get("average"),
+        "early_half_average": trend.get("early_half_average"),
+        "early_half_sample": early_sample,
+        "recent_half_average": trend.get("recent_half_average"),
+        "recent_half_sample": recent_sample,
+        "direction": (
+            "insufficient_sample"
+            if early_sample < 10 or recent_sample < 10
+            else direction
+        ),
+        "guard": "satisfaction_does_not_measure_complaint_incidence",
+    }
+
+
+def _final_pressure_state(
+    direct: dict[str, Any], earned: dict[str, Any]
+) -> tuple[str, str]:
+    direct_coverage = _nonnegative_int(
+        direct["temporal_coverage"]["comparable_months"],
+        field="direct.comparable_months",
+    )
+    direct_interval = (direct.get("annual") or {}).get("uncertainty")
+    if direct_coverage < MIN_TEMPORAL_MONTHS or not direct_interval:
+        return (
+            "pressure_unavailable_insufficient_temporal_coverage",
+            "Não há meses comparáveis suficientes para uma conclusão anual.",
+        )
+
+    direct_state = str(direct_interval["state"])
+    earned_coverage = _nonnegative_int(
+        (earned.get("temporal_coverage") or {}).get("comparable_months") or 0,
+        field="earned.comparable_months",
+    )
+    earned_interval = (earned.get("annual") or {}).get("uncertainty")
+    if earned_coverage >= MIN_TEMPORAL_MONTHS and earned_interval is not None:
+        earned_state = str(earned_interval["state"])
+        if earned_state != direct_state:
+            return (
+                "pressure_inconclusive_denominator_sensitivity",
+                "A conclusão muda de estado quando usamos a medida diagnóstica de prêmio ganho.",
+            )
+
+    if direct_state == "above_size_proportional_reference":
+        return (
+            "above_expected_with_sufficient_evidence",
+            "Há mais reclamações do que esperaríamos para o tamanho da operação nos meses comparáveis.",
+        )
+    if direct_state == "below_size_proportional_reference":
+        return (
+            "below_expected_with_sufficient_evidence",
+            "Há menos reclamações do que esperaríamos para o tamanho da operação nos meses comparáveis; isso não prova melhor atendimento.",
+        )
+    return (
+        "not_distinguishable_from_expected",
+        "Os dados não mostram diferença suficientemente clara em relação ao esperado para o tamanho da operação.",
+    )
+
+
+def _assert_calibration_alignment(entity: dict[str, Any], direct: dict[str, Any]) -> None:
+    calibration_pressure = entity.get("pressure_12m") or {}
+    if calibration_pressure.get("aggregation_policy") != ALIGNED_POLICY:
+        raise ConductMethodologyClosureError(
+            f"calibration pressure is not monthly-aligned: {entity.get('entity_id')}"
+        )
+    closure_annual = direct.get("annual") or {}
+    for field in ("observed_complaints", "expected_complaints", "ratio"):
+        left = calibration_pressure.get(field)
+        right = closure_annual.get(field)
+        if left is None or right is None:
+            if left != right:
+                raise ConductMethodologyClosureError(
+                    f"calibration/closure pressure mismatch for {entity.get('entity_id')}: {field}"
+                )
+            continue
+        if not math.isclose(float(left), float(right), rel_tol=1e-10, abs_tol=1e-10):
+            raise ConductMethodologyClosureError(
+                f"calibration/closure pressure mismatch for {entity.get('entity_id')}: {field}"
+            )
+
+    calibration_months = _nonnegative_int(
+        calibration_pressure.get("comparable_months") or 0,
+        field="calibration.comparable_months",
+    )
+    closure_months = _nonnegative_int(
+        (direct.get("temporal_coverage") or {}).get("comparable_months") or 0,
+        field="closure.comparable_months",
+    )
+    if calibration_months != closure_months:
+        raise ConductMethodologyClosureError(
+            f"calibration/closure comparable-month mismatch for {entity.get('entity_id')}"
+        )
+    calibration_zero = _nonnegative_int(
+        calibration_pressure.get("zero_market_complaint_months") or 0,
+        field="calibration.zero_market_complaint_months",
+    )
+    closure_zero = _nonnegative_int(
+        (direct.get("temporal_coverage") or {}).get("zero_market_complaint_months") or 0,
+        field="closure.zero_market_complaint_months",
+    )
+    if calibration_zero != closure_zero:
+        raise ConductMethodologyClosureError(
+            f"calibration/closure zero-market-month mismatch for {entity.get('entity_id')}"
+        )
+
+
+def build_closure(
+    calibration: dict[str, Any],
+    reconciliation: dict[str, Any],
+    portfolio: dict[str, Any],
+) -> dict[str, Any]:
+    if calibration.get("scoring") != "forbidden_in_this_artifact":
+        raise ConductMethodologyClosureError("upstream calibration must forbid scoring")
+    if reconciliation.get("scoring") not in {
+        "forbidden_in_this_artifact",
+        "forbidden",
+        None,
+    }:
+        raise ConductMethodologyClosureError("unexpected reconciliation scoring state")
+    if portfolio.get("scoring") != "forbidden_in_this_artifact":
+        raise ConductMethodologyClosureError("portfolio diagnostic must forbid scoring")
+
+    unit_contract = _validate_unit_contract(calibration)
+    candidates = list(calibration.get("entities") or [])
+    reconciliation_entities = list(reconciliation.get("entities") or [])
+    if len(reconciliation_entities) < MINIMUM_SANITY_POPULATION:
+        raise ConductMethodologyClosureError(
+            "reconciled insurer population is unexpectedly small: "
+            f"{len(reconciliation_entities)}"
+        )
+
+    expected_candidate_ids = {
+        str(row.get("entity_id") or "")
+        for row in reconciliation_entities
+        if str(((row.get("pressure_comparability") or {}).get("state")) or "")
+        == "direct_one_to_one_candidate"
+        and bool((row.get("pressure_comparability") or {}).get("pressure_eligible_candidate"))
+    }
+    candidate_ids = {str(row.get("entity_id") or "") for row in candidates}
+    if not candidates:
+        raise ConductMethodologyClosureError("conduct calibration has no pressure candidates")
+    if candidate_ids != expected_candidate_ids:
+        missing = sorted(expected_candidate_ids - candidate_ids)[:10]
+        extra = sorted(candidate_ids - expected_candidate_ids)[:10]
+        raise ConductMethodologyClosureError(
+            "calibration and reconciliation candidate populations differ: "
+            f"missing={missing} extra={extra}"
+        )
+
+    direct_baselines = _baselines(candidates, "premium_direct")
+    earned_baselines = _baselines(candidates, "premium_earned_diagnostic")
+    annual_alpha = FAMILYWISE_ALPHA / len(candidates)
+    monthly_alpha = FAMILYWISE_ALPHA / COMMON_MONTHS
+    portfolio_by_id = {
+        str(row.get("entity_id") or ""): row for row in portfolio.get("entities") or []
+    }
+    candidate_by_id = {str(row.get("entity_id") or ""): row for row in candidates}
+
+    candidate_rows: list[dict[str, Any]] = []
+    for entity_id, entity in sorted(candidate_by_id.items()):
+        direct = _series(
+            entity,
+            "premium_direct",
+            direct_baselines,
+            annual_alpha=annual_alpha,
+            monthly_alpha=monthly_alpha,
+        )
+        _assert_calibration_alignment(entity, direct)
+        earned = _series(
+            entity,
+            "premium_earned_diagnostic",
+            earned_baselines,
+            annual_alpha=annual_alpha,
+            monthly_alpha=monthly_alpha,
+        )
+        final_state, human_summary = _final_pressure_state(direct, earned)
+
+        portfolio_context = (portfolio_by_id.get(entity_id) or {}).get("portfolio") or {}
+        earned_coverage = _nonnegative_int(
+            earned["temporal_coverage"]["comparable_months"],
+            field="earned.comparable_months",
+        )
+        earned_interval = (earned.get("annual") or {}).get("uncertainty")
+        earned_sensitivity_usable = (
+            earned_coverage >= MIN_TEMPORAL_MONTHS and earned_interval is not None
+        )
+
+        candidate_rows.append(
+            {
+                "entity_id": entity_id,
+                "fip_code": entity.get("fip_code"),
+                "cnpj": entity.get("cnpj"),
+                "legal_name": entity.get("legal_name"),
+                "display_name": entity.get("display_name"),
+                "conduct_observed_complaints_12m": _nonnegative_int(
+                    entity.get("complaints_12m") or 0,
+                    field="complaints_12m",
+                ),
+                "comparability_state": "direct_one_to_one_candidate",
+                "pressure_conclusion": {
+                    "state": final_state,
+                    "human_summary": human_summary,
+                    "not_a_customer_incidence_rate": True,
+                    "not_a_quality_certification": True,
+                },
+                "direct_pressure": direct,
+                "earned_sensitivity": {
+                    **earned,
+                    "role": "diagnostic_guard_only",
+                    "selected_as_denominator": False,
+                    "minimum_comparable_months_for_veto": MIN_TEMPORAL_MONTHS,
+                    "usable_for_directional_veto": earned_sensitivity_usable,
+                    "annual_state_consistent_with_direct": (
+                        earned_interval.get("state")
+                        == ((direct.get("annual") or {}).get("uncertainty") or {}).get("state")
+                    )
+                    if earned_sensitivity_usable
+                    else None,
+                },
+                "portfolio_context": {
+                    "role": "context_and_sensitivity_only",
+                    "nearest_distance": portfolio_context.get("nearest_distance"),
+                    "fifth_nearest_distance": portfolio_context.get("fifth_nearest_distance"),
+                    "peer_group_selected": False,
+                    "pressure_adjusted_for_portfolio": False,
+                },
+                "satisfaction": _satisfaction_context(entity),
+                "remediation": {
+                    "state": "not_established_from_current_p3",
+                    "reason": (
+                        "O core P3 preservado nao oferece denominador avaliado suficiente "
+                        "para inferir resolucao; resposta e finalizacao nao provam remediacao."
+                    ),
+                },
+            }
+        )
+
+    reconciliation_by_id = {
+        str(row.get("entity_id") or ""): row for row in reconciliation_entities
+    }
+    noncomparable_rows: list[dict[str, Any]] = []
+    for entity_id, row in sorted(reconciliation_by_id.items()):
+        pressure = row.get("pressure_comparability") or {}
+        if (
+            str(pressure.get("state") or "") == "direct_one_to_one_candidate"
+            and bool(pressure.get("pressure_eligible_candidate"))
+        ):
+            continue
+        state = str(pressure.get("state") or "unknown")
+        noncomparable_rows.append(
+            {
+                "entity_id": entity_id,
+                "fip_code": row.get("fip_code"),
+                "cnpj": row.get("cnpj"),
+                "legal_name": row.get("legal_name"),
+                "display_name": row.get("display_name"),
+                "conduct_evidence_state": row.get("conduct_evidence_state"),
+                "complaints_12m": row.get("complaints_12m"),
+                "pressure_conclusion": {
+                    "state": "pressure_unavailable_not_comparable",
+                    "comparability_reason": state,
+                    "reason_code": pressure.get("reason_code"),
+                    "recovery_route": RECOVERY_ROUTE_BY_STATE.get(
+                        state, "manual_methodology_review"
+                    ),
+                    "human_summary": (
+                        "Há dados de Conduta, mas não há numerador e denominador "
+                        "comparáveis suficientes para calcular pressão sem inventar atribuições."
+                    ),
+                },
+            }
+        )
+
+    if len(candidate_rows) + len(noncomparable_rows) != len(reconciliation_entities):
+        raise ConductMethodologyClosureError(
+            "candidate and non-comparable partitions do not cover reconciliation population"
+        )
+
+    conclusion_counts = Counter(
+        str(row["pressure_conclusion"]["state"]) for row in candidate_rows
+    )
+    persistence_counts = Counter(
+        str(row["direct_pressure"]["persistence"]["state"]) for row in candidate_rows
+    )
+    trend_counts = Counter(
+        str(row["direct_pressure"]["trend"]["state"]) for row in candidate_rows
+    )
+    satisfaction_counts = Counter(
+        str(row["satisfaction"]["direction"]) for row in candidate_rows
+    )
+    portfolio_association = (
+        (portfolio.get("diagnostics") or {}).get(
+            "portfolio_distance_vs_pressure_difference", {}
+        )
+    )
+    portfolio_coverage = (
+        (portfolio.get("diagnostics") or {}).get("peer_coverage_curve") or []
+    )
+
+    return {
+        "artifact": "v2_conduct_methodology_closure",
+        "generated_at": _utc_now(),
+        "version": VERSION,
+        "status": "conduct_methodology_closed_for_signal_design",
+        "assessment_role": "final_conduct_evidence_and_comparability_contract_before_score_calibration",
+        "scoring": "forbidden_in_this_artifact",
+        "ranking": "forbidden_in_this_artifact",
+        "unit_contract": unit_contract,
+        "human_model": {
+            "pressure_question": "Reclama muito para o tamanho da operacao?",
+            "credibility_question": "Temos dados suficientes para confiar nessa diferenca?",
+            "time_question": "O sinal aparece de forma repetida ou parece episodico?",
+            "trend_question": "A pressao esta melhorando, piorando ou sem mudanca clara?",
+            "portfolio_question": "A carteira e diferente o bastante para exigir cautela na comparacao?",
+            "satisfaction_question": "Entre quem avaliou, como foi a experiencia e qual o tamanho da amostra?",
+            "silence_rule": "quando a evidencia nao sustenta a frase, a ferramenta nao afirma",
+        },
+        "methodology_decisions": {
+            "exposure_domain": "insurance_only",
+            "approved_operational_denominator": {
+                "field": "insurance_premium_direct",
+                "source": "Ses_seguros.csv:premio_direto",
+                "currency": "BRL",
+                "source_unit_label": "R$",
+                "scale_factor_applied": 1.0,
+                "source_documentation_url": unit_contract.get("source_documentation_url"),
+                "scope": "direct_one_to_one_candidate_only",
+                "approved_for_conduct_pressure": True,
+                "not_customer_count": True,
+                "private_pension_excluded": True,
+                "capitalization_excluded": True,
+                "monthly_alignment_required": True,
+                "annual_aggregation": ALIGNED_POLICY,
+                "zero_market_complaints_policy": ZERO_MARKET_COMPLAINTS_POLICY,
+            },
+            "diagnostic_denominator_guard": {
+                "field": "insurance_premium_earned",
+                "currency": "BRL",
+                "source_unit_label": "R$",
+                "scale_factor_applied": 1.0,
+                "minimum_comparable_months_for_directional_veto": MIN_TEMPORAL_MONTHS,
+                "incomplete_source_cells_are_unavailable_not_zero": True,
+            },
+            "uncertainty": {
+                "annual_method": "exact_poisson_standardized_ratio",
+                "annual_familywise_alpha": FAMILYWISE_ALPHA,
+                "annual_comparisons": len(candidates),
+                "annual_per_entity_alpha": annual_alpha,
+                "monthly_method": "exact_poisson_standardized_ratio",
+                "monthly_familywise_within_entity": True,
+                "monthly_per_month_alpha": monthly_alpha,
+                "shrinkage_selected": False,
+                "empirical_bayes_selected": False,
+                "reason": (
+                    "A etapa atual precisa impedir conclusoes frageis, nao estimar uma "
+                    "magnitude suavizada para score."
+                ),
+            },
+            "persistence": {
+                "minimum_comparable_months": MIN_TEMPORAL_MONTHS,
+                "persistent_share_of_comparable_months": PERSISTENCE_SHARE,
+                "role": "separate_repeated_signal_from_episodic_or_sparse_signal",
+            },
+            "trend": {
+                "comparison": "recent_6m_vs_early_6m",
+                "minimum_comparable_months_per_half": HALF_MIN_COMPARABLE_MONTHS,
+                "method": "exact_conditional_poisson_rate_ratio",
+                "familywise_across_entities": True,
+            },
+            "portfolio_mix": {
+                "adjustment_selected": False,
+                "peer_groups_selected": False,
+                "distance_threshold_selected": False,
+                "reason": (
+                    "A associacao entre distancia de carteira e diferenca de pressao e fraca, "
+                    "e limiares estreitos deixam a maior parte do universo sem peers; coramo "
+                    "permanece contexto e diagnostico de sensibilidade."
+                ),
+                "all_pairs_spearman": portfolio_association.get("all_pairs_spearman"),
+                "high_volume_pairs_spearman": portfolio_association.get(
+                    "high_volume_100_plus_pairs_spearman"
+                ),
+                "peer_coverage_curve": portfolio_coverage,
+            },
+            "satisfaction": {
+                "role": "context_only_not_pressure_weight",
+                "minimum_sample_per_half_for_direction": 10,
+            },
+            "remediation": {
+                "selected": False,
+                "state": "not_established_from_current_p3",
+                "reason": (
+                    "Responder/finalizar nao prova remediacao e o denominador de resolucao "
+                    "nao esta preservado de forma suficiente no P3 atual."
+                ),
+            },
+            "non_comparable_entities": {
+                "remain_searchable": True,
+                "pressure_is_null": True,
+                "no_weight_redistribution": True,
+                "recovery_routes_preserved": True,
+            },
+        },
+        "population": {
+            "regulatory_universe": len(reconciliation_entities),
+            "pressure_candidates": len(candidate_rows),
+            "pressure_unavailable_not_comparable": len(noncomparable_rows),
+        },
+        "diagnostics": {
+            "pressure_conclusion_counts": dict(sorted(conclusion_counts.items())),
+            "persistence_counts": dict(sorted(persistence_counts.items())),
+            "trend_counts": dict(sorted(trend_counts.items())),
+            "satisfaction_direction_counts": dict(sorted(satisfaction_counts.items())),
+        },
+        "candidate_entities": candidate_rows,
+        "non_comparable_entities": noncomparable_rows,
+        "closure": {
+            "conduct_foundation_complete": True,
+            "conduct_comparability_contract_complete": True,
+            "conduct_signal_contract_complete": True,
+            "conduct_numeric_score_defined": False,
+            "next_stage": "cross_pillar_score_calibration_after_financial_methodology_closure",
+            "important": (
+                "Fechar Conduta significa saber quando e como afirmar algo; "
+                "nao significa fabricar pressao para casos sem comparabilidade."
+            ),
+        },
+    }
+
+
+def build_from_files() -> dict[str, Any]:
+    return build_closure(
+        json.loads(CALIBRATION_PATH.read_text(encoding="utf-8")),
+        json.loads(RECONCILIATION_PATH.read_text(encoding="utf-8")),
+        json.loads(PORTFOLIO_PATH.read_text(encoding="utf-8")),
+    )
+
+
+def main() -> None:
+    payload = build_from_files()
+    OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
+    OUTPUT_PATH.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    print(
+        json.dumps(
+            {
+                "artifact": payload["artifact"],
+                "version": payload["version"],
+                "status": payload["status"],
+                "population": payload["population"],
+                "diagnostics": payload["diagnostics"],
+                "closure": payload["closure"],
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+    print(f"written to {OUTPUT_PATH}")
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,210 @@
+{
+  "schema_version": "2.0-draft-consumer-gov-receita-hints-1",
+  "source_authority": "Receita Federal do Brasil",
+  "source_url": "https://solucoes.receita.fazenda.gov.br/Servicos/cnpjreva/",
+  "verified_at": "2026-08-21",
+  "policy": {
+    "purpose": "Persist source-backed legal-entity identities for Consumer.gov labels that generic Receita name discovery cannot safely resolve.",
+    "fuzzy_matching": "forbidden",
+    "susep_authority": "Current ordinary-insurer admission still requires exact target CNPJ resolution to the canonical SUSEP universe.",
+    "outside_157_rule": "A non-canonical CNPJ may be excluded only when the official Receita primary activity is in the explicit safe outside allowlist.",
+    "sales_channel_transfer": "Never transfer a broker, administrator, cooperative or point-of-sale complaint to a carrier without separate risk-carrier evidence."
+  },
+  "rows": [
+    {
+      "provider_name": "Ciasprev",
+      "target_cnpj": "08071645000127",
+      "resolution_state": "outside_157",
+      "reason_code": "receita_closed_pension_activity",
+      "legal_name_receita": "CIASPREV - CENTRO DE INTEGRACAO E ASSISTENCIA AOS SERVIDORES PUBLICOS PREVIDENCIA PRIVADA",
+      "trade_name": null,
+      "primary_cnae_code": "6541300",
+      "legal_nature_code": "3999",
+      "evidence": [
+        {
+          "authority": "Receita Federal do Brasil",
+          "document": "Comprovante de Inscrição e de Situação Cadastral",
+          "cnpj": "08.071.645/0001-27",
+          "observed_fact": "CNAE principal 65.41-3-00 - Previdência complementar fechada; natureza jurídica Associação Privada"
+        }
+      ]
+    },
+    {
+      "provider_name": "SudaVida (antiga Sudamerica Vida)",
+      "target_cnpj": "81052722000191",
+      "resolution_state": "outside_157",
+      "reason_code": "receita_insurance_broker_or_agent_activity",
+      "legal_name_receita": "SUDAVIDA CORRETORA DE SEGUROS LTDA",
+      "trade_name": "SUDAVIDA",
+      "primary_cnae_code": "6622300",
+      "legal_nature_code": "2240",
+      "evidence": [
+        {
+          "authority": "Receita Federal do Brasil",
+          "document": "Comprovante de Inscrição e de Situação Cadastral",
+          "cnpj": "81.052.722/0001-91",
+          "observed_fact": "Nome fantasia SUDAVIDA; CNAE principal 66.22-3-00 - Corretores e agentes de seguros, de planos de previdência complementar e de saúde"
+        }
+      ]
+    },
+    {
+      "provider_name": "American Life Seguros",
+      "target_cnpj": "67865360000127",
+      "resolution_state": "matched_current_insurer",
+      "reason_code": "receita_branch_trade_name_same_cnpj_root",
+      "legal_name_receita": "ALLSEG SEGURADORA S/A",
+      "trade_name": "AMERICAN LIFE COMPANHIA DE SEGUROS",
+      "primary_cnae_code": "6511101",
+      "legal_nature_code": "2054",
+      "evidence": [
+        {
+          "authority": "Receita Federal do Brasil",
+          "document": "Comprovante de Inscrição e de Situação Cadastral",
+          "cnpj": "67.865.360/0003-99",
+          "observed_fact": "Filial do mesmo CNPJ-base 67.865.360 usa nome fantasia AMERICAN LIFE COMPANHIA DE SEGUROS; matriz 67.865.360/0001-27 é ALLSEG SEGURADORA S/A"
+        }
+      ]
+    },
+    {
+      "provider_name": "Metlife Administradora de Fundos Multipatrocinados (MultiPrev)",
+      "target_cnpj": "07416843000112",
+      "resolution_state": "outside_157",
+      "reason_code": "receita_auxiliary_insurance_pension_activity",
+      "legal_name_receita": "METLIFE ADMINISTRADORA DE FUNDOS MULTIPATROCINADOS LTDA",
+      "trade_name": null,
+      "primary_cnae_code": "6629100",
+      "legal_nature_code": "2062",
+      "evidence": [
+        {
+          "authority": "Receita Federal do Brasil",
+          "document": "Comprovante de Inscrição e de Situação Cadastral",
+          "cnpj": "07.416.843/0001-12",
+          "observed_fact": "CNAE principal 66.29-1-00 - Atividades auxiliares dos seguros, da previdência complementar e dos planos de saúde; natureza jurídica Sociedade Empresária Limitada"
+        },
+        {
+          "authority": "Receita Federal do Brasil",
+          "document": "Comprovante de Inscrição e de Situação Cadastral",
+          "cnpj": "67.846.188/0001-64",
+          "observed_fact": "MULTIPREV FUNDO MULTIPLO DE PENSAO possui CNAE principal 65.41-3-00 - Previdência complementar fechada e natureza jurídica Associação Privada"
+        }
+      ]
+    },
+    {
+      "provider_name": "Presença Tech",
+      "target_cnpj": "49599381000166",
+      "resolution_state": "outside_157",
+      "reason_code": "receita_securitization_activity",
+      "legal_name_receita": "PRESENCA TECH SECURITIZADORA S/A",
+      "trade_name": null,
+      "primary_cnae_code": "6492100",
+      "legal_nature_code": "2054",
+      "evidence": [
+        {
+          "authority": "Receita Federal do Brasil",
+          "document": "Comprovante de Inscrição e de Situação Cadastral",
+          "cnpj": "49.599.381/0001-66",
+          "observed_fact": "CNAE principal 64.92-1-00 - Securitização de créditos"
+        }
+      ]
+    },
+    {
+      "provider_name": "MG Seguros",
+      "target_cnpj": "26136748000100",
+      "resolution_state": "matched_current_insurer",
+      "reason_code": "verified_receita_trade_name_current_susep_insurer",
+      "legal_name_receita": "BMG SEGURADORA S.A",
+      "trade_name": "MG SEGUROS",
+      "primary_cnae_code": "6511101",
+      "legal_nature_code": "2054",
+      "evidence": [
+        {
+          "authority": "Portal da Transparência / Governo Federal",
+          "url": "https://portaldatransparencia.gov.br/pessoa-juridica/26136748000100",
+          "cnpj": "26.136.748/0001-00",
+          "observed_fact": "BMG SEGURADORA S.A. tem nome fantasia MG SEGUROS e CNAE principal de seguros de vida."
+        },
+        {
+          "authority": "PROCON-MS / Cadastro de Reclamações Fundamentadas 2025",
+          "url": "https://www.procon.ms.gov.br/wp-content/uploads/2026/03/Cadastro-de-Reclamacoes-Fundamentadas-2025-%E2%80%93-Tres-Lagoas.pdf",
+          "cnpj": "26.136.748/0001-00",
+          "observed_fact": "Registro público relaciona o fornecedor MG Seguros à pessoa jurídica MG SEGUROS, VIDA E PREVIDENCIA S.A., CNPJ 26.136.748/0001-00."
+        },
+        {
+          "authority": "Consumidor.gov.br",
+          "url": "https://www.consumidor.gov.br/pages/principal/empresas-participantes",
+          "observed_fact": "A lista atual de participantes contém MG Seguros no segmento de Seguros, Capitalização e Previdência e não apresenta uma segunda entrada atual denominada BMG Seguradora."
+        }
+      ]
+    },
+    {
+      "provider_name": "Reag Seguradora",
+      "target_cnpj": "53759974000110",
+      "resolution_state": "matched_current_insurer",
+      "reason_code": "verified_legal_name_same_cnpj_current_susep_insurer",
+      "legal_name_receita": "REAG SEGURADORA S.A.",
+      "trade_name": "TAAMIN SEGURADORA",
+      "primary_cnae_code": "6512000",
+      "legal_nature_code": "2054",
+      "evidence": [
+        {
+          "authority": "Taamin Seguradora",
+          "url": "https://www.taamin.com.br/governanca",
+          "cnpj": "53.759.974/0001-10",
+          "observed_fact": "A página institucional identifica a razão social REAG Seguradora, CNPJ 53.759.974/0001-10 e Registro SUSEP 01864 sob a marca Taamin Seguradora."
+        },
+        {
+          "authority": "SUSEP / Diário Oficial da União",
+          "reference": "Portaria CGRAJ/SUSEP nº 3.047, de 30/03/2026",
+          "observed_fact": "A SUSEP identifica TAAMIN SEGURADORA S.A., CNPJ 53.759.974/0001-10, confirmando a mesma pessoa jurídica atualmente usada no inventário regulatório v2."
+        }
+      ]
+    },
+    {
+      "provider_name": "Ciclic",
+      "target_cnpj": "29032677000193",
+      "resolution_state": "outside_157",
+      "reason_code": "receita_insurance_broker_or_agent_activity",
+      "legal_name_receita": "CICLIC CORRETORA DE SEGUROS S.A.",
+      "trade_name": "CICLIC",
+      "primary_cnae_code": "6622300",
+      "legal_nature_code": "2054",
+      "evidence": [
+        {
+          "authority": "Ciclic",
+          "url": "https://home.ciclic.com.br/termos-de-uso/",
+          "cnpj": "29.032.677/0001-93",
+          "observed_fact": "Os Termos de Uso identificam a participante como CICLIC CORRETORA DE SEGUROS S.A., CNPJ 29.032.677/0001-93."
+        },
+        {
+          "authority": "Receita Federal do Brasil",
+          "document": "Cadastro Nacional da Pessoa Jurídica",
+          "cnpj": "29.032.677/0001-93",
+          "observed_fact": "CNAE principal 66.22-3-00 - Corretores e agentes de seguros, de planos de previdência complementar e de saúde."
+        }
+      ]
+    },
+    {
+      "provider_name": "Sky Seguradora",
+      "target_cnpj": "52997050000199",
+      "resolution_state": "matched_current_insurer",
+      "reason_code": "verified_provider_label_current_susep_insurer",
+      "legal_name_receita": "SKY SEGURADORA S.A. - MICROSSEGURADORA",
+      "trade_name": "SKY SEGURADORA",
+      "primary_cnae_code": "6511101",
+      "legal_nature_code": "2054",
+      "evidence": [
+        {
+          "authority": "Sky Seguradora",
+          "url": "https://skyseguradora.com.br/",
+          "cnpj": "52.997.050/0001-99",
+          "observed_fact": "O site oficial identifica SKY SEGURADORA S.A. - MICROSSEGURADORA, Código SUSEP 0363-8, CNPJ 52.997.050/0001-99."
+        },
+        {
+          "authority": "Consumidor.gov.br",
+          "url": "https://www.consumidor.gov.br/pages/principal/empresas-participantes",
+          "observed_fact": "A lista pública de participantes contém o rótulo 'Sky Seguradora'."
+        }
+      ]
+    }
+  ]
+}

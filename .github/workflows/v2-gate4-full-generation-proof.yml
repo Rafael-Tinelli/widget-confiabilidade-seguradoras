@@ -1,0 +1,385 @@
+name: V2 Gate 4 Full Generation Proof
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - refactor/v2-data-foundation
+    paths:
+      - ".github/workflows/v2-gate4-full-generation-proof.yml"
+      - "api/v2/**"
+      - "api/sources/**"
+      - "api/build_consumidor_gov.py"
+      - "api/utils/**"
+      - "data/reference/v2/**"
+      - "requirements.txt"
+      - "requirements-dev.txt"
+      - "tests/test_v2_gate4_pipeline_static_contract.py"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: v2-gate4-full-generation-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  full-generation-proof:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    env:
+      V2_SOURCE_HEAD_SHA: ${{ github.sha }}
+      V2_BUILD_ID: v2-gate4-full-${{ github.run_id }}-a${{ github.run_attempt }}
+      V2_SOURCE_CACHE_DIR: data/cache/v2/source
+      SES_ALLOW_INSECURE_SSL: "1"
+      SUSEP_LICENSED_VERIFY_SSL: "0"
+      SUSEP_SPECIAL_VERIFY_SSL: "0"
+      SUSEP_SANDBOX_VERIFY_SSL: "1"
+
+    steps:
+      - name: Checkout exact source head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Restore validated regulatory source cache
+        uses: actions/cache/restore@v4
+        with:
+          path: data/cache/v2/source
+          key: v2-gate4-source-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: |
+            v2-gate4-source-${{ runner.os }}-
+
+      - name: Restore validated Conduct source cache
+        uses: actions/cache/restore@v4
+        with:
+          path: data/cache/v2/conduct
+          key: v2-gate4-conduct-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: |
+            v2-gate4-conduct-${{ runner.os }}-
+
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install -r requirements-dev.txt
+
+      - name: Freeze generation timestamp
+        run: |
+          set -euo pipefail
+          echo "V2_GENERATED_AT=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_ENV"
+
+      - name: Validate final Gate 4 code before acquisition
+        run: |
+          set -euo pipefail
+          ruff check \
+            api/v2/gate4_pipeline.py \
+            api/v2/generation.py \
+            api/v2/audit_financial_publication_chain.py \
+            api/v2/build_liquidity_experiment.py \
+            api/v2/build_operating_experiment.py \
+            api/v2/build_public_distribution_manifest.py \
+            api/v2/install_public_generation.py \
+            api/v2/build_ranking_eligibility_preflight.py \
+            tests/test_v2_gate4_pipeline.py \
+            tests/test_v2_gate4_pipeline_static_contract.py \
+            tests/test_v2_generation.py \
+            tests/test_v2_financial_publication_audit.py \
+            tests/test_v2_public_generation_install.py
+          python -m pytest -q \
+            tests/test_v2_gate4_pipeline.py \
+            tests/test_v2_gate4_pipeline_static_contract.py \
+            tests/test_v2_generation.py \
+            tests/test_v2_financial_publication_audit.py \
+            tests/test_v2_public_generation_install.py
+
+      - name: Ensure versioned Consumer.gov bootstrap is available
+        run: |
+          set -euo pipefail
+          python -m api.v2.bootstrap_conduct_consumer_cache
+
+      - name: Validate publication contract before full execution
+        run: |
+          set -euo pipefail
+          python -m api.v2.gate4_pipeline \
+            --write-contract data/derived/v2/gate4_pipeline_contract.json \
+            > /tmp/gate4-contract.log
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          payload = json.loads(
+              Path("data/derived/v2/gate4_pipeline_contract.json").read_text(
+                  encoding="utf-8"
+              )
+          )
+          if payload.get("publication_ready") is not True:
+              raise SystemExit(f"Gate 4 not publication-ready: {payload.get('publication_blockers')}")
+          if payload.get("publication_blockers") != []:
+              raise SystemExit(f"Gate 4 blockers remain: {payload.get('publication_blockers')}")
+          if payload.get("single_generation_workspace_required") is not True:
+              raise SystemExit("single-generation workspace requirement missing")
+          if payload.get("cross_run_latest_successful_restore_forbidden") is not True:
+              raise SystemExit("cross-run latest-successful restoration must remain forbidden")
+          order = payload.get("topological_order") or []
+          if not order or order[0] != "source_snapshot" or order[-1] != "distribution_manifest":
+              raise SystemExit(f"unexpected Gate 4 topological order: {order}")
+          stages = {stage["stage_id"]: stage for stage in payload.get("stages") or []}
+          source_commands = (stages.get("source_snapshot") or {}).get("commands") or []
+          if not source_commands:
+              raise SystemExit("source_snapshot must be executable by the canonical DAG")
+          for stage_id in ("financial_evidence", "liquidity", "operating"):
+              commands = (stages.get(stage_id) or {}).get("commands") or []
+              flattened = [part for command in commands for part in command]
+              if "--eligibility-input" not in flattened or "--ses-zip" not in flattened:
+                  raise SystemExit(
+                      f"{stage_id} must consume same-generation eligibility and SES inputs"
+                  )
+          PY
+
+      - name: Remove prior public-package materialization
+        run: |
+          set -euo pipefail
+          rm -rf data/derived/v2/public
+
+      - name: Execute complete Gate 4 DAG in one generation
+        run: |
+          set -euo pipefail
+          python -m api.v2.gate4_pipeline --run-all > /tmp/gate4-full.log
+          tail -n 80 /tmp/gate4-full.log
+
+      - name: Validate one-generation lineage and methodological boundaries
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          from api.v2.gate4_pipeline import STAGES
+
+          build_id = os.environ["V2_BUILD_ID"]
+          source_head = os.environ["V2_SOURCE_HEAD_SHA"]
+
+          missing = [
+              output
+              for stage in STAGES
+              for output in stage.outputs
+              if not Path(output).exists()
+          ]
+          if missing:
+              raise SystemExit(f"Gate 4 full DAG missing outputs: {missing}")
+
+          source_lineage = json.loads(
+              Path("data/derived/v2/source_lineage.json").read_text(encoding="utf-8")
+          )
+          conduct_lineage = json.loads(
+              Path("data/derived/v2/conduct_source_lineage.json").read_text(encoding="utf-8")
+          )
+          for name, payload in (
+              ("regulatory", source_lineage),
+              ("conduct", conduct_lineage),
+          ):
+              build = payload.get("build") or {}
+              if build.get("build_id") != build_id:
+                  raise SystemExit(f"{name} lineage build_id mismatch")
+              if build.get("source_head_sha") != source_head:
+                  raise SystemExit(f"{name} lineage source_head_sha mismatch")
+              rows = payload.get("sources") or []
+              if not rows:
+                  raise SystemExit(f"{name} lineage is empty")
+              for row in rows:
+                  if row.get("build_id") != build_id:
+                      raise SystemExit(f"{name} source build mismatch: {row.get('source_id')}")
+                  if row.get("state") not in {"fresh", "stale"}:
+                      raise SystemExit(f"unusable {name} source state: {row}")
+                  if len(str(row.get("sha256") or "")) != 64:
+                      raise SystemExit(f"missing {name} source hash: {row.get('source_id')}")
+
+          watchdog = json.loads(
+              Path("data/derived/v2/relationship_watchdog.json").read_text(encoding="utf-8")
+          )
+          if int((watchdog.get("summary") or {}).get("blocking_registry_drift_count") or 0) != 0:
+              raise SystemExit("relationship watchdog contains blocking registry drift")
+
+          conduct = json.loads(
+              Path("data/derived/v2/conduct_methodology_closure.json").read_text(
+                  encoding="utf-8"
+              )
+          )
+          if conduct.get("status") != "conduct_methodology_closed_for_signal_design":
+              raise SystemExit(f"Conduct closure not closed: {conduct.get('status')}")
+          if conduct.get("scoring") != "forbidden_in_this_artifact":
+              raise SystemExit("Conduct closure scoring prohibition was lost")
+          if conduct.get("ranking") != "forbidden_in_this_artifact":
+              raise SystemExit("Conduct closure ranking prohibition was lost")
+
+          financial_audit = json.loads(
+              Path("data/derived/v2/financial_publication_audit.json").read_text(
+                  encoding="utf-8"
+              )
+          )
+          if financial_audit.get("status") != "financial_publication_chain_verified":
+              raise SystemExit(f"financial publication audit failed: {financial_audit}")
+          if (financial_audit.get("contracts") or {}).get("capital_pla_source_field") != "new_pla":
+              raise SystemExit("financial publication audit lost new_pla numerator contract")
+          if financial_audit.get("scoring") != "forbidden_in_this_artifact":
+              raise SystemExit("financial publication audit must forbid scoring")
+          if financial_audit.get("ranking") != "forbidden_in_this_artifact":
+              raise SystemExit("financial publication audit must forbid ranking")
+
+          ranking = json.loads(
+              Path("data/derived/v2/ranking_eligibility_preflight.json").read_text(
+                  encoding="utf-8"
+              )
+          )
+          if int((ranking.get("population") or {}).get("ranking_eligible") or 0) != 0:
+              raise SystemExit("ranking_eligible must remain zero")
+          decision = ranking.get("closure_decision") or {}
+          if decision.get("ranking_eligibility_gate_opened") is not False:
+              raise SystemExit("ranking gate must remain methodologically closed")
+          if ranking.get("ranking") != "forbidden_in_this_artifact":
+              raise SystemExit("ranking preflight must preserve ranking prohibition")
+          freshness_policy = (ranking.get("source_contracts") or {}).get(
+              "operational_freshness_policy"
+          )
+          if freshness_policy != (
+              "single_generation_workspace_cross_run_latest_successful_restore_forbidden"
+          ):
+              raise SystemExit(f"ranking preflight freshness policy mismatch: {freshness_policy}")
+
+          manifest = json.loads(
+              Path("data/derived/v2/public/distribution_manifest.json").read_text(
+                  encoding="utf-8"
+              )
+          )
+          manifest_build = manifest.get("build") or {}
+          if manifest_build.get("build_id") != build_id:
+              raise SystemExit("distribution manifest build_id mismatch")
+          if manifest_build.get("source_head_sha") != source_head:
+              raise SystemExit("distribution manifest source_head_sha mismatch")
+          source_rows = (manifest.get("source_lineage") or {}).get("sources") or []
+          expected_source_ids = {
+              str(row.get("source_id"))
+              for payload in (source_lineage, conduct_lineage)
+              for row in payload.get("sources") or []
+          }
+          manifest_source_ids = {str(row.get("source_id")) for row in source_rows}
+          if manifest_source_ids != expected_source_ids:
+              raise SystemExit(
+                  f"distribution lineage mismatch: {manifest_source_ids} != {expected_source_ids}"
+              )
+          if any(row.get("build_id") != build_id for row in source_rows):
+              raise SystemExit("distribution manifest mixes source generations")
+
+          financial_population = financial_audit.get("population") or {}
+          summary = {
+              "build_id": build_id,
+              "source_head_sha": source_head,
+              "stage_count": len(STAGES),
+              "regulatory_source_count": len(source_lineage.get("sources") or []),
+              "conduct_source_count": len(conduct_lineage.get("sources") or []),
+              "watchdog_blocking_drift": 0,
+              "ranking_eligible": 0,
+              "conduct_status": conduct.get("status"),
+              "financial_publication_audit_status": financial_audit.get("status"),
+              "financial_reference_period": financial_audit.get("reference_period"),
+              "capital_derivable": financial_population.get("capital_derivable"),
+              "capital_unavailable": financial_population.get("capital_unavailable"),
+              "capital_below_cmr": financial_population.get("capital_below_cmr"),
+              "package_sha256": (manifest.get("public_package") or {}).get(
+                  "package_sha256"
+              ),
+          }
+          Path("data/derived/v2/gate4_full_generation_summary.json").write_text(
+              json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          print(json.dumps(summary, ensure_ascii=False, indent=2))
+          PY
+
+      - name: Verify, install and roll back exact public package
+        run: |
+          set -euo pipefail
+          python -m api.v2.install_public_generation verify data/derived/v2/public
+          rm -rf /tmp/v2-gate4-install /tmp/v2-gate4-previous-fixture
+          cp -a data/derived/v2/public /tmp/v2-gate4-previous-fixture
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          path = Path("/tmp/v2-gate4-previous-fixture/distribution_manifest.json")
+          payload = json.loads(path.read_text(encoding="utf-8"))
+          fixture_id = os.environ["V2_BUILD_ID"] + "-previous-fixture"
+          payload.setdefault("build", {})["build_id"] = fixture_id
+          for row in (payload.get("source_lineage") or {}).get("sources") or []:
+              row["build_id"] = fixture_id
+          path.write_text(
+              json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          PY
+          python -m api.v2.install_public_generation verify /tmp/v2-gate4-previous-fixture
+          python -m api.v2.install_public_generation install \
+            /tmp/v2-gate4-previous-fixture /tmp/v2-gate4-install
+          python -m api.v2.install_public_generation install \
+            data/derived/v2/public /tmp/v2-gate4-install
+          python -m api.v2.install_public_generation rollback /tmp/v2-gate4-install \
+            > /tmp/v2-gate4-rollback.json
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          root = Path("/tmp/v2-gate4-install")
+          rollback = json.loads(Path("/tmp/v2-gate4-rollback.json").read_text())
+          expected_fixture = os.environ["V2_BUILD_ID"] + "-previous-fixture"
+          if rollback.get("build_id") != expected_fixture:
+              raise SystemExit(f"rollback did not restore previous fixture: {rollback}")
+          current = (root / "current").resolve()
+          previous = (root / "previous").resolve()
+          if current.name != expected_fixture:
+              raise SystemExit(f"current pointer after rollback is wrong: {current}")
+          if previous.name != os.environ["V2_BUILD_ID"]:
+              raise SystemExit(f"previous pointer after rollback is wrong: {previous}")
+          print(json.dumps(rollback, ensure_ascii=False, indent=2))
+          PY
+
+      - name: Save validated regulatory source cache
+        uses: actions/cache/save@v4
+        with:
+          path: data/cache/v2/source
+          key: v2-gate4-source-${{ runner.os }}-${{ github.run_id }}
+
+      - name: Save validated Conduct source cache
+        uses: actions/cache/save@v4
+        with:
+          path: data/cache/v2/conduct
+          key: v2-gate4-conduct-${{ runner.os }}-${{ github.run_id }}
+
+      - name: Upload final Gate 4 proof
+        uses: actions/upload-artifact@v4
+        with:
+          name: v2-gate4-full-generation-${{ github.run_id }}-a${{ github.run_attempt }}
+          retention-days: 14
+          path: |
+            data/derived/v2/gate4_pipeline_contract.json
+            data/derived/v2/gate4_full_generation_summary.json
+            data/derived/v2/source_lineage.json
+            data/derived/v2/conduct_source_lineage.json
+            data/derived/v2/relationship_watchdog.json
+            data/derived/v2/entity_financial_evidence_inventory.json
+            data/derived/v2/financial_methodology_closure.json
+            data/derived/v2/financial_publication_audit.json
+            data/derived/v2/conduct_methodology_closure.json
+            data/derived/v2/ranking_eligibility_preflight.json
+            data/derived/v2/public/distribution_manifest.json
+            data/derived/v2/public/

@@ -1,0 +1,31 @@
+name: V2 Conduct Comparative Calibration (legacy invalidated)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: v2-conduct-comparative-calibration-legacy-${{ github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  legacy-notice:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Explain invalidated experiment
+        run: |
+          cat <<'EOF'
+          This workflow is preserved only for historical reproducibility.
+
+          Conduct Comparative Calibration v1 is methodologically invalidated because it
+          combined direct insurance premiums with private-pension contributions in one
+          exposure denominator. PGBL, VGBL and traditional private-pension activity must
+          not be folded into insurance production for the insurance ranking.
+
+          Do not use this workflow or its artifacts for scoring, ranking, eligibility,
+          or current Conduct calibration. The replacement path is the Conduct Coverage /
+          Identity-Exposure Reconciliation audit.
+          EOF

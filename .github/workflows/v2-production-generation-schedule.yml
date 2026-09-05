@@ -1,0 +1,29 @@
+name: V2 Production Generation Schedule
+
+on:
+  schedule:
+    - cron: "17 9 * * 1"
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: read
+
+concurrency:
+  group: v2-production-generation-schedule
+  cancel-in-progress: false
+
+jobs:
+  trigger-full-generation:
+    if: vars.V2_PRODUCTION_AUTOMATION_ENABLED == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Trigger canonical Full Generation on main
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh workflow run v2-gate4-full-generation-proof.yml \
+            --repo "$GITHUB_REPOSITORY" \
+            --ref main

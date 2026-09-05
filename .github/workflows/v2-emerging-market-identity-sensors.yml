@@ -1,0 +1,344 @@
+name: V2 Emerging Market Identity Sensors
+
+on:
+  workflow_run:
+    workflows:
+      - V2 Gate 4 Full Generation Proof
+    types:
+      - completed
+  workflow_dispatch:
+    inputs:
+      source_run_id:
+        description: Exact successful Full Generation run id to inspect
+        required: true
+        type: string
+      update_issue:
+        description: Update the singleton review issue when the source run is from main
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  actions: read
+  contents: read
+  issues: write
+  id-token: write
+
+concurrency:
+  group: v2-emerging-market-identity-sensors
+  cancel-in-progress: false
+
+jobs:
+  collect-and-review:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.head_branch == 'main' &&
+        vars.V2_MARKET_SENSOR_AUTOMATION_ENABLED == 'true'
+      )
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      GSC_WIF_PROVIDER: ${{ secrets.GSC_WIF_PROVIDER }}
+      GSC_SERVICE_ACCOUNT: ${{ secrets.GSC_SERVICE_ACCOUNT }}
+      GSC_PROPERTY: ${{ vars.GSC_PROPERTY }}
+      GSC_RANKING_PAGE_URL: ${{ vars.GSC_RANKING_PAGE_URL }}
+      UNKNOWN_QUERY_SNAPSHOT_URL: ${{ secrets.V2_UNKNOWN_QUERY_SNAPSHOT_URL }}
+      UNKNOWN_QUERY_SNAPSHOT_TOKEN: ${{ secrets.V2_UNKNOWN_QUERY_SNAPSHOT_TOKEN }}
+
+    steps:
+      - name: Checkout sensor implementation
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Resolve exact successful Full Generation
+        id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MANUAL_SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_run" ]]; then
+            source_run_id=$(jq -r '.workflow_run.id' "$GITHUB_EVENT_PATH")
+          else
+            source_run_id="$MANUAL_SOURCE_RUN_ID"
+          fi
+          [[ "$source_run_id" =~ ^[0-9]+$ ]] || {
+            echo "invalid source run id: $source_run_id" >&2
+            exit 1
+          }
+
+          run_json=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$source_run_id")
+          workflow_name=$(jq -r '.name' <<<"$run_json")
+          conclusion=$(jq -r '.conclusion' <<<"$run_json")
+          head_branch=$(jq -r '.head_branch' <<<"$run_json")
+          run_attempt=$(jq -r '.run_attempt' <<<"$run_json")
+          html_url=$(jq -r '.html_url' <<<"$run_json")
+
+          [[ "$workflow_name" == "V2 Gate 4 Full Generation Proof" ]] || {
+            echo "source run is not the canonical Full Generation workflow" >&2
+            exit 1
+          }
+          [[ "$conclusion" == "success" ]] || {
+            echo "source Full Generation did not conclude successfully" >&2
+            exit 1
+          }
+          [[ "$run_attempt" =~ ^[0-9]+$ ]] || {
+            echo "invalid run attempt" >&2
+            exit 1
+          }
+
+          artifact_name="v2-gate4-full-generation-${source_run_id}-a${run_attempt}"
+          {
+            echo "run_id=$source_run_id"
+            echo "run_attempt=$run_attempt"
+            echo "artifact_name=$artifact_name"
+            echo "html_url=$html_url"
+            echo "head_branch=$head_branch"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Download exact Full Generation artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN_ID: ${{ steps.source.outputs.run_id }}
+          ARTIFACT_NAME: ${{ steps.source.outputs.artifact_name }}
+        run: |
+          set -euo pipefail
+          rm -rf "$RUNNER_TEMP/v2-market-source"
+          mkdir -p "$RUNNER_TEMP/v2-market-source"
+          gh run download "$SOURCE_RUN_ID" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name "$ARTIFACT_NAME" \
+            --dir "$RUNNER_TEMP/v2-market-source"
+
+          mapfile -t search_indexes < <(find "$RUNNER_TEMP/v2-market-source" -type f -name search_index.json -print)
+          mapfile -t watchdogs < <(find "$RUNNER_TEMP/v2-market-source" -type f -name relationship_watchdog.json -print)
+          [[ ${#search_indexes[@]} -eq 1 ]] || {
+            echo "expected one search_index.json, found ${#search_indexes[@]}" >&2
+            exit 1
+          }
+          [[ ${#watchdogs[@]} -eq 1 ]] || {
+            echo "expected one relationship_watchdog.json, found ${#watchdogs[@]}" >&2
+            exit 1
+          }
+          cp "${search_indexes[0]}" "$RUNNER_TEMP/search_index.json"
+          cp "${watchdogs[0]}" "$RUNNER_TEMP/relationship_watchdog.json"
+
+      - name: Restore previous observational regulatory baseline if available
+        id: baseline
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_BRANCH: ${{ steps.source.outputs.head_branch }}
+        run: |
+          set -euo pipefail
+          rm -rf "$RUNNER_TEMP/market-state-previous"
+          mkdir -p "$RUNNER_TEMP/market-state-previous"
+          previous_run_id=$(gh run list \
+            --repo "$GITHUB_REPOSITORY" \
+            --workflow "V2 Emerging Market Identity Sensors" \
+            --branch "$SOURCE_BRANCH" \
+            --status success \
+            --limit 20 \
+            --json databaseId \
+            --jq '.[0].databaseId // empty')
+          if [[ -z "$previous_run_id" ]]; then
+            echo "state=unavailable" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if gh run download "$previous_run_id" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name v2-market-sensor-state \
+            --dir "$RUNNER_TEMP/market-state-previous"; then
+            echo "state=fresh" >> "$GITHUB_OUTPUT"
+            echo "run_id=$previous_run_id" >> "$GITHUB_OUTPUT"
+          else
+            rm -rf "$RUNNER_TEMP/market-state-previous"/*
+            echo "state=unavailable" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Collect current SUSEP regulatory sensor state
+        continue-on-error: true
+        env:
+          SUSEP_LICENSED_VERIFY_SSL: "0"
+          SUSEP_SANDBOX_VERIFY_SSL: "1"
+        run: |
+          set -euo pipefail
+          rm -rf "$RUNNER_TEMP/market-state-current"
+          mkdir -p "$RUNNER_TEMP/market-state-current"
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          from api.sources.susep_licensed import fetch_licensed_entities
+          from api.sources.susep_sandbox import fetch_sandbox_participants
+
+          root = Path(os.environ["RUNNER_TEMP"]) / "market-state-current"
+          licensed = fetch_licensed_entities()
+          (root / "licensed.json").write_text(
+              json.dumps({"entities": licensed}, ensure_ascii=False, indent=2) + "\n",
+              encoding="utf-8",
+          )
+          sandbox = fetch_sandbox_participants()
+          (root / "sandbox.json").write_text(
+              json.dumps({"participants": sandbox}, ensure_ascii=False, indent=2) + "\n",
+              encoding="utf-8",
+          )
+          PY
+
+      - name: Authenticate to Google for GSC sensor
+        id: gsc-auth
+        if: >-
+          env.GSC_WIF_PROVIDER != '' &&
+          env.GSC_SERVICE_ACCOUNT != '' &&
+          env.GSC_PROPERTY != '' &&
+          env.GSC_RANKING_PAGE_URL != ''
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ env.GSC_WIF_PROVIDER }}
+          service_account: ${{ env.GSC_SERVICE_ACCOUNT }}
+          token_format: access_token
+          access_token_scopes: https://www.googleapis.com/auth/webmasters.readonly
+          create_credentials_file: false
+
+      - name: Collect GSC demand snapshot
+        if: steps.gsc-auth.outcome == 'success'
+        continue-on-error: true
+        env:
+          GSC_ACCESS_TOKEN: ${{ steps.gsc-auth.outputs.access_token }}
+        run: |
+          set -euo pipefail
+          python tools/fetch_gsc_market_queries.py \
+            --site-url "$GSC_PROPERTY" \
+            --page-url "$GSC_RANKING_PAGE_URL" \
+            --output "$RUNNER_TEMP/gsc_market_queries.json"
+
+      - name: Collect privacy-minimized HostGator aggregate snapshot
+        if: env.UNKNOWN_QUERY_SNAPSHOT_URL != '' && env.UNKNOWN_QUERY_SNAPSHOT_TOKEN != ''
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --location \
+            --max-time 30 \
+            --header "Authorization: Bearer $UNKNOWN_QUERY_SNAPSHOT_TOKEN" \
+            --output "$RUNNER_TEMP/widget_unknown_queries.json" \
+            "$UNKNOWN_QUERY_SNAPSHOT_URL"
+
+      - name: Build compact non-authoritative candidate registry
+        run: |
+          set -euo pipefail
+          python -m api.v2.build_market_identity_candidates \
+            --search-index "$RUNNER_TEMP/search_index.json" \
+            --widget-snapshot "$RUNNER_TEMP/widget_unknown_queries.json" \
+            --gsc-snapshot "$RUNNER_TEMP/gsc_market_queries.json" \
+            --previous-licensed "$RUNNER_TEMP/market-state-previous/licensed.json" \
+            --current-licensed "$RUNNER_TEMP/market-state-current/licensed.json" \
+            --previous-sandbox "$RUNNER_TEMP/market-state-previous/sandbox.json" \
+            --current-sandbox "$RUNNER_TEMP/market-state-current/sandbox.json" \
+            --output "$RUNNER_TEMP/market_identity_candidates.json"
+
+          python -m api.v2.merge_market_identity_watchdog \
+            --watchdog "$RUNNER_TEMP/relationship_watchdog.json" \
+            --market-registry "$RUNNER_TEMP/market_identity_candidates.json" \
+            --output "$RUNNER_TEMP/relationship_watchdog_with_market_sensors.json"
+
+      - name: Render provenance-aware singleton review queue
+        id: queue
+        env:
+          SOURCE_RUN_ID: ${{ steps.source.outputs.run_id }}
+          SOURCE_RUN_URL: ${{ steps.source.outputs.html_url }}
+        run: |
+          set -euo pipefail
+          summary=$(python -m api.v2.render_relationship_review_queue \
+            "$RUNNER_TEMP/relationship_watchdog_with_market_sensors.json" \
+            "$RUNNER_TEMP/relationship-review-queue.md" \
+            "$SOURCE_RUN_ID" \
+            "$SOURCE_RUN_URL")
+          review_count=$(jq -r '.review_count' <<<"$summary")
+          blocking_count=$(jq -r '.blocking_count' <<<"$summary")
+          market_count=$(jq -r '.market_count' <<<"$summary")
+          {
+            echo "review_count=$review_count"
+            echo "blocking_count=$blocking_count"
+            echo "market_count=$market_count"
+          } >> "$GITHUB_OUTPUT"
+          cat "$RUNNER_TEMP/relationship-review-queue.md" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Emit visible market review warning
+        if: steps.queue.outputs.market_count != '0'
+        env:
+          MARKET_COUNT: ${{ steps.queue.outputs.market_count }}
+        run: |
+          echo "::warning title=Emerging market identity review::${MARKET_COUNT} candidates require source-backed review. They have assertion_effect=none and cannot mutate the registry."
+
+      - name: Update the single relationship review issue
+        if: >-
+          steps.source.outputs.head_branch == 'main' &&
+          (github.event_name == 'workflow_run' || inputs.update_issue == true)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REVIEW_COUNT: ${{ steps.queue.outputs.review_count }}
+        run: |
+          set -euo pipefail
+          title='[v2] Relationship review queue'
+          issue_number=$(gh issue list \
+            --repo "$GITHUB_REPOSITORY" \
+            --state all \
+            --limit 100 \
+            --json number,title \
+            --jq ".[] | select(.title == \"$title\") | .number" \
+            | head -n 1)
+
+          if [[ "$REVIEW_COUNT" == "0" ]]; then
+            if [[ -n "$issue_number" ]]; then
+              gh issue close "$issue_number" \
+                --repo "$GITHUB_REPOSITORY" \
+                --comment "The exact inspected Full Generation plus configured market sensors have no review candidates."
+            fi
+            exit 0
+          fi
+
+          if [[ -n "$issue_number" ]]; then
+            gh issue reopen "$issue_number" --repo "$GITHUB_REPOSITORY" || true
+            gh issue edit "$issue_number" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "$title" \
+              --body-file "$RUNNER_TEMP/relationship-review-queue.md"
+          else
+            gh issue create \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "$title" \
+              --body-file "$RUNNER_TEMP/relationship-review-queue.md"
+          fi
+
+      - name: Upload compact sensor evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: v2-emerging-market-identity-${{ github.run_id }}-a${{ github.run_attempt }}
+          retention-days: 30
+          path: |
+            ${{ runner.temp }}/market_identity_candidates.json
+            ${{ runner.temp }}/relationship_watchdog_with_market_sensors.json
+            ${{ runner.temp }}/relationship-review-queue.md
+
+      - name: Upload next observational regulatory baseline
+        uses: actions/upload-artifact@v4
+        with:
+          name: v2-market-sensor-state
+          retention-days: 30
+          if-no-files-found: warn
+          path: |
+            ${{ runner.temp }}/market-state-current/licensed.json
+            ${{ runner.temp }}/market-state-current/sandbox.json

@@ -1,0 +1,237 @@
+name: V2 Cross-Pillar Assessment Semantic Contract
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: v2-cross-pillar-assessment-semantic-contract-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  cross-pillar-assessment-semantic-contract:
+    runs-on: ubuntu-24.04
+    env:
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install -r requirements-dev.txt
+
+      - name: Restore latest successful Cross-Pillar Calibration Stage 1
+        run: |
+          set -euo pipefail
+          branch="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
+          run_id="$(gh run list \
+            --repo "$GITHUB_REPOSITORY" \
+            --workflow "V2 Cross-Pillar Calibration Stage 1" \
+            --branch "$branch" \
+            --status success \
+            --limit 30 \
+            --json databaseId \
+            --jq '.[0].databaseId')"
+          test -n "$run_id"
+          rm -rf "$RUNNER_TEMP/stage1"
+          mkdir -p "$RUNNER_TEMP/stage1"
+          gh run download "$run_id" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name "v2-cross-pillar-calibration-stage-1-$run_id" \
+            --dir "$RUNNER_TEMP/stage1"
+          source_file="$(find "$RUNNER_TEMP/stage1" -type f -name cross_pillar_calibration_diagnostic.json | head -n 1)"
+          test -n "$source_file"
+          mkdir -p data/derived/v2
+          cp "$source_file" data/derived/v2/cross_pillar_calibration_diagnostic.json
+          echo "Restored Stage 1 from run $run_id"
+
+      - name: Restore latest successful Cross-Pillar Architecture Stage 2
+        run: |
+          set -euo pipefail
+          branch="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
+          run_id="$(gh run list \
+            --repo "$GITHUB_REPOSITORY" \
+            --workflow "V2 Cross-Pillar Architecture Stage 2" \
+            --branch "$branch" \
+            --status success \
+            --limit 30 \
+            --json databaseId \
+            --jq '.[0].databaseId')"
+          test -n "$run_id"
+          rm -rf "$RUNNER_TEMP/stage2"
+          mkdir -p "$RUNNER_TEMP/stage2"
+          gh run download "$run_id" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name "v2-cross-pillar-architecture-stage-2-$run_id" \
+            --dir "$RUNNER_TEMP/stage2"
+          source_file="$(find "$RUNNER_TEMP/stage2" -type f -name cross_pillar_architecture_experiment.json | head -n 1)"
+          test -n "$source_file"
+          mkdir -p data/derived/v2
+          cp "$source_file" data/derived/v2/cross_pillar_architecture_experiment.json
+          echo "Restored Stage 2 from run $run_id"
+
+      - name: Lint semantic contract
+        run: |
+          set -euo pipefail
+          ruff check \
+            api/v2/build_cross_pillar_assessment_semantic_contract.py \
+            tests/test_v2_cross_pillar_assessment_semantic_contract.py
+
+      - name: Run semantic contract tests
+        run: |
+          set -euo pipefail
+          python -m pytest -q tests/test_v2_cross_pillar_assessment_semantic_contract.py
+
+      - name: Build real semantic contract
+        run: |
+          set -euo pipefail
+          python -m api.v2.build_cross_pillar_assessment_semantic_contract
+
+      - name: Validate semantic contract boundaries
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          path = Path("data/derived/v2/cross_pillar_assessment_semantic_contract.json")
+          payload = json.loads(path.read_text(encoding="utf-8"))
+
+          if payload.get("status") != "cross_pillar_assessment_semantic_contract_closed":
+              raise SystemExit("semantic contract must be closed")
+          if payload.get("scoring") != "forbidden_in_this_artifact":
+              raise SystemExit("semantic contract must forbid scoring")
+          if payload.get("ranking") != "forbidden_in_this_artifact":
+              raise SystemExit("semantic contract must forbid ranking")
+
+          entities = payload.get("entities") or []
+          population = payload.get("population") or {}
+          universe = population.get("regulatory_universe")
+          supported = population.get("semantic_public_assessment_supported")
+          incomplete = population.get("joint_core_incomplete")
+          if not isinstance(universe, int) or universe < 100:
+              raise SystemExit(f"unexpectedly small semantic universe: {universe}")
+          if len(entities) != universe:
+              raise SystemExit("semantic entity count must equal regulatory universe")
+          if not isinstance(supported, int) or supported < 0:
+              raise SystemExit("invalid semantic complete population")
+          if not isinstance(incomplete, int) or incomplete < 0:
+              raise SystemExit("invalid semantic incomplete population")
+          if supported + incomplete != universe:
+              raise SystemExit("semantic population accounting mismatch")
+
+          diagnostics = payload.get("diagnostics") or {}
+          public_classes = diagnostics.get("public_class_counts") or {}
+          if sum(public_classes.values()) != universe:
+              raise SystemExit("public semantic class counts must cover the universe")
+          if public_classes.get("evidence_incomplete", 0) != incomplete:
+              raise SystemExit("evidence-incomplete class count must equal incomplete population")
+          state_counts = diagnostics.get("state_counts") or {}
+          if sum(state_counts.values()) != universe:
+              raise SystemExit("semantic state counts must cover the universe")
+          if state_counts.get("evidence_incomplete_for_joint_assessment", 0) != incomplete:
+              raise SystemExit("incomplete matrix-state count must equal incomplete population")
+
+          incomplete_alerts = diagnostics.get("incomplete_available_alert_counts") or {}
+          for name, count in incomplete_alerts.items():
+              if not isinstance(count, int) or count < 0 or count > incomplete:
+                  raise SystemExit(f"invalid incomplete alert count for {name}: {count}")
+
+          decision = payload.get("closure_decision") or {}
+          if decision.get("semantic_contract_closed") is not True:
+              raise SystemExit("semantic contract closure missing")
+          if decision.get("formal_assessment_eligibility_gate_opened") is not False:
+              raise SystemExit("semantic contract cannot open assessment eligibility")
+          if decision.get("formal_ranking_eligibility_gate_opened") is not False:
+              raise SystemExit("semantic contract cannot open ranking eligibility")
+          if decision.get("full_market_ranking_supported") is not False:
+              raise SystemExit("full-market ranking must remain blocked")
+
+          entity_ids = []
+          for row in entities:
+              entity_id = row.get("entity_id")
+              if not entity_id:
+                  raise SystemExit("semantic contract contains entity without entity_id")
+              entity_ids.append(entity_id)
+              public = row.get("public_assessment") or {}
+              if not all(public.get(key) for key in ("title", "summary", "why_it_matters", "mandatory_limit")):
+                  raise SystemExit(f"incomplete public language block: {entity_id}")
+              completeness = row.get("assessment_completeness")
+              if completeness == "joint_core_complete":
+                  if row.get("matrix_state") is None:
+                      raise SystemExit("complete assessment without matrix state")
+                  if row.get("semantic_public_assessment_supported") is not True:
+                      raise SystemExit("complete assessment not marked semantically supported")
+              elif completeness == "joint_core_incomplete":
+                  if row.get("matrix_state") is not None:
+                      raise SystemExit("incomplete assessment with matrix state")
+                  if row.get("semantic_public_assessment_supported") is not False:
+                      raise SystemExit("incomplete assessment marked semantically supported")
+                  if public.get("title") != "Avaliação conjunta incompleta":
+                      raise SystemExit("incomplete assessment has wrong public title")
+              else:
+                  raise SystemExit("unknown assessment completeness state")
+
+              conduct = (row.get("available_pillar_reading") or {}).get("conduct")
+              qualifiers = row.get("qualifiers") or {}
+              if qualifiers.get("conduct_persistence") or qualifiers.get("conduct_trend"):
+                  if conduct != "acima_do_esperado":
+                      raise SystemExit("adverse Conduct qualifier leaked to non-adverse conclusion")
+
+          if len(set(entity_ids)) != universe:
+              raise SystemExit("semantic entity_id population must be unique")
+          complete_rows = sum(
+              row.get("assessment_completeness") == "joint_core_complete"
+              for row in entities
+          )
+          if complete_rows != supported:
+              raise SystemExit("semantic supported count differs from complete row count")
+
+          forbidden = {
+              "overall_score",
+              "financial_score",
+              "conduct_score",
+              "ranking_position",
+              "assessment_eligible",
+              "ranking_eligible",
+          }
+
+          def walk(value):
+              if isinstance(value, dict):
+                  overlap = forbidden & set(value)
+                  if overlap:
+                      raise SystemExit(f"forbidden fields in semantic contract: {sorted(overlap)}")
+                  for child in value.values():
+                      walk(child)
+              elif isinstance(value, list):
+                  for child in value:
+                      walk(child)
+
+          walk(payload)
+          print(json.dumps({
+              "population": population,
+              "diagnostics": diagnostics,
+              "closure_decision": decision,
+          }, ensure_ascii=False, indent=2))
+          PY
+
+      - name: Upload semantic contract
+        uses: actions/upload-artifact@v4
+        with:
+          name: v2-cross-pillar-assessment-semantic-contract-${{ github.run_id }}
+          path: data/derived/v2/cross_pillar_assessment_semantic_contract.json
+          retention-days: 14

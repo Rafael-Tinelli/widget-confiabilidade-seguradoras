@@ -81,3 +81,30 @@ jobs:
         run: |
           set -euo pipefail
           python -m pytest -q
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Build widget frontend
+        working-directory: widget-ui
+        run: |
+          set -euo pipefail
+          npm install --no-audit --no-fund --package-lock=false
+          npm run build
+
+      - name: Validate versioned HostGator frontend
+        run: |
+          set -euo pipefail
+          php -l ranking-seguradoras/index2.php
+          php -l ranking-seguradoras/deployment/production-cutover/index.php
+          php -l ranking-seguradoras/deployment/production-cutover/legacy-state-redirects.php
+          node --check ranking-seguradoras/assets/ranking-v2.js
+          python ranking-seguradoras/tests/r2-static-check.py
+          python ranking-seguradoras/tests/r4-1-head-structure.py
+          python ranking-seguradoras/tests/r4-css-structure.py
+          python ranking-seguradoras/tests/r5-3-final-frontend.py
+          node ranking-seguradoras/tests/r3-technical-helper.mjs
+          node ranking-seguradoras/tests/r5-public-integrity.mjs
+          node ranking-seguradoras/tests/r5-1-navigation-history.mjs

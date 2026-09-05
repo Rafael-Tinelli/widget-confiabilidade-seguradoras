@@ -1,0 +1,161 @@
+name: V2 Gate 4 Evergreen Contract
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths:
+      - "api/v2/generation.py"
+      - "api/v2/source_snapshot.py"
+      - "api/v2/source_cache.py"
+      - "api/v2/build_source_snapshot.py"
+      - "api/v2/refresh_receita_lifecycle.py"
+      - "api/v2/bootstrap_conduct_consumer_cache.py"
+      - "api/v2/build_conduct_source_snapshot.py"
+      - "api/v2/build_consumer_gov_receita_identity.py"
+      - "api/v2/relationship_watchdog.py"
+      - "api/v2/gate4_pipeline.py"
+      - "api/v2/build_public_distribution_manifest.py"
+      - "api/v2/install_public_generation.py"
+      - "api/v2/build_eligibility_inventory.py"
+      - "api/v2/build_financial_evidence_inventory.py"
+      - "api/v2/build_lifecycle_relationship_inventory.py"
+      - "data/reference/v2/verified_relationships.json"
+      - "data/reference/v2/conduct_subject_relationships.json"
+      - "data/reference/v2/sandbox_brand_relationships.json"
+      - "tests/test_v2_generation.py"
+      - "tests/test_v2_public_generation_install.py"
+      - "tests/test_v2_source_snapshot.py"
+      - "tests/test_v2_source_cache.py"
+      - "tests/test_v2_build_source_snapshot.py"
+      - "tests/test_v2_receita_refresh.py"
+      - "tests/test_v2_conduct_consumer_bootstrap.py"
+      - "tests/test_v2_conduct_source_snapshot.py"
+      - "tests/test_v2_consumer_gov_receita_cache_key.py"
+      - "tests/test_v2_relationship_watchdog.py"
+      - "tests/test_v2_gate4_pipeline.py"
+      - "tests/test_v2_eligibility_inventory.py"
+      - "docs/gate4-evergreen-publication.md"
+      - ".github/workflows/v2-gate4-evergreen-contract.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: v2-gate4-evergreen-contract-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate-gate4-contract:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      V2_SOURCE_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      V2_BUILD_ID: v2-contract-${{ github.run_id }}-a${{ github.run_attempt }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install -r requirements-dev.txt
+
+      - name: Lint Gate 4 contract modules
+        run: |
+          set -euo pipefail
+          ruff check \
+            api/v2/generation.py \
+            api/v2/source_snapshot.py \
+            api/v2/source_cache.py \
+            api/v2/build_source_snapshot.py \
+            api/v2/refresh_receita_lifecycle.py \
+            api/v2/bootstrap_conduct_consumer_cache.py \
+            api/v2/build_conduct_source_snapshot.py \
+            api/v2/build_consumer_gov_receita_identity.py \
+            api/v2/relationship_watchdog.py \
+            api/v2/gate4_pipeline.py \
+            api/v2/build_public_distribution_manifest.py \
+            api/v2/install_public_generation.py \
+            api/v2/build_eligibility_inventory.py \
+            api/v2/build_financial_evidence_inventory.py \
+            api/v2/build_lifecycle_relationship_inventory.py \
+            tests/test_v2_generation.py \
+            tests/test_v2_public_generation_install.py \
+            tests/test_v2_source_snapshot.py \
+            tests/test_v2_source_cache.py \
+            tests/test_v2_build_source_snapshot.py \
+            tests/test_v2_receita_refresh.py \
+            tests/test_v2_conduct_consumer_bootstrap.py \
+            tests/test_v2_conduct_source_snapshot.py \
+            tests/test_v2_consumer_gov_receita_cache_key.py \
+            tests/test_v2_relationship_watchdog.py \
+            tests/test_v2_gate4_pipeline.py \
+            tests/test_v2_eligibility_inventory.py
+
+      - name: Run Gate 4 contract tests
+        run: |
+          set -euo pipefail
+          python -m pytest -q \
+            tests/test_v2_generation.py \
+            tests/test_v2_public_generation_install.py \
+            tests/test_v2_source_snapshot.py \
+            tests/test_v2_source_cache.py \
+            tests/test_v2_build_source_snapshot.py \
+            tests/test_v2_receita_refresh.py \
+            tests/test_v2_conduct_consumer_bootstrap.py \
+            tests/test_v2_conduct_source_snapshot.py \
+            tests/test_v2_consumer_gov_receita_cache_key.py \
+            tests/test_v2_relationship_watchdog.py \
+            tests/test_v2_gate4_pipeline.py \
+            tests/test_v2_eligibility_inventory.py
+
+      - name: Materialize validated pipeline contract
+        run: |
+          set -euo pipefail
+          python -m api.v2.gate4_pipeline \
+            --write-contract data/derived/v2/gate4_pipeline_contract.json
+
+      - name: Validate Gate 4 publication readiness
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          payload = json.loads(
+              Path("data/derived/v2/gate4_pipeline_contract.json").read_text(
+                  encoding="utf-8"
+              )
+          )
+          if payload.get("single_generation_workspace_required") is not True:
+              raise SystemExit("Gate 4 must require one generation workspace")
+          if payload.get("cross_run_latest_successful_restore_forbidden") is not True:
+              raise SystemExit("Gate 4 must forbid cross-run latest-successful restoration")
+          blockers = payload.get("publication_blockers") or []
+          if blockers:
+              raise SystemExit(f"Gate 4 still has operational publication blockers: {blockers}")
+          if payload.get("publication_ready") is not True:
+              raise SystemExit("Gate 4 publication contract must be operationally ready")
+          print(json.dumps({
+              "topological_order": payload.get("topological_order"),
+              "publication_ready": payload.get("publication_ready"),
+              "publication_blockers": blockers,
+          }, ensure_ascii=False, indent=2))
+          PY
+
+      - name: Upload Gate 4 contract artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: v2-gate4-evergreen-contract-${{ github.run_id }}
+          retention-days: 14
+          path: data/derived/v2/gate4_pipeline_contract.json

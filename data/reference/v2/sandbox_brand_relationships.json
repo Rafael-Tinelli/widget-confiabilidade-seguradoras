@@ -1,0 +1,35 @@
+{
+  "schema_version": "1.0",
+  "note": "Verified consumer-facing brand relationships for Sandbox carriers. Carrier-level Consumer.gov conduct may be exposed as contextual evidence for a verified brand, but the artifact must preserve that the complaints are registered against the carrier unless the source itself names the brand. Sandbox evidence never enters the ordinary-insurer ranking or ordinary market baseline.",
+  "brands": [
+    {
+      "brand_id": "brand:loovi",
+      "name": "Loovi",
+      "aliases": ["Loovi Seguros", "Loovi Technology"],
+      "representative_cnpj": "34504257000100",
+      "risk_carrier_cnpj": "47006254000180",
+      "risk_carrier_name": "LTI Seguros S.A.",
+      "regulatory_scope": "sandbox",
+      "product_scope": "seguro automotivo comercializado pela Loovi e garantido pela LTI Seguros S.A.",
+      "conduct_context_policy": "carrier_level_context_not_brand_exclusive_attribution",
+      "ordinary_ranking_effect": "none",
+      "evidence": [
+        {
+          "authority": "Loovi",
+          "url": "https://www.loovi.com.br/faq",
+          "fact": "A Loovi declara ser representante da LTI Seguros S.A. e comercializar seguro automotivo por meio da seguradora Sandbox."
+        },
+        {
+          "authority": "LTI Seguros",
+          "url": "https://ltiseguros.com.br/",
+          "fact": "O site da LTI identifica a Loovi como seu representante para contratação e informa que LTI e Loovi pertencem ao mesmo grupo econômico."
+        },
+        {
+          "authority": "SUSEP",
+          "url": "https://www.gov.br/susep/pt-br/assuntos/sandbox-regulatorio/seguradoras-participantes-do-sandbox-1",
+          "fact": "A SUSEP identifica LTI Seguros S.A., CNPJ 47.006.254/0001-80, como participante autorizada da 2ª edição do Sandbox para Seguros de Danos."
+        }
+      ]
+    }
+  ]
+}

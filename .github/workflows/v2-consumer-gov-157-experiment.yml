@@ -1,0 +1,172 @@
+name: V2 Consumer.gov 157 Experiment (legacy)
+
+# Legacy exploratory workflow kept for reproducibility only.
+# The current PR gate for Consumer.gov conduct evidence is
+# v2-consumer-gov-conduct-evidence.yml. Keeping this workflow off the
+# pull_request path avoids false-red checks caused by transient SUSEP
+# availability while preserving the original experiment for manual runs.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: v2-consumer-gov-157-${{ github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  consumer-gov-157:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+
+    env:
+      SES_ALLOW_INSECURE_SSL: "1"
+      SES_KEEP_ZIP: "1"
+      SES_WRITE_AUDIT: "1"
+      SES_CACHE_DIR: "data/raw/ses"
+      SUSEP_LICENSED_VERIFY_SSL: "0"
+      SUSEP_SPECIAL_VERIFY_SSL: "0"
+      SUSEP_SANDBOX_VERIFY_SSL: "1"
+      SES_ZIP_URL: "http://127.0.0.1:9/BaseCompleta.zip"
+      SES_ZIP_URL_FALLBACK: "http://127.0.0.1:9/BaseCompleta.zip"
+      CG_MONTHS_BACK: "12"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install -r requirements-dev.txt
+
+      - name: Restore validated SES source cache
+        uses: actions/cache/restore@v4
+        with:
+          path: data/raw/ses
+          key: v2-consumer-gov-157-ses-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: |
+            ses-source-${{ runner.os }}-
+
+      - name: Verify cached BaseCompleta
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import zipfile
+          from pathlib import Path
+          path = Path("data/raw/ses/BaseCompleta.zip")
+          if not path.exists() or path.stat().st_size < 100_000_000:
+              raise SystemExit("valid cached BaseCompleta.zip is required")
+          if not zipfile.is_zipfile(path):
+              raise SystemExit("cached BaseCompleta.zip is not a valid ZIP")
+          print(f"SES cache OK: {path.stat().st_size} bytes")
+          PY
+
+      - name: Compile experiments
+        run: |
+          set -euo pipefail
+          python -m py_compile api/v2/build_consumer_gov_157_experiment.py
+          python -m py_compile api/v2/build_consumer_gov_identity_experiment.py
+          python -m py_compile api/v2/consumer_gov_identity.py
+          python -m py_compile api/v2/consumer_gov_universe_resolution.py
+
+      - name: Test Consumer.gov identity contracts
+        run: |
+          set -euo pipefail
+          python -m pytest -q \
+            tests/test_v2_consumer_gov_identity.py \
+            tests/test_v2_consumer_gov_universe_resolution.py
+
+      - name: Build formal 157-insurer eligibility universe
+        run: |
+          set -euo pipefail
+          python -m api.v2.build_eligibility_inventory
+
+      - name: Run Consumer.gov x 157 baseline experiment
+        run: |
+          set -euo pipefail
+          python -m api.v2.build_consumer_gov_157_experiment
+
+      - name: Run Consumer.gov identity-resolution experiment
+        run: |
+          set -euo pipefail
+          python -m api.v2.build_consumer_gov_identity_experiment
+
+      - name: Validate experiment contracts
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          forbidden = {"score", "assessment_eligible", "ranking_eligible"}
+
+          def walk(value):
+              if isinstance(value, dict):
+                  overlap = forbidden & set(value)
+                  if overlap:
+                      raise SystemExit(f"forbidden decision fields: {sorted(overlap)}")
+                  for child in value.values():
+                      walk(child)
+              elif isinstance(value, list):
+                  for child in value:
+                      walk(child)
+
+          baseline = json.loads(
+              Path("data/derived/v2/consumer_gov_157_experiment.json").read_text(
+                  encoding="utf-8"
+              )
+          )
+          resolved = json.loads(
+              Path("data/derived/v2/consumer_gov_identity_experiment.json").read_text(
+                  encoding="utf-8"
+              )
+          )
+          for payload in (baseline, resolved):
+              if payload.get("status") != "experimental":
+                  raise SystemExit("Consumer.gov artifacts must remain experimental")
+              if payload["universe"]["eligible_insurers"] != 157:
+                  raise SystemExit("experiment universe is not 157 insurers")
+              walk(payload)
+
+          total = resolved["rows"]["complaints_in_insurance_segment_snapshots"]
+          states = resolved["rows"]["resolution_states_weighted_by_complaints"]
+          if sum(states.values()) != total:
+              raise SystemExit("identity resolution states do not reconcile to source total")
+          if resolved["rows"]["matched_current_insurer_complaints"] < baseline["rows"]["matched_complaints"]:
+              raise SystemExit("curated identity layer unexpectedly reduced matched complaints")
+
+          print(json.dumps({
+              "months": baseline["source"]["months"],
+              "structured_cnpj_present_in_snapshots": baseline["source"]["structured_cnpj_present_in_snapshots"],
+              "baseline_universe": baseline["universe"],
+              "baseline_rows": baseline["rows"],
+              "resolved_universe": resolved["universe"],
+              "resolved_rows": resolved["rows"],
+              "ambiguous_providers": resolved["ambiguous_providers"],
+              "outside_157_providers": resolved["outside_157_providers"],
+          }, ensure_ascii=False, indent=2))
+          PY
+
+      - name: Upload experiment artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: v2-consumer-gov-157-${{ github.run_id }}
+          retention-days: 14
+          if-no-files-found: warn
+          path: |
+            data/derived/v2/consumer_gov_157_experiment.json
+            data/derived/v2/consumer_gov_identity_experiment.json
+            data/derived/v2/entity_eligibility_inventory.json

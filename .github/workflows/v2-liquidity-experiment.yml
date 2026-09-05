@@ -1,0 +1,185 @@
+name: V2 Liquidity Experiment
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: v2-liquidity-experiment-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  liquidity-experiment:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+
+    env:
+      GH_TOKEN: ${{ github.token }}
+      V2_SOURCE_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      V2_ELIGIBILITY_INPUT: data/derived/v2/entity_eligibility_inventory.json
+      SES_ALLOW_INSECURE_SSL: "1"
+      SES_KEEP_ZIP: "1"
+      SES_WRITE_AUDIT: "1"
+      SES_CACHE_DIR: "data/raw/ses"
+      SES_ZIP_URL: "http://127.0.0.1:9/BaseCompleta.zip"
+      SES_ZIP_URL_FALLBACK: "http://127.0.0.1:9/BaseCompleta.zip"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install -r requirements-dev.txt
+
+      - name: Restore validated SES source cache
+        uses: actions/cache/restore@v4
+        with:
+          path: data/raw/ses
+          key: v2-liquidity-ses-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: |
+            ses-source-${{ runner.os }}-
+
+      - name: Verify cached BaseCompleta
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import zipfile
+          from pathlib import Path
+
+          path = Path("data/raw/ses/BaseCompleta.zip")
+          if not path.exists() or path.stat().st_size < 100_000_000:
+              raise SystemExit("valid cached BaseCompleta.zip is required")
+          if not zipfile.is_zipfile(path):
+              raise SystemExit("cached BaseCompleta.zip is not a valid ZIP")
+          print(f"SES cache OK: {path.stat().st_size} bytes")
+          PY
+
+      - name: Restore same-head validated eligibility artifact
+        run: |
+          set -euo pipefail
+          branch="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
+          run_id="$(gh run list \
+            --repo "$GITHUB_REPOSITORY" \
+            --workflow "V2 Eligibility Validation" \
+            --branch "$branch" \
+            --status success \
+            --limit 50 \
+            --json databaseId,headSha \
+            --jq '[.[] | select(.headSha == env.V2_SOURCE_HEAD_SHA)][0].databaseId')"
+          if [[ -z "$run_id" || "$run_id" == "null" ]]; then
+            echo "No same-head upstream eligibility artifact for $V2_SOURCE_HEAD_SHA" >&2
+            exit 1
+          fi
+          echo "Using same-head eligibility run: $run_id"
+          rm -rf "$RUNNER_TEMP/eligibility-upstream"
+          mkdir -p "$RUNNER_TEMP/eligibility-upstream"
+          gh run download "$run_id" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name "v2-eligibility-$run_id" \
+            --dir "$RUNNER_TEMP/eligibility-upstream"
+          source_file="$(find "$RUNNER_TEMP/eligibility-upstream" -type f -name entity_eligibility_inventory.json | head -n 1)"
+          if [[ -z "$source_file" ]]; then
+            echo "Upstream artifact does not contain entity_eligibility_inventory.json" >&2
+            exit 1
+          fi
+          mkdir -p "$(dirname "$V2_ELIGIBILITY_INPUT")"
+          cp "$source_file" "$V2_ELIGIBILITY_INPUT"
+          python - <<'PY'
+          from pathlib import Path
+          from api.v2.build_liquidity_experiment import load_validated_eligibility_artifact
+
+          path = Path("data/derived/v2/entity_eligibility_inventory.json")
+          payload = load_validated_eligibility_artifact(path)
+          meta = payload.get("meta") or {}
+          count = int(meta.get("regulatory_universe_eligible_count") or 0)
+          if count < 100:
+              raise SystemExit(f"unexpectedly small validated regulatory universe: {count}")
+          print(
+              "Validated eligibility snapshot: "
+              f"entities={len(payload.get('entities') or [])} "
+              f"regulatory_universe={count}"
+          )
+          PY
+
+      - name: Run liquidity experiment unit tests
+        run: |
+          python -m pytest -q \
+            tests/test_v2_liquidity_experiment.py \
+            tests/test_v2_liquidity_diagnostics.py
+
+      - name: Build liquidity experiment
+        run: python -m api.v2.build_liquidity_experiment
+
+      - name: Print quantitative diagnostics
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          path = Path("data/derived/v2/liquidity_experiment.json")
+          payload = json.loads(path.read_text(encoding="utf-8"))
+          summary = payload["summary"]
+          eligibility = json.loads(
+              Path("data/derived/v2/entity_eligibility_inventory.json").read_text(encoding="utf-8")
+          )
+          expected = int(
+              ((eligibility.get("meta") or {}).get("regulatory_universe_eligible_count")) or 0
+          )
+          if summary["entity_count"] != expected:
+              raise SystemExit(
+                  "liquidity population mismatch: "
+                  f"liquidity={summary['entity_count']} eligibility={expected}"
+              )
+          if payload.get("status") != "experimental":
+              raise SystemExit("liquidity artifact must remain experimental")
+
+          diagnostics = summary["diagnostics"]["metrics"]
+          compact = {
+              "reference_period": summary.get("reference_period"),
+              "entity_count": summary.get("entity_count"),
+              "quality_excluded_count": summary.get("quality_excluded_count"),
+              "current_ilc_ilt_correlation": summary.get("current_ilc_ilt_correlation"),
+              "ILC": {
+                  "states": summary["metrics"]["ILC"]["current_state_counts_all_entities"],
+                  "distribution": summary["metrics"]["ILC"]["current_distribution_excluding_quality_issues"],
+                  "complete_history": summary["metrics"]["ILC"]["complete_derivable_history_counts"],
+                  "rank_stability": summary["metrics"]["ILC"]["cross_section_rank_stability_vs_current"]["summary"],
+                  "capital_redundancy": diagnostics["ILC"]["capital_pla_cmr_redundancy"],
+              },
+              "ILT": {
+                  "states": summary["metrics"]["ILT"]["current_state_counts_all_entities"],
+                  "distribution": summary["metrics"]["ILT"]["current_distribution_excluding_quality_issues"],
+                  "complete_history": summary["metrics"]["ILT"]["complete_derivable_history_counts"],
+                  "rank_stability": summary["metrics"]["ILT"]["cross_section_rank_stability_vs_current"]["summary"],
+                  "capital_redundancy": diagnostics["ILT"]["capital_pla_cmr_redundancy"],
+              },
+          }
+          print(json.dumps(compact, ensure_ascii=False, indent=2))
+          PY
+
+      - name: Upload liquidity experiment artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: v2-liquidity-experiment-${{ github.run_id }}
+          retention-days: 14
+          if-no-files-found: warn
+          path: |
+            data/derived/v2/liquidity_experiment.json
+            data/derived/audit/ses/**

@@ -1,0 +1,175 @@
+name: V2 Cross-Pillar Coverage Audit
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: v2-cross-pillar-coverage-audit-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  cross-pillar-coverage-audit:
+    runs-on: ubuntu-24.04
+    env:
+      GH_TOKEN: ${{ github.token }}
+      V2_SOURCE_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install -r requirements-dev.txt
+
+      - name: Restore same-head Cross-Pillar Calibration Stage 1
+        run: |
+          set -euo pipefail
+          branch="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
+          run_id="$(gh run list \
+            --repo "$GITHUB_REPOSITORY" \
+            --workflow "V2 Cross-Pillar Calibration Stage 1" \
+            --branch "$branch" \
+            --status success \
+            --limit 50 \
+            --json databaseId,headSha \
+            --jq '[.[] | select(.headSha == env.V2_SOURCE_HEAD_SHA)][0].databaseId')"
+          if [[ -z "$run_id" || "$run_id" == "null" ]]; then
+            echo "No same-head Cross-Pillar Calibration Stage 1 artifact for $V2_SOURCE_HEAD_SHA" >&2
+            exit 1
+          fi
+          rm -rf "$RUNNER_TEMP/stage1"
+          mkdir -p "$RUNNER_TEMP/stage1"
+          gh run download "$run_id" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name "v2-cross-pillar-calibration-stage-1-$run_id" \
+            --dir "$RUNNER_TEMP/stage1"
+          source_file="$(find "$RUNNER_TEMP/stage1" -type f -name cross_pillar_calibration_diagnostic.json | head -n 1)"
+          test -n "$source_file"
+          mkdir -p data/derived/v2
+          cp "$source_file" data/derived/v2/cross_pillar_calibration_diagnostic.json
+          echo "Restored same-head stage 1 from run $run_id"
+
+      - name: Restore same-head Conduct coverage reconciliation
+        run: |
+          set -euo pipefail
+          branch="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
+          run_id="$(gh run list \
+            --repo "$GITHUB_REPOSITORY" \
+            --workflow "V2 Conduct Coverage Reconciliation" \
+            --branch "$branch" \
+            --status success \
+            --limit 50 \
+            --json databaseId,headSha \
+            --jq '[.[] | select(.headSha == env.V2_SOURCE_HEAD_SHA)][0].databaseId')"
+          if [[ -z "$run_id" || "$run_id" == "null" ]]; then
+            echo "No same-head Conduct coverage reconciliation artifact for $V2_SOURCE_HEAD_SHA" >&2
+            exit 1
+          fi
+          rm -rf "$RUNNER_TEMP/reconciliation"
+          mkdir -p "$RUNNER_TEMP/reconciliation"
+          gh run download "$run_id" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name "v2-conduct-coverage-reconciliation-$run_id" \
+            --dir "$RUNNER_TEMP/reconciliation"
+          source_file="$(find "$RUNNER_TEMP/reconciliation" -type f -name conduct_coverage_reconciliation.json | head -n 1)"
+          test -n "$source_file"
+          mkdir -p data/derived/v2
+          cp "$source_file" data/derived/v2/conduct_coverage_reconciliation.json
+          echo "Restored same-head reconciliation from run $run_id"
+
+      - name: Lint cross-pillar coverage audit
+        run: |
+          set -euo pipefail
+          ruff check \
+            api/v2/build_cross_pillar_coverage_audit.py \
+            tests/test_v2_cross_pillar_coverage_audit.py
+
+      - name: Run cross-pillar coverage audit tests
+        run: |
+          set -euo pipefail
+          python -m pytest -q tests/test_v2_cross_pillar_coverage_audit.py
+
+      - name: Build real cross-pillar coverage audit
+        run: |
+          set -euo pipefail
+          python -m api.v2.build_cross_pillar_coverage_audit
+
+      - name: Validate coverage audit boundaries
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          path = Path("data/derived/v2/cross_pillar_coverage_audit.json")
+          payload = json.loads(path.read_text(encoding="utf-8"))
+
+          if payload.get("status") != "cross_pillar_market_coverage_audit":
+              raise SystemExit("unexpected coverage audit status")
+          if payload.get("scoring") != "forbidden_in_this_artifact":
+              raise SystemExit("coverage audit must forbid scoring")
+          if payload.get("ranking") != "forbidden_in_this_artifact":
+              raise SystemExit("coverage audit must forbid ranking")
+
+          universe = (payload.get("universe") or {}).get("entities")
+          joint = ((payload.get("coverage") or {}).get("joint_core_conclusive") or {}).get("entity_count")
+          incomplete = ((payload.get("coverage") or {}).get("joint_core_incomplete") or {}).get("entity_count")
+          if not isinstance(universe, int) or universe < 100:
+              raise SystemExit(f"unexpectedly small coverage universe: {universe}")
+          if not isinstance(joint, int) or joint < 0 or joint > universe:
+              raise SystemExit("invalid jointly conclusive population")
+          if not isinstance(incomplete, int) or incomplete < 0:
+              raise SystemExit("invalid jointly incomplete population")
+          if joint + incomplete != universe:
+              raise SystemExit("coverage population accounting mismatch")
+          if payload.get("interpretation", {}).get("current_joint_conclusive_population_can_be_called_full_market_ranking") is not False:
+              raise SystemExit("current subset cannot be labeled full-market ranking")
+
+          forbidden = {
+              "overall_score",
+              "financial_score",
+              "conduct_score",
+              "ranking_position",
+              "assessment_eligible",
+              "ranking_eligible",
+          }
+          def walk(value):
+              if isinstance(value, dict):
+                  overlap = forbidden & set(value)
+                  if overlap:
+                      raise SystemExit(f"forbidden fields in coverage audit: {sorted(overlap)}")
+                  for child in value.values():
+                      walk(child)
+              elif isinstance(value, list):
+                  for child in value:
+                      walk(child)
+          walk(payload)
+
+          print(json.dumps({
+              "universe": payload.get("universe"),
+              "coverage": payload.get("coverage"),
+              "excluded_materiality": payload.get("excluded_materiality"),
+              "interpretation": payload.get("interpretation"),
+          }, ensure_ascii=False, indent=2))
+          PY
+
+      - name: Upload cross-pillar coverage audit
+        uses: actions/upload-artifact@v4
+        with:
+          name: v2-cross-pillar-coverage-audit-${{ github.run_id }}
+          path: data/derived/v2/cross_pillar_coverage_audit.json
+          retention-days: 14

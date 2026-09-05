@@ -1,1929 +1,1529 @@
 # Ranking de Seguradoras Sanida — Pipeline de Dados e Metodologia v2
 
-> **Status do projeto:** refatoração metodológica e arquitetural em andamento.  
-> Este README funciona, nesta fase, como **contrato de projeto, guia de implementação e registro das decisões já tomadas**.  
-> Regras marcadas como **EM VALIDAÇÃO** não devem ser tratadas como metodologia definitiva nem incorporadas ao scoring sem os testes previstos neste documento.
+> **Status do projeto:** fundação metodológica, operacional e frontend/SEO concluídas em Draft; **§19.1–§19.7 formalmente fechados no branch de trabalho**; frontend R5.3 ativo em produção desde 05/09/2026; rollback do frontend disponível; automações de geração/publicação e sensores permanecem desativados.
+> **Branch de trabalho:** `refactor/v2-data-foundation`.  
+> **PR:** #1 permanece **Draft**. O cutover do frontend não autoriza merge em `main`, publicação automática de dados, cron ou sensores.
+> **Produto principal:** consulta de identidade + avaliação semântica individual + comparação lado a lado; leaderboards unidimensionais e coleções semânticas são exploração secundária.  
+> **Ranking geral:** continua bloqueado (`ranking_eligible = 0`).  
+> **Frontend:** PHP/HTML/CSS/JS no HostGator consome contratos públicos prontos; **não recalcula metodologia**. O build Vite no CI é prova de compilabilidade, não deploy do frontend.  
+> **Marco crítico de 29/08/2026:** corrigido o numerador de `PLA/CMR`. O pipeline deve usar `NovoPla` (`new_pla`) como PLA prudencial final; `plajustado` (`pla_adjusted`) permanece somente como evidência intermediária da fonte. Artifacts gerados antes dessa correção não devem ser tratados como atuais para capital, assessment combinado ou leaderboards dependentes de capital.  
+> **Prova de fechamento do §19.1:** Full Generation Proof #49, run `33567550092`, head `7993dbabd1cf3cd21181c88d072aed4ce5573538`, concluída com sucesso; artifact `9824434275`, SHA-256 `d0ccb6ce274542015431ae9fde0084c12941d1983ce06527bf6872e442244431`.
+
+Este README é o **contrato operacional do projeto**. A consolidação coberta por este ciclo foi concluída até o §19.7: metodologia/dados, potencial informacional do frontend, evergreen, publicação HostGator preparada, limpeza do repositório, revisão funcional/UX, comunicação pública, SEO técnico/semântico, acabamento visual, integração final, staging real e rollback operacional. Após autorização separada, o frontend R5.3 foi promovido para a URL de produção e reconciliado por hash, HTTP, SEO e smoke funcional. A competência de **descoberta evergreen de novas identidades de mercado** permanece sem ativação operacional; merge, geração/publicação automática, cron e sensores continuam sujeitos a gates próprios.
+
+Documentação principal:
+
+- `docs/section-19-1-methodology-data-audit-closure.md`;
+- `docs/section-19-2-frontend-information-audit.md`;
+- `docs/section-19-3-19-4-evergreen-hostgator-publication.md`;
+- `docs/section-19-5-repository-cleanup.md`;
+- `docs/section-19-7-final-consolidation.md`;
+- `docs/production-frontend-cutover.md`;
+- `docs/emerging-market-identity-coverage.md`;
+- `docs/emerging-market-discovery-audit.md`;
+- `docs/financial-methodology-closure.md`;
+- `docs/conduct-methodology-closure.md`;
+- `docs/cross-pillar-calibration-stage-1.md`;
+- `docs/cross-pillar-architecture-stage-2.md`;
+- `docs/cross-pillar-assessment-semantic-contract.md`;
+- `docs/assessment-eligibility-contract.md`;
+- `docs/ranking-eligibility-preflight.md`;
+- `docs/exploratory-leaderboards-contract.md`;
+- `docs/public-search-profile-contract.md`.
+
+Regras marcadas como **EXPERIMENTAL**, **DIAGNÓSTICO**, **LEGACY**, **INVALIDATED** ou **PENDENTE** nunca podem vazar silenciosamente para o frontend público.
 
 ---
 
-## 1. Objetivo
+# 1. Objetivo do produto
 
-O projeto mantém a camada de dados e inteligência que alimenta a ferramenta pública da Sanida para consulta de seguradoras, empresas em regimes regulatórios específicos, marcas e outras entidades relacionadas ao mercado de seguros.
+A ferramenta pública deve ajudar o consumidor a responder, em linguagem progressiva:
 
-A ferramenta pública deve responder rapidamente às dúvidas que motivam a maior parte das consultas do usuário:
+1. **Quem é a empresa ou marca pesquisada?**
+2. **É seguradora autorizada, participante Sandbox, cooperativa de seguros, marca, plataforma, corretora, entidade histórica ou outro tipo de empresa?**
+3. **Existe seguradora por trás da marca ou relação societária relevante?**
+4. **Os sinais financeiros disponíveis mostram algum alerta material?**
+5. **As reclamações parecem altas ou baixas em relação ao tamanho da operação quando essa comparação é realmente possível?**
+6. **Há limitações que impedem uma conclusão conjunta?**
+7. **Quais números, períodos, fontes e regras sustentam a resposta?**
 
-- **Esta seguradora é confiável?**
-- **Ela apresenta bons sinais institucionais?**
-- **Como ela se compara a outras seguradoras realmente comparáveis?**
-- **Por que recebeu essa avaliação?**
-- **O nome pesquisado é realmente uma seguradora?**
-- **Quem é a entidade regulada por trás de uma marca?**
-- **A empresa está em regime ordinário, Sandbox ou outra condição regulatória identificável?**
-
-A complexidade metodológica deve existir **por trás da resposta**, não antes dela.
-
-O usuário não deve precisar compreender o funcionamento do SES, PLA, CMR, SusepCon, matching de entidades ou fórmulas contábeis para obter uma resposta inicial útil.
-
-A transparência deve ser progressiva:
+A progressão pública obrigatória é:
 
 ```text
 resposta rápida
-    ↓
-justificativa resumida
-    ↓
-indicadores
-    ↓
-fontes e períodos
-    ↓
-metodologia completa
+→ sinais em português comum
+→ identidade e relações relevantes
+→ comparação visual
+→ números técnicos
+→ fontes, período e limites
+→ metodologia completa
 ```
+
+O consumidor não deve precisar conhecer `PLA/CMR`, `ILT`, `observed/expected`, `risk_carrier`, códigos internos ou nomes de estados do backend para entender a primeira resposta.
 
 ---
 
-## 2. Princípio central do produto
+# 2. Princípio central
 
-O projeto não existe para produzir uma tabela tecnicamente sofisticada. Ele existe para **ajudar o consumidor a tomar uma decisão melhor**.
-
-A inteligência deve, portanto, seguir esta ordem:
+A ordem metodológica permanece:
 
 ```text
-1. identificar corretamente o que foi pesquisado
-2. entender o status e o papel da entidade
-3. decidir se ela pode ser avaliada
-4. decidir com quem ela pode ser comparada
-5. calcular os indicadores permitidos pelas fontes
-6. produzir uma avaliação
-7. explicar o resultado
-8. somente então posicioná-la em um ranking, quando aplicável
+identidade correta
+→ classificação correta
+→ lifecycle e relationships
+→ elegibilidade
+→ evidência
+→ período correto
+→ comparabilidade
+→ calibração
+→ avaliação
+→ eventual ordenação permitida
 ```
 
-A ordem inversa — calcular uma nota primeiro e tentar explicar depois — não é aceita na v2.
+Regra de projeto:
+
+> **identidade correta → dado correto → período correto → comparação correta → conclusão útil → explicação transparente.**
+
+É proibido produzir conclusão primeiro e procurar justificativa depois.
 
 ---
 
-## 3. Escopo do repositório
+# 3. Escopo do repositório
 
-### 3.1. Responsabilidade do GitHub
+O repositório é responsável por:
 
-A partir da v2, este repositório será responsável por:
-
-- coleta de fontes;
-- cache e contingência das fontes;
+- ingestão e cache de fontes;
 - normalização;
-- resolução de identidade;
-- classificação das entidades;
-- relações entre marcas e entidades jurídicas;
-- consolidação de status regulatório;
-- cálculo de indicadores;
-- aplicação da metodologia;
-- elegibilidade para avaliação;
-- elegibilidade para ranking;
-- formação das coortes comparáveis;
-- geração dos rankings;
-- validações;
-- auditoria;
-- snapshots históricos;
-- testes automatizados;
-- geração e publicação dos JSONs consumidos pelo site.
+- identidade canônica;
+- classificação regulatória;
+- lifecycle jurídico;
+- relações de marca, sucessão, grupo e `risk_carrier`;
+- descoberta observacional de novas identidades de mercado;
+- elegibilidade;
+- evidência financeira;
+- evidência de Conduta;
+- reconciliação entre sujeito de reclamação e exposição;
+- comparabilidade;
+- contratos semânticos;
+- auditoria e invariantes;
+- testes;
+- geração dos JSONs públicos;
+- workflows e artifacts.
 
-O repositório deve terminar na **camada de dados**.
-
-### 3.2. Fora do escopo do GitHub
-
-A v2 **não terá responsabilidade pelo frontend da página pública**.
-
-Devem sair progressivamente deste repositório:
-
-- React;
-- Vite;
-- HTML da página;
-- componentes visuais;
-- CSS público;
-- modais;
-- cards;
-- textos editoriais;
-- H1/H2;
-- `<title>`;
-- meta description;
-- canonical;
-- dados estruturados de página;
-- conteúdo de SEO;
-- regras de apresentação;
-- tradução dos códigos internos em frases de interface.
-
-A apresentação será construída diretamente no ambiente da Sanida com:
+O frontend público fica fora da metodologia. Sua função é pesquisar, navegar, formatar e renderizar contratos já fechados. A única exceção operacional é a emissão opcional de **telemetria observacional de busca sem resultado**, sem autoridade metodológica e desabilitada enquanto o endpoint não estiver explicitamente configurado.
 
 ```text
-PHP
-HTML
-CSS
-JavaScript
+php_may_recompute_methodology = false
+js_may_recompute_methodology  = false
 ```
 
-O PHP deverá receber dados semanticamente prontos.
+PHP/JS não podem:
 
-**Nenhuma regra de scoring, matching, elegibilidade ou classificação regulatória poderá ser reconstruída no PHP ou no JavaScript.**
+- recalcular PLA/CMR ou ILT;
+- recalcular `observed/expected`;
+- transferir reclamações entre marca, subject e carrier;
+- decidir identidade por fuzzy matching;
+- criar score;
+- criar ranking geral;
+- inferir sucessão ou aquisição;
+- transformar `null` em `0`;
+- decidir missingness;
+- inventar desempate.
 
 ---
 
-## 4. Arquitetura-alvo
+# 4. Arquitetura-alvo
 
 ```text
 FONTES OFICIAIS / PÚBLICAS
-          │
-          ├── SUSEP / SES
-          ├── licenciamentos e cadastros SUSEP
-          ├── Sandbox SUSEP
-          ├── SusepCon / BDR, quando utilizável
-          ├── Open Insurance
-          └── Consumidor.gov, quando aplicável
-          │
-          ▼
-COLETA + CACHE + VALIDAÇÃO DE FONTE
-          │
-          ▼
-NORMALIZAÇÃO
-          │
-          ▼
-IDENTIDADE CANÔNICA
-          │
-          ├── entidade jurídica
-          ├── CNPJ
-          ├── código FIP/SUSEP
-          ├── tipo
-          ├── situação
-          ├── regime
-          ├── grupo econômico
-          └── relações com marcas
-          │
-          ▼
-RESOLUÇÃO DE ENTIDADES E MARCAS
-          │
-          ▼
-INDICADORES
-          │
-          ▼
-ELEGIBILIDADE
-          │
-          ├── avaliação
-          ├── ranking
-          └── coorte comparável
-          │
-          ▼
-METODOLOGIA v2
-          │
-          ▼
-VALIDAÇÃO
-          │
-          ▼
+    │
+    ├── SUSEP / SES
+    ├── SUSEP — licenciadas
+    ├── SUSEP — regimes especiais
+    ├── SUSEP — Sandbox
+    ├── Receita Federal — lifecycle/CNPJ
+    ├── BDR / SusepCon quando publicamente consumível
+    └── Consumer.gov
+    │
+    ▼
+COLETA + CACHE + VALIDAÇÃO
+    │
+    ▼
+IDENTIDADE / CLASSIFICAÇÃO / LIFECYCLE
+    │
+    ▼
+RELATIONSHIPS / MARCAS / RISK CARRIERS
+    │
+    ▼
+ELEGIBILIDADE REGULATÓRIA
+    │
+    ▼
+EVIDÊNCIA FINANCEIRA + CONDUTA
+    │
+    ▼
+COMPARABILIDADE / RECONCILIAÇÃO
+    │
+    ▼
+CONTRATOS SEMÂNTICOS
+    │
+    ▼
 JSONs PÚBLICOS
-          │
-══════════╪════════════════════════════════════
-          │
-          ▼
-SANIDA.COM.BR
-          │
-          ├── PHP / HTML / SEO
-          ├── CSS
-          └── JavaScript de interação
+    │
+    ▼
+PHP + CSS + JS
 ```
+
+A descoberta evergreen de identidades emergentes funciona em paralelo e **não é autoridade metodológica**:
+
+```text
+SUSEP licensed delta ─┐
+SUSEP Sandbox delta ──┤
+Consumer.gov/watchdog ┤
+widget unknown query ─┼→ observations
+GSC unresolved query ─┘
+                         ↓
+              market candidate registry
+                         ↓
+            assertion_effect = none
+            score_effect = none
+            complaint_transfer_effect = none
+            automatic_registry_mutation = forbidden
+                         ↓
+              relationship_watchdog
+                         ↓
+               review queue única
+                         ↓
+              resolução source-backed
+                         ↓
+                registry canônico
+```
+
+Sensores podem descobrir; somente evidência adequada pode autorizar identidade/relação pública.
 
 ---
 
-## 5. O que a ferramenta avalia — e o que não avalia
+# 5. Identidade, busca e relações
 
-### 5.1. Território principal
+## 5.1. Identidade antes da avaliação
 
-A ferramenta pretende avaliar **sinais institucionais de confiabilidade da seguradora**, usando dados públicos e metodologia própria, documentada e reproduzível.
-
-Uma avaliação positiva significa que os indicadores utilizados pela metodologia apresentam sinais favoráveis dentro do universo comparável.
-
-Ela **não significa**, isoladamente, que:
-
-- qualquer produto daquela seguradora é adequado ao cliente;
-- a seguradora tem o menor preço;
-- determinada cobertura é melhor;
-- determinada apólice é mais ampla;
-- uma indenização específica será paga;
-- a empresa é “a melhor” para todo tipo de seguro.
-
-### 5.2. Ramos de atuação
-
-Os **ramos de atuação** podem ser informados na ficha da seguradora quando for possível apresentá-los de maneira simples, correta e útil.
-
-Exemplos de linguagem pública possível:
+Para registros SUSEP/SES:
 
 ```text
-Principais áreas de atuação:
-Automóvel, residencial, empresarial e vida
+entity_id = fip:XXXXXX
 ```
 
-Contudo:
-
-- ramos **não são um eixo principal do widget**;
-- a ferramenta não será transformada em ranking por intenção comercial como auto, vida, empresarial, garantia etc.;
-- páginas especializadas da Sanida continuam sendo responsáveis por explorar essas necessidades, produtos e intenções de busca;
-- um ramo não deve receber peso na nota apenas por existir;
-- a informação deve servir apenas para ajudar o usuário a compreender o perfil da seguradora.
-
----
-
-## 6. Princípios metodológicos já aprovados
-
-Os princípios abaixo são **decisões de projeto**.
-
-### 6.1. Identidade vem antes da nota
-
-Uma entidade só pode ser avaliada depois que sua identidade for resolvida com segurança suficiente.
-
-Nome comercial não é chave primária.
-
-Sempre que possível, a identidade deve convergir para:
+Pessoa jurídica:
 
 ```text
-entity_id
-CNPJ
-código FIP/SUSEP
-razão social
-tipo de entidade
-status regulatório
+legal_entity_id = cnpj:<CNPJ>
 ```
 
-### 6.2. Coisas diferentes não disputam o mesmo ranking
+A Receita Federal complementa lifecycle cadastral; não concede licença nem substitui a SUSEP.
+
+## 5.2. Busca mais ampla que assessment
 
 A busca pública pode localizar:
 
 - seguradora autorizada;
-- participante do Sandbox;
-- antiga participante do Sandbox;
-- marca comercial;
-- plataforma;
-- intermediário;
+- participante Sandbox;
+- sociedade cooperativa de seguros;
+- marca;
+- insurtech/plataforma;
 - corretora;
-- ressegurador;
-- entidade de previdência;
+- previdência;
 - capitalização;
-- associação ou entidade de proteção patrimonial mutualista;
-- assistência;
-- outra entidade identificável.
+- ressegurador;
+- entidade histórica;
+- entidade em regime especial;
+- outras identidades materializadas.
 
-Isso **não significa que todas sejam elegíveis para uma nota ou para o ranking de seguradoras**.
+Ser pesquisável não significa ser elegível para assessment ordinário.
+
+## 5.3. Fuzzy matching
+
+```text
+fuzzy search → ordenar candidatos
+fuzzy search ≠ decidir identidade
+```
+
+A mesma regra vale para a descoberta evergreen: similaridade pode sugerir investigação, mas não pode fundir candidates ou resolver identidade automaticamente.
+
+## 5.4. Relações
+
+O backend pode preservar:
+
+- `incorporated_into`;
+- sucessores;
+- grupo econômico observado;
+- marca;
+- `brand_of`;
+- `risk_carrier`;
+- relações especiais de subject/carrier/portfólio.
+
+Guardrails:
+
+```text
+brand ≠ legal_entity
+same_group ≠ succession
+same_group ≠ acquisition
+same_group ≠ joint_venture
+risk_carrier_relation ≠ complaint_transfer
+```
+
+Casos públicos importantes já materializados:
+
+- Azos ↔ Companhia Excelsior de Seguros, preservando Azos como `insurtech_platform` e a Excelsior como `risk_carrier` documentado;
+- Youse ↔ Caixa Seguradora, sem colapsar a identidade regulatória Youse nem transferir exposição/reclamações automaticamente;
+- Loovi ↔ LTI Seguros;
+- HDI Seguros × HDI Global no grupo TALANX, mantendo identidades distintas;
+- Zurich com necessidade de reconciliação temporal;
+- Bradesco Seguros com divisão de carteira;
+- entidades históricas com sucessão explícita quando documentada.
+
+---
+
+# 6. Contrato público de busca e perfil
+
+Contrato canônico:
+
+`docs/public-search-profile-contract.md`
+
+Arquivos:
+
+```text
+data/derived/v2/public/search_index.json
+data/derived/v2/public/profile_manifest.json
+data/derived/v2/public/profiles/*.json
+```
+
+No build que fechou esse contrato em 28/08/2026:
+
+```text
+entidades lifecycle                               492
+marcas verificadas                                 13
+perfis públicos                                   505
+entradas de busca                                 505
+seguradoras ordinárias atuais no lifecycle        159
+com payload de assessment daquele snapshot        157
+participantes Sandbox                              12
+```
+
+Esses números são snapshot histórico, não constantes metodológicas. O contrato público corrente é validado pelo Gate 4 e sua fotografia atual deve ser lida nos artifacts da geração correspondente.
+
+`search_index.json` resolve busca e desambiguação. `profile_manifest.json` resolve perfil → arquivo. Cada arquivo de `profiles/` contém identidade, relações, sinais disponíveis, semântica de ausência e contexto suficiente para o frontend não inventar lógica.
+
+### Semântica obrigatória
+
+```text
+null ≠ 0
+```
+
+Exemplo Youse:
+
+- reclamações podem existir;
+- `expected_complaints` pode ser `null`;
+- `pressure_ratio` pode ser `null`;
+- prêmio bruto zero pode existir na fonte;
+- esse zero pode ser explicitamente marcado como **não exibível como tamanho da operação**.
+
+O frontend deve respeitar `availability`, `public_use`, `zero_semantics` e `meaning`.
+
+---
+
+# 7. Pilar econômico-financeiro
+
+## 7.1. Arquitetura
+
+| Dimensão | Referência | Papel |
+|---|---|---|
+| Capital regulatório | PLA/CMR | eixo principal |
+| Liquidez | ILT | eixo principal |
+| Liquidez corrente | ILC | diagnóstico complementar |
+| Operação | ICA/IC | contexto longitudinal |
+| Rentabilidade | ILPL | diagnóstico apenas |
+
+Não há score financeiro numérico.
+
+## 7.2. Correção crítica de PLA/CMR — 29/08/2026
+
+Foi identificado um erro de interpretação de campo no pipeline de capital.
+
+A fonte `Ses_pl_margem.csv` preserva, entre outros:
+
+```text
+plajustado  → normalizado como pla_adjusted
+NovoPla     → normalizado como new_pla
+CMR         → cmr
+```
+
+O pipeline antigo calculava:
+
+```text
+pla_adjusted / CMR
+```
+
+Isso utilizava um valor intermediário e gerava falsos alertas prudenciais em casos materiais, inclusive Porto Seguro.
+
+A regra corrigida é:
+
+```text
+PLA/CMR = new_pla / cmr
+```
+
+Contrato atual no código:
+
+```text
+CAPITAL_PLA_SOURCE_FIELD = "new_pla"
+CAPITAL_PLA_RAW_INTERMEDIATE_FIELD = "pla_adjusted"
+```
+
+Consequências obrigatórias:
+
+- `new_pla` é o numerador prudencial do PLA/CMR;
+- `pla_adjusted` continua preservado como evidência intermediária/bruta;
+- **não existe fallback silencioso** de `new_pla` para `pla_adjusted`;
+- se `new_pla` estiver ausente, a métrica fica indisponível;
+- CMR zero continua sendo evidência inutilizável, não desempenho zero;
+- a seleção da competência financeira madura deve usar a mesma semântica de derivabilidade de `new_pla / CMR`.
+
+Versões após a correção:
+
+```text
+FINANCIAL_EVIDENCE_VERSION = 2.0-draft-evidence-profile-4
+MATURITY_POLICY_VERSION     = 2.0-draft-financial-period-maturity-3
+```
+
+Testes regressivos foram adicionados para impedir retorno ao numerador antigo.
+
+### Integridade da ingestão financeira SES
+
+O leitor financeiro falha fechado para linha CSV malformada, identificador FIP,
+`damesano` ou `CMPID` não inteiro, competência que não seja `AAAAMM` válida,
+número malformado e valor não finito. Notação científica finita publicada pela
+própria SUSEP continua aceita e preservada; caracteres desconhecidos nunca são
+apagados para fabricar um número aparentemente válido.
+
+Duplicatas de capital são contabilizadas por entidade e competência. Uma
+competência duplicada não participa da cobertura de maturidade nem deriva
+`new_pla / CMR`, pois escolher uma das linhas seria depender da ordem física do
+arquivo. O registro bruto permanece visível para investigação, sem virar score,
+ranking ou conclusão adversa automática.
+
+Os componentes de balanço usados nas fórmulas são aceitos somente no quadro
+oficial correspondente (`22A`, `22P` ou `23`). Um `CMPID` conhecido no quadro
+errado interrompe a geração, em vez de contaminar silenciosamente a fórmula.
+
+### Regra de invalidação
+
+Artifacts anteriores a essa correção que contenham:
+
+- sinal de capital;
+- assessment conjunto dependente de capital;
+- coleções financeiras;
+- leaderboard `highest_pla_cmr_ratio`;
+- semântica pública derivada do capital;
+
+**não devem ser tratados como atuais.** A cadeia dependente foi posteriormente regenerada e validada durante o §19.1, inclusive pela Full Generation Proof #49.
+
+Contagens históricas como “14 seguradoras abaixo do CMR” pertencem ao build anterior e permanecem **invalidadas para uso corrente**.
+
+## 7.3. Competência financeira madura
+
+```text
+última competência observada ≠ última competência madura
+```
+
+A política escolhe a competência comum mais recente com cobertura suficiente de capital derivável e alinhamento com as demais fontes financeiras.
+
+A maturidade não pode usar semântica diferente da métrica final: após a correção, derivabilidade de capital significa `new_pla` disponível + `CMR > 0`.
+
+## 7.4. Capital
+
+Estados:
+
+```text
+capital_below_cmr
+capital_meets_or_exceeds_cmr
+capital_signal_unavailable
+```
+
+Regras:
+
+- `PLA/CMR < 1`: insuficiência observada frente ao CMR na competência analisada;
+- `PLA/CMR >= 1`: requisito observado atendido;
+- não afirmar insolvência automaticamente;
+- excesso de capital não gera recompensa linear;
+- histórico curto altera confiança, não desempenho.
+
+## 7.5. Liquidez
+
+ILT é o indicador principal. ILC é diagnóstico complementar.
+
+A referência `1,0` do ILT é paridade aritmética, **não threshold prudencial oficial da SUSEP**.
+
+```text
+ilt_below_arithmetic_parity
+ilt_at_or_above_arithmetic_parity
+ilt_signal_unavailable
+```
+
+Capital e liquidez são não compensatórios: um não apaga materialmente o outro.
+
+## 7.6. Operação
+
+ICA/IC permanecem contexto longitudinal:
+
+```text
+balanced_persistent
+improved
+recent_pressure
+persistent_pressure
+indeterminate
+```
+
+Não formam terceiro score financeiro.
+
+---
+
+# 8. Pilar de Conduta
+
+Pergunta central:
+
+> **Há reclamações acima do que seria esperado para o tamanho comparável da operação, e esse sinal é suficientemente robusto e persistente?**
+
+O contrato de Conduta não responde simplesmente “quem tem mais reclamações”.
+
+## 8.1. Cascata de fontes
+
+```text
+P1  BDR / SusepCon atual e publicamente consumível
+ ↓
+P2  Consumer.gov Base Completa autêntica + SES
+ ↓
+P3  Consumer.gov core preservado + SES
+ ↓
+P0  evidência indisponível
+```
 
 Regra:
 
-> **A busca é ampla. O ranking é restrito.**
-
-### 6.3. Dado ausente nunca vale zero
-
-Ausência de um indicador não é evidência de desempenho ruim.
-
-É proibido converter automaticamente:
-
 ```text
-dado ausente → 0 pontos
+series_policy = no_cross_source_stitching
 ```
 
-### 6.4. Não haverá redistribuição silenciosa dos pilares principais
+Fontes diferentes não são costuradas em uma falsa série longitudinal.
 
-Se a metodologia geral exigir dois pilares e um deles não puder ser calculado de maneira válida:
+## 8.2. Exposição
 
-```text
-overall_score = null
-```
-
-A ferramenta poderá exibir os indicadores disponíveis, mas não deverá transformar automaticamente o pilar restante em 100% da nota sem regra metodológica explícita e previamente aprovada.
-
-### 6.5. Nota e qualidade da evidência são conceitos diferentes
-
-A v2 deverá separar:
+A exposição econômica aprovada para seguros é:
 
 ```text
-score
+source                         Ses_seguros.csv
+approved denominator           premio_direto
+diagnostic companion           premio_ganho
 ```
 
-de:
+Previdência e capitalização não entram no denominador de seguros.
+
+## 8.3. Evidência observada não é pressão comparável
 
 ```text
-assessment_confidence
+conduct_evidence_state ≠ pressure_comparability_state
 ```
 
-A nota responde:
+Uma empresa pode ter reclamações observadas e ainda não permitir cálculo proporcional seguro.
 
-> Como se comportaram os indicadores avaliados?
-
-A confiança da avaliação responde:
-
-> Quão robustos e completos são os dados que sustentam essa conclusão?
-
-### 6.6. Ranking é consequência
-
-A posição no ranking nunca entra no cálculo da nota.
-
-Fluxo obrigatório:
+## 8.4. Subject, marca e carrier
 
 ```text
-indicadores
-→ nota
-→ elegibilidade
-→ coorte
-→ ordenação
-→ posição
+consumer-facing subject
+↔ relação documentada
+↔ risk carrier(s)
 ```
 
-### 6.7. Open Insurance não gera pontos de confiabilidade
+Relações fornecem contexto; não transferem automaticamente reclamações ou produção.
 
-Participação no Open Insurance pode ser exibida como informação contextual.
+### Youse
 
-Não integra, por princípio, a nota de confiabilidade.
+Youse permanece uma identidade regulatória atual. Condições contratuais atuais podem identificar a Caixa Seguradora como garantidora/carrier de produtos Youse, mas isso não autoriza usar automaticamente a produção total da Caixa como denominador das reclamações da Youse nem colapsar as duas identidades.
 
-### 6.8. Porte não é sinônimo de confiabilidade
+### Loovi / LTI
 
-Não conferem pontos por si mesmos:
+A evidência Consumer.gov é atribuída à LTI Seguros. O perfil da marca Loovi pode apresentar esse contexto explicando a relação, sem transformar a marca em pessoa jurídica avaliada.
 
-- prêmio/arrecadação absoluta;
-- participação de mercado;
-- patrimônio absoluto;
-- tamanho do grupo econômico.
+## 8.5. Estatística e tempo
 
-Esses dados podem contextualizar o perfil da empresa.
+O contrato distingue:
 
-### 6.9. Sinistralidade isolada não mede confiabilidade
+- acima do esperado;
+- abaixo do esperado;
+- sem diferença clara;
+- conclusão sensível ao denominador;
+- histórico temporal insuficiente;
+- pressão não comparável;
+- persistência;
+- tendência;
+- satisfação sample-aware.
 
-Sinistralidade pode ajudar na compreensão econômica da operação, mas não deverá ser interpretada como:
-
-```text
-menos sinistros = seguradora melhor
-```
-
-Nem deverá ser usada isoladamente como proxy de solvência ou qualidade.
-
-### 6.10. Matching incerto não pode produzir verdade categórica
-
-Matching fuzzy, aliases e heurísticas são ferramentas para localizar candidatos.
-
-Não são autorização para transformar uma hipótese em identidade confirmada.
-
-### 6.11. A metodologia pertence ao backend
-
-O site recebe o resultado.
-
-Não calcula:
-
-- score;
-- rating;
-- confiança;
-- ranking;
-- matching;
-- situação regulatória;
-- elegibilidade.
+Resposta/finalização no Consumer.gov não prova resolução.
 
 ---
 
-## 7. Resolvedor de identidade
+# 9. Sandbox
 
-A ferramenta pública deverá aceitar consultas por nome sem exigir que o usuário conheça previamente a natureza jurídica daquilo que está buscando.
-
-Exemplo:
+Sandbox continua fora do benchmark ordinário.
 
 ```text
-“Nome pesquisado”
-       ↓
-alias / marca / razão social
-       ↓
-entidade ou conjunto de entidades relacionadas
-       ↓
-papel regulatório
-       ↓
-resposta adequada ao tipo encontrado
+ordinary_ranking_effect = none
 ```
 
-### 7.1. Modelo conceitual
+Participantes Sandbox podem ser pesquisados e receber contexto próprio de identidade e Conduta.
 
-Uma relação poderá conter, conforme a disponibilidade e a confiabilidade da fonte:
+Loovi ↔ LTI é o caso público mais desenvolvido no contrato atual.
 
-```text
-brand_id
-entity_id
-relationship_type
-status
-source
-confidence
-```
+Sandbox não herda assessment ordinário e não contamina baseline ordinário.
 
-Datas de vigência podem ser guardadas quando forem fornecidas de forma estruturada e sustentável pela fonte, mas a experiência pública deve priorizar o **estado atual calculado automaticamente**.
-
-O objetivo operacional é minimizar manutenção editorial.
-
-### 7.2. Marcas não herdam nota
-
-Se uma marca estiver associada a uma seguradora:
-
-```text
-Marca X
-→ risco assumido pela Seguradora Y
-```
-
-a nota pertence à **Seguradora Y**.
-
-A interface poderá mostrar:
-
-> Avaliação da seguradora responsável: 84/100
-
-Não deverá publicar:
-
-> Marca X: 84/100
-
-quando a marca não for a própria entidade avaliada.
+Sociedades cooperativas de seguros também possuem semântica própria e não entram no benchmark ordinário por presunção.
 
 ---
 
-## 8. Matriz Metodológica v2
+# 10. Avaliação entre pilares
 
-### 8.1. Camadas
-
-A v2 será organizada em cinco camadas:
+A arquitetura combinada é:
 
 ```text
-Identidade
-→ Elegibilidade
-→ Evidências
-→ Avaliação
-→ Ranking
+noncompensatory_state_matrix_with_adverse_qualifiers
 ```
 
-### 8.2. Identidade e contexto
+Não existe média ponderada entre Financeiro e Conduta.
 
-| Informação | Fonte principal | Pontua? | Função |
-|---|---|---:|---|
-| CNPJ | SUSEP | Não | Identidade |
-| Código FIP/SUSEP | SUSEP/SES | Não | Integração |
-| Razão social | SUSEP | Não | Identidade |
-| Nome de exibição | Derivado/curado | Não | UX |
-| Tipo da entidade | SUSEP + normalização | Não | Universo |
-| Situação atual | SUSEP | Não | Gate |
-| Regime regulatório | SUSEP | Não | Gate |
-| Grupo econômico | SUSEP | Não | Contexto |
-| Ramos de atuação | SES | Não | Contexto |
-| Open Insurance | Fonte oficial | Não | Contexto |
-| Marca/alias | Fonte verificável/curadoria | Não | Resolução de busca |
+A avaliação conjunta deve dizer **onde** existe sinal adverso e onde a evidência está incompleta, sem criar uma taxa de câmbio artificial entre capital, liquidez e reclamações.
 
-### 8.3. Elegibilidade
-
-A entidade deverá possuir estados independentes.
-
-Exemplo conceitual:
-
-```json
-{
-  "assessment_eligible": true,
-  "ranking_eligible": true,
-  "comparison_cohort": "licensed_insurers"
-}
-```
-
-#### Seguradora ordinária com dados suficientes
+Estados públicos podem incluir:
 
 ```text
-avaliação geral: sim
-ranking: sim
+no_current_core_adverse_signal
+conduct_pressure_only
+liquidity_pressure_only
+liquidity_and_conduct_pressure
+capital_shortfall_without_conduct_pressure
+capital_shortfall_and_conduct_pressure
+evidence_incomplete_for_joint_assessment
 ```
 
-#### Seguradora ordinária com financeiro suficiente e atendimento insuficiente
+### Estado após a auditoria de capital
+
+A cadeia dependente de capital foi **regenerada e validada** com `new_pla / CMR`. As contagens correntes devem ser lidas nos artifacts da geração integrada; contagens anteriores à correção permanecem históricas/invalidadas para uso corrente.
+
+O desenho semântico não compensatório permaneceu válido após a auditoria.
+
+---
+
+# 11. Assessment e ranking
+
+Os gates permanecem separados:
 
 ```text
-avaliação financeira: sim
-avaliação geral: não
-ranking geral: não
+regulatory_universe_eligible
+→ assessment_eligible
+→ ranking_eligible
 ```
 
-#### Sandbox
+`assessment_eligible` significa que há evidência suficiente e comparável para publicar a avaliação conjunta daquela versão. Não é selo de qualidade.
+
+`ranking_eligible` permanece `0` para ranking geral.
+
+A existência de leaderboards unidimensionais não abre ranking composto.
+
+Regra dos leaderboards:
+
+> **a própria métrica deve definir a ordem.**
+
+Exemplos autorizados pelo contrato exploratório:
 
 ```text
-identificação: sim
-status regulatório: sim
-avaliação geral v2: não, salvo metodologia futura específica
-ranking de seguradoras ordinárias: não
+largest_by_direct_premium
+highest_pla_cmr_ratio
+highest_ilt
+lowest_conduct_pressure_ratio
+highest_conduct_pressure_ratio
 ```
 
-#### Marca
+O leaderboard de PLA/CMR já foi reconstruído e validado após a correção de `new_pla`.
+
+Coleções semânticas permanecem `ordered = false`.
+
+Não suportados:
 
 ```text
-resolução: sim
-nota própria: não
-ranking próprio: não
-direcionamento à entidade responsável: quando possível
+ranking_geral
+mais_popular
+emergente_promissora
+consagrada_exemplar
+crescimento_de_premio
 ```
 
 ---
 
-## 9. Pilares candidatos da avaliação geral
+# 12. JSONs públicos
 
-A hipótese de trabalho atual utiliza dois pilares:
+Existem duas famílias complementares.
 
-```text
-1. solidez econômico-financeira
-2. atendimento / reclamações
-```
-
-A escolha final dos pesos ainda está **EM VALIDAÇÃO**.
-
-### Hipótese inicial
+## 12.1. Busca/perfil
 
 ```text
-Financeiro:   60%
-Atendimento:  40%
+public/search_index.json
+public/profile_manifest.json
+public/profiles/*.json
 ```
 
-Esses pesos **não estão aprovados**.
-
-Antes de serem incorporados como regra definitiva, deverão passar por:
-
-- análise de distribuição;
-- análise de sensibilidade;
-- inspeção de outliers;
-- testes em seguradoras conhecidas;
-- estabilidade temporal;
-- comparação com cenários 50/50, 55/45, 60/40, 65/35 e outros relevantes;
-- avaliação do quanto pequenas mudanças de peso alteram o ranking.
-
-Se alterações pequenas de peso provocarem mudanças excessivas de classificação, a metodologia deverá ser revista.
-
----
-
-## 10. Pilar econômico-financeiro
-
-A versão atual do projeto utiliza um indicador denominado “Solvência” baseado, entre outros fatores, em patrimônio, escala e sinistralidade.
-
-Essa lógica deverá ser **substituída**.
-
-A Base Completa da SUSEP disponibiliza elementos mais apropriados para a análise econômico-financeira e prudencial.
-
-### 10.1. Componentes candidatos
-
-Hipótese inicial:
-
-| Componente | Peso interno candidato | Status |
-|---|---:|---|
-| Capital regulatório | ~45% | EM VALIDAÇÃO |
-| Liquidez | ~30% | EM VALIDAÇÃO |
-| Sustentabilidade operacional | ~25% | EM VALIDAÇÃO |
-
-Esses pesos não são definitivos.
-
-### Não entram isoladamente na nota
-
-- sinistralidade;
-- prêmio total;
-- patrimônio absoluto;
-- market share;
-- rentabilidade isolada, até validação;
-- tamanho da empresa.
-
----
-
-## 11. Capital regulatório
-
-A principal medida candidata é a relação:
+## 12.2. Exploração/comparação
 
 ```text
-PLA / CMR
+public/insurer_explorer.json
+public/explore_index.json
+public/leaderboards/*.json
+public/collections/*.json
 ```
 
-ou outra expressão equivalente metodologicamente aprovada com base nos dados oficiais.
-
-### 11.1. Princípios aprovados
-
-O indicador não será tratado linearmente.
-
-Não é aceitável inferir:
+No servidor da Sanida, o frontend deve consumir a estrutura consolidada em:
 
 ```text
-PLA/CMR 2,0 = duas vezes melhor que PLA/CMR 1,0
+/ranking-seguradoras/data/v2/public/
 ```
 
-A transformação deverá respeitar:
+A publicação de produção preparada em §19.3–§19.4 sincroniza somente um pacote público validado e inteiro, sem reconstruir metodologia no HostGator.
 
-- significado regulatório;
-- zonas economicamente relevantes;
-- ganhos decrescentes;
-- saturação;
-- histórico;
-- estabilidade;
-- situações de proximidade ou insuficiência.
-
-### 11.2. EM VALIDAÇÃO
-
-Antes da fórmula definitiva serão testados:
-
-- valor atual;
-- média recente;
-- mínimo recente;
-- volatilidade;
-- frequência de aproximação do limite;
-- períodos ideais de observação;
-- comportamento dos extremos da distribuição;
-- situações de CMR zero, negativo, ausente ou não aplicável.
+Os artifacts de descoberta (`market_identity_candidates`, watchdog aumentado e review queue) são **operacionais/observacionais** e não fazem parte do pacote público apenas por terem sido detectados.
 
 ---
 
-## 12. Liquidez
+# 13. Frontend público
 
-A liquidez será estudada a partir dos campos e conceitos econômico-financeiros compatíveis com a estrutura SUSEP.
-
-### EM VALIDAÇÃO
-
-Será necessário testar:
-
-- índice de liquidez corrente;
-- índice de liquidez total;
-- eventual combinação;
-- redundância estatística com PLA/CMR;
-- comportamento por tipo de entidade;
-- zonas de adequação;
-- saturação;
-- estabilidade temporal.
-
-Indicadores altamente redundantes não devem receber pesos independentes que contem a mesma característica duas vezes.
-
----
-
-## 13. Sustentabilidade operacional
-
-O componente operacional deve medir, na medida permitida pelos dados, o equilíbrio econômico da operação.
-
-O estudo deverá priorizar conceitos mais completos que sinistralidade isolada, como indicadores combinados ou equivalentes compatíveis com a metodologia oficial disponível.
-
-### EM VALIDAÇÃO
-
-Testar:
-
-- índice combinado;
-- índice combinado ampliado;
-- custos de aquisição;
-- despesas administrativas;
-- resultado financeiro;
-- estabilidade em múltiplos períodos;
-- influência do mix operacional;
-- outliers;
-- comparabilidade.
-
-Nenhum indicador será incluído apenas porque está disponível na base.
-
----
-
-## 14. Atendimento e reclamações
-
-O objetivo deste pilar é responder, com dados comparáveis:
-
-> Como a empresa se comporta diante de problemas relatados pelos consumidores?
-
-### 14.1. Hierarquia pretendida
-
-Preferência por fonte regulatória oficial que forneça medida comparável e normalizada, especialmente quando houver estrutura adequada do SusepCon/BDR.
-
-O Consumidor.gov poderá funcionar como:
-
-- fonte complementar;
-- evidência adicional;
-- informação de resolução/satisfação;
-- contingência metodológica, se aprovada.
-
-A presença no Consumidor.gov não deve ser automaticamente convertida em verdade sobre uma pessoa jurídica quando a fonte não permitir identidade inequívoca.
-
-### 14.2. EM VALIDAÇÃO
-
-Definir:
-
-- fonte principal automatizável;
-- atualização disponível;
-- granularidade;
-- amostra mínima;
-- tratamento de baixa amostra;
-- normalização por porte/arrecadação;
-- coortes;
-- estabilidade;
-- substituição/fallback entre SusepCon, BDR e Consumidor.gov;
-- efeitos da indisponibilidade temporária da fonte.
-
----
-
-## 15. Confiança da avaliação
-
-A confiança da avaliação não aumenta nem reduz a nota.
-
-Ela representa a robustez da evidência.
-
-Fatores candidatos:
-
-- identidade confirmada;
-- atualidade;
-- histórico financeiro suficiente;
-- completude;
-- consistência temporal;
-- qualidade do vínculo entre fontes;
-- amostra de reclamações;
-- comparabilidade.
-
-Exemplo conceitual:
-
-```json
-{
-  "score": 84.2,
-  "rating": "high",
-  "confidence": "high"
-}
-```
-
-ou:
-
-```json
-{
-  "score": null,
-  "rating": null,
-  "confidence": "limited"
-}
-```
-
-A taxonomia final de confiança está **EM VALIDAÇÃO**.
-
----
-
-## 16. Classificação verbal da nota
-
-O frontend deverá traduzir o score para linguagem compreensível.
-
-As faixas ainda não estão aprovadas.
-
-Exemplo apenas para teste:
-
-| Score | Rótulo candidato |
-|---:|---|
-| 85–100 | Confiabilidade muito alta |
-| 70–84 | Confiabilidade alta |
-| 55–69 | Confiabilidade moderada |
-| < 55 | Indicadores exigem atenção |
-
-**Não implementar estas faixas como regra definitiva sem calibração.**
-
-Em especial, a metodologia deverá evitar afirmações categóricas como “não confiável” quando os indicadores não sustentarem esse nível de conclusão.
-
----
-
-## 17. Ranking
-
-O ranking deverá conter apenas entidades:
-
-- corretamente identificadas;
-- pertencentes ao universo definido;
-- elegíveis para avaliação;
-- com dados suficientes;
-- comparáveis dentro da coorte;
-- avaliadas pela mesma versão da metodologia.
-
-A apresentação pública deverá preferir linguagem como:
-
-> 8ª entre 41 seguradoras elegíveis nesta comparação
-
-em vez de:
-
-> 8ª melhor seguradora do Brasil
-
-quando a metodologia não sustentar a segunda afirmação.
-
-### 17.1. Não haverá ranking por produto nesta ferramenta
-
-Não é objetivo deste projeto criar rankings independentes de:
-
-- auto;
-- vida;
-- empresarial;
-- garantia;
-- residencial;
-- viagem;
-- outros produtos.
-
-Essas intenções pertencem a páginas editoriais e ferramentas específicas da Sanida.
-
----
-
-## 18. Schema JSON v2
-
-A v2 deverá utilizar contrato novo e estrito.
-
-A compatibilidade com aliases e estruturas históricas da API v1 **não será objetivo do novo schema**.
-
-A migração deverá ocorrer de forma controlada, mantendo a v1 apenas durante a transição necessária.
-
-### 18.1. Artefatos públicos propostos
+A direção atual da página é:
 
 ```text
-/api/v2/meta.json
-/api/v2/entities.json
-/api/v2/brands.json
-/api/v2/rankings.json
+Consulta e comparação de seguradoras
 ```
 
-A quantidade final poderá ser ajustada por razões de desempenho ou tamanho, desde que as responsabilidades permaneçam separadas.
-
----
-
-## 19. `meta.json`
-
-Responsável pelo estado global da publicação.
-
-Exemplo:
-
-```json
-{
-  "schema_version": "2.0",
-  "methodology_version": "2.0-draft",
-  "generated_at": "2026-08-17T03:00:00Z",
-  "status": "ok",
-
-  "periods": {
-    "financial": "2026-05",
-    "complaints": "2025-Q4",
-    "licensing": "2026-08-17",
-    "sandbox": "2026-08-17"
-  },
-
-  "counts": {
-    "entities": 0,
-    "assessed": 0,
-    "ranking_eligible": 0,
-    "brands": 0
-  },
-
-  "sources": {}
-}
-```
-
-As datas acima são exemplos de contrato, não valores fixos.
-
-O site poderá usar esse arquivo para informar ao usuário a atualidade das fontes.
-
----
-
-## 20. `entities.json`
-
-Responsável pelas entidades canônicas e por suas avaliações.
-
-Exemplo de contrato preliminar:
-
-```json
-{
-  "schema_version": "2.0",
-  "entities": [
-    {
-      "id": "cnpj:12345678000190",
-
-      "identity": {
-        "legal_name": "EXEMPLO SEGURADORA S.A.",
-        "display_name": "Exemplo Seguros",
-        "cnpj": "12345678000190",
-        "fip_code": "01234"
-      },
-
-      "classification": {
-        "entity_type": "insurer",
-        "regulatory_regime": "ordinary",
-        "regulatory_status": "active",
-        "economic_group": "Grupo Exemplo"
-      },
-
-      "activities": {
-        "summary": [
-          "automóvel",
-          "residencial",
-          "empresarial"
-        ]
-      },
-
-      "features": {
-        "open_insurance": true
-      },
-
-      "assessment": {
-        "eligible": true,
-        "methodology_version": "2.0-draft",
-
-        "overall": {
-          "score": 84.2,
-          "rating": "high",
-          "confidence": "high"
-        },
-
-        "financial": {
-          "score": 87.1,
-
-          "capital": {
-            "score": 91.4,
-            "pla": 1850000000,
-            "cmr": 930000000,
-            "pla_cmr_ratio": 1.989,
-            "period": "2026-05"
-          },
-
-          "liquidity": {
-            "score": 82.3,
-            "period": "2026-05"
-          },
-
-          "operations": {
-            "score": 84.0,
-            "period": "2026-05"
-          }
-        },
-
-        "complaints": {
-          "score": 79.8,
-          "source_id": "susep_complaints",
-          "period": "2025-Q4",
-          "comparison_group": "default"
-        },
-
-        "reason_codes": [
-          "capital_comfortable",
-          "capital_stable",
-          "complaints_better_than_reference"
-        ]
-      },
-
-      "ranking": {
-        "eligible": true,
-        "universe": "licensed_insurers",
-        "position": 8,
-        "total": 41
-      }
-    }
-  ]
-}
-```
-
-Os valores, rótulos e estruturas internas de indicadores acima são ilustrativos.
-
-O schema deverá ser fechado somente após a fase de calibração e revisão da necessidade real de cada campo público.
-
----
-
-## 21. Entidade com avaliação incompleta
-
-Exemplo:
-
-```json
-{
-  "assessment": {
-    "eligible": false,
-
-    "overall": {
-      "score": null,
-      "rating": null,
-      "confidence": "limited"
-    },
-
-    "financial": {
-      "score": 86.7
-    },
-
-    "complaints": {
-      "score": null,
-      "status": "insufficient_data"
-    },
-
-    "reason_codes": [
-      "financial_data_available",
-      "complaints_insufficient"
-    ]
-  },
-
-  "ranking": {
-    "eligible": false,
-    "position": null,
-    "reason": "incomplete_assessment"
-  }
-}
-```
-
-O site não deverá deduzir o motivo a partir de combinações de `null`.
-
-O backend deve publicar estados semanticamente claros.
-
----
-
-## 22. `brands.json`
-
-Marcas não recebem score.
-
-Exemplo:
-
-```json
-{
-  "schema_version": "2.0",
-  "brands": [
-    {
-      "id": "brand:exemplo",
-      "name": "Exemplo",
-      "aliases": [
-        "Exemplo Seguro",
-        "Exemplo Seguros"
-      ],
-      "classification": "commercial_brand",
-      "resolution_status": "resolved",
-
-      "relationships": [
-        {
-          "type": "risk_carrier",
-          "entity_id": "cnpj:12345678000190",
-          "status": "current",
-          "source_id": "verified_source"
-        }
-      ]
-    }
-  ]
-}
-```
-
-Quando não houver suporte suficiente:
-
-```json
-{
-  "resolution_status": "unresolved",
-  "relationships": []
-}
-```
-
-Isso é preferível a um vínculo falso criado por similaridade de nomes.
-
----
-
-## 23. `rankings.json`
-
-O PHP não deve recalcular ranking.
-
-Exemplo:
-
-```json
-{
-  "schema_version": "2.0",
-  "methodology_version": "2.0-draft",
-
-  "rankings": {
-    "licensed_insurers": {
-      "total": 41,
-      "items": [
-        {
-          "entity_id": "cnpj:11111111000111",
-          "position": 1,
-          "score": 92.4
-        },
-        {
-          "entity_id": "cnpj:22222222000122",
-          "position": 2,
-          "score": 91.7
-        }
-      ]
-    }
-  }
-}
-```
-
----
-
-## 24. Proveniência
-
-A origem dos dados deve ser rastreável.
-
-O JSON público não precisa repetir a descrição completa da fonte dentro de cada entidade.
-
-`meta.json` poderá possuir catálogo semelhante a:
-
-```json
-{
-  "sources": {
-    "susep_pl_margem": {
-      "provider": "SUSEP",
-      "dataset": "Ses_pl_margem"
-    },
-    "susep_complaints": {
-      "provider": "SUSEP",
-      "dataset": "SusepCon/BDR"
-    }
-  }
-}
-```
-
-As entidades referenciam `source_id` quando necessário.
-
----
-
-## 25. Proveniência operacional interna
-
-O pipeline deverá distinguir, internamente, como cada informação foi obtida.
-
-Taxonomia candidata:
+Fluxo principal:
 
 ```text
-automatic
-derived
-curated
-unsupported
+buscar nome conhecido pelo usuário
+→ confirmar identidade
+→ resposta rápida
+→ relações importantes
+→ sinais centrais em bom português
+→ comparar 2–4 seguradoras
+→ explorar lista/rankings por critério
+→ metodologia sob demanda
 ```
 
-### Objetivo
+Princípios de UX:
 
-- **automatic:** veio diretamente de fonte estruturada;
-- **derived:** foi calculado de forma determinística a partir de fonte estruturada;
-- **curated:** depende de associação manual/verificada;
-- **unsupported:** não há suporte suficiente.
+- usuário deve manter sensação de controle;
+- busca deve ser fácil de refazer;
+- navegação não pode sobrepor header global;
+- elementos internos não devem usar tags genéricas que colidam com CSS global (`header`, `footer`, `article`) quando classes neutras resolvem melhor;
+- nenhuma bandeja/sticky deve competir com o menu da Sanida sem necessidade funcional inequívoca;
+- desktop e mobile devem possuir composições próprias quando a comparação em matriz não couber;
+- complexidade técnica entra progressivamente;
+- cor deve comunicar função e semântica, não ornamentação.
 
-Regra desejada:
+### Semântica visual
 
-> Tudo que altera nota, elegibilidade ou situação regulatória deve ser automático ou derivado de fonte sustentável.
+Direção:
 
-Curadoria poderá auxiliar a resolução de marcas, aliases e apresentação, mas não deverá fabricar situação regulatória ou alterar indicadores financeiros.
+```text
+azul   → navegação/informação neutra
+verde  → sinal favorável naquele critério
+vermelho → alerta material naquele critério
+âmbar   → cautela/atenção
+cinza   → ausência, inconclusão ou neutralidade
+```
+
+### Comparador
+
+Desktop: critérios na coluna esquerda e seguradoras nas colunas seguintes.
+
+Leitura visual permitida:
+
+```text
+✓  sem alerta naquele critério
+✕  alerta
+!  atenção/cautela
+≈  sem diferença clara
+—  sem conclusão segura
+```
+
+Mobile: reorganizar por seguradora, sem esmagar matriz horizontal.
 
 ---
 
-## 26. O que não deve existir na API pública v2
+# 14. SEO e linguagem pública
 
-Não publicar sem necessidade concreta:
+SEO orienta a arquitetura sem sacrificar a experiência.
 
-- match reports completos;
-- candidatos de fuzzy matching;
-- score interno de similaridade;
-- logs;
-- respostas HTTP brutas;
-- arquivos originais completos;
-- todas as contas do SES;
-- estruturas de debug;
-- aliases legados da API v1;
-- campos duplicados;
-- frases editoriais;
-- HTML;
-- CSS;
-- JavaScript;
-- texto de interface;
-- explicações prontas dependentes de copy.
+Território semântico prioritário da página:
 
-Exemplo de duplicação que deve desaparecer:
+- consulta e comparação de seguradoras;
+- seguradoras autorizadas pela SUSEP;
+- lista de seguradoras;
+- seguradoras confiáveis;
+- maiores seguradoras do Brasil;
+- rankings por critérios objetivos;
+- consulta de identidade/regulação.
+
+Evitar disputar intencionalmente termos específicos de ramos de seguro quando existirem páginas próprias, reduzindo risco de canibalização.
+
+Headings públicos devem permanecer naturais, por exemplo:
 
 ```text
-openInsuranceParticipant
-open_insurance_participant
-opinParticipant
-opin_participant
+Consulta e comparação de seguradoras
+Lista de seguradoras autorizadas pela SUSEP
+Maiores seguradoras do Brasil e outros rankings por critérios objetivos
+Como saber se uma seguradora é confiável?
 ```
 
-Na v2 haverá apenas um conceito canônico, por exemplo:
+Termos de bastidor como `v2`, `active_licensed`, `ordinary`, `snapshot`, `lifecycle` e nomes internos de states não devem aparecer ao consumidor sem necessidade explicativa.
 
-```json
-{
-  "open_insurance": true
-}
+---
+
+# 15. Evergreen e zero manutenção
+
+A meta operacional é **zero manutenção editorial/técnica recorrente, ou o mais próximo possível disso**.
+
+Essa meta possui duas dimensões que não podem ser confundidas:
+
+```text
+zero manutenção rotineira de descoberta
+≠
+zero intervenção humana para resolver qualquer identidade ambígua
+```
+
+Após configuração/ativação operacional, o sistema não deve depender de alguém lembrar de procurar novas seguradoras, exportar GSC manualmente, comparar listas SUSEP à mão ou revisar semanalmente o mercado. Sensores regulatórios e de demanda devem executar automaticamente e tornar exceções visíveis.
+
+Para relações ambíguas — por exemplo insurtech vs corretora, plataforma vs marca, MGA/distribuidora, `risk_carrier`, sucessão ou transferência de carteira — revisão source-backed continua deliberadamente necessária. Essa revisão é tratamento de exceção material, não manutenção periódica.
+
+Princípios:
+
+1. fonte oficial/pública sempre que possível;
+2. cache validado;
+3. fallback sem mudança de semântica;
+4. workflow reproduzível;
+5. artifacts públicos versionados;
+6. publicação automática ou sincronização automática para o HostGator;
+7. validação antes de promoção;
+8. rollback simples;
+9. nenhuma curadoria periódica de números que possa ser derivada automaticamente;
+10. nenhuma curadoria periódica do catálogo regulado que possa ser descoberta automaticamente;
+11. curadoria apenas para fatos relacionais/identidades realmente não automatizáveis;
+12. detecção nunca equivale a afirmação.
+
+A implementação preparada no §19.3–§19.4 segue:
+
+```text
+fonte muda
+→ Full Generation coleta/cacheia
+→ valida schemas/invariantes
+→ reconstrói contratos na mesma geração
+→ valida regressões
+→ produz pacote público único
+→ publicador baixa o artifact exato daquele run
+→ HostGator verifica novamente
+→ troca atômica de current
+→ previous permanece disponível para rollback
+→ frontend consome
+```
+
+A descoberta de mercado acrescenta:
+
+```text
+fonte regulatória muda OU demanda desconhecida aparece
+→ observation
+→ candidate não autoritativo
+→ watchdog/review queue
+→ resolução source-backed quando necessária
+→ registry canônico
+→ evergreen nas gerações seguintes
+```
+
+### Potencial por classe
+
+- **nova seguradora licenciada:** alta automação. `apply_licensed_classification()` materializa FIP oficial novo mesmo quando ainda não existe no SES;
+- **novo Sandbox:** alta automação por CNPJ oficial exato e materialização específica;
+- **nova cooperativa de seguros:** automatizável sob o contrato atual quando o nome legal oficial é inequívoco; mudança de taxonomia SUSEP falha fechado e exige modelagem explícita;
+- **insurtech/plataforma/marca/corretora:** descoberta automática orientada por busca sem resultado e GSC; resolução canônica permanece source-backed;
+- **novo tipo regulatório desconhecido:** deve interromper/falhar fechado em vez de ser silenciosamente classificado.
+
+Limite consciente: uma identidade não regulada que nunca aparece nas fontes observadas e nunca produz demanda no widget/GSC pode permanecer desconhecida. O sistema não pretende varrer toda a internet; combina reconhecimento regulatório com relevância demonstrada por demanda real.
+
+Nunca:
+
+```text
+workflow parcial
+→ JSON incompleto sobrescreve produção
+```
+
+Nem:
+
+```text
+sensor
+→ fuzzy/inferência
+→ registry público
+```
+
+A automação de geração/publicação e os sensores de mercado permanecem desabilitados após o cutover do frontend. O PR Draft e cada gate operacional exigem autorização deliberada própria.
+
+---
+
+# 16. Workflows e dependências
+
+Autoridades automáticas da consolidação:
+
+- `CI`;
+- `V2 Gate 4 Evergreen Contract`;
+- `V2 Gate 4 Full Generation Proof`.
+
+Publicação automática de dados/cron preparados, porém ainda gated após o cutover do frontend:
+
+- `V2 HostGator Public Package Sync`;
+- `V2 Production Generation Schedule`.
+
+Descoberta evergreen preparada, porém gated até configuração operacional:
+
+- `V2 Emerging Market Identity Sensors`;
+- `V2 Relationship Review Queue`.
+
+O workflow de sensores exige:
+
+```text
+vars.V2_MARKET_SENSOR_AUTOMATION_ENABLED == true
+```
+
+quando executado automaticamente após Full Generation bem-sucedida em `main`. GSC e o snapshot HostGator são opcionais e explicitam `not_configured`/`unavailable` sem invalidar Gate 4.
+
+Workflows especializados permanecem úteis como validação diagnóstica/manual quando necessário, incluindo:
+
+- `V2 Foundation Validation`;
+- `V2 Classification Validation`;
+- `V2 Lifecycle Relationships Validation`;
+- `V2 Eligibility Validation`;
+- `V2 Financial Evidence Validation`;
+- `V2 Liquidity Experiment`;
+- `V2 Operating Experiment`;
+- `V2 Financial Methodology Closure`;
+- `V2 Consumer.gov Conduct Evidence`;
+- `V2 Receita Consumer.gov Identity Experiment`;
+- `V2 Conduct Comparative Preflight`;
+- `V2 Conduct Coverage Reconciliation`;
+- `V2 Conduct Comparative Calibration v2`;
+- `V2 Conduct Credibility Diagnostic`;
+- `V2 Conduct Portfolio Mix Diagnostic`;
+- `V2 Conduct Methodology Closure`;
+- `V2 Sandbox Brand Conduct Evidence`;
+- `V2 Cross-Pillar Calibration Stage 1`;
+- `V2 Cross-Pillar Coverage Audit`;
+- `V2 Cross-Pillar Architecture Stage 2`;
+- `V2 Cross-Pillar Assessment Semantic Contract`;
+- `V2 Assessment Eligibility Contract`;
+- `V2 Ranking Eligibility Preflight`;
+- `V2 Exploratory Leaderboards Contract`;
+- `V2 Public Search Profile Contract`.
+
+Classificação corrente:
+
+```text
+produção/fundação v2 -> KEEP
+diagnóstico v2       -> DIAGNOSTIC
+produção/histórico v1 -> LEGACY preservado para rollback após o cutover
+redundante/temporário -> DELETE somente após prova de ausência de dependência
 ```
 
 ---
 
-## 27. `reason_codes`
+# 17. Validações obrigatórias
 
-O backend poderá publicar códigos semânticos que permitam ao site produzir explicações consistentes sem reproduzir a fórmula.
+O pipeline deve falhar diante de situações como:
 
-Exemplos preliminares:
-
-```text
-capital_comfortable
-capital_near_requirement
-capital_below_requirement
-capital_stable
-capital_volatile
-liquidity_adequate
-operations_balanced
-complaints_better_than_reference
-complaints_worse_than_reference
-complaints_insufficient
-financial_data_insufficient
-identity_uncertain
-not_ranking_eligible
-sandbox_regime
-```
-
-Os códigos definitivos deverão ser documentados e testados.
-
-O PHP transforma:
-
-```text
-capital_comfortable
-```
-
-em linguagem pública.
-
-A regra matemática que gerou o código permanece no backend.
-
----
-
-## 28. Validação obrigatória do build
-
-Um JSON inválido não deve ser publicado.
-
-O pipeline deverá falhar se detectar, entre outros:
-
-- CNPJ duplicado em entidades incompatíveis;
 - `entity_id` duplicado;
+- CNPJ incompatível duplicado;
 - marca apontando para entidade inexistente;
-- score fora de 0–100;
-- `ranking_eligible = true` com score geral ausente;
-- posição de ranking para entidade inelegível;
-- Sandbox dentro de ranking de autorização ordinária;
-- indicador financeiro sem período;
-- dado de fonte com período futuro;
-- versão de metodologia incompatível;
-- `rating` incompatível com o score;
-- coorte inexistente;
-- ausência de classificação;
-- relação regulatória sem fonte mínima exigida;
+- referência pública (`*_profile_id`) apontando para perfil inexistente;
+- SSPE recebendo semântica ou assessment de seguradora ordinária;
+- Sandbox vazando para benchmark ordinário;
+- cooperativa vazando para benchmark ordinário por presunção;
+- previdência/capitalização vazando para exposição de seguros;
+- reclamações transferidas silenciosamente de subject para carrier;
+- pressão calculada sem denominador comparável;
+- fonte sem período;
 - valores não finitos;
-- queda anormal de cobertura da fonte;
-- redução anormal do universo sem confirmação.
+- queda anormal de cobertura;
+- alteração inesperada de schema;
+- alteração desconhecida da taxonomia de entidades licenciadas SUSEP;
+- `null` convertido em zero;
+- zero bruto exibido com semântica errada;
+- score produzido por artifact que proíbe scoring;
+- pilar ausente tratado como neutralidade;
+- subset incompleto apresentado como ranking integral;
+- avaliação incompleta escondendo alerta disponível;
+- frontend reconstruindo lógica de backend;
+- `PLA/CMR` calculado com campo diferente de `new_pla`;
+- fallback silencioso de `new_pla` para `pla_adjusted`;
+- competência madura calculada com regra de capital diferente da usada no assessment;
+- artifact público dependente de capital gerado com versão anterior do Financial Evidence;
+- reconstrução do pacote final misturando artifacts de gerações diferentes;
+- candidate de descoberta com `assertion_effect` diferente de `none`;
+- candidate de descoberta alterando score, reclamações ou registry;
+- fuzzy resolvendo automaticamente identidade emergente;
+- valor observacional não confiável quebrando/injetando markup na review queue.
 
-Além da validação de schema, deverão existir **sanity checks de dados**.
+Sensores de demanda indisponíveis **não** devem invalidar Gate 4; sua ausência precisa aparecer explicitamente como estado do sensor e nunca como evidência negativa de inexistência.
 
 ---
 
-## 29. JSON Schema
+# 18. Correção de capital — arquivos alterados
 
-A v2 deverá possuir arquivos formais de JSON Schema para validação automática.
+A correção de 29/08/2026 foi aplicada somente no branch de trabalho e manteve `main` intacta.
 
-Estrutura candidata:
+Arquivos centrais:
 
 ```text
-schemas/
-├── meta.schema.json
-├── entities.schema.json
-├── brands.schema.json
-└── rankings.schema.json
+api/v2/financial_evidence.py
+api/v2/financial_periods.py
+tests/test_v2_financial_evidence.py
+tests/test_v2_financial_evidence_inventory.py
+tests/test_v2_financial_periods.py
+tests/test_v2_susep_financial_evidence.py
 ```
 
-CI e workflows de publicação deverão validar todos os artefatos contra esses schemas antes do commit automatizado.
+O conjunto de testes inclui regressão onde `plajustado` indicaria falsamente razão abaixo de 1 enquanto `NovoPla` mostra requisito atendido. A regra correta deve vencer.
 
 ---
 
-## 30. Auditoria e dados internos
+# 19. Fase atual — CONSOLIDAÇÃO FINAL DA V2 FECHADA
 
-A simplificação da API pública não significa redução da auditabilidade.
-
-O repositório poderá preservar estruturas ricas internamente:
+A consolidação metodológica, informacional, operacional, de frontend e de integração está formalmente encerrada até o §19.7. O gate READY foi consumido por uma autorização posterior e específica; o frontend R5.3 está ativo em produção, sem ativar as demais camadas operacionais:
 
 ```text
-data/
-├── raw/
-├── normalized/
-├── derived/
-├── snapshots/
-└── audit/
+SECTION_19_1_STATUS = CLOSED
+SECTION_19_2_STATUS = CLOSED
+SECTION_19_3_STATUS = CLOSED_IN_ARCHITECTURE_AND_CODE
+SECTION_19_3_DISCOVERY_STATUS = CLOSED_IN_ARCHITECTURE_AND_CODE
+SECTION_19_4_STATUS = CLOSED_IN_ARCHITECTURE_AND_CODE
+SECTION_19_5_STATUS = CLOSED
+SECTION_19_6_STATUS = CLOSED
+SECTION_19_7_STATUS = CLOSED
+READY_FOR_CUTOVER = YES
+ROLLBACK_PROVADO_NO_AMBIENTE_REAL = true
+PRODUCTION_CUTOVER_STATUS = COMPLETE
+production_cutover_authorized = consumed
+PRODUCTION_FRONTEND_R5_3 = PASS
+V2_PRODUCTION_AUTOMATION_ENABLED = false
+V2_HOSTGATOR_DEPLOY_ENABLED = false
+V2_MARKET_SENSOR_AUTOMATION_ENABLED = false
+market_sensor_production_enabled = false
+SSH_TRUST_HARDENING_IN_CODE = PASS
+DEDICATED_HOSTGATOR_ACTIONS_KEY_LOGIN = PASS
+V2_HOSTGATOR_SECRETS_CONFIGURED = true
+V2_HOSTGATOR_VARIABLES_CONFIGURED = true
+GITHUB_ACTIONS_SSH_RUNTIME_VALIDATION = NOT_EXECUTED
 ```
 
-Essas estruturas podem conter:
+## 19.1. Auditoria geral de metodologia e dados — **FECHADO**
 
-- arquivos de origem;
-- snapshots;
-- contas intermediárias;
-- relatórios de matching;
-- divergências;
-- métricas de cobertura;
-- testes de metodologia;
-- explicações de exclusão;
-- histórico de alterações.
-
-A API pública deve ser enxuta.
-
-A auditoria interna pode ser detalhada.
-
----
-
-## 31. Atualização evergreen
-
-O projeto deve minimizar manutenção editorial.
-
-Situações como:
-
-- entrada ou saída do Sandbox;
-- mudança de status;
-- atualização financeira;
-- mudança de ranking;
-- alteração de indicador;
-- mudança em fonte de reclamações;
-
-devem ser recalculadas automaticamente sempre que a fonte permitir.
-
-Evitar depender de textos manuais como:
-
-> “esta relação era válida até março de 2026”
-
-para representar o estado atual.
-
-Histórico poderá ser preservado internamente e apresentado quando for material, mas a resposta padrão deverá ser derivada do **estado vigente**.
-
-Zero manutenção absoluta não é pressuposto do projeto: endpoints, formatos e regras regulatórias podem mudar.
-
-O objetivo é **quase zero manutenção editorial rotineira**, com manutenção técnica apenas quando a infraestrutura das fontes mudar ou a metodologia for revisada.
-
----
-
-## 32. Fontes
-
-### 32.1. SUSEP / SES
-
-A SUSEP deve ser a principal referência para:
-
-- identidade regulatória;
-- Código FIP;
-- CNPJ quando disponível;
-- dados financeiros;
-- PLA;
-- CMR;
-- informações contábeis;
-- grupos;
-- atividades;
-- séries históricas;
-- demais informações oficiais úteis.
-
-A Base Completa não deve ser interpretada como uma lista pronta de “seguradoras comparáveis”.
-
-O pipeline deverá classificar o universo antes de avaliar.
-
-### 32.2. LISTAEMPRESAS
-
-`LISTAEMPRESAS.csv` é uma fonte auxiliar importante para integração entre códigos, CNPJs e nomes.
-
-Não deverá ser usada isoladamente para definir o universo do ranking.
-
-### 32.3. Sandbox SUSEP
-
-O Sandbox deverá ser integrado ao resolvedor de entidades.
-
-Participantes podem aparecer na busca pública, mas não devem ser misturados automaticamente ao ranking das seguradoras de regime ordinário.
-
-O estado deverá ser atualizado de forma automática sempre que a fonte oficial permitir.
-
-### 32.4. Open Insurance
-
-Informação contextual.
-
-Não compõe a nota de confiabilidade v2.
-
-### 32.5. SusepCon / BDR
-
-Fonte prioritária candidata para o componente regulatório de reclamações, condicionada à disponibilidade, estrutura, periodicidade e automação adequadas.
-
-### 32.6. Consumidor.gov
-
-Fonte pública complementar importante.
-
-A metodologia v2 deverá reduzir a dependência de matching ambíguo marca ↔ pessoa jurídica.
-
-Seu papel definitivo no score ainda está **EM VALIDAÇÃO**.
-
----
-
-## 33. Estado da API v1
-
-A API v1 e a metodologia atual são consideradas **legadas durante a refatoração**.
-
-A v1 contém decisões que não deverão ser carregadas automaticamente para a v2, entre elas:
-
-- pilar denominado “Solvência” construído por aproximações próprias;
-- uso de sinistralidade como parte importante desse pilar;
-- score de Open Insurance;
-- ausência de reputação podendo gerar contribuição zero;
-- aliases redundantes no JSON;
-- responsabilidades de apresentação acopladas ao repositório;
-- deduplicação defensiva no frontend;
-- matching que precisa ser revisto à luz do novo modelo de identidade.
-
-A v1 continuará funcional apenas pelo tempo necessário para construir, validar e migrar a v2.
-
-Não será objetivo manter compatibilidade permanente entre os contratos.
-
----
-
-## 34. Frontend legado
-
-A pasta atual de frontend poderá permanecer temporariamente durante a transição, mas é considerada **fora da arquitetura-alvo**.
-
-Componentes React/Vite não devem receber novas regras de negócio da v2.
-
-A remoção acontecerá somente quando:
-
-1. API v2 estiver válida;
-2. publicação dos JSONs estiver funcionando;
-3. página PHP da Sanida consumir a v2;
-4. busca e ranking estiverem equivalentes ou superiores;
-5. rollback estiver documentado.
-
----
-
-## 35. Workflows e automação
-
-A infraestrutura operacional existente de:
-
-- cache;
-- fallback;
-- snapshots;
-- CI;
-- testes;
-- refresh periódico;
-- auditoria;
-- proteção contra publicação de artefatos inválidos;
-
-deve ser preservada e simplificada quando possível.
-
-A refatoração não parte do pressuposto de reescrever toda a engenharia operacional.
-
-O objetivo é remover complexidade acidental, principalmente:
-
-- frontend no repo;
-- aliases;
-- compatibilidade histórica desnecessária;
-- regras duplicadas;
-- schema excessivamente amplo;
-- normalizações ambíguas;
-- campos de debug em produção.
-
----
-
-## 36. Sequência de implementação
-
-A ordem abaixo é parte do contrato do projeto.
-
-### Fase 0 — README e contrato
-
-- [x] definir objetivo;
-- [x] separar GitHub e frontend;
-- [x] estabelecer princípios metodológicos;
-- [x] definir estrutura preliminar da API v2;
-- [x] registrar pontos ainda em validação.
-
-### Fase 1 — Inventário das fontes
-
-- [ ] mapear arquivos relevantes da Base Completa;
-- [ ] mapear chaves;
-- [ ] mapear períodos;
-- [ ] medir cobertura;
-- [ ] documentar entidades presentes por fonte;
-- [ ] testar atualização automática;
-- [ ] classificar fonte como primária, complementar ou contextual.
-
-**Saída:** artefato de mapeamento de fontes e cobertura.
-
-### Fase 2 — Identidade canônica
-
-- [ ] definir `entity_id`;
-- [ ] consolidar Código FIP;
-- [ ] consolidar CNPJ;
-- [ ] normalizar razão social;
-- [ ] classificar `entity_type`;
-- [ ] classificar regime regulatório;
-- [ ] incorporar grupos econômicos;
-- [ ] resolver duplicidades;
-- [ ] registrar divergências;
-- [ ] criar testes de unicidade.
-
-**Critério de conclusão:** o frontend não precisa deduplicar entidades.
-
-### Fase 3 — Resolvedor de marcas
-
-- [ ] separar marca e entidade jurídica;
-- [ ] migrar aliases úteis;
-- [ ] classificar origem dos vínculos;
-- [ ] reduzir fuzzy matching a geração de candidatos quando necessário;
-- [ ] impedir vínculo categórico sem suporte suficiente;
-- [ ] integrar Sandbox;
-- [ ] testar mudanças de estado;
-- [ ] medir quantidade de relações `curated`.
-
-**Meta:** evitar criar dependência de manutenção manual em escala.
-
-### Fase 4 — Matriz quantitativa
-
-- [ ] analisar PLA/CMR;
-- [ ] testar janelas temporais;
-- [ ] testar saturação;
-- [ ] analisar liquidez;
-- [ ] medir correlações;
-- [ ] estudar indicadores operacionais;
-- [ ] estudar reclamações;
-- [ ] definir amostras mínimas;
-- [ ] testar outliers;
-- [ ] testar dados ausentes;
-- [ ] testar empresas especializadas;
-- [ ] testar estabilidade temporal.
-
-**Somente depois:** definir fórmulas definitivas.
-
-### Fase 5 — Pesos e score
-
-- [ ] testar pesos candidatos;
-- [ ] executar análise de sensibilidade;
-- [ ] comparar rankings;
-- [ ] revisar casos individuais;
-- [ ] definir faixas verbais;
-- [ ] definir confiança da avaliação;
-- [ ] documentar limitações.
-
-**Critério de aprovação:** a metodologia deve permanecer interpretável e razoavelmente estável diante de pequenas alterações de parâmetros.
-
-### Fase 6 — Schema v2 definitivo
-
-- [ ] revisar necessidade real de cada campo;
-- [ ] congelar nomes;
-- [ ] remover aliases;
-- [ ] escrever JSON Schemas;
-- [ ] escrever fixtures;
-- [ ] validar `reason_codes`;
-- [ ] definir versionamento.
-
-### Fase 7 — Builders v2
-
-- [ ] construir normalização;
-- [ ] construir identidade;
-- [ ] construir brands;
-- [ ] construir assessment;
-- [ ] construir ranking;
-- [ ] gerar `meta.json`;
-- [ ] gerar `entities.json`;
-- [ ] gerar `brands.json`;
-- [ ] gerar `rankings.json`.
-
-### Fase 8 — Testes e auditoria
-
-- [ ] schema;
-- [ ] unicidade;
-- [ ] integridade referencial;
-- [ ] ausência de NaN/Infinity;
-- [ ] períodos;
-- [ ] cobertura;
-- [ ] comparação com snapshots anteriores;
-- [ ] regressões de identidade;
-- [ ] regressões de score;
-- [ ] regressões de ranking;
-- [ ] Sandbox;
-- [ ] marcas;
-- [ ] fonte indisponível;
-- [ ] cache;
-- [ ] fallback.
-
-### Fase 9 — Publicação dos JSONs
-
-- [ ] adaptar workflow;
-- [ ] publicar `/api/v2/`;
-- [ ] preservar `/api/v1/` temporariamente;
-- [ ] validar consumo em staging;
-- [ ] documentar rollback.
-
-### Fase 10 — Frontend no site
-
-Esta fase ocorre fora da responsabilidade estrutural deste repositório.
-
-No site:
-
-- PHP lê v2;
-- PHP produz HTML inicial;
-- CSS controla apresentação;
-- JavaScript controla busca e interação;
-- SEO permanece sob controle da página;
-- conteúdo editorial permanece separado dos dados.
-
-### Fase 11 — Migração
-
-- [ ] ativar v2 em produção;
-- [ ] observar erros;
-- [ ] comparar comportamento;
-- [ ] remover dependência do bundle legado;
-- [ ] remover publicação de assets React/Vite;
-- [ ] desativar v1 quando seguro.
-
-### Fase 12 — Limpeza
-
-- [ ] remover `widget-ui`;
-- [ ] remover aliases v1 desnecessários;
-- [ ] remover código morto;
-- [ ] remover compatibilidade temporária;
-- [ ] simplificar workflows;
-- [ ] revisar dependências.
-
-### Fase 13 — Revisão final deste README
-
-Ao final da refatoração:
-
-- [ ] remover hipóteses rejeitadas;
-- [ ] transformar regras aprovadas em documentação definitiva;
-- [ ] substituir exemplos provisórios;
-- [ ] documentar fórmula final;
-- [ ] documentar fontes finais;
-- [ ] documentar atualização;
-- [ ] documentar schema final;
-- [ ] documentar deployment;
-- [ ] registrar limitações conhecidas.
-
----
-
-## 37. Testes quantitativos obrigatórios antes de fechar a metodologia
-
-Nenhum peso ou faixa deve ser aprovado apenas porque “parece razoável”.
-
-Executar, no mínimo:
-
-### Distribuição
-
-- mínimo;
-- máximo;
-- mediana;
-- percentis;
-- outliers;
-- cobertura.
-
-### Correlação
-
-Identificar componentes redundantes.
-
-### Sensibilidade
-
-Alterar pesos e observar:
-
-- top 10;
-- top 20;
-- quartis;
-- movimentações extremas;
-- empresas especializadas;
-- empresas pequenas;
-- empresas grandes.
-
-### Estabilidade temporal
-
-Recalcular em diferentes períodos.
-
-### Casos-limite
-
-Investigar manualmente entidades que apresentem:
-
-- score muito alto;
-- score muito baixo;
-- PLA/CMR próximo ao limite;
-- ratios extremos;
-- baixa amostra de reclamações;
-- dados incompletos;
-- mudança recente de regime;
-- identidade ambígua.
-
-### Sanity check econômico
-
-O algoritmo deve ser matematicamente válido e economicamente interpretável.
-
-Uma fórmula estatisticamente elegante que produz conclusões absurdas deve ser rejeitada.
-
----
-
-## 38. Critérios para incluir um indicador
-
-Um indicador só entra na nota quando passar por todos os testes:
-
-1. possui fonte sustentável;
-2. mede algo relacionado ao conceito pretendido;
-3. possui interpretação econômica;
-4. é comparável no universo definido;
-5. não duplica excessivamente outro indicador;
-6. possui tratamento razoável de extremos;
-7. possui tratamento de ausência;
-8. pode ser atualizado automaticamente;
-9. pode ser explicado ao consumidor;
-10. melhora a qualidade da conclusão.
-
-A disponibilidade de uma coluna na base **não é razão suficiente para pontuá-la**.
-
----
-
-## 39. Critérios de simplificação
-
-A refatoração deve reduzir complexidade sem reduzir a capacidade de auditoria.
-
-Preferir:
+Status formal:
 
 ```text
-uma chave canônica
-uma regra
-uma fonte primária
-um significado
+SECTION_19_1_STATUS = CLOSED
+closed_at = 2026-09-01
+methodology_recalibration_required = false
+ranking_gate_opened = false
+production_cutover_authorized_by_19_1 = false
 ```
+
+Documento de encerramento:
+
+`docs/section-19-1-methodology-data-audit-closure.md`
+
+A auditoria percorreu a cadeia **fonte → parsing → identidade/período → unidade/sinal/missingness → denominador/fórmula → artifacts → contratos semânticos → JSON público → pacote Gate 4**.
+
+Critérios cumpridos:
+
+- fórmulas críticas revisadas desde a fonte até o JSON público;
+- amostras e casos suspeitos confrontados com a cadeia real;
+- erros de unidade, campo, sinal, período, denominador, missingness e parsing investigados explicitamente;
+- bugs reais corrigidos na camada de origem adequada;
+- regressões adicionadas para impedir retorno das falhas;
+- documentação corrente reconciliada com artifacts atuais;
+- contrato público final incorporado ao caminho canônico do Gate 4;
+- lineage/freshness/cache preservados sem fingir que cache antigo é fonte fresca;
+- pacote público validado como geração única e com rollback verificável.
+
+Principais correções consolidadas no §19.1:
+
+- `PLA/CMR = new_pla / CMR`, sem fallback para `pla_adjusted`;
+- ingestão financeira SES fail-closed para valores/IDs/períodos/quadros malformados;
+- pressão de Conduta anual alinhada mês a mês em Calibration, Credibility, Portfolio Mix e Closure;
+- missingness, zero, negativo e mercado sem reclamações preservados como estados distintos;
+- períodos consecutivos e contadores inteiros validados sem truncamento silencioso;
+- finalização regulatória de SSPE incorporada ao Gate 4 canônico;
+- validator público incorporado ao empacotamento;
+- referências públicas para perfis inexistentes passam a falhar fechado;
+- política de `latest successful artifacts` removida do contrato corrente em favor de `same-generation workspace`/`build_id` único.
+
+Prova canônica final:
+
+```text
+V2 Gate 4 Full Generation Proof #49
+run        33567550092
+head       7993dbabd1cf3cd21181c88d072aed4ce5573538
+conclusion success
+artifact   9824434275
+sha256     d0ccb6ce274542015431ae9fde0084c12941d1983ce06527bf6872e442244431
+```
+
+Snapshot operacional pós-auditoria, apenas como fotografia:
+
+```text
+regulatory_universe     156
+conduct_comparable      101
+conduct_not_comparable   55
+assessment_eligible      82
+ranking_eligible          0
+```
+
+A descoberta `plajustado` × `NovoPla` permanece o precedente operacional: aparência de plausibilidade não substitui auditoria da semântica da fonte.
+
+## 19.2. Auditoria do potencial informacional do frontend — **FECHADO**
+
+Documento:
+
+`docs/section-19-2-frontend-information-audit.md`
+
+Resultado final:
+
+```text
+17 capacidades auditadas
+17 PUBLIC_READY
+17 FRONTEND_USED
+0 PUBLIC_PARTIAL conhecido
+0 BACKEND_GAP conhecido
+0 FRONTEND_GAP conhecido
+```
+
+O caminho ativo foi migrado do endpoint/score v1 para os contratos públicos v2. A auditoria também:
+
+- publicou explicitamente a janela de Conduta `2025-07 → 2026-06` no backend público;
+- manteve aliases na semântica correta de marca, sem contaminar legal entities;
+- ligou lifecycle, sucessões, grupos, marcas, risk carriers, Conduta, Sandbox, sinais financeiros, períodos, comparabilidade, confiança, limites, leaderboards e coleções;
+- corrigiu busca por CNPJ/código SUSEP digitados com pontuação sem fuzzy identity assignment;
+- incorporou build Vite ao CI como prova de compilabilidade.
+
+Provas finais do frontend funcional:
+
+```text
+CI #1406                      success
+V2 Gate 4 Evergreen #246      success
+Full Generation #51           success para a projeção pública de período
+```
+
+## 19.3. Evergreen / zero manutenção — **FECHADO EM ARQUITETURA E CÓDIGO**
+
+Documento conjunto com §19.4:
+
+`docs/section-19-3-19-4-evergreen-hostgator-publication.md`
+
+Implementação consolidada:
+
+- fontes/cache preservam `fresh`, `stale` e `unavailable` sem maquiagem temporal;
+- Full Generation continua sendo a geração canônica única;
+- artifact de publicação é identificado pelo run exato, nunca por “latest successful”;
+- publicação HostGator reaproveita o mesmo `distribution_manifest` e o mesmo instalador verificado;
+- staging/incoming, `current`, `previous` e rollback foram definidos e testados;
+- o instalador de rollback fica persistido no HostGator;
+- falha de fonte ou de nova geração não derruba a geração anterior já servida.
+
+O build Vite no CI continua sendo validação do frontend, não publicação no HostGator.
+
+### 19.3.1. Descoberta evergreen de novas identidades — **FECHADO EM ARQUITETURA E CÓDIGO**
+
+Documentos:
+
+- `docs/emerging-market-identity-coverage.md`;
+- `docs/emerging-market-discovery-audit.md`.
+
+A auditoria diferenciou atualização das empresas conhecidas de descoberta de empresas ainda desconhecidas.
+
+Resultado:
+
+```text
+new licensed insurer
+→ fonte SUSEP licenciadas
+→ FIP novo pode ser materializado mesmo sem presença prévia no SES
+→ perfil pesquisável sob taxonomia conhecida
+
+new Sandbox participant
+→ CNPJ oficial exato
+→ identidade Sandbox própria
+→ fora do benchmark ordinário
+
+new cooperative
+→ subtype insurance_cooperative sob contrato atual
+→ pesquisável
+→ fora do ordinary benchmark
+→ nova taxonomia SUSEP desconhecida falha fechado
+
+new insurtech / platform / brand / broker
+→ unknown widget query e/ou GSC
+→ candidate observacional
+→ source-backed review
+→ canonical registry somente após resolução
+```
+
+Todo candidate emergente preserva:
+
+```text
+assertion_effect = none
+score_effect = none
+complaint_transfer_effect = none
+automatic_registry_mutation = forbidden
+blocking = false
+```
+
+A expectativa de manutenção é:
+
+```text
+routine_discovery_maintenance = zero_after_setup
+human_exception_review = required_when_identity_or_relationship_is_ambiguous
+```
+
+Isso significa que o sistema pode automatizar a **observação** de novas empresas sem automatizar afirmações arriscadas.
+
+Full Generation integrada posterior à implementação regulatória/cooperativa:
+
+```text
+V2 Gate 4 Full Generation Proof #66
+run        33666689092
+head       1a14bab84c85ba88919f5e5b2e6e8221e6cbd212
+build_id   v2-gate4-full-33666689092-a1
+conclusion success
+stage_count 25
+watchdog_blocking_drift 0
+ranking_eligible 0
+artifact   9861836318
+digest     sha256:f45ce9b8b1cb8bbd7ec09734bad77189e2ded4b1aa0ce8aeee43f717de84bff8
+```
+
+A ativação operacional ainda depende de configuração deliberada do endpoint HostGator, GSC/WIF e `V2_MARKET_SENSOR_AUTOMATION_ENABLED`; isso não reabre a arquitetura.
+
+## 19.4. Cron jobs e publicação — **FECHADO EM ARQUITETURA E CÓDIGO**
+
+Arquivos principais:
+
+```text
+.github/workflows/v2-hostgator-publication.yml
+.github/workflows/v2-production-generation-schedule.yml
+ops/hostgator/install_v2_public_remote.sh
+```
+
+Semântica:
+
+```text
+cron gated
+→ dispara Full Generation canônica em main
+→ somente success em main autoriza publicador
+→ baixa artifact exato daquele run
+→ verifica build_id + source_head_sha + package_sha256
+→ envia geração inteira ao HostGator
+→ verifica novamente
+→ troca current atomicamente
+→ mantém previous
+```
+
+Os gates de automação permanecem desligados no Draft, mesmo com o frontend R5.3 já ativo:
+
+```text
+V2_PRODUCTION_AUTOMATION_ENABLED
+V2_HOSTGATOR_DEPLOY_ENABLED
+V2_MARKET_SENSOR_AUTOMATION_ENABLED
+```
+
+O cutover do frontend foi concluído em 05/09/2026; o hardening da confiança SSH e o provisionamento dos secrets/variables também estão concluídos, com chave dedicada testada e todos os gates mantidos em `false`. A leitura dos secrets por um runner do GitHub permanece não executada enquanto o workflow não estiver no branch default. A próxima ativação operacional ainda exige ação deliberada: merge autorizado em `main`, Full Generation canônica e publicação manual controlada antes de habilitar o cron. A ativação dos sensores de demanda exige adicionalmente provisionamento do endpoint de unknown query e, para GSC, credenciais WIF/service account e configuração da propriedade/URL.
+
+## 19.5. Limpeza do repositório — **FECHADO**
+
+Documento:
+
+`docs/section-19-5-repository-cleanup.md`
+
+Classificação aplicada:
+
+```text
+KEEP       — produção/fundação atual
+DIAGNOSTIC — auditoria ainda útil
+LEGACY     — histórico reprodutível / v1 preservada para rollback após o cutover
+DELETE     — redundante/obsoleto/temporário com ausência de dependência confirmada
+```
+
+Remoções confirmadas:
+
+- `widget-ui/src/InsurerScoreModal.jsx` — modal de score v1 morto;
+- `data/raw/consumidor_gov/tmp68ikpili.csv` — temporário rastreado acidentalmente;
+- `teste_consumidor.py` — scratch manual obsoleto.
+
+Foram preservados deliberadamente:
+
+- workflows e scripts v1 ainda necessários para histórico/rollback até aposentadoria explicitamente autorizada;
+- `widget-ui/dist/` como LEGACY, após a cópia real do HostGator provar que
+  `widget.js`/`widget.css` de produção correspondem exatamente a esse bundle;
+- experimentos/diagnósticos v2 que preservam a justificativa metodológica;
+- snapshots regulatórios canônicos;
+- `verify_extraction.sh` como LEGACY/manual only;
+- duplicações históricas cujo caminho ainda pode ser consumidor do v1.
+
+A limpeza é protegida por `tests/test_v2_repository_cleanup.py`.
+
+## 19.6. Revisão do frontend e SEO — **FECHADO**
+
+Status formal:
+
+```text
+SECTION_19_6_STATUS = CLOSED
+closed_at = 2026-09-03
+methodology_reopened = false
+ranking_gate_opened = false
+production_cutover_authorized_by_19_6 = false
+```
+
+O §19.6 comparou o frontend v2 com os pontos úteis da experiência anterior e consolidou somente o que continuava compatível com a metodologia atual. O trabalho foi executado sobre a superfície de teste do HostGator, sem substituir `index.php` de produção.
+
+Foram consolidados:
+
+- busca com desambiguação e precedência adequada para seguradoras ordinárias sem apagar marcas, históricas, Sandbox ou outras identidades;
+- perfis adaptativos para seguradora ordinária, marca, `market_identity`, participante Sandbox e entidade histórica;
+- navegação reversível e preservação de comparação, filtros, paginação e contexto sem barras persistentes de estado;
+- compartilhamento de perfil e comparação;
+- comparação entre 2–4 seguradoras sem vencedor artificial;
+- acessibilidade por teclado/ARIA nas buscas e controles principais;
+- tratamento explícito de indisponibilidade, dados incompletos e `null ≠ 0`;
+- interpretação progressiva: resposta humana → sinais → identificação/regulação → números explicados → metodologia e fontes;
+- helper de números restrito a **o que é / por que importa / como interpretar**, deixando fórmulas, variáveis, fontes, fundamentos e salvaguardas para a seção metodológica;
+- organização de Conduta em reclamações observadas, tamanho comparável da operação e referência proporcional para interpretação;
+- linguagem pública sem vazamento desnecessário de nomes de backend, arquivos, fields ou states internos.
+
+### SEO e arquitetura de estado
+
+A investigação cruzou GSC, oportunidades de palavras-chave, capacidade real da ferramenta e risco de expansão artificial. A decisão final é conservadora:
+
+```text
+/ranking-seguradoras/
+→ documento SEO principal
+→ canonical próprio
+→ território genérico de consulta, confiabilidade, SUSEP, comparação e rankings objetivos
+
+#consulta=...
+#perfil=...
+#comparar=...
+→ estado funcional/compartilhável
+→ não tratado como inventário de páginas SEO
+```
+
+Decisões consolidadas:
+
+- não criar automaticamente uma URL indexável por seguradora;
+- não transformar volume de busca por marca em justificativa suficiente para página;
+- páginas editoriais futuras sobre marcas exigem **tese própria**, valor independente e diferença material em relação a outras páginas do site e à SERP;
+- parâmetros antigos de estado devem ser consolidados no cutover, sem criar superfície indexável paralela;
+- SEO orienta `title`, meta description, headings, arquitetura semântica e cobertura de intenção sem degradar o português;
+- não criar ranking geral ou linguagem absoluta para satisfazer palavra-chave.
+
+### Direção visual consolidada
+
+A direção de acabamento ficou definida como:
+
+> **tecnologia aplicada + inteligência sobre dados + confiança + clareza**, com aparência editorial/profissional e linguagem visual sóbria.
 
 Evitar:
 
-```text
-aliases múltiplos
-fallbacks sem semântica
-regras reconstruídas em várias camadas
-campos duplicados
-debug público
-heurísticas silenciosas
-```
+- estética genérica de dashboard SaaS;
+- roxo/gradiente “IA” como linguagem principal;
+- neon e glassmorphism gratuito;
+- excesso de cards, badges, sombras e elementos flutuantes;
+- densidade visual que concorra com a interpretação dos dados.
 
----
+O acabamento final do §19.6 consolidou hierarquia, alinhamento, densidade, responsividade e os componentes novos de identificação, números explicados e metodologia sem alterar o contrato metodológico.
 
-## 40. Versionamento
+O fechamento do §19.6 **não autoriza cutover, merge em `main`, ativação de cron nem publicação automática**.
 
-A API e a metodologia deverão ser versionadas separadamente.
+## 19.7. Lapidação final e consolidação da v2 — **FECHADO — READY FOR CUTOVER**
 
-Exemplo:
+Objetivo: produzir a última revisão integrada antes de decidir se a v2 está tecnicamente pronta para uma decisão posterior de cutover. Esta etapa não reabre os §§19.1–19.6 por preferência ou por existência de alternativas; somente regressão objetiva, inconsistência concreta ou falha de integração justifica correção em área já fechada.
 
-```text
-schema_version: 2.0
-methodology_version: 2.1
-```
+O frontend efetivamente observado no HostGator foi versionado, reconciliado com o head global, protegido por manifesto/hash da geração pública e incorporado ao CI. A revisão preservou o bundle v1 que atendia produção e preparou arquivos separados de staging, cutover e rollback. Em 05/09/2026, uma autorização posterior e específica promoveu o candidato R5.3 para produção; a v1 passou a permanecer somente como backup de rollback.
 
-Uma alteração de fórmula pode mudar a metodologia sem necessariamente quebrar o contrato JSON.
-
-Uma alteração estrutural incompatível deverá mudar a versão do schema.
-
-Mudanças materiais na metodologia deverão ser registradas em changelog.
-
----
-
-## 41. Transparência pública
-
-A metodologia deve ser pública e compreensível, mas a primeira tela da ferramenta não deve ser sobrecarregada.
-
-A apresentação ideal deverá permitir níveis progressivos:
+Provas finais consolidadas:
 
 ```text
-Nível 1
-resultado
-
-Nível 2
-por que recebeu essa avaliação
-
-Nível 3
-indicadores e períodos
-
-Nível 4
-fontes, fórmula e metodologia
+GitHub R5.3 / HostGator bytes              PASS
+CI #1486                                   PASS
+V2 Gate 4 Evergreen Contract #326          PASS
+HostGator staging                          PASS
+Full Generation #69 / build_id             PASS
+rollback real para public-pre-r5-live      PASS
+519 JSONs / 505 perfis legado              PASS
+legacy aggregate SHA256                    PASS
+search_index legado HTTP = local           PASS
+retorno atômico ao current/R5              PASS
+manifest R5 pós-retorno HTTP = local       PASS
+smoke curto pós-retorno                    PASS
 ```
 
-Transparência não significa despejar detalhes de implementação no usuário.
+A primeira migração não possuía `previous`; por isso a prova real de rollback foi o caso especial via diretório preservado `public-pre-r5-live`. Não afirmar que o rollback normal do instalador por `previous` foi exercitado.
 
----
+O relatório completo, a evidência operacional e o gate binário estão em:
 
-## 42. Linguagem pública
+`docs/section-19-7-final-consolidation.md`
 
-A ferramenta deverá distinguir cuidadosamente:
+O registro do cutover de produção está em:
+
+`docs/production-frontend-cutover.md`
+
+O roteiro de instalação, prova de rollback e restrições de cutover está em:
+
+`ranking-seguradoras/deployment/production-cutover/INSTALLACAO-HOSTGATOR.md`
+
+Estado formal:
 
 ```text
-seguradora regular
-seguradora em Sandbox
-marca
-plataforma
-intermediário
-associação
-outra entidade
+SECTION_19_7_STATUS = CLOSED
+READY_FOR_CUTOVER = YES
+ROLLBACK_PROVADO_NO_AMBIENTE_REAL = true
+PRODUCTION_CUTOVER_STATUS = COMPLETE
+production_cutover_authorized = consumed
+PRODUCTION_FRONTEND_R5_3 = PASS
+V2_PRODUCTION_AUTOMATION_ENABLED = false
+V2_HOSTGATOR_DEPLOY_ENABLED = false
+V2_MARKET_SENSOR_AUTOMATION_ENABLED = false
+market_sensor_production_enabled = false
+SSH_TRUST_HARDENING_IN_CODE = PASS
+DEDICATED_HOSTGATOR_ACTIONS_KEY_LOGIN = PASS
+V2_HOSTGATOR_SECRETS_CONFIGURED = true
+V2_HOSTGATOR_VARIABLES_CONFIGURED = true
+GITHUB_ACTIONS_SSH_RUNTIME_VALIDATION = NOT_EXECUTED
 ```
 
-Evitar afirmações que ultrapassem os dados.
-
-Preferir:
-
-> apresenta bons sinais institucionais nos indicadores avaliados
-
-a:
-
-> é definitivamente uma boa seguradora para qualquer cliente
-
-Preferir:
-
-> 8ª entre 41 seguradoras elegíveis nesta avaliação
-
-a:
-
-> 8ª melhor seguradora do Brasil
-
-quando o segundo enunciado não puder ser sustentado.
+O gate READY não autorizava produção por si só; ele foi consumido somente após autorização explícita separada. O cutover concluído também **não autoriza** merge, alteração de `main`, ativação de cron/publicador/sensores nem remoção da v1 ou dos backups legados.
 
 ---
 
-## 43. SEO e o repositório
+# 20. O que não fazer
 
-SEO não é responsabilidade deste repositório.
+Não:
 
-O repo fornece dados.
-
-O site decide:
-
-- páginas indexáveis;
-- canonical;
-- metadata;
-- títulos;
-- conteúdo;
-- links;
-- indexação;
-- estrutura editorial;
-- integração com outros hubs;
-- intenção de busca.
-
-A existência de uma marca no JSON **não implica criação de uma página indexável para ela**.
-
-A ferramenta pode resolver centenas de buscas sem gerar centenas de landing pages.
-
----
-
-## 44. Princípio editorial relacionado
-
-Conteúdo editorial e ferramenta possuem papéis diferentes.
-
-A ferramenta:
-
-> identifica, verifica, avalia e direciona.
-
-As matérias:
-
-> explicam conceitos, relações, decisões e contextos que justificam tratamento editorial próprio.
-
-O projeto não deverá reproduzir, dentro do JSON, uma segunda camada editorial destinada a capturar consultas.
+- reabrir score para “facilitar” UI;
+- escolher peso Financeiro × Conduta arbitrariamente;
+- usar ranking geral para satisfazer palavra-chave;
+- premiar excesso de PLA/CMR ou ILT sem novo contrato;
+- tratar ausência como zero;
+- tratar incomparabilidade como neutralidade;
+- misturar seguros, previdência e capitalização;
+- transferir reclamações por semelhança de nome;
+- incluir Sandbox no baseline ordinário;
+- incluir cooperativa no baseline ordinário por presunção;
+- aplicar fuzzy matching decisório;
+- permitir PHP/JS corrigir backend;
+- transformar demanda desconhecida em identidade pública automaticamente;
+- permitir candidate observacional mutar o registry;
+- publicar artifacts antigos após mudança metodológica;
+- manter processo manual só porque funciona em teste;
+- apagar código experimental antes de confirmar dependências;
+- alterar `main` antes do encerramento e autorização explícita do cutover.
 
 ---
 
-## 45. Definição de sucesso da v2
+# 21. Critério de sucesso da consolidação
 
-A refatoração será considerada bem-sucedida quando:
+Para o escopo §19.1–§19.7 e a extensão de descoberta evergreen do §19.3, os critérios técnicos, informacionais, operacionais e de experiência foram atendidos no branch Draft/superfície de teste:
 
-- o usuário conseguir pesquisar uma empresa ou marca sem conhecer sua natureza jurídica;
-- o sistema identificar corretamente o tipo da entidade;
-- seguradoras comparáveis receberem avaliação coerente;
-- entidades incomparáveis não sejam forçadas ao ranking;
-- ausência de dados não seja convertida em desempenho ruim;
-- a metodologia utilize sinais mais defensáveis;
-- o estado atual seja atualizado automaticamente;
-- o frontend não precise corrigir dados;
-- o frontend não contenha regra de negócio;
-- a API pública seja significativamente menor e mais clara;
-- cada campo tenha um único significado;
-- o processo seja auditável;
-- o site tenha controle integral da apresentação e do SEO;
-- a manutenção editorial rotineira seja mínima.
+- fórmulas críticas foram auditadas da fonte ao JSON público;
+- regressões cobrem bugs materiais conhecidos;
+- artifacts dependentes do novo PLA foram reconstruídos e validados;
+- o frontend ativo consome identidade, relações, avaliação e limites do contrato v2;
+- linguagem pública e `public_use` são respeitados;
+- a publicação de dados possui mecanismo versionado, exato por run e atômico preparado para HostGator;
+- cron/publicação têm dependência clara e falha segura;
+- nova seguradora licenciada pode ser materializada automaticamente mesmo sem presença prévia no SES;
+- novo Sandbox pode ser materializado por identidade oficial própria;
+- cooperativas possuem subtipo explícito e não entram no benchmark ordinário por presunção;
+- buscas desconhecidas/GSC podem alimentar candidates sem efeito público;
+- candidates são operacionalmente visíveis sem permitir assertion/score/complaint transfer/registry mutation;
+- valores observacionais não confiáveis são neutralizados antes de renderização na fila de revisão;
+- arquivos experimentais/legacy foram classificados conservadoramente;
+- documentação central incorpora a diferença entre evergreen de dados conhecidos e evergreen de descoberta;
+- busca, navegação, comparação e estados compartilháveis foram estabilizados no frontend v2;
+- identidades complexas são apresentadas sem colapsar marca, pessoa jurídica, sucessão, Sandbox ou `risk_carrier`;
+- números técnicos receberam interpretação progressiva sem deslocar a metodologia para o JavaScript;
+- a arquitetura SEO concentra a superfície indexável no hub e evita geração massiva de páginas por marca;
+- a linguagem visual foi consolidada em tecnologia aplicada, inteligência de dados, confiança e clareza, sem estética de dashboard genérico;
+- staging real R5.3, geração pública e bytes versionados foram reconciliados;
+- rollback real da primeira migração foi provado via `public-pre-r5-live`, com conteúdo legado efetivamente servido por HTTP;
+- o retorno atômico ao R5 e o smoke pós-retorno foram aprovados;
+- `main` e a produção HostGator não foram alterados durante a consolidação do §19.7; o frontend foi promovido depois, sob autorização específica e registrada separadamente.
 
----
+A cobertura evergreen operacional em produção só passa a existir após configuração/ativação deliberada dos sensores; isso é uma etapa operacional separada da arquitetura já fechada.
 
-## 46. Questões metodológicas ainda abertas
-
-Até que sejam testadas, **não considerar como regras definitivas**:
-
-- peso Financeiro × Atendimento;
-- subpesos do pilar financeiro;
-- fórmula de transformação de PLA/CMR;
-- janela temporal do capital;
-- fórmula de liquidez;
-- indicador operacional final;
-- tratamento de empresas com forte especialização;
-- fonte definitiva de reclamações;
-- amostra mínima;
-- normalização das reclamações;
-- coortes necessárias;
-- cálculo de `assessment_confidence`;
-- faixas de rating;
-- threshold de elegibilidade;
-- `reason_codes` finais;
-- quais dados de ramos devem ser resumidos publicamente;
-- formato final dos quatro JSONs;
-- eventual necessidade de fragmentação por desempenho.
-
-Esses pontos deverão ser resolvidos por análise de dados e testes, não por preferência estética.
+O §19.7 está encerrado sem blocker técnico objetivo conhecido. Seu gate READY foi consumido pelo cutover autorizado em 05/09/2026; isso não abriu autorização de merge ou automação.
 
 ---
 
-## 47. Diretriz final desta etapa
+# 22. Diretriz final
 
-A v2 não deve ser construída para preservar a lógica da v1.
+A v2 não existe para reproduzir a v1 com outros números.
 
-Deve preservar o que a engenharia atual faz bem:
+Ela deve preservar o que a engenharia anterior fazia bem:
 
 - automação;
 - cache;
-- contingência;
 - snapshots;
-- testes;
-- atualização recorrente;
-- rastreabilidade.
+- rastreabilidade;
+- busca rápida;
+- utilidade ao consumidor.
 
-E substituir o que se mostrou conceitualmente frágil:
+E eliminar o que era frágil:
 
 - universo mal delimitado;
-- nota aplicada a dados incompletos;
-- aproximação de solvência;
-- Open Insurance como mérito;
-- sinistralidade com interpretação excessiva;
 - matching tratado como verdade;
-- JSON redundante;
-- frontend acoplado ao pipeline.
+- score sobre dados incompletos;
+- proxies excessivos;
+- mistura de pessoa jurídica, marca e carrier;
+- mistura de domínios de produto;
+- frontend recalculando metodologia;
+- falsa precisão de uma ordem total;
+- jargão antes da resposta humana;
+- processos manuais permanentes;
+- catálogo que só conhece empresas porque alguém lembrou de cadastrá-las;
+- artifacts experimentais vazando para produto.
 
-A regra de projeto é:
+Estado final da consolidação:
 
-> **identidade correta → dado correto → período correto → comparação correta → conclusão útil → explicação transparente.**
+```text
+§19.1 FECHADO
+→ §19.2 FECHADO
+→ §19.3 FECHADO EM ARQUITETURA/CÓDIGO
+   ↳ DESCOBERTA EVERGREEN FECHADA EM ARQUITETURA/CÓDIGO
+→ §19.4 FECHADO EM ARQUITETURA/CÓDIGO
+→ §19.5 FECHADO
+→ §19.6 FECHADO — FRONTEND / UX / COMUNICAÇÃO / SEO
+→ §19.7 FECHADO — READY FOR CUTOVER
+→ ROLLBACK REAL PROVADO
+→ FRONTEND R5.3 EM PRODUÇÃO — CUTOVER CONCLUÍDO
+→ V1 E PUBLIC-PRE-R5-LIVE PRESERVADOS PARA ROLLBACK
+→ SENSORES DE MERCADO EM PRODUÇÃO AINDA NÃO CONFIGURADOS/ATIVADOS
+→ MERGE / GERAÇÃO AUTOMÁTICA / PUBLICAÇÃO AUTOMÁTICA CONTINUAM PENDENTES DE AUTORIZAÇÃO
+```
+
+Áreas fechadas não devem ser reabertas apenas porque outra abordagem seria possível. Mudanças posteriores devem responder a evidência objetiva de bug, regressão, mudança de fonte/contrato ou necessidade operacional concreta.
 
 ---
 

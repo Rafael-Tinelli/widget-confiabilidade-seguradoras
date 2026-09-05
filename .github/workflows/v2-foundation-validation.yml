@@ -1,0 +1,219 @@
+name: V2 Foundation Validation
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate-v2-foundation:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      SES_ALLOW_INSECURE_SSL: "1"
+      SES_KEEP_ZIP: "0"
+      SES_WRITE_AUDIT: "1"
+      SES_CACHE_DIR: "data/raw/ses"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-dev.txt
+          python -m pip install -r requirements.txt
+
+      - name: Restore validated SES source cache
+        uses: actions/cache/restore@v4
+        with:
+          path: data/raw/ses
+          key: v2-validation-ses-source-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: |
+            ses-source-${{ runner.os }}-
+
+      - name: Verify cached BaseCompleta
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import zipfile
+          from pathlib import Path
+
+          path = Path("data/raw/ses/BaseCompleta.zip")
+          if not path.exists():
+              raise SystemExit("validated SES cache is unavailable: BaseCompleta.zip not found")
+          if path.stat().st_size < 100_000_000:
+              raise SystemExit(f"cached BaseCompleta.zip is unexpectedly small: {path.stat().st_size} bytes")
+          if not zipfile.is_zipfile(path):
+              raise SystemExit("cached BaseCompleta.zip is not a valid ZIP")
+          print(f"SES cache OK: BaseCompleta.zip={path.stat().st_size} bytes")
+          PY
+
+      - name: Run v2 identity tests
+        run: |
+          set -euo pipefail
+          python -m pytest -q tests/test_v2_identity.py tests/test_v2_identity_inventory.py
+
+      - name: Build identity inventory from validated SES cache
+        env:
+          SES_ZIP_URL: "http://127.0.0.1:9/BaseCompleta.zip"
+          SES_ZIP_URL_FALLBACK: "http://127.0.0.1:9/BaseCompleta.zip"
+        run: |
+          set -euo pipefail
+          mkdir -p data/derived/v2
+          python -m api.v2.build_identity_inventory 2>&1 | tee data/derived/v2/identity-build.log
+
+      - name: Validate identity inventory
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from collections import Counter
+          from pathlib import Path
+
+          src = Path("data/derived/v2/entity_identity_inventory.json")
+          if not src.exists():
+              raise SystemExit("identity inventory was not generated")
+
+          payload = json.loads(src.read_text(encoding="utf-8"))
+          entities = payload.get("entities")
+          meta = payload.get("meta") or {}
+          if not isinstance(entities, list) or not entities:
+              raise SystemExit("identity inventory has no entities")
+          if len(entities) < 100:
+              raise SystemExit(f"unexpectedly small identity universe: {len(entities)}")
+          if meta.get("count") != len(entities):
+              raise SystemExit("meta.count does not match entity list length")
+
+          def duplicates(values):
+              counts = Counter(values)
+              return sorted(key for key, value in counts.items() if key and value > 1)
+
+          def valid_cnpj(cnpj):
+              if cnpj is None:
+                  return True
+              return (
+                  len(cnpj) == 14
+                  and cnpj[:12].isalnum()
+                  and cnpj[:12] == cnpj[:12].upper()
+                  and cnpj[-2:].isdigit()
+                  and cnpj != "0" * 14
+              )
+
+          entity_ids = [item.get("entity_id") for item in entities]
+          fips = [item.get("fip_code") for item in entities]
+          cnpjs = [item.get("cnpj") for item in entities if item.get("cnpj")]
+
+          errors = []
+          if duplicates(entity_ids):
+              errors.append("duplicate entity_id")
+          if duplicates(fips):
+              errors.append("duplicate fip_code")
+
+          required_activity_keys = {"insurance", "pension", "capitalization", "reinsurance"}
+          malformed = []
+          for item in entities:
+              entity_id = item.get("entity_id") or ""
+              fip = item.get("fip_code") or ""
+              cnpj = item.get("cnpj")
+              legal_entity_id = item.get("legal_entity_id")
+              name = (item.get("legal_name") or "").strip()
+              activities = item.get("activities") or {}
+
+              if len(fip) != 6 or not fip.isdigit():
+                  malformed.append([entity_id, "invalid_fip"])
+              if not name:
+                  malformed.append([entity_id, "missing_legal_name"])
+              if not valid_cnpj(cnpj):
+                  malformed.append([entity_id, "invalid_cnpj"])
+              if entity_id != f"fip:{fip}":
+                  malformed.append([entity_id, "entity_id_mismatch"])
+              expected_legal_id = f"cnpj:{cnpj}" if cnpj else None
+              if legal_entity_id != expected_legal_id:
+                  malformed.append([entity_id, "legal_entity_id_mismatch"])
+              if set(activities) != required_activity_keys:
+                  malformed.append([entity_id, "activity_contract_mismatch"])
+              if item.get("entity_type") != "unknown":
+                  malformed.append([entity_id, "premature_entity_type_classification"])
+              if item.get("regulatory_regime") != "unknown":
+                  malformed.append([entity_id, "premature_regime_classification"])
+              if item.get("regulatory_status") != "unknown":
+                  malformed.append([entity_id, "premature_status_classification"])
+
+          if malformed:
+              errors.append(f"malformed entities: {len(malformed)}")
+
+          by_activity = {
+              key: sum(bool((item.get("activities") or {}).get(key)) for item in entities)
+              for key in sorted(required_activity_keys)
+          }
+          if sum(by_activity.values()) == 0:
+              errors.append("BaseCompleta not evidenced: all SES activity counts are zero")
+
+          no_cnpj = [
+              {
+                  "entity_id": item.get("entity_id"),
+                  "fip_code": item.get("fip_code"),
+                  "legal_name": item.get("legal_name"),
+              }
+              for item in entities
+              if not item.get("cnpj")
+          ]
+          multi_activity = [
+              {
+                  "entity_id": item.get("entity_id"),
+                  "fip_code": item.get("fip_code"),
+                  "legal_name": item.get("legal_name"),
+                  "activities": [
+                      key for key, value in (item.get("activities") or {}).items() if value
+                  ],
+              }
+              for item in entities
+              if sum(bool(value) for value in (item.get("activities") or {}).values()) > 1
+          ]
+
+          report = {
+              "status": "failed" if errors else "ok",
+              "count": len(entities),
+              "with_cnpj": len(cnpjs),
+              "without_cnpj": len(no_cnpj),
+              "duplicate_cnpj_values": len(duplicates(cnpjs)),
+              "by_activity_evidence": by_activity,
+              "multi_activity_count": len(multi_activity),
+              "errors": errors,
+              "malformed_sample": malformed[:50],
+              "without_cnpj_sample": no_cnpj[:50],
+              "multi_activity_sample": multi_activity[:50],
+          }
+
+          out = Path("data/derived/v2/identity-validation-report.json")
+          out.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+          print(json.dumps(report, ensure_ascii=False, indent=2))
+
+          if errors:
+              raise SystemExit("identity inventory validation failed: " + "; ".join(errors))
+          PY
+
+      - name: Upload v2 validation artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: v2-foundation-validation-${{ github.run_id }}
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            data/derived/v2/entity_identity_inventory.json
+            data/derived/v2/identity-validation-report.json
+            data/derived/v2/identity-build.log
+            data/derived/audit/ses/**

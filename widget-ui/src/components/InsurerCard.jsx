@@ -1,226 +1,121 @@
-import { ShieldCheck, Award, BadgeCheck } from 'lucide-react';
+import { GitCompareArrows, ShieldCheck } from 'lucide-react';
 
-function clampPct(n) {
-  const x = Number(n);
-  if (!Number.isFinite(x)) return 0;
-  return Math.max(0, Math.min(100, x));
+function formatPeriod(value) {
+  const text = String(value || '').replace(/\D/g, '');
+  if (text.length !== 6) return value || '—';
+  return `${text.slice(4, 6)}/${text.slice(0, 4)}`;
 }
 
-function safeNumber(value, fallback = 0) {
-  const n = Number(value);
-  return Number.isFinite(n) ? n : fallback;
-}
-
-function firstBoolean(...values) {
-  return values.find((value) => typeof value === 'boolean') ?? null;
-}
-
-export default function InsurerCard({ insurer, onOpenScoreModal }) {
-  const name = insurer?.name || '—';
-  const id = insurer?.id || '';
-  const cnpj = insurer?.cnpj || insurer?.cnpjKey || null;
-
-  const data = insurer?.data || {};
-  const flags = insurer?.flags || {};
-
-  // Nota final (0–100)
-  const score = safeNumber(data.score ?? data.final_score ?? data.financial_score, 0);
-
-  // 3 pilares (compatível com snapshots antigos e novos)
-  const solvencyScore = safeNumber(
-    data.solvencyScore ?? data.financialScore ?? data.financial_score,
-    0
-  );
-  const reputationScore = safeNumber(data.reputationScore ?? data.reputation_score, 0);
-  const innovationScore = safeNumber(data.innovationScore, 0);
-
-  // Disponibilidade de reputação (Consumidor.gov) — compatível com snapshots antigos e novos
-  const rep =
-    insurer?.reputation ??
-    insurer?.components?.reputation ??
-    data?.componentsDetail?.reputation ??
-    null;
-
-  const hasReputation = (() => {
-    if (!rep || typeof rep !== 'object' || Array.isArray(rep)) return false;
-    
-    const repStats =
-      rep.statistics && typeof rep.statistics === 'object' ? rep.statistics : rep;
-    const repIdx =
-      rep.indexes && typeof rep.indexes === 'object' ? rep.indexes : rep;
-    const knownKeys = [
-      'complaintsCount',
-      'respondedCount',
-      'resolvedCount',
-      'finalizedCount',
-      'scoreSum',
-      'satisfactionCount',
-      'averageScore',
-      'total_claims',
-      'responded_claims',
-      'resolved_claims',
-      'finalized_claims',
-      'complaintsPerPremium',
-      'complaints_per_premium',
-      'satScore',
-      'resolutionRate',
-      'responseTimeDays',
-    ];
-
-    const hasKnownKey = knownKeys.some(
-      (k) =>
-        Object.prototype.hasOwnProperty.call(rep, k) ||
-        Object.prototype.hasOwnProperty.call(repStats, k) ||
-        Object.prototype.hasOwnProperty.call(repIdx, k)
-    );
-    if (!hasKnownKey) return false;
-
-    const hasAnyValue =
-      Object.values(repStats).some((v) => v !== undefined && v !== null) ||
-      Object.values(repIdx).some((v) => v !== undefined && v !== null);
-    return hasAnyValue;
-  })();
-
-  const availability = data.availability || {};
-  const reputationMatched =
-    typeof availability.reputationMatched === 'boolean'
-      ? availability.reputationMatched
-      : hasReputation;
-  const reputationApplied =
-    typeof availability.reputationApplied === 'boolean'
-      ? availability.reputationApplied
-      : reputationMatched;
-
-  const openInsuranceFlag = firstBoolean(
-    availability.openInsuranceParticipant,
-    flags.openInsuranceParticipant,
-    flags.open_insurance_participant,
-    flags.opinParticipant,
-    flags.opin_participant,
-    insurer?.components?.openInsurance?.participant,
-    insurer?.components?.openInsurance?.is_participant,
-    insurer?.components?.open_insurance?.participant,
-    insurer?.components?.open_insurance?.is_participant,
-    data.openInsuranceParticipant,
-    data.open_insurance
-  );
-  const openInsurance =
-    openInsuranceFlag === null ? innovationScore >= 80 : openInsuranceFlag;
-
-  const handleOpen = () => onOpenScoreModal?.(insurer);
-  const handleKeyDown = (e) => {
-    if (e.key === 'Enter' || e.key === ' ') {
-      e.preventDefault();
-      handleOpen();
-    }
+function confidenceLabel(value) {
+  const labels = {
+    established_core_history: 'histórico central estabelecido',
+    limited_core_history: 'histórico central limitado',
+    insufficient_core_evidence: 'evidência central insuficiente',
   };
+  return labels[value] || 'confiança não classificada';
+}
+
+function toneClass(publicClass) {
+  switch (publicClass) {
+    case 'prudential_warning':
+      return 'border-red-200 bg-red-50 text-red-900';
+    case 'attention':
+      return 'border-amber-200 bg-amber-50 text-amber-900';
+    case 'favorable_reading':
+      return 'border-emerald-200 bg-emerald-50 text-emerald-900';
+    default:
+      return 'border-slate-200 bg-slate-50 text-slate-800';
+  }
+}
+
+export default function InsurerCard({
+  entry,
+  explorer,
+  onOpen,
+  compareSelected = false,
+  compareDisabled = false,
+  onToggleCompare,
+}) {
+  const name = entry?.name || explorer?.display_name || explorer?.legal_name || '—';
+  const assessment = explorer?.assessment || null;
+  const financial = explorer?.financial || null;
+  const conduct = explorer?.conduct || null;
+  const isOrdinary = Boolean(explorer);
 
   return (
-    <div
-      role="button"
-      tabIndex={0}
-      onClick={handleOpen}
-      onKeyDown={handleKeyDown}
-      aria-label={`Ver detalhes da nota de ${name}`}
-      className="group relative cursor-pointer rounded-2xl bg-white p-6 shadow-sm ring-1 ring-black/5 transition hover:-translate-y-0.5 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-slate-300"
-    >
-      {/* Header */}
+    <article className="flex h-full flex-col rounded-2xl bg-white p-5 shadow-sm ring-1 ring-black/5">
       <div className="flex items-start justify-between gap-3">
-        <div>
-          <h3 className="text-base font-semibold leading-tight text-slate-900">
-            {name}
-          </h3>
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <ShieldCheck className="h-4 w-4 shrink-0 text-slate-500" />
+            <h3 className="text-base font-semibold leading-tight text-slate-900">{name}</h3>
+          </div>
           <p className="mt-1 text-xs text-slate-500">
-            SUSEP: <span className="font-mono">{id || '—'}</span>
-            {cnpj ? (
-              <>
-                {' '}• CNPJ: <span className="font-mono">{cnpj}</span>
-              </>
-            ) : null}
+            {entry?.disambiguation || 'Identidade publicada no contrato v2'}
           </p>
         </div>
-
-        {/* Score */}
-        <div className="flex items-center gap-2 rounded-xl bg-slate-50 px-3 py-2 ring-1 ring-black/5">
-          <ShieldCheck className="h-5 w-5 text-slate-700" />
-          <div className="text-right">
-            <div className="text-xs font-medium text-slate-500">Nota</div>
-            <div className="text-lg font-semibold text-slate-900">
-              {score.toFixed(0)}
-            </div>
-          </div>
-        </div>
       </div>
 
-      {/* Pilares */}
-      <div className="mt-4 grid grid-cols-3 gap-3">
-        <div>
-          <div className="flex items-center justify-between text-xs text-slate-600">
-            <span>Solvência</span>
-            <span className="font-semibold text-slate-900">{solvencyScore.toFixed(0)}</span>
+      {isOrdinary ? (
+        <>
+          <div className={`mt-4 rounded-xl border p-3 ${toneClass(assessment?.public_class)}`}>
+            <div className="text-sm font-semibold">{assessment?.title || 'Leitura conjunta'}</div>
+            {assessment?.summary ? <p className="mt-1 text-xs leading-relaxed opacity-90">{assessment.summary}</p> : null}
           </div>
-          <div className="mt-1 h-2 w-full rounded-full bg-slate-100">
-            <div
-              className="h-2 rounded-full bg-slate-900/70"
-              style={{ width: `${clampPct(solvencyScore)}%` }}
-            />
-          </div>
-        </div>
 
-        <div>
-          <div className="flex items-center justify-between text-xs text-slate-600">
-            <span>Reputação</span>
-            <span className="font-semibold text-slate-900">
-              {reputationApplied ? reputationScore.toFixed(0) : '—'}
-            </span>
-          </div>
-          <div className="mt-1 h-2 w-full rounded-full bg-slate-100">
-            <div
-              className="h-2 rounded-full bg-slate-900/50"
-              style={{ width: `${clampPct(reputationApplied ? reputationScore : 0)}%` }}
-            />
-          </div>
-          {!reputationMatched ? (
-            <div className="mt-1 text-[10px] text-slate-500">
-              Sem dados do Consumidor.gov
+          <div className="mt-4 grid grid-cols-1 gap-2 text-xs text-slate-600">
+            <div className="rounded-lg border border-slate-200 p-3">
+              <span className="font-medium text-slate-900">Financeiro</span>
+              <p className="mt-1 leading-relaxed">
+                {financial?.public_interpretation?.headline || 'Sem leitura financeira pública.'}
+              </p>
+              <div className="mt-1 text-slate-500">
+                Competência: {formatPeriod(financial?.reference_period)} · {confidenceLabel(financial?.evidence_confidence)}
+              </div>
             </div>
-          ) : !reputationApplied ? (
-            <div className="mt-1 text-[10px] text-amber-700">
-              Dados não aplicados à nota
+
+            <div className="rounded-lg border border-slate-200 p-3">
+              <span className="font-medium text-slate-900">Conduta</span>
+              <p className="mt-1 leading-relaxed">{conduct?.summary || 'Sem resumo público.'}</p>
+              {conduct?.reference_window ? (
+                <div className="mt-1 text-slate-500">
+                  Janela: {conduct.reference_window.start_month} a {conduct.reference_window.end_month}
+                </div>
+              ) : null}
             </div>
-          ) : null}
-        </div>
-
-        <div>
-          <div className="flex items-center justify-between text-xs text-slate-600">
-            <span>Open Insurance</span>
-            <span className="font-semibold text-slate-900">{innovationScore.toFixed(0)}</span>
           </div>
-          <div className="mt-1 h-2 w-full rounded-full bg-slate-100">
-            <div
-              className="h-2 rounded-full bg-slate-900/40"
-              style={{ width: `${clampPct(innovationScore)}%` }}
-            />
-          </div>
+        </>
+      ) : (
+        <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">
+          Este resultado é pesquisável, mas não pertence necessariamente ao universo ordinário de comparação.
         </div>
-      </div>
+      )}
 
-      {/* Badges e dica */}
-      <div className="mt-4 flex flex-wrap items-center gap-2">
-        {openInsurance ? (
-          <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-800 ring-1 ring-emerald-200">
-            <BadgeCheck className="h-4 w-4" />
-            Participante OPIN
-          </span>
-        ) : (
-          <span className="inline-flex items-center gap-1 rounded-full bg-slate-50 px-3 py-1 text-xs font-medium text-slate-700 ring-1 ring-slate-200">
-            <Award className="h-4 w-4" />
-            Sem sinal OPIN
-          </span>
-        )}
+      <div className="mt-auto flex flex-wrap items-center gap-2 pt-5">
+        <button
+          type="button"
+          onClick={() => onOpen?.(entry)}
+          className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-semibold text-white hover:bg-slate-800"
+        >
+          Ver perfil
+        </button>
 
-        <span className="text-xs text-slate-500">Clique para ver a metodologia</span>
+        {isOrdinary && onToggleCompare ? (
+          <button
+            type="button"
+            disabled={!compareSelected && compareDisabled}
+            onClick={() => onToggleCompare(explorer.entity_id)}
+            className={`inline-flex items-center gap-1 rounded-lg border px-3 py-2 text-xs font-semibold transition ${
+              compareSelected
+                ? 'border-sky-300 bg-sky-50 text-sky-800'
+                : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40'
+            }`}
+          >
+            <GitCompareArrows className="h-3.5 w-3.5" />
+            {compareSelected ? 'Remover da comparação' : 'Comparar'}
+          </button>
+        ) : null}
       </div>
-    </div>
+    </article>
   );
 }

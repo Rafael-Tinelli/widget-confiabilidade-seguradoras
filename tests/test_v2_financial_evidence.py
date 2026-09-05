@@ -1,0 +1,197 @@
+from __future__ import annotations
+
+from api.v2.financial_evidence import (
+    apply_financial_evidence,
+    financial_evidence_summary,
+    month_window,
+    validate_financial_evidence,
+)
+
+
+def _eligible_entity() -> dict:
+    return {
+        "entity_id": "fip:000001",
+        "fip_code": "000001",
+        "entity_type": "insurer",
+        "regulatory_regime": "ordinary",
+        "regulatory_status": "active_licensed",
+        "eligibility": {"regulatory_universe_eligible": True},
+    }
+
+
+def _source(
+    months: int = 12,
+    cmr: float = 80.0,
+    *,
+    pla_adjusted: float | None = 100.0,
+    new_pla: float | None = 100.0,
+) -> dict:
+    periods = month_window(202606, months)
+    capital = {
+        period: {
+            "period": period,
+            "pla_adjusted": pla_adjusted,
+            "new_pla": new_pla,
+            "cmr": cmr,
+        }
+        for period in periods
+    }
+    balance_values = {
+        period: {1479: 100.0, 11160: 0.0, 351: 0.0, 1040: 50.0}
+        for period in periods
+    }
+    return {
+        "source": {},
+        "reference_periods": {
+            "capital": 202606,
+            "balance": 202606,
+            "insurance_operations": 202606,
+        },
+        "entities": {
+            "000001": {
+                "capital_history": capital,
+                "balance_periods": set(periods),
+                "balance_values": balance_values,
+                "insurance_operation_periods": set(periods),
+                "nonzero_premium_periods": set(periods),
+                "duplicate_capital_rows": 0,
+                "duplicate_capital_rows_by_period": {},
+                "duplicate_balance_cmpid_rows": 0,
+            }
+        },
+    }
+
+
+def test_month_window_crosses_year_boundary() -> None:
+    assert month_window(202601, 3) == [202511, 202512, 202601]
+
+
+def test_complete_core_history_is_readiness_not_assessment() -> None:
+    entities = apply_financial_evidence([_eligible_entity()], _source())
+    validate_financial_evidence(entities)
+    profile = entities[0]["financial_evidence"]
+
+    assert profile["state"] == "complete_core_history"
+    assert profile["core_financial_evidence_ready"] is True
+    assert profile["capital"]["pla_cmr_ratio"] == 1.25
+    assert profile["capital"]["pla_cmr_numerator_field"] == "new_pla"
+    assert profile["assessment_eligible"] is False
+    assert profile["ranking_eligible"] is False
+
+
+def test_pla_cmr_uses_final_new_pla_not_intermediate_plajustado() -> None:
+    entities = apply_financial_evidence(
+        [_eligible_entity()],
+        _source(pla_adjusted=70.0, new_pla=110.0, cmr=100.0),
+    )
+    validate_financial_evidence(entities)
+    capital = entities[0]["financial_evidence"]["capital"]
+
+    assert capital["pla_cmr_ratio"] == 1.10
+    assert capital["latest"]["pla_adjusted"] == 70.0
+    assert capital["latest"]["new_pla"] == 110.0
+    assert capital["pla_cmr_numerator_field"] == "new_pla"
+    assert capital["pla_cmr_raw_intermediate_field"] == "pla_adjusted"
+
+
+def test_missing_new_pla_does_not_fall_back_to_plajustado() -> None:
+    entities = apply_financial_evidence(
+        [_eligible_entity()],
+        _source(pla_adjusted=120.0, new_pla=None, cmr=100.0),
+    )
+    profile = entities[0]["financial_evidence"]
+
+    assert profile["state"] == "capital_metric_unavailable"
+    assert profile["capital"]["current_metric_state"] == "pla_missing"
+    assert profile["capital"]["pla_cmr_ratio"] is None
+    assert profile["capital"]["pla_cmr_ratio_state"] == "unavailable"
+
+
+def test_short_history_remains_limited_not_bad() -> None:
+    entities = apply_financial_evidence([_eligible_entity()], _source(months=5))
+    profile = entities[0]["financial_evidence"]
+
+    assert profile["state"] == "limited_core_history"
+    assert profile["core_financial_evidence_ready"] is False
+    assert "capital_adequacy_history_under_12m" in profile["reason_codes"]
+    assert "balance_history_under_12m" in profile["reason_codes"]
+
+
+def test_zero_cmr_is_unavailable_evidence_not_adverse_signal() -> None:
+    entities = apply_financial_evidence([_eligible_entity()], _source(cmr=0.0))
+    validate_financial_evidence(entities)
+    profile = entities[0]["financial_evidence"]
+
+    assert profile["state"] == "capital_metric_unavailable"
+    assert profile["capital"]["state"] == "metric_unavailable"
+    assert profile["capital"]["current_metric_state"] == "cmr_zero_unusable"
+    assert profile["capital"]["pla_cmr_ratio"] is None
+    assert profile["capital"]["pla_cmr_ratio_state"] == "unavailable"
+
+
+def test_negative_cmr_is_source_investigation_case() -> None:
+    entities = apply_financial_evidence([_eligible_entity()], _source(cmr=-1.0))
+    profile = entities[0]["financial_evidence"]
+
+    assert profile["state"] == "requires_source_investigation"
+    assert profile["capital"]["current_metric_state"] == "cmr_negative_invalid"
+    assert profile["capital"]["pla_cmr_ratio"] is None
+
+
+def test_duplicate_current_capital_row_blocks_order_dependent_ratio() -> None:
+    source = _source()
+    source_entity = source["entities"]["000001"]
+    source_entity["duplicate_capital_rows"] = 1
+    source_entity["duplicate_capital_rows_by_period"] = {202606: 1}
+
+    entities = apply_financial_evidence([_eligible_entity()], source)
+    validate_financial_evidence(entities)
+    profile = entities[0]["financial_evidence"]
+
+    assert profile["state"] == "requires_source_investigation"
+    assert profile["capital"]["current_metric_state"] == "source_duplicate_rows"
+    assert profile["capital"]["duplicate_rows_current"] == 1
+    assert profile["capital"]["pla_cmr_ratio"] is None
+    assert "capital_source_duplicate_rows" in profile["reason_codes"]
+
+
+def test_duplicate_historical_capital_row_is_not_counted_as_derivable_history() -> None:
+    source = _source()
+    source_entity = source["entities"]["000001"]
+    source_entity["duplicate_capital_rows"] = 1
+    source_entity["duplicate_capital_rows_by_period"] = {202601: 1}
+
+    profile = apply_financial_evidence([_eligible_entity()], source)[0][
+        "financial_evidence"
+    ]
+
+    assert profile["state"] == "limited_core_history"
+    assert profile["capital"]["capital_adequacy_windows"]["12"] == {
+        "expected_months": 12,
+        "derivable_months": 11,
+        "complete": False,
+    }
+
+
+def test_noneligible_entity_is_not_applicable() -> None:
+    entity = _eligible_entity()
+    entity["eligibility"]["regulatory_universe_eligible"] = False
+    entities = apply_financial_evidence([entity], _source())
+
+    assert entities[0]["financial_evidence"]["state"] == "not_applicable"
+
+
+def test_summary_counts_only_regulatory_universe() -> None:
+    eligible = _eligible_entity()
+    outside = {
+        "entity_id": "fip:000002",
+        "fip_code": "000002",
+        "eligibility": {"regulatory_universe_eligible": False},
+    }
+    entities = apply_financial_evidence([eligible, outside], _source())
+    summary = financial_evidence_summary(entities)
+
+    assert summary["regulatory_eligible_count"] == 1
+    assert summary["core_financial_evidence_ready_count"] == 1
+    assert summary["assessment_eligible_count"] == 0
+    assert summary["ranking_eligible_count"] == 0

@@ -1,0 +1,321 @@
+name: V2 Consumer.gov Conduct Evidence
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: v2-consumer-gov-conduct-${{ github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  conduct-evidence:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+
+    env:
+      GH_TOKEN: ${{ github.token }}
+      V2_SOURCE_HEAD_SHA: ${{ github.sha }}
+      V2_ELIGIBILITY_INPUT: data/derived/v2/entity_eligibility_inventory.json
+      SES_ALLOW_INSECURE_SSL: "1"
+      SES_KEEP_ZIP: "1"
+      SES_WRITE_AUDIT: "1"
+      SES_CACHE_DIR: "data/raw/ses"
+      SUSEP_LICENSED_VERIFY_SSL: "0"
+      SUSEP_SPECIAL_VERIFY_SSL: "0"
+      SUSEP_SANDBOX_VERIFY_SSL: "1"
+      SES_ZIP_URL: "http://127.0.0.1:9/BaseCompleta.zip"
+      SES_ZIP_URL_FALLBACK: "http://127.0.0.1:9/BaseCompleta.zip"
+      CG_MONTHS_BACK: "12"
+      CG_HTTP_RETRIES: "5"
+      CG_HTTP_BACKOFF: "1.5"
+      CG_CONNECT_TIMEOUT: "20"
+      CG_READ_TIMEOUT: "120"
+      CG_DOWNLOAD_READ_TIMEOUT: "300"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install -r requirements-dev.txt
+
+      - name: Lint conduct modules
+        run: |
+          set -euo pipefail
+          ruff check \
+            api/v2/consumer_gov_conduct.py \
+            api/v2/consumer_gov_conduct_core.py \
+            api/v2/build_consumer_gov_conduct_evidence.py \
+            tests/test_v2_consumer_gov_conduct.py
+
+      - name: Restore validated SES source cache
+        uses: actions/cache/restore@v4
+        with:
+          path: data/raw/ses
+          key: v2-conduct-ses-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: |
+            ses-source-${{ runner.os }}-
+
+      - name: Restore optional Consumer.gov raw taxonomy cache
+        uses: actions/cache/restore@v4
+        with:
+          path: data/raw/consumidor_gov
+          key: v2-conduct-consumer-raw-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: |
+            v2-conduct-consumer-raw-${{ runner.os }}-
+
+      - name: Verify cached BaseCompleta
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import zipfile
+          from pathlib import Path
+
+          path = Path("data/raw/ses/BaseCompleta.zip")
+          if not path.exists() or path.stat().st_size < 100_000_000:
+              raise SystemExit("valid cached BaseCompleta.zip is required")
+          if not zipfile.is_zipfile(path):
+              raise SystemExit("cached BaseCompleta.zip is not a valid ZIP")
+          print(f"SES cache OK: {path.stat().st_size} bytes")
+          PY
+
+      - name: Compile conduct modules
+        run: |
+          set -euo pipefail
+          python -m py_compile api/v2/consumer_gov_conduct.py
+          python -m py_compile api/v2/consumer_gov_conduct_core.py
+          python -m py_compile api/v2/build_consumer_gov_conduct_evidence.py
+
+      - name: Test conduct core and optional taxonomy contracts
+        run: |
+          set -euo pipefail
+          python -m pytest -q tests/test_v2_consumer_gov_conduct.py
+
+      - name: Refresh Consumer.gov preserved aggregate when possible
+        run: |
+          set -euo pipefail
+          python -m api.build_consumidor_gov
+
+      - name: Restore same-head validated eligibility artifact
+        run: |
+          set -euo pipefail
+          branch="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
+          run_id="$(gh run list \
+            --repo "$GITHUB_REPOSITORY" \
+            --workflow "V2 Eligibility Validation" \
+            --branch "$branch" \
+            --status success \
+            --limit 50 \
+            --json databaseId,headSha \
+            --jq '[.[] | select(.headSha == env.V2_SOURCE_HEAD_SHA)][0].databaseId')"
+          if [[ -z "$run_id" || "$run_id" == "null" ]]; then
+            echo "No same-head upstream eligibility artifact for $V2_SOURCE_HEAD_SHA" >&2
+            exit 1
+          fi
+          rm -rf "$RUNNER_TEMP/eligibility-upstream"
+          mkdir -p "$RUNNER_TEMP/eligibility-upstream"
+          gh run download "$run_id" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name "v2-eligibility-$run_id" \
+            --dir "$RUNNER_TEMP/eligibility-upstream"
+          source_file="$(find "$RUNNER_TEMP/eligibility-upstream" -type f -name entity_eligibility_inventory.json | head -n 1)"
+          if [[ -z "$source_file" ]]; then
+            echo "Upstream artifact does not contain entity_eligibility_inventory.json" >&2
+            exit 1
+          fi
+          mkdir -p "$(dirname "$V2_ELIGIBILITY_INPUT")"
+          cp "$source_file" "$V2_ELIGIBILITY_INPUT"
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          payload = json.loads(Path("data/derived/v2/entity_eligibility_inventory.json").read_text(encoding="utf-8"))
+          count = int(((payload.get("meta") or {}).get("regulatory_universe_eligible_count")) or 0)
+          if count < 100:
+              raise SystemExit(f"unexpectedly small same-head regulatory universe: {count}")
+          print(f"Same-head eligibility regulatory_universe={count}")
+          PY
+
+      - name: Build base Consumer.gov identity
+        run: |
+          set -euo pipefail
+          python -m api.v2.build_consumer_gov_identity_experiment
+
+      - name: Build filtered Receita identity snapshot
+        run: |
+          set -euo pipefail
+          python -m api.v2.build_consumer_gov_receita_identity --force
+
+      - name: Build definitive Consumer.gov identity resolution
+        run: |
+          set -euo pipefail
+          python -m api.v2.build_consumer_gov_receita_resolution_experiment
+
+      - name: Build Consumer.gov conduct core with optional taxonomy enrichment
+        run: |
+          set -euo pipefail
+          python -m api.v2.build_consumer_gov_conduct_evidence
+
+      - name: Validate conduct evidence boundaries
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          conduct = json.loads(
+              Path("data/derived/v2/consumer_gov_conduct_evidence.json").read_text(
+                  encoding="utf-8"
+              )
+          )
+          resolved = json.loads(
+              Path(
+                  "data/derived/v2/consumer_gov_receita_resolution_experiment.json"
+              ).read_text(encoding="utf-8")
+          )
+
+          if conduct.get("status") != "experimental":
+              raise SystemExit("conduct evidence must remain experimental")
+          if conduct.get("scoring") != "forbidden_in_this_artifact":
+              raise SystemExit("conduct evidence must explicitly forbid scoring")
+
+          source = conduct["source"]
+          if source["core"].get("state") != "available":
+              raise SystemExit("preserved conduct core must be available")
+          if source["core"].get("required") is not True:
+              raise SystemExit("preserved conduct core must remain mandatory")
+
+          taxonomy = source["taxonomy_evidence"]
+          if taxonomy.get("state") not in {"available", "source_unavailable"}:
+              raise SystemExit(f"unexpected taxonomy state: {taxonomy}")
+          if taxonomy.get("required_for_conduct_core") is not False:
+              raise SystemExit("taxonomy must not block conduct core")
+          if taxonomy.get("required_for_scoring") is not False:
+              raise SystemExit("taxonomy must not be used for scoring")
+
+          forbidden = {
+              "overall_score",
+              "assessment_eligible",
+              "ranking_eligible",
+              "ranking_position",
+          }
+
+          def walk(value):
+              if isinstance(value, dict):
+                  overlap = forbidden & set(value)
+                  if overlap:
+                      raise SystemExit(f"forbidden decision fields: {sorted(overlap)}")
+                  for child in value.values():
+                      walk(child)
+              elif isinstance(value, list):
+                  for child in value:
+                      walk(child)
+
+          walk(conduct)
+
+          months = source["months"]
+          if len(months) != 12:
+              raise SystemExit(f"expected 12 conduct months, got {len(months)}")
+
+          if taxonomy["state"] == "available":
+              catalog = conduct["taxonomy_catalog"]
+              for key in ("area", "assunto", "grupo_problema", "problema"):
+                  if not catalog.get(key):
+                      raise SystemExit(f"available taxonomy is empty: {key}")
+          elif any(conduct["taxonomy_catalog"].get(key) for key in conduct["taxonomy_catalog"]):
+              raise SystemExit("unavailable taxonomy must not leak partial classifications")
+
+          summary = conduct["resolution_summary"]
+          post = resolved["post_receita"]
+          pairs = (
+              ("complaints_total", "complaints_total"),
+              (
+                  "matched_current_insurer_complaints",
+                  "matched_current_insurer_complaints",
+              ),
+              ("outside_157_complaints", "outside_157_complaints"),
+              ("ambiguous_complaints", "ambiguous_complaints"),
+              ("unresolved_complaints", "unresolved_complaints"),
+          )
+          for conduct_key, resolved_key in pairs:
+              if int(summary[conduct_key]) != int(post[resolved_key]):
+                  raise SystemExit(
+                      f"identity reconciliation mismatch {conduct_key}: "
+                      f"{summary[conduct_key]} != {post[resolved_key]}"
+                  )
+
+          entity_total = sum(
+              int(entity["totals"]["complaints"])
+              for entity in conduct["entities"]
+          )
+          if entity_total != int(summary["matched_current_insurer_complaints"]):
+              raise SystemExit(
+                  f"entity total mismatch: {entity_total} != "
+                  f"{summary['matched_current_insurer_complaints']}"
+              )
+
+          for entity in conduct["entities"]:
+              monthly_total = sum(int(item["complaints"]) for item in entity["monthly"])
+              if monthly_total != int(entity["totals"]["complaints"]):
+                  raise SystemExit(
+                      f"monthly reconciliation failed for {entity['entity_id']}"
+                  )
+              for item in entity["monthly"]:
+                  if item.get("consumer_resolved_rate_among_evaluated") is not None:
+                      raise SystemExit(
+                          "preserved core must not invent evaluated denominator"
+                      )
+
+          print(
+              json.dumps(
+                  {
+                      "source": {
+                          "months": months,
+                          "core": source["core"]["state"],
+                          "taxonomy": taxonomy,
+                      },
+                      "universe": conduct["universe"],
+                      "resolution_summary": summary,
+                      "film_summary": conduct["film_summary"],
+                  },
+                  ensure_ascii=False,
+                  indent=2,
+              )
+          )
+          PY
+
+      - name: Save optional Consumer.gov raw taxonomy cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: data/raw/consumidor_gov
+          key: v2-conduct-consumer-raw-${{ runner.os }}-${{ github.run_id }}
+
+      - name: Upload conduct artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: v2-consumer-gov-conduct-${{ github.run_id }}
+          retention-days: 14
+          if-no-files-found: warn
+          path: |
+            data/derived/v2/consumer_gov_conduct_evidence.json
+            data/derived/v2/consumer_gov_identity_experiment.json
+            data/derived/v2/consumer_gov_receita_resolution_experiment.json
+            data/derived/v2/entity_eligibility_inventory.json
+            data/raw/consumidor_gov/manifest.json

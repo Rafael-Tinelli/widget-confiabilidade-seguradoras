@@ -1,0 +1,150 @@
+name: V2 Conduct Credibility Diagnostic
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: v2-conduct-credibility-diagnostic-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  conduct-credibility-diagnostic:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+      V2_SOURCE_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install -r requirements-dev.txt
+
+      - name: Restore same-head Conduct comparative calibration v2
+        run: |
+          set -euo pipefail
+          branch="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
+          run_id="$(gh run list \
+            --repo "$GITHUB_REPOSITORY" \
+            --workflow "V2 Conduct Comparative Calibration v2" \
+            --branch "$branch" \
+            --status success \
+            --limit 50 \
+            --json databaseId,headSha \
+            --jq '[.[] | select(.headSha == env.V2_SOURCE_HEAD_SHA)][0].databaseId')"
+          if [[ -z "$run_id" || "$run_id" == "null" ]]; then
+            echo "No same-head Conduct comparative calibration v2 artifact for $V2_SOURCE_HEAD_SHA" >&2
+            exit 1
+          fi
+          rm -rf "$RUNNER_TEMP/calibration-upstream"
+          mkdir -p "$RUNNER_TEMP/calibration-upstream"
+          gh run download "$run_id" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name "v2-conduct-comparative-calibration-v2-$run_id" \
+            --dir "$RUNNER_TEMP/calibration-upstream"
+          source_file="$(find "$RUNNER_TEMP/calibration-upstream" -type f -name conduct_comparative_calibration_v2.json | head -n 1)"
+          test -n "$source_file"
+          mkdir -p data/derived/v2
+          cp "$source_file" data/derived/v2/conduct_comparative_calibration_v2.json
+          echo "Restored same-head calibration from run $run_id"
+
+      - name: Lint credibility diagnostic
+        run: |
+          set -euo pipefail
+          ruff check \
+            api/v2/build_conduct_credibility_diagnostic.py \
+            tests/test_v2_conduct_credibility_diagnostic.py
+
+      - name: Run credibility diagnostic tests
+        run: |
+          set -euo pipefail
+          python -m pytest -q tests/test_v2_conduct_credibility_diagnostic.py
+
+      - name: Build real Conduct credibility diagnostic
+        run: |
+          set -euo pipefail
+          python -m api.v2.build_conduct_credibility_diagnostic
+
+      - name: Validate diagnostic boundaries
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          path = Path("data/derived/v2/conduct_credibility_diagnostic.json")
+          payload = json.loads(path.read_text(encoding="utf-8"))
+          calibration = json.loads(
+              Path("data/derived/v2/conduct_comparative_calibration_v2.json").read_text(encoding="utf-8")
+          )
+          if payload.get("scoring") != "forbidden_in_this_artifact":
+              raise SystemExit("credibility diagnostic must forbid scoring")
+          if payload.get("ranking") != "forbidden_in_this_artifact":
+              raise SystemExit("credibility diagnostic must forbid ranking")
+          methodology = payload.get("methodology") or {}
+          if methodology.get("shrinkage_applied") is not False:
+              raise SystemExit("shrinkage cannot be applied in this gate")
+          if methodology.get("empirical_bayes_applied") is not False:
+              raise SystemExit("Empirical Bayes cannot be applied in this gate")
+          if methodology.get("denominator_selected") is not False:
+              raise SystemExit("denominator cannot be promoted in this gate")
+          if methodology.get("portfolio_mix_adjusted") is not False:
+              raise SystemExit("portfolio mix cannot be silently adjusted in this gate")
+          expected = int(
+              ((calibration.get("population") or {}).get("direct_one_to_one_candidates")) or 0
+          )
+          actual = int(
+              ((payload.get("population") or {}).get("direct_candidate_entities")) or 0
+          )
+          if expected <= 0 or actual != expected:
+              raise SystemExit(
+                  f"credibility candidate population mismatch: {actual} != {expected}"
+              )
+
+          forbidden = {
+              "overall_score",
+              "ranking_position",
+              "assessment_eligible",
+              "ranking_eligible",
+          }
+          def walk(value):
+              if isinstance(value, dict):
+                  overlap = forbidden & set(value)
+                  if overlap:
+                      raise SystemExit(f"forbidden decision fields: {sorted(overlap)}")
+                  for child in value.values():
+                      walk(child)
+              elif isinstance(value, list):
+                  for child in value:
+                      walk(child)
+          walk(payload)
+          print(json.dumps({
+              "population": payload["population"],
+              "direct_familywise_exact_states": payload["diagnostics"]["direct_familywise_exact_states"],
+              "temporal_overlap": payload["diagnostics"]["temporal_overlap"],
+              "denominator_sensitivity": payload["diagnostics"]["denominator_sensitivity"],
+          }, ensure_ascii=False, indent=2))
+          PY
+
+      - name: Upload Conduct credibility diagnostic
+        uses: actions/upload-artifact@v4
+        with:
+          name: v2-conduct-credibility-diagnostic-${{ github.run_id }}
+          retention-days: 14
+          path: data/derived/v2/conduct_credibility_diagnostic.json

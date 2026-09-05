@@ -1,0 +1,140 @@
+name: V2 Public Search Profile Contract
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: v2-public-search-profile-contract-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  public-search-profile-contract:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install -r requirements-dev.txt
+
+      - name: Restore latest successful public-contract inputs
+        run: |
+          set -euo pipefail
+          branch="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
+          mkdir -p data/derived/v2/public
+
+          restore_artifact() {
+            workflow="$1"
+            prefix="$2"
+            filename="$3"
+            destination="$4"
+            temp_dir="$RUNNER_TEMP/restore-${prefix}"
+            run_id="$(gh run list \
+              --repo "$GITHUB_REPOSITORY" \
+              --workflow "$workflow" \
+              --branch "$branch" \
+              --status success \
+              --limit 30 \
+              --json databaseId \
+              --jq '.[0].databaseId')"
+
+            if [[ -z "$run_id" || "$run_id" == "null" ]]; then
+              echo "No successful artifact found for $workflow on $branch" >&2
+              exit 1
+            fi
+
+            rm -rf "$temp_dir"
+            mkdir -p "$temp_dir"
+            gh run download "$run_id" \
+              --repo "$GITHUB_REPOSITORY" \
+              --name "${prefix}-${run_id}" \
+              --dir "$temp_dir"
+            source_file="$(find "$temp_dir" -type f -name "$filename" | head -n 1)"
+
+            if [[ -z "$source_file" ]]; then
+              echo "$workflow artifact missing $filename" >&2
+              exit 1
+            fi
+
+            cp "$source_file" "$destination"
+            echo "Restored $workflow from run $run_id"
+          }
+
+          restore_artifact \
+            "V2 Lifecycle Relationships Validation" \
+            "v2-lifecycle-relationships" \
+            "entity_lifecycle_relationship_inventory.json" \
+            "data/derived/v2/entity_lifecycle_relationship_inventory.json"
+
+          restore_artifact \
+            "V2 Exploratory Leaderboards Contract" \
+            "v2-exploratory-leaderboards-contract" \
+            "insurer_explorer.json" \
+            "data/derived/v2/public/insurer_explorer.json"
+
+          restore_artifact \
+            "V2 Sandbox Brand Conduct Evidence" \
+            "v2-sandbox-brand-conduct" \
+            "sandbox_brand_conduct_evidence.json" \
+            "data/derived/v2/sandbox_brand_conduct_evidence.json"
+
+      - name: Lint public search/profile contract
+        run: |
+          set -euo pipefail
+          ruff check \
+            api/v2/build_public_search_profile_contract.py \
+            api/v2/public_profile_regulatory_semantics.py \
+            api/v2/validate_public_search_profile_contract.py \
+            tests/test_v2_public_search_profile_contract.py \
+            tests/test_v2_public_profile_regulatory_semantics.py
+
+      - name: Run public search/profile tests
+        run: |
+          set -euo pipefail
+          python -m pytest -q \
+            tests/test_v2_public_search_profile_contract.py \
+            tests/test_v2_public_profile_regulatory_semantics.py
+
+      - name: Build real public search/profile package
+        run: |
+          set -euo pipefail
+          rm -rf data/derived/v2/public/profiles
+          rm -f \
+            data/derived/v2/public/search_index.json \
+            data/derived/v2/public/profile_manifest.json \
+            data/derived/v2/public_search_profile_contract.json
+          python -m api.v2.public_profile_regulatory_semantics
+
+      - name: Validate real public contract boundaries
+        run: |
+          set -euo pipefail
+          python -m api.v2.validate_public_search_profile_contract
+
+      - name: Upload closed public search/profile contract
+        uses: actions/upload-artifact@v4
+        with:
+          name: v2-public-search-profile-contract-${{ github.run_id }}
+          retention-days: 14
+          path: |
+            data/derived/v2/public_search_profile_contract.json
+            data/derived/v2/public/search_index.json
+            data/derived/v2/public/profile_manifest.json
+            data/derived/v2/public/profiles/**
