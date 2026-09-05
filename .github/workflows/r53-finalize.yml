@@ -5,6 +5,7 @@ on:
     branches: ["refactor/v2-data-foundation"]
     paths:
       - "tools/r53_finalize.py"
+      - ".github/workflows/r53-finalize.yml"
 
 permissions:
   contents: write
@@ -39,6 +40,9 @@ jobs:
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # GITHUB_TOKEN cannot update workflow files without workflows permission.
+          # Keep ci.yml unchanged in this one-shot commit; it is updated separately.
+          git restore .github/workflows/ci.yml
           git add -A
           if git diff --cached --quiet; then
             echo "Nothing to materialize."
