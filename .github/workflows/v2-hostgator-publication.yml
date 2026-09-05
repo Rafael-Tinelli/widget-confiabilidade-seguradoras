@@ -176,20 +176,51 @@ jobs:
           [[ "$SSH_HOST" =~ ^[A-Za-z0-9.-]+$ ]] || exit 1
           [[ "$SSH_USER" =~ ^[A-Za-z0-9._-]+$ ]] || exit 1
           [[ "$SSH_PORT" =~ ^[0-9]+$ ]] || exit 1
+          (( SSH_PORT >= 1 && SSH_PORT <= 65535 )) || exit 1
           [[ "$PUBLICATION_ROOT" =~ ^/[A-Za-z0-9._/-]+$ ]] || exit 1
           [[ "$PUBLIC_PATH" =~ ^/[A-Za-z0-9._/-]+$ ]] || exit 1
 
       - name: Configure pinned SSH trust
+        id: ssh_trust
         env:
+          SSH_HOST: ${{ secrets.V2_HOSTGATOR_HOST }}
           SSH_PRIVATE_KEY: ${{ secrets.V2_HOSTGATOR_SSH_KEY }}
           SSH_KNOWN_HOSTS: ${{ secrets.V2_HOSTGATOR_KNOWN_HOSTS }}
+          SSH_PORT: ${{ vars.V2_HOSTGATOR_SSH_PORT }}
         run: |
           set -euo pipefail
-          install -d -m 700 "$HOME/.ssh"
-          printf '%s\n' "$SSH_PRIVATE_KEY" > "$HOME/.ssh/v2_hostgator"
-          chmod 600 "$HOME/.ssh/v2_hostgator"
-          printf '%s\n' "$SSH_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
-          chmod 600 "$HOME/.ssh/known_hosts"
+          SSH_PORT=${SSH_PORT:-22}
+          ssh_dir="$RUNNER_TEMP/v2-hostgator-ssh"
+          key_file="$ssh_dir/private_key"
+          known_hosts_file="$ssh_dir/known_hosts"
+          umask 077
+          install -d -m 700 "$ssh_dir"
+          install -m 600 /dev/null "$key_file"
+          install -m 600 /dev/null "$known_hosts_file"
+          printf '%s\n' "$SSH_PRIVATE_KEY" | tr -d '\r' > "$key_file"
+          printf '%s\n' "$SSH_KNOWN_HOSTS" | tr -d '\r' > "$known_hosts_file"
+
+          ssh-keygen -y -P '' -f "$key_file" >/dev/null || {
+            echo "V2_HOSTGATOR_SSH_KEY is not a valid unencrypted private key" >&2
+            exit 1
+          }
+          ssh-keygen -l -f "$known_hosts_file" >/dev/null || {
+            echo "V2_HOSTGATOR_KNOWN_HOSTS has no valid host public key" >&2
+            exit 1
+          }
+          known_host_lookup="$SSH_HOST"
+          if [[ "$SSH_PORT" != "22" ]]; then
+            known_host_lookup="[$SSH_HOST]:$SSH_PORT"
+          fi
+          ssh-keygen -F "$known_host_lookup" -f "$known_hosts_file" >/dev/null || {
+            echo "V2_HOSTGATOR_KNOWN_HOSTS does not pin the configured host and port" >&2
+            exit 1
+          }
+
+          {
+            echo "key_file=$key_file"
+            echo "known_hosts_file=$known_hosts_file"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Upload and atomically install exact generation
         env:
@@ -201,24 +232,34 @@ jobs:
           BUILD_ID: ${{ steps.source.outputs.build_id }}
           PACKAGE_SHA: ${{ steps.package.outputs.sha256 }}
           PACKAGE_DIR: ${{ steps.package.outputs.dir }}
+          SSH_KEY_FILE: ${{ steps.ssh_trust.outputs.key_file }}
+          SSH_KNOWN_HOSTS_FILE: ${{ steps.ssh_trust.outputs.known_hosts_file }}
         run: |
           set -euo pipefail
           SSH_PORT=${SSH_PORT:-22}
+          : "${SSH_KEY_FILE:?missing ephemeral SSH key path}"
+          : "${SSH_KNOWN_HOSTS_FILE:?missing ephemeral known_hosts path}"
           remote="$SSH_USER@$SSH_HOST"
           incoming="$PUBLICATION_ROOT/incoming/$BUILD_ID"
           ssh_opts=(
-            -i "$HOME/.ssh/v2_hostgator"
+            -i "$SSH_KEY_FILE"
             -p "$SSH_PORT"
             -o BatchMode=yes
+            -o IdentitiesOnly=yes
             -o StrictHostKeyChecking=yes
-            -o UserKnownHostsFile="$HOME/.ssh/known_hosts"
+            -o UserKnownHostsFile="$SSH_KNOWN_HOSTS_FILE"
+            -o GlobalKnownHostsFile=/dev/null
+            -o UpdateHostKeys=no
           )
           scp_opts=(
-            -i "$HOME/.ssh/v2_hostgator"
+            -i "$SSH_KEY_FILE"
             -P "$SSH_PORT"
             -o BatchMode=yes
+            -o IdentitiesOnly=yes
             -o StrictHostKeyChecking=yes
-            -o UserKnownHostsFile="$HOME/.ssh/known_hosts"
+            -o UserKnownHostsFile="$SSH_KNOWN_HOSTS_FILE"
+            -o GlobalKnownHostsFile=/dev/null
+            -o UpdateHostKeys=no
           )
 
           ssh "${ssh_opts[@]}" "$remote" \
@@ -240,3 +281,10 @@ jobs:
                '$incoming/install_public_generation.py'"
 
           ssh "${ssh_opts[@]}" "$remote" "rm -rf '$incoming'"
+
+      - name: Remove ephemeral SSH material
+        if: always()
+        run: |
+          ssh_dir="$RUNNER_TEMP/v2-hostgator-ssh"
+          rm -f -- "$ssh_dir/private_key" "$ssh_dir/known_hosts"
+          rmdir -- "$ssh_dir" 2>/dev/null || true

@@ -1,11 +1,12 @@
-# §19.7 — Consolidação final R5.3 após QA e rollback real no HostGator
+# §19.7 — Consolidação final R5.3, rollback real e cutover do frontend
 
 - Data da consolidação HostGator: **04/09/2026**
 - Auditoria final do branch: **05/09/2026**
 - Prova real de rollback e retorno: **05/09/2026**
+- Cutover de produção do frontend: **05/09/2026**
 - Branch: `refactor/v2-data-foundation`
 - PR: **#1 Draft**
-- Produção: **não autorizada**
+- Produção: **frontend R5.3 ativo; automações de dados e sensores desativados**
 
 ## Estado consolidado
 
@@ -127,11 +128,19 @@ copiar head-global.php do payload do widget     NÃO
 
 No staging, a não indexação foi comprovada por `X-Robots-Tag: noindex, follow`. A meta robots global pode permanecer com o default legado; o frontend não injeta segunda meta. O antigo `deployment/production-cutover/PHP/head-global.php` não integra o payload de cutover.
 
-## Candidato de produção
+## Candidato de produção — PROMOVIDO
 
 `ranking-seguradoras/deployment/production-cutover/index.php` é derivado mecanicamente do mesmo R5.3 aprovado. As diferenças intencionais são somente o estado de produção: sem `X-Robots-Tag: noindex`, `$page_robots` de produção, URL limpa `/ranking-seguradoras/` e carregamento de `legacy-state-redirects.php`.
 
-Esse candidato **não foi instalado**.
+Após o fechamento do §19.7, uma autorização explícita e separada promoveu esse candidato para `/home1/sanid210/public_html/ranking-seguradoras/index.php` por troca atômica. O arquivo servido foi reconciliado com o candidato versionado:
+
+```text
+production index SHA256  081952849d2d6e3d1bb3bca0334e404db5e9c890f66cd50e4330005566cf51fc
+legacy redirects SHA256  f803a83ed600f3e71f1bd25ec137bafc7f046a9d9eadba04f6173d76a754823d
+PRODUCTION_CUTOVER_STATUS COMPLETE
+```
+
+O registro completo do evento, incluindo backup e smoke pós-cutover, está em `docs/production-frontend-cutover.md`.
 
 ## Rollback real — PROVADO
 
@@ -203,11 +212,15 @@ reopen_methodology_without_concrete_bug = false
 frontend_may_recompute_methodology = false
 general_score_allowed = false
 general_ranking_allowed = false
-production_cutover_authorized = false
+PRODUCTION_CUTOVER_STATUS = COMPLETE
+production_cutover_authorized = consumed
+V2_PRODUCTION_AUTOMATION_ENABLED = false
+V2_HOSTGATOR_DEPLOY_ENABLED = false
+V2_MARKET_SENSOR_AUTOMATION_ENABLED = false
 market_sensor_production_enabled = false
 ```
 
-**READY FOR CUTOVER não significa CUTOVER AUTORIZADO.** READY expressa apenas que o candidato ficou tecnicamente apto para uma decisão posterior. Merge, alteração de `main`, substituição do `index.php`, ativação de cron/publicador/sensores e qualquer cutover permanecem dependentes de autorização explícita posterior.
+READY não significava autorização implícita. O gate foi consumido apenas após autorização explícita separada para o frontend. O evento concluído não autorizou merge, alteração de `main`, cron, publicador automático ou sensores.
 
 ## Matriz final do gate
 
@@ -225,6 +238,12 @@ FAIL-CLOSED / RETRY                    PASS
 CUTOVER PAYLOAD                        PASS
 ROLLBACK REAL                          PASS
 R5 RETURN AFTER ROLLBACK               PASS
+PRODUCTION FRONTEND CUTOVER             PASS
+PRODUCTION HTTP / CANONICAL / ROBOTS    PASS
+PRODUCTION SEARCH / PROFILE             PASS
+PRODUCTION COMPARISON / HISTORY         PASS
+PRODUCTION MOBILE SMOKE                 PASS
+FRONTEND ROLLBACK AVAILABLE             PASS
 DOCUMENTAÇÃO                           PASS
 ```
 
@@ -236,6 +255,11 @@ FRONTEND_CONSOLIDATED_IN_REPOSITORY = YES
 SECTION_19_7_STATUS = CLOSED
 READY_FOR_CUTOVER = YES
 ROLLBACK_PROVADO_NO_AMBIENTE_REAL = true
-production_cutover_authorized = false
+PRODUCTION_CUTOVER_STATUS = COMPLETE
+production_cutover_authorized = consumed
+PRODUCTION_FRONTEND_R5_3 = PASS
+V2_PRODUCTION_AUTOMATION_ENABLED = false
+V2_HOSTGATOR_DEPLOY_ENABLED = false
+V2_MARKET_SENSOR_AUTOMATION_ENABLED = false
 market_sensor_production_enabled = false
 ```

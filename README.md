@@ -1,15 +1,15 @@
 # Ranking de Seguradoras Sanida — Pipeline de Dados e Metodologia v2
 
-> **Status do projeto:** fundação metodológica, operacional e frontend/SEO concluídas em Draft; **§19.1–§19.7 formalmente fechados no branch de trabalho**; staging HostGator R5.3 aprovado; rollback real pós-migração provado; recomendação técnica **READY FOR CUTOVER**, sem autorização de produção.
+> **Status do projeto:** fundação metodológica, operacional e frontend/SEO concluídas em Draft; **§19.1–§19.7 formalmente fechados no branch de trabalho**; frontend R5.3 ativo em produção desde 05/09/2026; rollback do frontend disponível; automações de geração/publicação e sensores permanecem desativados.
 > **Branch de trabalho:** `refactor/v2-data-foundation`.  
-> **PR:** #1 permanece **Draft**. Não fazer merge em `main` nem cutover de produção sem autorização explícita posterior.  
+> **PR:** #1 permanece **Draft**. O cutover do frontend não autoriza merge em `main`, publicação automática de dados, cron ou sensores.
 > **Produto principal:** consulta de identidade + avaliação semântica individual + comparação lado a lado; leaderboards unidimensionais e coleções semânticas são exploração secundária.  
 > **Ranking geral:** continua bloqueado (`ranking_eligible = 0`).  
 > **Frontend:** PHP/HTML/CSS/JS no HostGator consome contratos públicos prontos; **não recalcula metodologia**. O build Vite no CI é prova de compilabilidade, não deploy do frontend.  
 > **Marco crítico de 29/08/2026:** corrigido o numerador de `PLA/CMR`. O pipeline deve usar `NovoPla` (`new_pla`) como PLA prudencial final; `plajustado` (`pla_adjusted`) permanece somente como evidência intermediária da fonte. Artifacts gerados antes dessa correção não devem ser tratados como atuais para capital, assessment combinado ou leaderboards dependentes de capital.  
 > **Prova de fechamento do §19.1:** Full Generation Proof #49, run `33567550092`, head `7993dbabd1cf3cd21181c88d072aed4ce5573538`, concluída com sucesso; artifact `9824434275`, SHA-256 `d0ccb6ce274542015431ae9fde0084c12941d1983ce06527bf6872e442244431`.
 
-Este README é o **contrato operacional do projeto**. A consolidação coberta por este ciclo foi concluída até o §19.7: metodologia/dados, potencial informacional do frontend, evergreen, publicação HostGator preparada, limpeza do repositório, revisão funcional/UX, comunicação pública, SEO técnico/semântico, acabamento visual, integração final, staging real e rollback operacional. A competência de **descoberta evergreen de novas identidades de mercado** foi auditada e incorporada como extensão do §19.3, ainda sem ativação operacional de produção. O sistema está tecnicamente pronto para uma decisão posterior de cutover, o que **não equivale a merge, autorização de produção, ativação de cron ou sensores**.
+Este README é o **contrato operacional do projeto**. A consolidação coberta por este ciclo foi concluída até o §19.7: metodologia/dados, potencial informacional do frontend, evergreen, publicação HostGator preparada, limpeza do repositório, revisão funcional/UX, comunicação pública, SEO técnico/semântico, acabamento visual, integração final, staging real e rollback operacional. Após autorização separada, o frontend R5.3 foi promovido para a URL de produção e reconciliado por hash, HTTP, SEO e smoke funcional. A competência de **descoberta evergreen de novas identidades de mercado** permanece sem ativação operacional; merge, geração/publicação automática, cron e sensores continuam sujeitos a gates próprios.
 
 Documentação principal:
 
@@ -18,6 +18,7 @@ Documentação principal:
 - `docs/section-19-3-19-4-evergreen-hostgator-publication.md`;
 - `docs/section-19-5-repository-cleanup.md`;
 - `docs/section-19-7-final-consolidation.md`;
+- `docs/production-frontend-cutover.md`;
 - `docs/emerging-market-identity-coverage.md`;
 - `docs/emerging-market-discovery-audit.md`;
 - `docs/financial-methodology-closure.md`;
@@ -872,7 +873,7 @@ sensor
 → registry público
 ```
 
-A automação de produção e os sensores de mercado permanecem desabilitados enquanto o Draft não tiver cutover/configuração deliberadamente autorizados.
+A automação de geração/publicação e os sensores de mercado permanecem desabilitados após o cutover do frontend. O PR Draft e cada gate operacional exigem autorização deliberada própria.
 
 ---
 
@@ -884,7 +885,7 @@ Autoridades automáticas da consolidação:
 - `V2 Gate 4 Evergreen Contract`;
 - `V2 Gate 4 Full Generation Proof`.
 
-Publicação/cron preparados, porém gated até cutover:
+Publicação automática de dados/cron preparados, porém ainda gated após o cutover do frontend:
 
 - `V2 HostGator Public Package Sync`;
 - `V2 Production Generation Schedule`.
@@ -935,7 +936,7 @@ Classificação corrente:
 ```text
 produção/fundação v2 -> KEEP
 diagnóstico v2       -> DIAGNOSTIC
-produção/histórico v1 -> LEGACY enquanto não houver cutover
+produção/histórico v1 -> LEGACY preservado para rollback após o cutover
 redundante/temporário -> DELETE somente após prova de ausência de dependência
 ```
 
@@ -1002,7 +1003,7 @@ O conjunto de testes inclui regressão onde `plajustado` indicaria falsamente ra
 
 # 19. Fase atual — CONSOLIDAÇÃO FINAL DA V2 FECHADA
 
-A consolidação metodológica, informacional, operacional, de frontend e de integração está formalmente encerrada até o §19.7. O candidato R5.3 ficou tecnicamente apto para uma decisão explícita posterior de cutover, sem abrir autorização de produção:
+A consolidação metodológica, informacional, operacional, de frontend e de integração está formalmente encerrada até o §19.7. O gate READY foi consumido por uma autorização posterior e específica; o frontend R5.3 está ativo em produção, sem ativar as demais camadas operacionais:
 
 ```text
 SECTION_19_1_STATUS = CLOSED
@@ -1015,7 +1016,12 @@ SECTION_19_6_STATUS = CLOSED
 SECTION_19_7_STATUS = CLOSED
 READY_FOR_CUTOVER = YES
 ROLLBACK_PROVADO_NO_AMBIENTE_REAL = true
-production_cutover_authorized = false
+PRODUCTION_CUTOVER_STATUS = COMPLETE
+production_cutover_authorized = consumed
+PRODUCTION_FRONTEND_R5_3 = PASS
+V2_PRODUCTION_AUTOMATION_ENABLED = false
+V2_HOSTGATOR_DEPLOY_ENABLED = false
+V2_MARKET_SENSOR_AUTOMATION_ENABLED = false
 market_sensor_production_enabled = false
 ```
 
@@ -1230,7 +1236,7 @@ cron gated
 → mantém previous
 ```
 
-Os gates de produção permanecem desligados no Draft:
+Os gates de automação permanecem desligados no Draft, mesmo com o frontend R5.3 já ativo:
 
 ```text
 V2_PRODUCTION_AUTOMATION_ENABLED
@@ -1238,7 +1244,7 @@ V2_HOSTGATOR_DEPLOY_ENABLED
 V2_MARKET_SENSOR_AUTOMATION_ENABLED
 ```
 
-O primeiro cutover ainda exige ação deliberada: merge autorizado em `main`, configuração SSH/known_hosts/paths, provisionamento do symlink público e publicação de teste antes de habilitar o cron. A ativação dos sensores de demanda exige adicionalmente provisionamento do endpoint de unknown query e, para GSC, credenciais WIF/service account e configuração da propriedade/URL.
+O cutover do frontend foi concluído em 05/09/2026 e o hardening da confiança SSH está implementado no workflow. A próxima ativação operacional ainda exige ação deliberada: provisionamento e verificação dos secrets/variables SSH, merge autorizado em `main`, Full Generation canônica e publicação manual de teste antes de habilitar o cron. A ativação dos sensores de demanda exige adicionalmente provisionamento do endpoint de unknown query e, para GSC, credenciais WIF/service account e configuração da propriedade/URL.
 
 ## 19.5. Limpeza do repositório — **FECHADO**
 
@@ -1251,7 +1257,7 @@ Classificação aplicada:
 ```text
 KEEP       — produção/fundação atual
 DIAGNOSTIC — auditoria ainda útil
-LEGACY     — histórico reprodutível / produção v1 enquanto não houver cutover
+LEGACY     — histórico reprodutível / v1 preservada para rollback após o cutover
 DELETE     — redundante/obsoleto/temporário com ausência de dependência confirmada
 ```
 
@@ -1263,7 +1269,7 @@ Remoções confirmadas:
 
 Foram preservados deliberadamente:
 
-- workflows e scripts v1 ainda necessários para produção/histórico antes do cutover;
+- workflows e scripts v1 ainda necessários para histórico/rollback até aposentadoria explicitamente autorizada;
 - `widget-ui/dist/` como LEGACY, após a cópia real do HostGator provar que
   `widget.js`/`widget.css` de produção correspondem exatamente a esse bundle;
 - experimentos/diagnósticos v2 que preservam a justificativa metodológica;
@@ -1349,7 +1355,7 @@ O fechamento do §19.6 **não autoriza cutover, merge em `main`, ativação de c
 
 Objetivo: produzir a última revisão integrada antes de decidir se a v2 está tecnicamente pronta para uma decisão posterior de cutover. Esta etapa não reabre os §§19.1–19.6 por preferência ou por existência de alternativas; somente regressão objetiva, inconsistência concreta ou falha de integração justifica correção em área já fechada.
 
-O frontend efetivamente observado no HostGator foi versionado, reconciliado com o head global, protegido por manifesto/hash da geração pública e incorporado ao CI. A revisão preservou o bundle v1 que ainda atende produção e preparou arquivos separados de staging, cutover e rollback.
+O frontend efetivamente observado no HostGator foi versionado, reconciliado com o head global, protegido por manifesto/hash da geração pública e incorporado ao CI. A revisão preservou o bundle v1 que atendia produção e preparou arquivos separados de staging, cutover e rollback. Em 05/09/2026, uma autorização posterior e específica promoveu o candidato R5.3 para produção; a v1 passou a permanecer somente como backup de rollback.
 
 Provas finais consolidadas:
 
@@ -1374,6 +1380,10 @@ O relatório completo, a evidência operacional e o gate binário estão em:
 
 `docs/section-19-7-final-consolidation.md`
 
+O registro do cutover de produção está em:
+
+`docs/production-frontend-cutover.md`
+
 O roteiro de instalação, prova de rollback e restrições de cutover está em:
 
 `ranking-seguradoras/deployment/production-cutover/INSTALLACAO-HOSTGATOR.md`
@@ -1384,11 +1394,16 @@ Estado formal:
 SECTION_19_7_STATUS = CLOSED
 READY_FOR_CUTOVER = YES
 ROLLBACK_PROVADO_NO_AMBIENTE_REAL = true
-production_cutover_authorized = false
+PRODUCTION_CUTOVER_STATUS = COMPLETE
+production_cutover_authorized = consumed
+PRODUCTION_FRONTEND_R5_3 = PASS
+V2_PRODUCTION_AUTOMATION_ENABLED = false
+V2_HOSTGATOR_DEPLOY_ENABLED = false
+V2_MARKET_SENSOR_AUTOMATION_ENABLED = false
 market_sensor_production_enabled = false
 ```
 
-**READY FOR CUTOVER ≠ CUTOVER AUTORIZADO.** READY significa apenas que o candidato está tecnicamente apto para uma decisão posterior. Não autoriza merge, alteração de `main`, substituição de `index.php`, instalação do payload de produção, ativação de cron/publicador/sensores ou remoção da v1/backup legado.
+O gate READY não autorizava produção por si só; ele foi consumido somente após autorização explícita separada. O cutover concluído também **não autoriza** merge, alteração de `main`, ativação de cron/publicador/sensores nem remoção da v1 ou dos backups legados.
 
 ---
 
@@ -1444,11 +1459,11 @@ Para o escopo §19.1–§19.7 e a extensão de descoberta evergreen do §19.3, o
 - staging real R5.3, geração pública e bytes versionados foram reconciliados;
 - rollback real da primeira migração foi provado via `public-pre-r5-live`, com conteúdo legado efetivamente servido por HTTP;
 - o retorno atômico ao R5 e o smoke pós-retorno foram aprovados;
-- `main` e a produção HostGator não foram alterados por esta consolidação.
+- `main` e a produção HostGator não foram alterados durante a consolidação do §19.7; o frontend foi promovido depois, sob autorização específica e registrada separadamente.
 
 A cobertura evergreen operacional em produção só passa a existir após configuração/ativação deliberada dos sensores; isso é uma etapa operacional separada da arquitetura já fechada.
 
-O §19.7 está encerrado sem blocker técnico objetivo conhecido. **Fechar §19.7 e declarar READY FOR CUTOVER não autoriza, por si só, merge ou produção.**
+O §19.7 está encerrado sem blocker técnico objetivo conhecido. Seu gate READY foi consumido pelo cutover autorizado em 05/09/2026; isso não abriu autorização de merge ou automação.
 
 ---
 
@@ -1492,8 +1507,10 @@ Estado final da consolidação:
 → §19.6 FECHADO — FRONTEND / UX / COMUNICAÇÃO / SEO
 → §19.7 FECHADO — READY FOR CUTOVER
 → ROLLBACK REAL PROVADO
+→ FRONTEND R5.3 EM PRODUÇÃO — CUTOVER CONCLUÍDO
+→ V1 E PUBLIC-PRE-R5-LIVE PRESERVADOS PARA ROLLBACK
 → SENSORES DE MERCADO EM PRODUÇÃO AINDA NÃO CONFIGURADOS/ATIVADOS
-→ CUTOVER/PRODUÇÃO CONTINUA PENDENTE DE AUTORIZAÇÃO DELIBERADA
+→ MERGE / GERAÇÃO AUTOMÁTICA / PUBLICAÇÃO AUTOMÁTICA CONTINUAM PENDENTES DE AUTORIZAÇÃO
 ```
 
 Áreas fechadas não devem ser reabertas apenas porque outra abordagem seria possível. Mudanças posteriores devem responder a evidência objetiva de bug, regressão, mudança de fonte/contrato ou necessidade operacional concreta.

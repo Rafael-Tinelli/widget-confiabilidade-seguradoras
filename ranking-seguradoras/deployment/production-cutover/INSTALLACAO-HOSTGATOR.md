@@ -1,6 +1,6 @@
 # R5.3 — staging, cutover e rollback no HostGator
 
-Este documento descreve o estado efetivamente validado em 04–05/09/2026. **Não autoriza produção.**
+Este documento descreve o estado efetivamente validado em 04–05/09/2026 e o cutover do frontend concluído em 05/09/2026. A autorização utilizada foi consumida; este registro **não autoriza repetir o cutover nem ativar automações**.
 
 ## Regra crítica: não alterar o head global
 
@@ -101,9 +101,9 @@ O diretório `public-pre-r5-live` continua sendo backup operacional da primeira 
 ROLLBACK_PROVADO_NO_AMBIENTE_REAL = true
 ```
 
-## Cutover de frontend — somente após autorização explícita
+## Cutover de frontend — CONCLUÍDO
 
-O candidato permanece separado. Quando e somente quando houver autorização posterior, o mapa de instalação será:
+Após autorização explícita e restrita ao frontend, o mapa abaixo foi instalado:
 
 | Origem versionada | Destino HostGator |
 |---|---|
@@ -114,15 +114,52 @@ O segundo destino é o caminho exato exigido pelo `require` do candidato. O `ran
 
 **Não pertence ao cutover:** `PHP/head-global.php`.
 
+Evidência dos arquivos promovidos:
+
+```text
+production index SHA256  081952849d2d6e3d1bb3bca0334e404db5e9c890f66cd50e4330005566cf51fc
+legacy redirects SHA256  f803a83ed600f3e71f1bd25ec137bafc7f046a9d9eadba04f6173d76a754823d
+atomic swap               PASS
+PHP lint                  PASS
+```
+
+Antes da troca, a v1 foi preservada fora do `public_html`:
+
+```text
+/home1/sanid210/sanida-frontend-backups/ranking-seguradoras/index.php.pre-r5-3.20260905T132240Z
+SHA256 9b2995a2925824f7b638daec62355c93f1b49a9169698caa10724a5bebd6ac28
+mode   600
+```
+
+Esse caminho é o rollback independente do frontend e não deve ser removido. Uma eventual restauração precisa copiar o backup para um arquivo temporário adjacente ao `index.php`, validar hash e `php -l` e só então fazer nova troca atômica. Não executar rollback sem falha objetiva ou decisão operacional explícita.
+
+Validação posterior:
+
+```text
+PRODUCTION_HTTP                   PASS
+PRODUCTION_CANONICAL              PASS
+PRODUCTION_ROBOTS                 PASS
+PRODUCTION_MANIFEST_INTEGRITY     PASS
+PRODUCTION_SEARCH                 PASS
+PRODUCTION_PROFILE                PASS
+PRODUCTION_COMPARISON             PASS
+PRODUCTION_HISTORY                PASS
+PRODUCTION_MOBILE_SMOKE           PASS
+FRONTEND_ROLLBACK_AVAILABLE       YES
+DATA_ROLLBACK_AVAILABLE           YES
+```
+
+O registro completo está em `docs/production-frontend-cutover.md`.
+
 ## Não fazer
 
 ```text
 NÃO alterar /PHP/head-global.php
-NÃO instalar cutover antes de autorização
+NÃO repetir o cutover sem nova necessidade e autorização explícita
 NÃO substituir dados JSON um a um
 NÃO apontar public para diretório parcial
 NÃO ativar cron/publicador/sensores por consequência do frontend
-NÃO apagar v1/backup/legacy antes da prova pós-cutover e janela de rollback
+NÃO apagar v1/backup/legacy sem aposentadoria explicitamente autorizada
 ```
 
 Estado atual:
@@ -136,8 +173,13 @@ rollback real pós-migração           PASS
 R5 return after rollback             PASS
 READY FOR CUTOVER                    YES
 ROLLBACK_PROVADO_NO_AMBIENTE_REAL    true
-production_cutover_authorized        false
+PRODUCTION_CUTOVER_STATUS             COMPLETE
+production_cutover_authorized        consumed
+PRODUCTION_FRONTEND_R5_3             PASS
+V2_PRODUCTION_AUTOMATION_ENABLED     false
+V2_HOSTGATOR_DEPLOY_ENABLED          false
+V2_MARKET_SENSOR_AUTOMATION_ENABLED  false
 market_sensor_production_enabled     false
 ```
 
-**READY FOR CUTOVER ≠ CUTOVER AUTORIZADO.** Este estado significa apenas que o candidato está tecnicamente pronto para uma decisão posterior; nenhuma ação de produção é autorizada por este documento.
+O gate READY foi consumido apenas pela autorização explícita do frontend. O cutover concluído não autoriza merge, geração/publicação automática, cron, sensores, remoção da v1 ou alteração do `head-global.php`.

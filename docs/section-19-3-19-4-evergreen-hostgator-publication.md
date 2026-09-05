@@ -1,8 +1,10 @@
 # §19.3–§19.4 — Evergreen, zero manutenção, cron e publicação HostGator
 
-Status: **FECHADO COMO ARQUITETURA E IMPLEMENTAÇÃO; CUTOVER DE PRODUÇÃO NÃO ATIVADO NO DRAFT**.
+Status: **FECHADO COMO ARQUITETURA E IMPLEMENTAÇÃO; FRONTEND R5.3 EM PRODUÇÃO; AUTOMAÇÃO DE DADOS NÃO ATIVADA NO DRAFT**.
 
 Data: 02/09/2026.
+
+Hardening SSH pós-cutover: 05/09/2026.
 
 Este documento fecha conjuntamente os itens §19.3 e §19.4 porque o mecanismo de cron só é seguro se consumir exatamente o mesmo contrato evergreen de geração e distribuição.
 
@@ -210,11 +212,22 @@ O workflow usa:
 
 ```text
 BatchMode=yes
+IdentitiesOnly=yes
 StrictHostKeyChecking=yes
 UserKnownHostsFile=<arquivo controlado pelo workflow>
+GlobalKnownHostsFile=/dev/null
+UpdateHostKeys=no
 ```
 
-Secrets necessários após o cutover:
+O material é escrito somente em um diretório efêmero sob `RUNNER_TEMP`, criado com `umask 077`. Antes da conexão, o workflow:
+
+- valida que `V2_HOSTGATOR_SSH_KEY` contém uma chave privada válida e não interativa;
+- valida a sintaxe das chaves públicas de host;
+- exige que `V2_HOSTGATOR_KNOWN_HOSTS` contenha uma entrada para o host e a porta configurados;
+- não usa `ssh-keyscan` como fonte de confiança durante a publicação;
+- remove chave e `known_hosts` do diretório efêmero com `if: always()`.
+
+Secrets necessários para a futura publicação controlada:
 
 ```text
 V2_HOSTGATOR_HOST
@@ -234,6 +247,8 @@ V2_PRODUCTION_AUTOMATION_ENABLED  # precisa ser "true" para o cron disparar gera
 ```
 
 Nenhum valor de credencial é versionado no repositório.
+
+A auditoria pós-cutover também confirmou que não existem chave privada, `known_hosts` operacional ou arquivo SSH rastreado. O repositório contém somente a lógica e os nomes dos secrets.
 
 ---
 
@@ -369,18 +384,19 @@ V2_PRODUCTION_AUTOMATION_ENABLED = true
 
 ---
 
-## 11. Estado no Draft atual
+## 11. Estado pós-cutover do frontend
 
-Nenhum cutover foi executado por esta consolidação.
+O mecanismo de automação não executou o cutover. O frontend R5.3 foi promovido manualmente em 05/09/2026 após autorização separada e permanece independente dos gates de geração/publicação.
 
 Enquanto o PR #1 estiver Draft e as variáveis de habilitação não estiverem deliberadamente ligadas:
 
 ```text
-produção v1                         intocada
-frontend no HostGator               intocado
-/ranking-seguradoras/data/v2/public não criado/substituído automaticamente
+frontend R5.3 em produção            PASS
+v1                                   preservada como backup de rollback
+/ranking-seguradoras/data/v2/public  aponta para a geração R5 aprovada
 cron de produção v2                 desabilitado por gate
 publicação SSH                       desabilitada por gate
+sensores evergreen                   desabilitados por gate
 ```
 
 Além disso, eventos `workflow_run` e `schedule` tornam-se operacionais a partir da presença desses workflows no branch default. Portanto a definição versionada pode ser validada agora sem transformar o branch de refatoração em produção.
@@ -428,15 +444,15 @@ Foram resolvidos:
 
 O cron nunca tenta coordenar artifacts independentes.
 
-### Cutover
+### Próxima ativação operacional
 
-O cutover real permanece deliberadamente pendente de:
+O cutover do frontend está concluído. A automação de dados permanece deliberadamente pendente de:
 
 1. merge futuro autorizado em `main`;
-2. confirmação de `python3` e SSH na conta HostGator;
-3. criação do symlink público uma única vez;
-4. configuração de secrets/variables;
-5. teste manual de publicação de uma Full Generation de `main`;
+2. configuração e validação dos secrets/variables SSH, inclusive `V2_HOSTGATOR_KNOWN_HOSTS`;
+3. Full Generation bem-sucedida em `main`;
+4. publicação manual controlada dessa geração;
+5. prova do comportamento de `previous` e do rollback normal do instalador;
 6. somente depois, habilitação dos dois gates de automação.
 
 Isso é uma pendência de ativação de produção, não uma lacuna no mecanismo versionado.

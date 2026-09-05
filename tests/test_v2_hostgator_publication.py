@@ -162,6 +162,36 @@ def test_publication_workflow_uses_exact_successful_main_generation_only():
     assert "latest successful" not in workflow.lower()
 
 
+def test_publication_workflow_uses_only_pinned_ephemeral_ssh_trust():
+    workflow = PUBLICATION_WORKFLOW.read_text(encoding="utf-8")
+
+    for required in (
+        "$RUNNER_TEMP/v2-hostgator-ssh",
+        "umask 077",
+        "ssh-keygen -y -P ''",
+        "ssh-keygen -l -f",
+        "ssh-keygen -F",
+        "does not pin the configured host and port",
+        "IdentitiesOnly=yes",
+        "StrictHostKeyChecking=yes",
+        "GlobalKnownHostsFile=/dev/null",
+        "UpdateHostKeys=no",
+        "if: always()",
+        "Remove ephemeral SSH material",
+    ):
+        assert required in workflow
+
+    for forbidden in (
+        "ssh-keyscan",
+        "StrictHostKeyChecking=no",
+        "108.179.193.28",
+    ):
+        assert forbidden not in workflow
+
+    assert not Path(".github/known_hosts").exists()
+    assert not Path("ops/hostgator/known_hosts").exists()
+
+
 def test_production_scheduler_is_gated_and_triggers_canonical_workflow_on_main():
     workflow = SCHEDULE_WORKFLOW.read_text(encoding="utf-8")
 
