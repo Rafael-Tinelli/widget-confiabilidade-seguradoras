@@ -12,6 +12,10 @@ on:
         description: Exact successful Full Generation run id to republish
         required: true
         type: string
+      confirm_publication:
+        description: Type PUBLISH to authorize this one manual production publication
+        required: true
+        type: string
 
 permissions:
   actions: read
@@ -24,18 +28,28 @@ concurrency:
 jobs:
   publish-hostgator:
     if: >-
-      vars.V2_HOSTGATOR_DEPLOY_ENABLED == 'true' &&
+      github.event_name == 'workflow_dispatch' ||
       (
-        github.event_name == 'workflow_dispatch' ||
-        (
-          github.event.workflow_run.conclusion == 'success' &&
-          github.event.workflow_run.head_branch == 'main'
-        )
+        vars.V2_HOSTGATOR_DEPLOY_ENABLED == 'true' &&
+        github.event_name == 'workflow_run' &&
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.head_branch == 'main'
       )
     runs-on: ubuntu-24.04
     timeout-minutes: 30
 
     steps:
+      - name: Confirm explicit manual publication
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          MANUAL_CONFIRMATION: ${{ inputs.confirm_publication }}
+        run: |
+          set -euo pipefail
+          [[ "$MANUAL_CONFIRMATION" == "PUBLISH" ]] || {
+            echo "manual publication requires confirm_publication=PUBLISH" >&2
+            exit 1
+          }
+
       - name: Resolve and validate exact source run
         id: source
         env:
