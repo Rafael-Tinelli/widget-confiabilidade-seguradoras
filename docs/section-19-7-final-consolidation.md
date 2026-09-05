@@ -1,7 +1,8 @@
-# §19.7 — Consolidação final R5.3 após QA HostGator
+# §19.7 — Consolidação final R5.3 após QA e rollback real no HostGator
 
 - Data da consolidação HostGator: **04/09/2026**
 - Auditoria final do branch: **05/09/2026**
+- Prova real de rollback e retorno: **05/09/2026**
 - Branch: `refactor/v2-data-foundation`
 - PR: **#1 Draft**
 - Produção: **não autorizada**
@@ -80,10 +81,15 @@ Observação não bloqueante: Back/Forward e os retornos semânticos restauram e
 
 ## Auditoria final de drift
 
-O ponto de partida conferido no remoto foi
-`de999a3916a1ce633faf0aa27daad345d22d0494`. O PR permaneceu Draft e apontando de
-`refactor/v2-data-foundation` para `main`. No mesmo HEAD, CI #1485 (run
-`33933490009`) e Evergreen Contract (run `33933489991`) estavam verdes.
+O branch foi consolidado em `552f9b2749aea434ad85d18ab070c5f70fec3155` antes do registro documental da prova de rollback. Nesse SHA:
+
+```text
+CI #1486                               PASS
+V2 Gate 4 Evergreen Contract #326      PASS
+pytest                                 538 PASS
+PR #1                                  Draft
+main                                   intocada
+```
 
 A verificação curta no ambiente real, sem repetir a bateria funcional, confirmou:
 
@@ -98,17 +104,14 @@ DOM data-load-state                          ready
 canonical                                    https://sanida.com.br/ranking-seguradoras/
 ```
 
-O pacote local preservado foi novamente verificado pelo instalador: 806 JSONs
-físicos, 805 manifestados, 791 perfis e 156 seguradoras ordinárias. A suíte local
-resultou em 538 testes PASS; os quatro avisos de correlação com entrada constante
-continuam conhecidos e não bloqueantes.
+O pacote local preservado foi novamente verificado pelo instalador: 806 JSONs físicos, 805 manifestados, 791 perfis e 156 seguradoras ordinárias. Os quatro avisos de correlação com entrada constante continuam conhecidos e não bloqueantes.
 
 | Classe | Drift/risco objetivo | Tratamento |
 |---|---|---|
-| BLOCKER | a primeira migração real não possui `previous`; o retorno por `public-pre-r5-live` ainda não foi exercitado | permanece pendente no HostGator |
-| NECESSÁRIA | README ainda dizia que instalação e QA do staging estavam pendentes | corrigido para staging R5.3 aprovado e rollback pendente |
-| NECESSÁRIA | o CI não comparava integralmente o candidato de produção com os bytes aprovados nem fazia lint dos PHPs de deployment | guard de derivação exata e três `php -l` adicionados |
-| RECOMENDADA | o roteiro conceitual removia o symlink e movia o diretório legado, criando uma janela evitável | prova preparada com troca atômica de symlink, sem mover o backup |
+| RESOLVIDO | a primeira migração real não possuía `previous`; faltava provar o retorno pelo backup `public-pre-r5-live` | rollback real exercitado e retorno ao R5 comprovado em 05/09/2026 |
+| NECESSÁRIA | README/documentação ainda registravam rollback como pendente | reconciliados com a prova real |
+| NECESSÁRIA | o CI não comparava integralmente o candidato de produção com os bytes aprovados nem fazia lint dos PHPs de deployment | guard de derivação exata e três `php -l` já adicionados |
+| RECOMENDADA | o roteiro conceitual removia o symlink e movia o diretório legado, criando uma janela evitável | prova executada com troca atômica de symlink, sem mover o backup |
 | OPCIONAL | restauração exata de scroll após renderização assíncrona | não executada; rota, entidade e estado já são restaurados e não há impacto material comprovado |
 | OPCIONAL | lockfile Node, CSP adicional, monitoramento sintético e matriz ampliada de navegadores | mantidos fora do gate; não justificam mudança especulativa |
 | NÃO MEXER | `head-global.php`, v1, `main`, cron, sensores, metodologia e ranking | preservados |
@@ -122,7 +125,7 @@ alterar /PHP/head-global.php no HostGator       PROIBIDO neste cutover
 copiar head-global.php do payload do widget     NÃO
 ```
 
-No staging, a não indexação foi comprovada por `X-Robots-Tag: noindex, follow`. A meta robots global pode permanecer com o default legado; o frontend não injeta segunda meta. O antigo `deployment/production-cutover/PHP/head-global.php` deixa de integrar o payload de cutover.
+No staging, a não indexação foi comprovada por `X-Robots-Tag: noindex, follow`. A meta robots global pode permanecer com o default legado; o frontend não injeta segunda meta. O antigo `deployment/production-cutover/PHP/head-global.php` não integra o payload de cutover.
 
 ## Candidato de produção
 
@@ -130,24 +133,67 @@ No staging, a não indexação foi comprovada por `X-Robots-Tag: noindex, follow
 
 Esse candidato **não foi instalado**.
 
-## Rollback: blocker operacional remanescente
+## Rollback real — PROVADO
 
-O diretório anterior foi preservado em:
+A primeira migração não possuía `previous`. Por isso a prova real não exercitou o rollback normal do instalador por `previous`; exercitou corretamente o caso especial da primeira migração, usando o diretório legado preservado:
 
 ```text
 /home1/sanid210/public_html/ranking-seguradoras/data/v2/public-pre-r5-live
 ```
 
-Existe também backup privado verificado. Como a primeira publicação não tinha
-`previous`, a prova precisa servir temporariamente `public-pre-r5-live` pelo
-caminho `public`, validar 519 JSON / 505 profiles e o hash agregado histórico, e
-então retornar imediatamente ao R5.3. O roteiro foi ajustado para trocar symlinks
-atomicamente no mesmo filesystem, sem mover o diretório legado.
+O diretório continua preservado e **não deve ser apagado** neste fechamento.
 
-A integridade do backup foi comprovada, mas essa reversão **ainda não foi executada após a migração real**:
+Sequência efetivamente executada:
 
 ```text
-ROLLBACK_PROVADO_NO_AMBIENTE_REAL = false
+R5
+→ criação/validação de symlink temporário para public-pre-r5-live
+→ troca atômica de public para o legado com mv --force --no-target-directory
+→ validação do legado pelo caminho público real
+→ troca atômica de public de volta para current
+→ validação pós-retorno do R5
+→ smoke curto do staging
+```
+
+Evidência do estado legado servido:
+
+```text
+legacy JSONs              519
+legacy profiles           505
+legacy aggregate SHA256   f3f4e9df6d2105798a49231188069ad01b72c40ee816f4289fa0d96c8d94185d
+search_index local SHA256 0c81f7502ec1bbc898280e1bd07ee6722e39f7b580d2d188a5779e38a6d789f7
+search_index HTTP SHA256  0c81f7502ec1bbc898280e1bd07ee6722e39f7b580d2d188a5779e38a6d789f7
+ROLLBACK_LEGACY_VALIDATION=PASS
+```
+
+Portanto o teste não foi apenas uma troca teórica de ponteiro: o `search_index.json` legado foi efetivamente servido por HTTP através do caminho público usado pelo frontend.
+
+Retorno ao R5:
+
+```text
+public=/home1/sanid210/sanida-v2-publication/generations/v2-gate4-full-33829195597-a1
+current=/home1/sanid210/sanida-v2-publication/generations/v2-gate4-full-33829195597-a1
+generation=v2-gate4-full-33829195597-a1
+R5_RETURN=PASS
+```
+
+Validação pós-retorno:
+
+```text
+manifest build_id         v2-gate4-full-33829195597-a1
+manifest files_count      805
+manifest package_sha256   be7c1da75a7cbfe14de836c97c2b0ecacb0703eeb89f18ddf647bd80d2bfa502
+manifest HTTP status      200
+manifest local SHA256     4a1e5237257d6965447a801f8ed31850c9e74b7609dfb4888c6b5fd1c304d2fe
+manifest HTTP SHA256      4a1e5237257d6965447a801f8ed31850c9e74b7609dfb4888c6b5fd1c304d2fe
+HTTP_LOCAL_MATCH          True
+R5_POST_RETURN_VALIDATION PASS
+```
+
+O smoke mínimo após o retorno também passou: carregamento normal do staging, busca por Allianz e abertura normal do perfil. A bateria completa não foi repetida porque os bytes/dados aprovados permaneceram os mesmos e não surgiu sinal de regressão.
+
+```text
+ROLLBACK_PROVADO_NO_AMBIENTE_REAL = true
 ```
 
 ## Gates
@@ -161,9 +207,9 @@ production_cutover_authorized = false
 market_sensor_production_enabled = false
 ```
 
-Para remover o último blocker do §19.7: CI do commit consolidado verde → prova reversível de rollback no HostGator → retorno imediato ao R5.3 → smoke/hash curto.
+**READY FOR CUTOVER não significa CUTOVER AUTORIZADO.** READY expressa apenas que o candidato ficou tecnicamente apto para uma decisão posterior. Merge, alteração de `main`, substituição do `index.php`, ativação de cron/publicador/sensores e qualquer cutover permanecem dependentes de autorização explícita posterior.
 
-## Matriz corrente do gate
+## Matriz final do gate
 
 ```text
 GITHUB R5.3 CONSOLIDADO                PASS
@@ -177,17 +223,19 @@ HISTORY / SHARE / ROUTES               PASS
 MOBILE                                 PASS
 FAIL-CLOSED / RETRY                    PASS
 CUTOVER PAYLOAD                        PASS
-ROLLBACK                               FAIL — prova real pendente
+ROLLBACK REAL                          PASS
+R5 RETURN AFTER ROLLBACK               PASS
 DOCUMENTAÇÃO                           PASS
 ```
 
-Até isso ocorrer:
+Estado formal:
 
 ```text
 HOSTGATOR_STAGING_R5_3 = PASS
 FRONTEND_CONSOLIDATED_IN_REPOSITORY = YES
-SECTION_19_7_STATUS = ACTIVE
-READY_FOR_CUTOVER = NO
-reason = rollback real ainda não provado
+SECTION_19_7_STATUS = CLOSED
+READY_FOR_CUTOVER = YES
+ROLLBACK_PROVADO_NO_AMBIENTE_REAL = true
 production_cutover_authorized = false
+market_sensor_production_enabled = false
 ```

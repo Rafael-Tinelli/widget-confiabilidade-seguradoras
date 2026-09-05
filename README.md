@@ -1,15 +1,15 @@
 # Ranking de Seguradoras Sanida — Pipeline de Dados e Metodologia v2
 
-> **Status do projeto:** fundação metodológica e revisão de frontend/SEO concluídas em Draft; **§19.1–§19.6 formalmente fechados no branch de trabalho**; **§19.7 com staging HostGator R5.3 aprovado e consolidado no branch**; rollback real pós-migração ainda pendente; recomendação atual **NOT READY** e cutover de produção deliberadamente não autorizado.
+> **Status do projeto:** fundação metodológica, operacional e frontend/SEO concluídas em Draft; **§19.1–§19.7 formalmente fechados no branch de trabalho**; staging HostGator R5.3 aprovado; rollback real pós-migração provado; recomendação técnica **READY FOR CUTOVER**, sem autorização de produção.
 > **Branch de trabalho:** `refactor/v2-data-foundation`.  
-> **PR:** #1 permanece **Draft**. Não fazer merge em `main` antes de autorização explícita para staging/cutover.  
+> **PR:** #1 permanece **Draft**. Não fazer merge em `main` nem cutover de produção sem autorização explícita posterior.  
 > **Produto principal:** consulta de identidade + avaliação semântica individual + comparação lado a lado; leaderboards unidimensionais e coleções semânticas são exploração secundária.  
 > **Ranking geral:** continua bloqueado (`ranking_eligible = 0`).  
 > **Frontend:** PHP/HTML/CSS/JS no HostGator consome contratos públicos prontos; **não recalcula metodologia**. O build Vite no CI é prova de compilabilidade, não deploy do frontend.  
 > **Marco crítico de 29/08/2026:** corrigido o numerador de `PLA/CMR`. O pipeline deve usar `NovoPla` (`new_pla`) como PLA prudencial final; `plajustado` (`pla_adjusted`) permanece somente como evidência intermediária da fonte. Artifacts gerados antes dessa correção não devem ser tratados como atuais para capital, assessment combinado ou leaderboards dependentes de capital.  
 > **Prova de fechamento do §19.1:** Full Generation Proof #49, run `33567550092`, head `7993dbabd1cf3cd21181c88d072aed4ce5573538`, concluída com sucesso; artifact `9824434275`, SHA-256 `d0ccb6ce274542015431ae9fde0084c12941d1983ce06527bf6872e442244431`.
 
-Este README é o **contrato operacional do projeto**. A consolidação coberta por este ciclo foi concluída até o §19.6: metodologia/dados, potencial informacional do frontend, evergreen, publicação HostGator preparada, limpeza do repositório, revisão funcional/UX, comunicação pública, SEO técnico/semântico e acabamento visual. A competência de **descoberta evergreen de novas identidades de mercado** foi auditada e incorporada como extensão do §19.3, ainda sem ativação operacional de produção. A fase seguinte é a **lapidação final e consolidação da v2** antes de qualquer decisão de cutover. Isso **não equivale a merge ou cutover de produção**.
+Este README é o **contrato operacional do projeto**. A consolidação coberta por este ciclo foi concluída até o §19.7: metodologia/dados, potencial informacional do frontend, evergreen, publicação HostGator preparada, limpeza do repositório, revisão funcional/UX, comunicação pública, SEO técnico/semântico, acabamento visual, integração final, staging real e rollback operacional. A competência de **descoberta evergreen de novas identidades de mercado** foi auditada e incorporada como extensão do §19.3, ainda sem ativação operacional de produção. O sistema está tecnicamente pronto para uma decisão posterior de cutover, o que **não equivale a merge, autorização de produção, ativação de cron ou sensores**.
 
 Documentação principal:
 
@@ -17,6 +17,7 @@ Documentação principal:
 - `docs/section-19-2-frontend-information-audit.md`;
 - `docs/section-19-3-19-4-evergreen-hostgator-publication.md`;
 - `docs/section-19-5-repository-cleanup.md`;
+- `docs/section-19-7-final-consolidation.md`;
 - `docs/emerging-market-identity-coverage.md`;
 - `docs/emerging-market-discovery-audit.md`;
 - `docs/financial-methodology-closure.md`;
@@ -999,9 +1000,9 @@ O conjunto de testes inclui regressão onde `plajustado` indicaria falsamente ra
 
 ---
 
-# 19. Fase atual — CONSOLIDAÇÃO FINAL DA V2
+# 19. Fase atual — CONSOLIDAÇÃO FINAL DA V2 FECHADA
 
-A consolidação metodológica, informacional, operacional e de frontend está formalmente encerrada até o §19.6. A etapa ativa passa a ser a lapidação final e a reconciliação de tudo o que será necessário para declarar a v2 pronta para uma decisão explícita de cutover:
+A consolidação metodológica, informacional, operacional, de frontend e de integração está formalmente encerrada até o §19.7. O candidato R5.3 ficou tecnicamente apto para uma decisão explícita posterior de cutover, sem abrir autorização de produção:
 
 ```text
 SECTION_19_1_STATUS = CLOSED
@@ -1011,7 +1012,9 @@ SECTION_19_3_DISCOVERY_STATUS = CLOSED_IN_ARCHITECTURE_AND_CODE
 SECTION_19_4_STATUS = CLOSED_IN_ARCHITECTURE_AND_CODE
 SECTION_19_5_STATUS = CLOSED
 SECTION_19_6_STATUS = CLOSED
-SECTION_19_7_STATUS = ACTIVE_FINAL_POLISH_AND_V2_CONSOLIDATION
+SECTION_19_7_STATUS = CLOSED
+READY_FOR_CUTOVER = YES
+ROLLBACK_PROVADO_NO_AMBIENTE_REAL = true
 production_cutover_authorized = false
 market_sensor_production_enabled = false
 ```
@@ -1342,54 +1345,50 @@ O acabamento final do §19.6 consolidou hierarquia, alinhamento, densidade, resp
 
 O fechamento do §19.6 **não autoriza cutover, merge em `main`, ativação de cron nem publicação automática**.
 
-## 19.7. Lapidação final e consolidação da v2 — **STAGING R5.3 APROVADO; ROLLBACK REAL PENDENTE**
+## 19.7. Lapidação final e consolidação da v2 — **FECHADO — READY FOR CUTOVER**
 
-Objetivo: produzir a última revisão integrada antes de decidir se a v2 está pronta para cutover. Esta etapa não reabre os §§19.1–19.6 por preferência ou por existência de alternativas; somente regressão objetiva, inconsistência concreta ou falha de integração justifica correção em área já fechada.
+Objetivo: produzir a última revisão integrada antes de decidir se a v2 está tecnicamente pronta para uma decisão posterior de cutover. Esta etapa não reabre os §§19.1–19.6 por preferência ou por existência de alternativas; somente regressão objetiva, inconsistência concreta ou falha de integração justifica correção em área já fechada.
 
-Escopo prioritário:
+O frontend efetivamente observado no HostGator foi versionado, reconciliado com o head global, protegido por manifesto/hash da geração pública e incorporado ao CI. A revisão preservou o bundle v1 que ainda atende produção e preparou arquivos separados de staging, cutover e rollback.
 
-1. reconciliar o estado atual do branch, a superfície de teste no HostGator e os arquivos finais do frontend, eliminando drift entre o que foi validado e o que será versionado;
-2. executar QA visual e funcional ponta a ponta em desktop e mobile, incluindo busca, desambiguação, perfis complexos, helpers, comparação, lista, leaderboards, coleções, compartilhamento, Back/Forward, loading e erros;
-3. revisar acessibilidade real dos controles e ordem de foco, sem transformar a etapa em redesign;
-4. consolidar CSS/JS/PHP finais, removendo apenas dívida objetiva e overrides comprovadamente redundantes, sem reescrever por preferência;
-5. confirmar que o frontend final consome somente o pacote público v2 e continua sem recalcular metodologia;
-6. verificar a integração com uma geração pública v2 corrente e os casos representativos/limítrofes antes do cutover;
-7. executar a última auditoria técnica de SEO para produção: canonical, robots, `noindex` de teste, estados por fragmento, parâmetros legados, redirects, crawlability, headings, links internos e ausência de explosão de URLs;
-8. preparar checklist de cutover, rollback e aposentadoria segura da superfície v1/cron legado, sem executar essas ações antes de autorização explícita;
-9. reconciliar documentação, testes, deployment helpers e estrutura final do widget para que a v2 não dependa de arquivos temporários ou conhecimento desta conversa;
-10. ao final, produzir uma recomendação binária e fundamentada: **READY FOR CUTOVER** ou **NOT READY**, com blockers objetivos se houver.
-
-Invariantes da etapa:
+Provas finais consolidadas:
 
 ```text
-reopen_methodology_without_concrete_bug = false
-frontend_may_recompute_methodology = false
-general_score_allowed = false
-general_ranking_allowed = false
-mass_brand_seo_pages_allowed = false
-production_cutover_authorized = false
-main_may_change_without_explicit_authorization = false
+GitHub R5.3 / HostGator bytes              PASS
+CI #1486                                   PASS
+V2 Gate 4 Evergreen Contract #326          PASS
+HostGator staging                          PASS
+Full Generation #69 / build_id             PASS
+rollback real para public-pre-r5-live      PASS
+519 JSONs / 505 perfis legado              PASS
+legacy aggregate SHA256                    PASS
+search_index legado HTTP = local           PASS
+retorno atômico ao current/R5              PASS
+manifest R5 pós-retorno HTTP = local       PASS
+smoke curto pós-retorno                    PASS
 ```
 
-### Consolidação executada
+A primeira migração não possuía `previous`; por isso a prova real de rollback foi o caso especial via diretório preservado `public-pre-r5-live`. Não afirmar que o rollback normal do instalador por `previous` foi exercitado.
 
-O frontend efetivamente observado no HostGator foi versionado, reconciliado com o
-head global, protegido por manifesto/hash da geração pública e incorporado ao CI.
-A revisão também corrigiu a linguagem pública gerada, preservou o bundle v1 que
-ainda atende produção e preparou arquivos separados de staging, cutover e rollback.
-
-O relatório, a classificação dos drifts e o gate binário estão em:
+O relatório completo, a evidência operacional e o gate binário estão em:
 
 `docs/section-19-7-final-consolidation.md`
 
-O roteiro copiável de instalação e validação está em:
+O roteiro de instalação, prova de rollback e restrições de cutover está em:
 
 `ranking-seguradoras/deployment/production-cutover/INSTALLACAO-HOSTGATOR.md`
 
-Recomendação atual: **NOT READY**, exclusivamente porque a reversão real da primeira
-migração ainda precisa ser provada no HostGator e seguida do retorno imediato ao
-R5.3 com smoke/hash curto. Não há autorização implícita de merge, produção, cron ou
-sensores.
+Estado formal:
+
+```text
+SECTION_19_7_STATUS = CLOSED
+READY_FOR_CUTOVER = YES
+ROLLBACK_PROVADO_NO_AMBIENTE_REAL = true
+production_cutover_authorized = false
+market_sensor_production_enabled = false
+```
+
+**READY FOR CUTOVER ≠ CUTOVER AUTORIZADO.** READY significa apenas que o candidato está tecnicamente apto para uma decisão posterior. Não autoriza merge, alteração de `main`, substituição de `index.php`, instalação do payload de produção, ativação de cron/publicador/sensores ou remoção da v1/backup legado.
 
 ---
 
@@ -1420,7 +1419,7 @@ Não:
 
 # 21. Critério de sucesso da consolidação
 
-Para o escopo §19.1–§19.6 e a extensão de descoberta evergreen do §19.3, os critérios técnicos, informacionais e de experiência foram atendidos no branch Draft/superfície de teste:
+Para o escopo §19.1–§19.7 e a extensão de descoberta evergreen do §19.3, os critérios técnicos, informacionais, operacionais e de experiência foram atendidos no branch Draft/superfície de teste:
 
 - fórmulas críticas foram auditadas da fonte ao JSON público;
 - regressões cobrem bugs materiais conhecidos;
@@ -1442,11 +1441,14 @@ Para o escopo §19.1–§19.6 e a extensão de descoberta evergreen do §19.3, o
 - números técnicos receberam interpretação progressiva sem deslocar a metodologia para o JavaScript;
 - a arquitetura SEO concentra a superfície indexável no hub e evita geração massiva de páginas por marca;
 - a linguagem visual foi consolidada em tecnologia aplicada, inteligência de dados, confiança e clareza, sem estética de dashboard genérico;
+- staging real R5.3, geração pública e bytes versionados foram reconciliados;
+- rollback real da primeira migração foi provado via `public-pre-r5-live`, com conteúdo legado efetivamente servido por HTTP;
+- o retorno atômico ao R5 e o smoke pós-retorno foram aprovados;
 - `main` e a produção HostGator não foram alterados por esta consolidação.
 
 A cobertura evergreen operacional em produção só passa a existir após configuração/ativação deliberada dos sensores; isso é uma etapa operacional separada da arquitetura já fechada.
 
-O §19.7 é o gate final de integração e preparação de cutover. Seu encerramento deve dizer explicitamente se existem blockers objetivos. **Fechar §19.7 não autoriza, por si só, merge ou produção.**
+O §19.7 está encerrado sem blocker técnico objetivo conhecido. **Fechar §19.7 e declarar READY FOR CUTOVER não autoriza, por si só, merge ou produção.**
 
 ---
 
@@ -1478,7 +1480,7 @@ E eliminar o que era frágil:
 - catálogo que só conhece empresas porque alguém lembrou de cadastrá-las;
 - artifacts experimentais vazando para produto.
 
-Estado ao final do §19.6 e início da etapa final:
+Estado final da consolidação:
 
 ```text
 §19.1 FECHADO
@@ -1488,12 +1490,13 @@ Estado ao final do §19.6 e início da etapa final:
 → §19.4 FECHADO EM ARQUITETURA/CÓDIGO
 → §19.5 FECHADO
 → §19.6 FECHADO — FRONTEND / UX / COMUNICAÇÃO / SEO
-→ §19.7 ATIVO — LAPIDAÇÃO FINAL E CONSOLIDAÇÃO DA V2
+→ §19.7 FECHADO — READY FOR CUTOVER
+→ ROLLBACK REAL PROVADO
 → SENSORES DE MERCADO EM PRODUÇÃO AINDA NÃO CONFIGURADOS/ATIVADOS
 → CUTOVER/PRODUÇÃO CONTINUA PENDENTE DE AUTORIZAÇÃO DELIBERADA
 ```
 
-Áreas fechadas não devem ser reabertas apenas porque outra abordagem seria possível. Na etapa final, corrigir apenas evidência objetiva de bug, regressão, inconsistência documental, dívida que afete o produto ou risco concreto de cutover.
+Áreas fechadas não devem ser reabertas apenas porque outra abordagem seria possível. Mudanças posteriores devem responder a evidência objetiva de bug, regressão, mudança de fonte/contrato ou necessidade operacional concreta.
 
 ---
 

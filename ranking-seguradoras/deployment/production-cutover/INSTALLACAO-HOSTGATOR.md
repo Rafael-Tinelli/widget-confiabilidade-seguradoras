@@ -1,6 +1,6 @@
 # R5.3 — staging, cutover e rollback no HostGator
 
-Este documento descreve o estado efetivamente validado em 04/09/2026. **Não autoriza produção.**
+Este documento descreve o estado efetivamente validado em 04–05/09/2026. **Não autoriza produção.**
 
 ## Regra crítica: não alterar o head global
 
@@ -35,11 +35,11 @@ package_sha256    be7c1da75a7cbfe14de836c97c2b0ecacb0703eeb89f18ddf647bd80d2bfa5
 
 ## Smoke do staging
 
-Confirmar somente: HTTP 200; `X-Robots-Tag: noindex, follow`; canonical de produção; `data-load-state=ready`; busca abre perfil; comparação simples funciona; em 375×667 a busca vem antes da explicação; lista mobile não tem o gap do `flex-basis`.
+O QA funcional completo do R5.3 já foi executado. Após a prova real de rollback, foi repetido somente o smoke mínimo necessário: carregamento normal do widget, busca por Allianz e abertura normal do perfil. A validação pós-retorno também confirmou o manifesto servido por HTTP idêntico ao arquivo local da geração restaurada.
 
-Não repetir toda a bateria discriminante quando os hashes acima forem idênticos.
+Não repetir toda a bateria discriminante quando os hashes acima forem idênticos e não houver sinal objetivo de regressão.
 
-## Prova de rollback ainda obrigatória — executar uma etapa por vez
+## Prova real de rollback — CONCLUÍDA
 
 Estado legado preservado:
 
@@ -47,86 +47,70 @@ Estado legado preservado:
 /home1/sanid210/public_html/ranking-seguradoras/data/v2/public-pre-r5-live
 ```
 
-A primeira reversão é especial porque a primeira instalação não tinha `previous`.
-Nenhum comando de cutover de frontend pertence a esta prova.
+A primeira reversão foi especial porque a primeira instalação não tinha `previous`. Portanto, **não afirmar que o rollback normal do instalador por `previous` foi exercitado**. A prova real usou o diretório legado preservado acima e troca atômica do ponteiro `public` no mesmo filesystem.
 
-### Etapa 1 — preflight somente leitura
-
-**OBJETIVO**
-
-Confirmar tipos, destinos e contagens antes de criar ou trocar qualquer ponteiro.
-
-**COMANDO EXATO**
-
-```bash
-set -euo pipefail
-SANIDA_PUBLIC_DATA=/home1/sanid210/public_html/ranking-seguradoras/data/v2/public
-SANIDA_LEGACY_DATA=/home1/sanid210/public_html/ranking-seguradoras/data/v2/public-pre-r5-live
-SANIDA_CURRENT=/home1/sanid210/sanida-v2-publication/current
-test -L "$SANIDA_PUBLIC_DATA"
-test -d "$SANIDA_LEGACY_DATA" && test ! -L "$SANIDA_LEGACY_DATA"
-test -L "$SANIDA_CURRENT"
-test "$(readlink -f "$SANIDA_PUBLIC_DATA")" = "$(readlink -f "$SANIDA_CURRENT")"
-command mv --help | grep -F -- '--no-target-directory' >/dev/null
-printf 'public=%s\ncurrent=%s\nlegacy=%s\njson=%s\nprofiles=%s\n' \
-  "$(readlink -f "$SANIDA_PUBLIC_DATA")" \
-  "$(readlink -f "$SANIDA_CURRENT")" \
-  "$(readlink -f "$SANIDA_LEGACY_DATA")" \
-  "$(find "$SANIDA_LEGACY_DATA" -type f -name '*.json' | wc -l)" \
-  "$(find "$SANIDA_LEGACY_DATA/profiles" -maxdepth 1 -type f -name '*.json' | wc -l)"
-```
-
-**RESULTADO ESPERADO**
-
-- `public` e `current` resolvem para a mesma geração R5;
-- `legacy` resolve para `public-pre-r5-live`;
-- `json=519`;
-- `profiles=505`;
-- nenhum texto de erro e código de saída zero.
-
-**PARE AQUI**
-
-Não crie symlink temporário e não altere `public`. Registre a saída antes da
-próxima etapa.
-
-### Etapas seguintes — não executar sem conferir a etapa anterior
-
-Depois do preflight, cada ação será fornecida separadamente no mesmo formato. A
-prova usará um symlink irmão temporário e `mv --no-target-directory` no mesmo
-filesystem para trocar o ponteiro de forma atômica. Isso evita a janela entre
-`unlink public` e `mv public-pre-r5-live public`, mantém o diretório legado no
-lugar e torna o retorno ao R5 igualmente atômico.
-
-Sequência controlada prevista:
+Sequência efetivamente executada:
 
 ```text
-1. capturar o hash agregado dos 519 JSONs legados;
-2. preparar e validar um symlink temporário para public-pre-r5-live;
-3. trocar public atomicamente para o legado;
-4. validar contagens, hash e HTTP do legado;
-5. trocar public atomicamente de volta para current;
-6. validar manifesto/build_id/hash/HTTP do R5.3;
-7. executar somente o smoke curto do frontend.
+R5
+→ preflight de tipos/destinos/contagens
+→ hash agregado do legado
+→ symlink temporário para public-pre-r5-live
+→ troca atômica de public para o legado com mv --force --no-target-directory
+→ validação local + HTTP através do caminho public
+→ troca atômica de public de volta para current
+→ validação do R5 restaurado
+→ smoke curto do staging
 ```
 
-Se qualquer guarda falhar, parar sem tentar corrigir caminhos por presunção. Não
-usar `rm`, não mover o diretório legado e não deixar `public` apontando para o
-legado entre sessões.
+Evidência do legado efetivamente servido:
+
+```text
+legacy JSONs              519
+legacy profiles           505
+legacy aggregate SHA256   f3f4e9df6d2105798a49231188069ad01b72c40ee816f4289fa0d96c8d94185d
+search_index local SHA256 0c81f7502ec1bbc898280e1bd07ee6722e39f7b580d2d188a5779e38a6d789f7
+search_index HTTP SHA256  0c81f7502ec1bbc898280e1bd07ee6722e39f7b580d2d188a5779e38a6d789f7
+ROLLBACK_LEGACY_VALIDATION=PASS
+```
+
+Retorno ao R5:
+
+```text
+public=/home1/sanid210/sanida-v2-publication/generations/v2-gate4-full-33829195597-a1
+current=/home1/sanid210/sanida-v2-publication/generations/v2-gate4-full-33829195597-a1
+generation=v2-gate4-full-33829195597-a1
+R5_RETURN=PASS
+```
+
+Validação pós-retorno:
+
+```text
+build_id              v2-gate4-full-33829195597-a1
+files_count           805
+package_sha256        be7c1da75a7cbfe14de836c97c2b0ecacb0703eeb89f18ddf647bd80d2bfa502
+manifest HTTP status  200
+manifest local SHA256 4a1e5237257d6965447a801f8ed31850c9e74b7609dfb4888c6b5fd1c304d2fe
+manifest HTTP SHA256  4a1e5237257d6965447a801f8ed31850c9e74b7609dfb4888c6b5fd1c304d2fe
+HTTP_LOCAL_MATCH      True
+```
+
+O diretório `public-pre-r5-live` continua sendo backup operacional da primeira migração e **não deve ser apagado** neste fechamento.
+
+```text
+ROLLBACK_PROVADO_NO_AMBIENTE_REAL = true
+```
 
 ## Cutover de frontend — somente após autorização explícita
 
-O candidato permanece separado. Quando e somente quando houver autorização, o
-mapa de instalação será:
+O candidato permanece separado. Quando e somente quando houver autorização posterior, o mapa de instalação será:
 
 | Origem versionada | Destino HostGator |
 |---|---|
 | `ranking-seguradoras/deployment/production-cutover/index.php` | `/home1/sanid210/public_html/ranking-seguradoras/index.php` |
 | `ranking-seguradoras/deployment/production-cutover/legacy-state-redirects.php` | `/home1/sanid210/public_html/ranking-seguradoras/deployment/production-cutover/legacy-state-redirects.php` |
 
-O segundo destino é o caminho exato exigido pelo `require` do candidato. O
-`ranking-v2.js` e o `ranking-v2.css` de produção devem continuar sendo os mesmos
-bytes aprovados no staging; não há cópia diferente de assets no payload de
-cutover.
+O segundo destino é o caminho exato exigido pelo `require` do candidato. O `ranking-v2.js` e o `ranking-v2.css` de produção devem continuar sendo os mesmos bytes aprovados no staging; não há cópia diferente de assets no payload de cutover.
 
 **Não pertence ao cutover:** `PHP/head-global.php`.
 
@@ -144,11 +128,16 @@ NÃO apagar v1/backup/legacy antes da prova pós-cutover e janela de rollback
 Estado atual:
 
 ```text
-staging R5.3                    PASS
-QA funcional                    PASS
-fail-closed/retry               PASS
-mobile                          PASS
-rollback real pós-migração      PENDENTE
-READY FOR CUTOVER               NO
-production_cutover_authorized   false
+staging R5.3                         PASS
+QA funcional                         PASS
+fail-closed/retry                    PASS
+mobile                               PASS
+rollback real pós-migração           PASS
+R5 return after rollback             PASS
+READY FOR CUTOVER                    YES
+ROLLBACK_PROVADO_NO_AMBIENTE_REAL    true
+production_cutover_authorized        false
+market_sensor_production_enabled     false
 ```
+
+**READY FOR CUTOVER ≠ CUTOVER AUTORIZADO.** Este estado significa apenas que o candidato está tecnicamente pronto para uma decisão posterior; nenhuma ação de produção é autorizada por este documento.
