@@ -101,5 +101,7 @@ jobs:
           python ranking-seguradoras/tests/r2-static-check.py
           python ranking-seguradoras/tests/r4-1-head-structure.py
           python ranking-seguradoras/tests/r4-css-structure.py
+          python ranking-seguradoras/tests/r5-3-final-frontend.py
           node ranking-seguradoras/tests/r3-technical-helper.mjs
           node ranking-seguradoras/tests/r5-public-integrity.mjs
+          node ranking-seguradoras/tests/r5-1-navigation-history.mjs
