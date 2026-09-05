@@ -174,6 +174,8 @@ O workflow aceita somente:
    - `head_sha` válido;
    - `run_attempt` identificável.
 
+O caminho automático por `workflow_run` exige `V2_HOSTGATOR_DEPLOY_ENABLED=true`. O caminho manual é deliberadamente independente desse gate automático, mas exige `workflow_dispatch`, um `source_run_id` exato e confirmação literal `confirm_publication=PUBLISH`. Assim é possível provar uma publicação manual controlada mantendo a publicação automática desligada.
+
 O artifact esperado é derivado deterministicamente:
 
 ```text
@@ -242,9 +244,11 @@ Variables necessárias:
 V2_HOSTGATOR_SSH_PORT             # opcional; default operacional 22
 V2_HOSTGATOR_PUBLICATION_ROOT     # caminho absoluto privado/operacional
 V2_HOSTGATOR_PUBLIC_PATH          # caminho absoluto servido como /ranking-seguradoras/data/v2/public
-V2_HOSTGATOR_DEPLOY_ENABLED       # precisa ser "true" para publicar
+V2_HOSTGATOR_DEPLOY_ENABLED       # precisa ser "true" somente para publicação automática por workflow_run
 V2_PRODUCTION_AUTOMATION_ENABLED  # precisa ser "true" para o cron disparar geração
 ```
+
+A publicação manual controlada não exige `V2_HOSTGATOR_DEPLOY_ENABLED=true`; ela exige `workflow_dispatch`, `source_run_id` exato e `confirm_publication=PUBLISH`.
 
 Nenhum valor de credencial é versionado no repositório.
 
@@ -408,8 +412,9 @@ Enquanto o PR #1 estiver Draft e as variáveis de habilitação não estiverem d
 frontend R5.3 em produção            PASS
 v1                                   preservada como backup de rollback
 /ranking-seguradoras/data/v2/public  aponta para a geração R5 aprovada
-cron de produção v2                 desabilitado por gate
-publicação SSH                       desabilitada por gate
+cron de produção v2                  desabilitado por gate
+publicação SSH automática            desabilitada por gate
+publicação SSH manual                somente dispatch explícito + confirmação PUBLISH
 sensores evergreen                   desabilitados por gate
 ```
 
