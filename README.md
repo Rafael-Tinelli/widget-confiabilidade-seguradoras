@@ -1,6 +1,6 @@
 # Ranking de Seguradoras Sanida — Pipeline de Dados e Metodologia v2
 
-> **Status do projeto:** fundação metodológica e revisão de frontend/SEO concluídas em Draft; **§19.1–§19.6 formalmente fechados no branch de trabalho**; **§19.7 implementado no branch e aguardando a prova final no staging HostGator**; recomendação atual **NOT READY** e cutover de produção deliberadamente não autorizado.
+> **Status do projeto:** fundação metodológica e revisão de frontend/SEO concluídas em Draft; **§19.1–§19.6 formalmente fechados no branch de trabalho**; **§19.7 com staging HostGator R5.3 aprovado e consolidado no branch**; rollback real pós-migração ainda pendente; recomendação atual **NOT READY** e cutover de produção deliberadamente não autorizado.
 > **Branch de trabalho:** `refactor/v2-data-foundation`.  
 > **PR:** #1 permanece **Draft**. Não fazer merge em `main` antes de autorização explícita para staging/cutover.  
 > **Produto principal:** consulta de identidade + avaliação semântica individual + comparação lado a lado; leaderboards unidimensionais e coleções semânticas são exploração secundária.  

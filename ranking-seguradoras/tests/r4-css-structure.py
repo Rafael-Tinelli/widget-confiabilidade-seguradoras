@@ -21,5 +21,5 @@ assert 'grid-template-columns:1fr;\n  gap:0;\n  max-width:940px;' in css, 'metho
 assert 'rk2-data-row__label-text' in js
 assert 'rk2-data-row__value' in js
 assert 'rk2-tech-help__title' not in js
-assert 'ranking-v2.css?v=15' in php and 'ranking-v2.js?v=15' in php
-print('R4 CSS/visual structure checks: PASS')
+assert 'ranking-v2.css?v=17' in php and 'ranking-v2.js?v=16' in php
+print('R5.3 CSS/visual structure checks: PASS')

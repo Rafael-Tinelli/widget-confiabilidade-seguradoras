@@ -57,8 +57,8 @@ $rk2_schema = [
     $rk2_schema,
     JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_AMP
 ); ?></script>
-<link rel="stylesheet" href="/ranking-seguradoras/assets/ranking-v2.css?v=15">
-<script src="/ranking-seguradoras/assets/ranking-v2.js?v=15" defer></script>
+<link rel="stylesheet" href="/ranking-seguradoras/assets/ranking-v2.css?v=17">
+<script src="/ranking-seguradoras/assets/ranking-v2.js?v=16" defer></script>
 <script src="/JS/formulario.js" defer></script>
 <script src="/JS/efeitos-visuais.js" defer></script>
 </head>
@@ -81,15 +81,6 @@ $rk2_schema = [
           Consulta SUSEP · dados públicos · comparação
         </div>
         <h1 id="rk2-title">Consulte as seguradoras SUSEP e compare sinais de confiabilidade</h1>
-        <p class="rk2-hero__lead">
-          Pesquise pelo nome que você conhece. A ferramenta identifica se corresponde a uma seguradora autorizada pela SUSEP,
-          uma marca ou identidade de mercado, uma empresa histórica ou um participante do Sandbox. Depois, separa situação regulatória,
-          capital, liquidez e reclamações para mostrar o que os dados permitem afirmar.
-        </p>
-        <div class="rk2-hero__meta" aria-live="polite">
-          <span id="rk2-population">Carregando catálogo público…</span>
-          <a href="#confiabilidade">Como interpretar a confiabilidade?</a>
-        </div>
       </div>
 
       <div class="rk2-search-panel" aria-label="Consultar empresa">
@@ -131,6 +122,18 @@ $rk2_schema = [
           <a href="#comparar">Comparar seguradoras <span aria-hidden="true">→</span></a>
           <a href="#lista">Lista de seguradoras <span aria-hidden="true">→</span></a>
           <a href="#explorar">Rankings por critério <span aria-hidden="true">→</span></a>
+        </div>
+      </div>
+
+      <div class="rk2-hero__explain">
+        <p class="rk2-hero__lead">
+          Pesquise pelo nome que você conhece. A ferramenta identifica se corresponde a uma seguradora autorizada pela SUSEP,
+          uma marca ou identidade de mercado, uma empresa histórica ou um participante do Sandbox. Depois, separa situação regulatória,
+          capital, liquidez e reclamações para mostrar o que os dados permitem afirmar.
+        </p>
+        <div class="rk2-hero__meta" aria-live="polite">
+          <span id="rk2-population">Carregando catálogo público…</span>
+          <a href="#confiabilidade">Como interpretar a confiabilidade?</a>
         </div>
       </div>
 

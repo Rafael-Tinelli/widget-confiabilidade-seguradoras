@@ -102,11 +102,17 @@
   position:relative;
   display:grid;
   grid-template-columns:minmax(0,1.08fr) minmax(360px,.92fr);
-  gap:clamp(36px,5vw,72px);
-  align-items:center;
+  grid-template-areas:
+    "copy search"
+    "explain search";
+  column-gap:clamp(36px,5vw,72px);
+  row-gap:20px;
+  align-items:start;
 }
 
-.rk2-hero__copy{min-width:0}
+.rk2-hero__copy{grid-area:copy;min-width:0}
+.rk2-search-panel{grid-area:search;align-self:center}
+.rk2-hero__explain{grid-area:explain;min-width:0}
 
 .rk2-eyebrow,
 .rk2-kicker{
@@ -148,7 +154,7 @@
 
 .rk2-hero__lead{
   max-width:720px;
-  margin:20px 0 0;
+  margin:0;
   color:#465b72;
   font-family:var(--font-secondary,"Roboto",sans-serif);
   font-size:clamp(1rem,1.25vw,1.12rem);
@@ -1672,8 +1678,16 @@
 /* ========================= RESPONSIVE ========================= */
 
 @media (max-width:980px){
-  .rk2-hero__grid{grid-template-columns:1fr;gap:28px}
-  .rk2-hero__copy{text-align:center}
+  .rk2-hero__grid{
+    grid-template-columns:1fr;
+    grid-template-areas:
+      "copy"
+      "search"
+      "explain";
+    gap:28px;
+  }
+  .rk2-hero__copy,
+  .rk2-hero__explain{text-align:center}
   .rk2-hero h1,
   .rk2-hero__lead{margin-inline:auto}
   .rk2-hero__meta{justify-content:center}
@@ -1682,6 +1696,7 @@
   .rk2-signal:last-child{grid-column:1/-1}
   .rk2-sandbox-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}
   .rk2-list-tools{align-items:stretch;flex-direction:column}
+  .rk2-list-tools .rk2-field{flex:0 0 auto;width:100%}
   .rk2-field{max-width:none}
 }
 
@@ -1874,6 +1889,7 @@
   display:block;
 }
 .rk2--result-mode .rk2-hero__copy,
+.rk2--result-mode .rk2-hero__explain,
 .rk2--result-mode .rk2-search-panel{
   display:none;
 }

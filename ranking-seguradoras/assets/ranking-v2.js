@@ -688,9 +688,42 @@
     }
   }
 
+  function normalizeOriginHistoryEntry(origin) {
+    if (!origin?.type) return;
+
+    const url = pageRouteURL();
+    let rk2 = null;
+
+    if (origin.type === "comparison") {
+      const ids = validComparisonIds((origin.compareIds || state.compareIds).join(","));
+      if (ids.length < 2) return;
+      url.hash = routeHash("comparar", ids.join(","));
+      rk2 = { mode: "comparison" };
+    } else if (origin.type === "list") {
+      url.hash = "#lista";
+      rk2 = { mode: "section", section: "lista" };
+    } else if (origin.type === "board") {
+      url.hash = "#explorar";
+      rk2 = { mode: "section", section: "explorar" };
+    } else if (origin.type === "profile" && origin.profileId) {
+      url.hash = routeHash("perfil", origin.profileId);
+      rk2 = { mode: "profile", profileId: origin.profileId };
+    } else {
+      return;
+    }
+
+    const previous = history.state && typeof history.state === "object" ? history.state : {};
+    history.replaceState(
+      { ...previous, rk2, rk2View: currentViewSnapshot() },
+      "",
+      `${url.pathname}${url.search}${url.hash}`,
+    );
+  }
+
   function updateURL(profileId, origin = null) {
     try {
       persistCurrentViewState({ force: true });
+      if (origin) normalizeOriginHistoryEntry(origin);
       const url = pageRouteURL();
       url.hash = routeHash("perfil", profileId);
       if (sameLocationTarget(url)) return;
@@ -1885,9 +1918,13 @@
       const title = $(".rk2-board-head h3", els.boardPanel)?.textContent?.trim();
       return { type: "board", label: title ? `Voltar para ${title}` : "Voltar para o ranking" };
     }
-    if (element.closest("#rk2-compare-grid")) return { type: "comparison", label: "Voltar à comparação" };
+    if (element.closest("#rk2-compare-grid")) {
+      return { type: "comparison", label: "Voltar à comparação", compareIds: [...state.compareIds] };
+    }
     if (element.closest("#rk2-list")) return { type: "list", label: "Voltar à lista de seguradoras" };
-    if (element.closest("#rk2-result") && state.currentProfileId) return { type: "profile", label: "Voltar ao perfil anterior" };
+    if (element.closest("#rk2-result") && state.currentProfileId) {
+      return { type: "profile", label: "Voltar ao perfil anterior", profileId: state.currentProfileId };
+    }
     return null;
   }
 

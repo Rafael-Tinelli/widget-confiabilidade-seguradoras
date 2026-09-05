@@ -14,7 +14,7 @@ js_static_ids=set(re.findall(r'\$\("#([A-Za-z0-9_-]+)"\)',js))
 missing=sorted(js_static_ids-html_ids)
 assert not missing, f'JS references missing static ids: {missing}'
 
-assert 'ranking-v2.css?v=15' in php and 'ranking-v2.js?v=15' in php
+assert 'ranking-v2.css?v=17' in php and 'ranking-v2.js?v=16' in php
 assert 'X-Robots-Tag: noindex, follow' in php
 assert 'data-history-back' in js
 assert 'Voltar à lista de seguradoras' in js
