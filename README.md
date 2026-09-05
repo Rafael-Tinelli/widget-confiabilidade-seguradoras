@@ -1342,7 +1342,7 @@ O acabamento final do §19.6 consolidou hierarquia, alinhamento, densidade, resp
 
 O fechamento do §19.6 **não autoriza cutover, merge em `main`, ativação de cron nem publicação automática**.
 
-## 19.7. Lapidação final e consolidação da v2 — **QA HOSTGATOR PENDENTE**
+## 19.7. Lapidação final e consolidação da v2 — **STAGING R5.3 APROVADO; ROLLBACK REAL PENDENTE**
 
 Objetivo: produzir a última revisão integrada antes de decidir se a v2 está pronta para cutover. Esta etapa não reabre os §§19.1–19.6 por preferência ou por existência de alternativas; somente regressão objetiva, inconsistência concreta ou falha de integração justifica correção em área já fechada.
 
@@ -1386,9 +1386,10 @@ O roteiro copiável de instalação e validação está em:
 
 `ranking-seguradoras/deployment/production-cutover/INSTALLACAO-HOSTGATOR.md`
 
-Recomendação atual: **NOT READY**, exclusivamente porque a mesma entrega ainda
-precisa ser instalada e validada no ambiente real. Não há autorização implícita de
-merge, produção, cron ou sensores.
+Recomendação atual: **NOT READY**, exclusivamente porque a reversão real da primeira
+migração ainda precisa ser provada no HostGator e seguida do retorno imediato ao
+R5.3 com smoke/hash curto. Não há autorização implícita de merge, produção, cron ou
+sensores.
 
 ---
 

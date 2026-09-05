@@ -5,12 +5,19 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 php = (ROOT / "index2.php").read_text(encoding="utf-8")
-production = (ROOT / "deployment" / "production-cutover" / "index.php").read_text(encoding="utf-8")
+cutover_root = ROOT / "deployment" / "production-cutover"
+production = (cutover_root / "index.php").read_text(encoding="utf-8")
+redirects = (cutover_root / "legacy-state-redirects.php").read_text(encoding="utf-8")
 css = (ROOT / "assets" / "ranking-v2.css").read_text(encoding="utf-8")
 
 
 def sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def replace_once(source: str, old: str, new: str) -> str:
+    assert source.count(old) == 1, f"expected one production transform source: {old!r}"
+    return source.replace(old, new)
 
 
 # Pin the exact staging bytes that passed HostGator QA on 2026-09-04.
@@ -32,6 +39,51 @@ assert '/ranking-seguradoras/assets/ranking-v2.css?v=17' in php
 assert '/ranking-seguradoras/assets/ranking-v2.js?v=16' in php
 assert '/ranking-seguradoras/assets/ranking-v2.css?v=17' in production
 assert '/ranking-seguradoras/assets/ranking-v2.js?v=16' in production
+
+# Production must remain a mechanical derivative of the exact staging bytes.
+# These are the only five intentional differences in the cutover candidate.
+expected_production = php
+for old, new in (
+    (
+        "Ranking/Comparador de Seguradoras v2 — §19.7 candidato final de staging",
+        "Ranking/Comparador de Seguradoras v2 — §19.7 candidato final de produção",
+    ),
+    (
+        "URL: https://sanida.com.br/ranking-seguradoras/index2.php",
+        "URL: https://sanida.com.br/ranking-seguradoras/",
+    ),
+    (
+        "header('X-Robots-Tag: noindex, follow', true);",
+        "require __DIR__ . '/deployment/production-cutover/legacy-state-redirects.php';",
+    ),
+    (
+        '$page_robots = "noindex, follow";',
+        '$page_robots = "index, follow, max-image-preview:large";',
+    ),
+    (
+        '$rk2_page_url    = "/ranking-seguradoras/index2.php";',
+        '$rk2_page_url    = "/ranking-seguradoras/";',
+    ),
+):
+    expected_production = replace_once(expected_production, old, new)
+assert production == expected_production, "production candidate drifted from approved R5.3 staging"
+
+payload_files = {
+    path.relative_to(cutover_root).as_posix()
+    for path in cutover_root.rglob("*")
+    if path.is_file()
+}
+assert payload_files == {
+    "INSTALLACAO-HOSTGATOR.md",
+    "index.php",
+    "legacy-state-redirects.php",
+}
+
+# Legacy HTTP parameters collapse into fragment-only application states.
+assert redirects.index("$_GET['perfil']") < redirects.index("$_GET['comparar']") < redirects.index("$_GET['q']")
+assert "'/ranking-seguradoras/#' . $rk2_kind . '=' . rawurlencode($rk2_value)" in redirects
+assert "header('Location: ' . $rk2_location, true, 301);" in redirects
+assert redirects.rstrip().endswith("exit;\n}")
 
 assert '"copy search"' in css
 assert '"explain search"' in css

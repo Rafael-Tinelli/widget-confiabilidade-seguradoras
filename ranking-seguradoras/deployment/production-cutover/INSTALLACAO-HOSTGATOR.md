@@ -39,7 +39,7 @@ Confirmar somente: HTTP 200; `X-Robots-Tag: noindex, follow`; canonical de produ
 
 Não repetir toda a bateria discriminante quando os hashes acima forem idênticos.
 
-## Prova de rollback ainda obrigatória
+## Prova de rollback ainda obrigatória — executar uma etapa por vez
 
 Estado legado preservado:
 
@@ -47,25 +47,86 @@ Estado legado preservado:
 /home1/sanid210/public_html/ranking-seguradoras/data/v2/public-pre-r5-live
 ```
 
-A primeira reversão é especial porque a primeira instalação não tinha `previous`. Em janela controlada:
+A primeira reversão é especial porque a primeira instalação não tinha `previous`.
+Nenhum comando de cutover de frontend pertence a esta prova.
 
-```text
-1. confirmar public -> current R5;
-2. remover somente o symlink public;
-3. renomear public-pre-r5-live -> public;
-4. validar 519 JSON e 505 profiles;
-5. validar hash agregado histórico;
-6. reverter: public -> public-pre-r5-live;
-7. recriar public como symlink para /home1/sanid210/sanida-v2-publication/current;
-8. validar manifesto/build_id/hash/HTTP;
-9. smoke curto do frontend.
+### Etapa 1 — preflight somente leitura
+
+**OBJETIVO**
+
+Confirmar tipos, destinos e contagens antes de criar ou trocar qualquer ponteiro.
+
+**COMANDO EXATO**
+
+```bash
+set -euo pipefail
+SANIDA_PUBLIC_DATA=/home1/sanid210/public_html/ranking-seguradoras/data/v2/public
+SANIDA_LEGACY_DATA=/home1/sanid210/public_html/ranking-seguradoras/data/v2/public-pre-r5-live
+SANIDA_CURRENT=/home1/sanid210/sanida-v2-publication/current
+test -L "$SANIDA_PUBLIC_DATA"
+test -d "$SANIDA_LEGACY_DATA" && test ! -L "$SANIDA_LEGACY_DATA"
+test -L "$SANIDA_CURRENT"
+test "$(readlink -f "$SANIDA_PUBLIC_DATA")" = "$(readlink -f "$SANIDA_CURRENT")"
+command mv --help | grep -F -- '--no-target-directory' >/dev/null
+printf 'public=%s\ncurrent=%s\nlegacy=%s\njson=%s\nprofiles=%s\n' \
+  "$(readlink -f "$SANIDA_PUBLIC_DATA")" \
+  "$(readlink -f "$SANIDA_CURRENT")" \
+  "$(readlink -f "$SANIDA_LEGACY_DATA")" \
+  "$(find "$SANIDA_LEGACY_DATA" -type f -name '*.json' | wc -l)" \
+  "$(find "$SANIDA_LEGACY_DATA/profiles" -maxdepth 1 -type f -name '*.json' | wc -l)"
 ```
 
-Não executar essa prova sem acompanhamento deliberado.
+**RESULTADO ESPERADO**
+
+- `public` e `current` resolvem para a mesma geração R5;
+- `legacy` resolve para `public-pre-r5-live`;
+- `json=519`;
+- `profiles=505`;
+- nenhum texto de erro e código de saída zero.
+
+**PARE AQUI**
+
+Não crie symlink temporário e não altere `public`. Registre a saída antes da
+próxima etapa.
+
+### Etapas seguintes — não executar sem conferir a etapa anterior
+
+Depois do preflight, cada ação será fornecida separadamente no mesmo formato. A
+prova usará um symlink irmão temporário e `mv --no-target-directory` no mesmo
+filesystem para trocar o ponteiro de forma atômica. Isso evita a janela entre
+`unlink public` e `mv public-pre-r5-live public`, mantém o diretório legado no
+lugar e torna o retorno ao R5 igualmente atômico.
+
+Sequência controlada prevista:
+
+```text
+1. capturar o hash agregado dos 519 JSONs legados;
+2. preparar e validar um symlink temporário para public-pre-r5-live;
+3. trocar public atomicamente para o legado;
+4. validar contagens, hash e HTTP do legado;
+5. trocar public atomicamente de volta para current;
+6. validar manifesto/build_id/hash/HTTP do R5.3;
+7. executar somente o smoke curto do frontend.
+```
+
+Se qualquer guarda falhar, parar sem tentar corrigir caminhos por presunção. Não
+usar `rm`, não mover o diretório legado e não deixar `public` apontando para o
+legado entre sessões.
 
 ## Cutover de frontend — somente após autorização explícita
 
-O candidato é `ranking-seguradoras/deployment/production-cutover/index.php`, junto de `legacy-state-redirects.php`. O `ranking-v2.js` e o `ranking-v2.css` de produção devem ser os mesmos bytes aprovados no staging.
+O candidato permanece separado. Quando e somente quando houver autorização, o
+mapa de instalação será:
+
+| Origem versionada | Destino HostGator |
+|---|---|
+| `ranking-seguradoras/deployment/production-cutover/index.php` | `/home1/sanid210/public_html/ranking-seguradoras/index.php` |
+| `ranking-seguradoras/deployment/production-cutover/legacy-state-redirects.php` | `/home1/sanid210/public_html/ranking-seguradoras/deployment/production-cutover/legacy-state-redirects.php` |
+
+O segundo destino é o caminho exato exigido pelo `require` do candidato. O
+`ranking-v2.js` e o `ranking-v2.css` de produção devem continuar sendo os mesmos
+bytes aprovados no staging; não há cópia diferente de assets no payload de
+cutover.
 
 **Não pertence ao cutover:** `PHP/head-global.php`.
 

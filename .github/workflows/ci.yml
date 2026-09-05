@@ -97,6 +97,9 @@ jobs:
       - name: Validate versioned HostGator frontend
         run: |
           set -euo pipefail
+          php -l ranking-seguradoras/index2.php
+          php -l ranking-seguradoras/deployment/production-cutover/index.php
+          php -l ranking-seguradoras/deployment/production-cutover/legacy-state-redirects.php
           node --check ranking-seguradoras/assets/ranking-v2.js
           python ranking-seguradoras/tests/r2-static-check.py
           python ranking-seguradoras/tests/r4-1-head-structure.py
