@@ -218,6 +218,11 @@ V2_PRODUCTION_AUTOMATION_ENABLED = false
 V2_HOSTGATOR_DEPLOY_ENABLED = false
 V2_MARKET_SENSOR_AUTOMATION_ENABLED = false
 market_sensor_production_enabled = false
+SSH_TRUST_HARDENING_IN_CODE = PASS
+DEDICATED_HOSTGATOR_ACTIONS_KEY_LOGIN = PASS
+V2_HOSTGATOR_SECRETS_CONFIGURED = true
+V2_HOSTGATOR_VARIABLES_CONFIGURED = true
+GITHUB_ACTIONS_SSH_RUNTIME_VALIDATION = NOT_EXECUTED
 ```
 
 READY não significava autorização implícita. O gate foi consumido apenas após autorização explícita separada para o frontend. O evento concluído não autorizou merge, alteração de `main`, cron, publicador automático ou sensores.
@@ -262,4 +267,9 @@ V2_PRODUCTION_AUTOMATION_ENABLED = false
 V2_HOSTGATOR_DEPLOY_ENABLED = false
 V2_MARKET_SENSOR_AUTOMATION_ENABLED = false
 market_sensor_production_enabled = false
+SSH_TRUST_HARDENING_IN_CODE = PASS
+DEDICATED_HOSTGATOR_ACTIONS_KEY_LOGIN = PASS
+V2_HOSTGATOR_SECRETS_CONFIGURED = true
+V2_HOSTGATOR_VARIABLES_CONFIGURED = true
+GITHUB_ACTIONS_SSH_RUNTIME_VALIDATION = NOT_EXECUTED
 ```

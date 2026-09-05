@@ -180,6 +180,11 @@ V2_PRODUCTION_AUTOMATION_ENABLED     false
 V2_HOSTGATOR_DEPLOY_ENABLED          false
 V2_MARKET_SENSOR_AUTOMATION_ENABLED  false
 market_sensor_production_enabled     false
+SSH_TRUST_HARDENING_IN_CODE          PASS
+DEDICATED_HOSTGATOR_ACTIONS_KEY_LOGIN PASS
+V2_HOSTGATOR_SECRETS_CONFIGURED      true
+V2_HOSTGATOR_VARIABLES_CONFIGURED    true
+GITHUB_ACTIONS_SSH_RUNTIME_VALIDATION NOT_EXECUTED
 ```
 
 O gate READY foi consumido apenas pela autorização explícita do frontend. O cutover concluído não autoriza merge, geração/publicação automática, cron, sensores, remoção da v1 ou alteração do `head-global.php`.

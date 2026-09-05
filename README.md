@@ -1023,6 +1023,11 @@ V2_PRODUCTION_AUTOMATION_ENABLED = false
 V2_HOSTGATOR_DEPLOY_ENABLED = false
 V2_MARKET_SENSOR_AUTOMATION_ENABLED = false
 market_sensor_production_enabled = false
+SSH_TRUST_HARDENING_IN_CODE = PASS
+DEDICATED_HOSTGATOR_ACTIONS_KEY_LOGIN = PASS
+V2_HOSTGATOR_SECRETS_CONFIGURED = true
+V2_HOSTGATOR_VARIABLES_CONFIGURED = true
+GITHUB_ACTIONS_SSH_RUNTIME_VALIDATION = NOT_EXECUTED
 ```
 
 ## 19.1. Auditoria geral de metodologia e dados — **FECHADO**
@@ -1244,7 +1249,7 @@ V2_HOSTGATOR_DEPLOY_ENABLED
 V2_MARKET_SENSOR_AUTOMATION_ENABLED
 ```
 
-O cutover do frontend foi concluído em 05/09/2026 e o hardening da confiança SSH está implementado no workflow. A próxima ativação operacional ainda exige ação deliberada: provisionamento e verificação dos secrets/variables SSH, merge autorizado em `main`, Full Generation canônica e publicação manual de teste antes de habilitar o cron. A ativação dos sensores de demanda exige adicionalmente provisionamento do endpoint de unknown query e, para GSC, credenciais WIF/service account e configuração da propriedade/URL.
+O cutover do frontend foi concluído em 05/09/2026; o hardening da confiança SSH e o provisionamento dos secrets/variables também estão concluídos, com chave dedicada testada e todos os gates mantidos em `false`. A leitura dos secrets por um runner do GitHub permanece não executada enquanto o workflow não estiver no branch default. A próxima ativação operacional ainda exige ação deliberada: merge autorizado em `main`, Full Generation canônica e publicação manual controlada antes de habilitar o cron. A ativação dos sensores de demanda exige adicionalmente provisionamento do endpoint de unknown query e, para GSC, credenciais WIF/service account e configuração da propriedade/URL.
 
 ## 19.5. Limpeza do repositório — **FECHADO**
 
@@ -1401,6 +1406,11 @@ V2_PRODUCTION_AUTOMATION_ENABLED = false
 V2_HOSTGATOR_DEPLOY_ENABLED = false
 V2_MARKET_SENSOR_AUTOMATION_ENABLED = false
 market_sensor_production_enabled = false
+SSH_TRUST_HARDENING_IN_CODE = PASS
+DEDICATED_HOSTGATOR_ACTIONS_KEY_LOGIN = PASS
+V2_HOSTGATOR_SECRETS_CONFIGURED = true
+V2_HOSTGATOR_VARIABLES_CONFIGURED = true
+GITHUB_ACTIONS_SSH_RUNTIME_VALIDATION = NOT_EXECUTED
 ```
 
 O gate READY não autorizava produção por si só; ele foi consumido somente após autorização explícita separada. O cutover concluído também **não autoriza** merge, alteração de `main`, ativação de cron/publicador/sensores nem remoção da v1 ou dos backups legados.

@@ -118,11 +118,15 @@ V2_HOSTGATOR_DEPLOY_ENABLED = false
 V2_MARKET_SENSOR_AUTOMATION_ENABLED = false
 market_sensor_production_enabled = false
 SSH_TRUST_HARDENING_IN_CODE = PASS
+DEDICATED_HOSTGATOR_ACTIONS_KEY_LOGIN = PASS
+V2_HOSTGATOR_SECRETS_CONFIGURED = true
+V2_HOSTGATOR_VARIABLES_CONFIGURED = true
+GITHUB_ACTIONS_SSH_RUNTIME_VALIDATION = NOT_EXECUTED
 REPOSITORY_SSH_PRIVATE_KEY_EXPOSURE = false
 REPOSITORY_KNOWN_HOSTS_MATERIAL = false
 ```
 
-O publicador prepara chave e `known_hosts` somente no `RUNNER_TEMP`, valida chave privada, sintaxe e vínculo exato do host/porta, usa `StrictHostKeyChecking=yes`, `IdentitiesOnly=yes` e confiança limitada ao arquivo efêmero, e remove o material com `if: always()`. O conteúdo operacional de `V2_HOSTGATOR_KNOWN_HOSTS` deve existir apenas no GitHub Secret de mesmo nome.
+O publicador prepara chave e `known_hosts` somente no `RUNNER_TEMP`, valida chave privada, sintaxe e vínculo exato do host/porta, usa `StrictHostKeyChecking=yes`, `IdentitiesOnly=yes` e confiança limitada ao arquivo efêmero, e remove o material com `if: always()`. Uma chave dedicada foi instalada no HostGator com encaminhamentos e PTY desabilitados; seu login não interativo foi provado. Os quatro secrets SSH e as variables operacionais foram configurados no GitHub, sem versionar seus valores. Os três gates de habilitação permaneceram explicitamente `false`.
 
 ## Estado formal
 
@@ -134,4 +138,4 @@ production_cutover_authorized = consumed
 PRODUCTION_FRONTEND_R5_3 = PASS
 ```
 
-O hardening da confiança SSH está implementado no workflow, sem material sensível versionado. O próximo gate é operacional e separado: provisionar e verificar os secrets/variables no GitHub, avaliar explicitamente o merge, executar uma Full Generation em `main` e só então autorizar — em decisão própria — uma publicação manual controlada. Este registro não autoriza essas ações nem qualquer habilitação recorrente.
+O hardening da confiança SSH e o provisionamento dos secrets/variables estão concluídos, sem material sensível versionado. Como o workflow só se torna operacional a partir do branch default e os gates continuam desligados, a leitura desses secrets por um runner do GitHub ainda não foi executada. O próximo gate é operacional e separado: avaliar explicitamente o merge, executar uma Full Generation em `main` e só então autorizar — em decisão própria — uma publicação manual controlada. Este registro não autoriza essas ações nem qualquer habilitação recorrente.

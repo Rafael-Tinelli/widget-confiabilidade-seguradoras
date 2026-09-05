@@ -250,6 +250,20 @@ Nenhum valor de credencial é versionado no repositório.
 
 A auditoria pós-cutover também confirmou que não existem chave privada, `known_hosts` operacional ou arquivo SSH rastreado. O repositório contém somente a lógica e os nomes dos secrets.
 
+Provisionamento concluído em 05/09/2026:
+
+```text
+DEDICATED_HOSTGATOR_ACTIONS_KEY_LOGIN  PASS
+V2_HOSTGATOR_SECRETS_CONFIGURED       true
+V2_HOSTGATOR_VARIABLES_CONFIGURED     true
+V2_HOSTGATOR_DEPLOY_ENABLED           false
+V2_PRODUCTION_AUTOMATION_ENABLED      false
+V2_MARKET_SENSOR_AUTOMATION_ENABLED   false
+GITHUB_ACTIONS_SSH_RUNTIME_VALIDATION NOT_EXECUTED
+```
+
+A chave dedicada foi validada em autenticação pública não interativa diretamente contra o HostGator. A última linha não representa falha: o consumo dos secrets pelo runner permanece deliberadamente não executado enquanto o workflow não estiver no branch default e não houver autorização do gate operacional.
+
 ---
 
 ## 7. Instalação no HostGator
@@ -449,11 +463,11 @@ O cron nunca tenta coordenar artifacts independentes.
 O cutover do frontend está concluído. A automação de dados permanece deliberadamente pendente de:
 
 1. merge futuro autorizado em `main`;
-2. configuração e validação dos secrets/variables SSH, inclusive `V2_HOSTGATOR_KNOWN_HOSTS`;
+2. validação do consumo dos secrets/variables pelo runner, sem relaxar a pinagem de host;
 3. Full Generation bem-sucedida em `main`;
-4. publicação manual controlada dessa geração;
+4. autorização separada para publicação manual controlada dessa geração;
 5. prova do comportamento de `previous` e do rollback normal do instalador;
-6. somente depois, habilitação dos dois gates de automação.
+6. somente depois, autorização separada para habilitar os gates de automação.
 
 Isso é uma pendência de ativação de produção, não uma lacuna no mecanismo versionado.
 
