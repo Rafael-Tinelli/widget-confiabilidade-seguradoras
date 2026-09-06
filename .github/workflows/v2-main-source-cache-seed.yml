@@ -1,0 +1,134 @@
+name: V2 Main Source Cache Seed
+
+on:
+  workflow_dispatch:
+    inputs:
+      bridge_run_id:
+        description: "Successful trusted cache-export run id from refactor/v2-data-foundation"
+        required: true
+        type: string
+      confirm_seed:
+        description: "Type SEED to create the default-branch Receita bootstrap cache"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: v2-main-source-cache-seed
+  cancel-in-progress: false
+
+jobs:
+  seed:
+    if: github.ref == 'refs/heads/main' && inputs.confirm_seed == 'SEED'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Validate trusted bridge run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRIDGE_RUN_ID: ${{ inputs.bridge_run_id }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import os
+          if not os.environ["BRIDGE_RUN_ID"].isdigit():
+              raise SystemExit("bridge_run_id must be numeric")
+          PY
+
+          run_json="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$BRIDGE_RUN_ID")"
+          RUN_JSON="$run_json" python - <<'PY'
+          import json
+          import os
+
+          payload = json.loads(os.environ["RUN_JSON"])
+          expected = {
+              "conclusion": "success",
+              "head_branch": "refactor/v2-data-foundation",
+              "path": ".github/workflows/tmp-export-v2-validated-source-cache.yml",
+          }
+          for field, value in expected.items():
+              if payload.get(field) != value:
+                  raise SystemExit(
+                      f"untrusted bridge run: {field}={payload.get(field)!r}, expected {value!r}"
+                  )
+          print(
+              "trusted bridge run: "
+              f"id={payload.get('id')} head_sha={payload.get('head_sha')}"
+          )
+          PY
+
+      - name: Download validated Receita bootstrap pair
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRIDGE_RUN_ID: ${{ inputs.bridge_run_id }}
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/v2-receita-bootstrap
+          mkdir -p /tmp/v2-receita-bootstrap
+          gh run download "$BRIDGE_RUN_ID" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name "v2-receita-cache-bootstrap-$BRIDGE_RUN_ID" \
+            --dir /tmp/v2-receita-bootstrap
+
+      - name: Validate and materialize Receita cache seed
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib
+          import json
+          import shutil
+          from pathlib import Path
+
+          source = Path("/tmp/v2-receita-bootstrap")
+          content = source / "receita_cnpj_lifecycle.json"
+          metadata = source / "receita_cnpj_lifecycle.meta.json"
+          if not content.is_file() or not metadata.is_file():
+              raise SystemExit("Receita bootstrap artifact is incomplete")
+
+          cache_meta = json.loads(metadata.read_text(encoding="utf-8"))
+          if cache_meta.get("source_id") != "receita_cnpj_lifecycle":
+              raise SystemExit("Receita bootstrap cache source_id mismatch")
+          if not str(cache_meta.get("source_url") or "").strip():
+              raise SystemExit("Receita bootstrap cache source_url missing")
+          if not str(cache_meta.get("fetched_at") or "").strip():
+              raise SystemExit("Receita bootstrap cache fetched_at missing")
+
+          digest = hashlib.sha256(content.read_bytes()).hexdigest()
+          if digest != cache_meta.get("sha256"):
+              raise SystemExit("Receita bootstrap artifact hash mismatch")
+
+          payload = json.loads(content.read_text(encoding="utf-8"))
+          source_meta = payload.get("source") or {}
+          meta = payload.get("meta") or {}
+          if source_meta.get("authority") != "Receita Federal do Brasil":
+              raise SystemExit("unexpected Receita bootstrap authority")
+          if source_meta.get("ingestion_method") != "official_nextcloud_webdav_bulk_filtered":
+              raise SystemExit("unexpected Receita bootstrap ingestion method")
+          if meta.get("gate4_cache_contract_version") != "v2-receita-lifecycle-1":
+              raise SystemExit("Receita bootstrap cache contract mismatch")
+          if len(str(meta.get("target_universe_hash") or "")) != 64:
+              raise SystemExit("Receita bootstrap target-universe hash missing")
+          if int(meta.get("resolved_count") or 0) < 200:
+              raise SystemExit("Receita bootstrap resolved_count unexpectedly small")
+
+          target = Path("data/cache/v2/source")
+          target.mkdir(parents=True, exist_ok=True)
+          shutil.copy2(content, target / content.name)
+          shutil.copy2(metadata, target / metadata.name)
+          print(json.dumps({
+              "reference_period": source_meta.get("reference_period"),
+              "target_count": meta.get("target_count"),
+              "resolved_count": meta.get("resolved_count"),
+              "target_universe_hash": meta.get("target_universe_hash"),
+              "sha256": digest,
+          }, indent=2))
+          PY
+
+      - name: Save default-branch regulatory bootstrap cache
+        uses: actions/cache/save@v4
+        with:
+          path: data/cache/v2/source
+          key: v2-gate4-source-${{ runner.os }}-main-bootstrap-${{ github.run_id }}
