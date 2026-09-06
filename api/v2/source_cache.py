@@ -17,7 +17,6 @@ from pathlib import Path
 from api.v2.generation import BuildContext
 from api.v2.source_snapshot import SourceObservation
 
-
 DEFAULT_SUSEP_FETCH_DEADLINE_SECONDS = 900.0
 
 
