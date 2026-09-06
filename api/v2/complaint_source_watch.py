@@ -317,7 +317,7 @@ def _probe_once() -> tuple[list[WatchEvent], dict[str, str]]:
             event = evaluate_consumer_publications(publications)
             if event:
                 events.append(event)
-        except Exception as exc:  # sensor must remain observational
+        except Exception as exc:  # noqa: BLE001 - observational sensor must not abort
             diagnostics["consumer_direct"] = f"{type(exc).__name__}: {exc}"
         finally:
             consumer_gov_direct.HTTP_RETRIES = old_retries
