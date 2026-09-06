@@ -24,12 +24,12 @@ jobs:
     timeout-minutes: 240
 
     env:
-      SES_ALLOW_INSECURE_SSL: "1"
+      SES_ALLOW_INSECURE_SSL: "0"
       SES_KEEP_ZIP: "1"
       SES_WRITE_AUDIT: "1"
       SES_CACHE_DIR: "data/raw/ses"
-      SUSEP_LICENSED_VERIFY_SSL: "0"
-      SUSEP_SPECIAL_VERIFY_SSL: "0"
+      SUSEP_LICENSED_VERIFY_SSL: "1"
+      SUSEP_SPECIAL_VERIFY_SSL: "1"
       SUSEP_SANDBOX_VERIFY_SSL: "1"
       # This workflow consumes the last BaseCompleta already validated by the
       # main refresh pipeline; it must not redownload the large SUSEP source.
