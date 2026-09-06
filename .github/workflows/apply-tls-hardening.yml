@@ -1,4 +1,4 @@
-name: Temporary apply SUSEP TLS hardening
+name: Temporary prepare SUSEP TLS hardening artifact
 
 on:
   push:
@@ -6,10 +6,10 @@ on:
       - ops/enforce-susep-tls-verification
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  apply:
+  prepare:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -60,21 +60,27 @@ jobs:
           if remaining:
               raise SystemExit('insecure workflow overrides remain: ' + ' | '.join(remaining))
 
+          Path('/tmp/tls-hardening-files.txt').write_text(
+              '\n'.join(changed) + '\n', encoding='utf-8'
+          )
           print('TLS_HARDENING_CHANGED_FILES=' + str(len(changed)))
           for path in changed:
               print('TLS_HARDENING_CHANGED ' + path)
           for old, count in counts.items():
               print(f'TLS_HARDENING_REPLACEMENTS {old} count={count}')
           PY
-
-      - name: Remove temporary applicator and commit exact workflow-only change
-        run: |
-          set -euo pipefail
           rm .github/workflows/apply-tls-hardening.yml
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add .github/workflows
-          git diff --cached --check
-          git diff --cached --stat
-          git commit -m "chore(ops): enforce SUSEP TLS verification in workflows"
-          git push origin HEAD:ops/enforce-susep-tls-verification
+          git diff --check
+          git diff -- .github/workflows > /tmp/tls-hardening.patch
+          cat /tmp/tls-hardening-files.txt
+
+      - name: Upload exact hardened workflow files
+        uses: actions/upload-artifact@v4
+        with:
+          name: tls-hardened-workflows
+          retention-days: 1
+          include-hidden-files: true
+          path: |
+            .github/workflows
+            /tmp/tls-hardening.patch
+            /tmp/tls-hardening-files.txt
