@@ -1,0 +1,106 @@
+name: TMP Export V2 Validated Source Cache
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - refactor/v2-data-foundation
+    paths:
+      - ".github/workflows/tmp-export-v2-validated-source-cache.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tmp-export-v2-validated-source-cache
+  cancel-in-progress: false
+
+jobs:
+  export:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Restore validated regulatory source cache
+        id: restore-source-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: data/cache/v2/source
+          key: v2-gate4-source-${{ runner.os }}-cache-export-${{ github.run_id }}
+          restore-keys: |
+            v2-gate4-source-${{ runner.os }}-
+
+      - name: Validate restored cache bundle
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib
+          import json
+          from pathlib import Path
+
+          root = Path("data/cache/v2/source")
+          required = {
+              "susep_ses_base_completa": ".zip",
+              "susep_listaempresas": ".csv",
+              "susep_licensed_entities": ".json",
+              "susep_special_regimes": ".json",
+              "susep_sandbox": ".json",
+              "receita_cnpj_lifecycle": ".json",
+          }
+
+          def sha256(path: Path) -> str:
+              digest = hashlib.sha256()
+              with path.open("rb") as handle:
+                  for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                      digest.update(chunk)
+              return digest.hexdigest()
+
+          for source_id, suffix in required.items():
+              content = root / f"{source_id}{suffix}"
+              metadata = root / f"{source_id}.meta.json"
+              if not content.is_file() or not metadata.is_file():
+                  raise SystemExit(f"missing validated cache pair for {source_id}")
+              payload = json.loads(metadata.read_text(encoding="utf-8"))
+              if payload.get("source_id") != source_id:
+                  raise SystemExit(f"cache source_id mismatch for {source_id}")
+              expected = str(payload.get("sha256") or "")
+              actual = sha256(content)
+              if len(expected) != 64 or actual != expected:
+                  raise SystemExit(f"cache sha256 mismatch for {source_id}")
+              if not str(payload.get("fetched_at") or "").strip():
+                  raise SystemExit(f"cache fetched_at missing for {source_id}")
+
+          receita = json.loads(
+              (root / "receita_cnpj_lifecycle.json").read_text(encoding="utf-8")
+          )
+          source = receita.get("source") or {}
+          meta = receita.get("meta") or {}
+          if source.get("authority") != "Receita Federal do Brasil":
+              raise SystemExit("unexpected Receita authority")
+          if source.get("ingestion_method") != "official_nextcloud_webdav_bulk_filtered":
+              raise SystemExit("unexpected Receita ingestion method")
+          if not source.get("reference_period"):
+              raise SystemExit("Receita reference period missing")
+          if meta.get("gate4_cache_contract_version") != "v2-receita-lifecycle-1":
+              raise SystemExit("Receita cache contract mismatch")
+          if len(str(meta.get("target_universe_hash") or "")) != 64:
+              raise SystemExit("Receita target-universe hash missing")
+          if int(meta.get("resolved_count") or 0) < 200:
+              raise SystemExit("Receita cache resolved_count unexpectedly small")
+
+          print(json.dumps({
+              "cache_hit": "${{ steps.restore-source-cache.outputs.cache-hit }}",
+              "receita_reference_period": source.get("reference_period"),
+              "receita_resolved_count": meta.get("resolved_count"),
+              "receita_target_count": meta.get("target_count"),
+              "receita_target_universe_hash": meta.get("target_universe_hash"),
+          }, indent=2))
+          PY
+
+      - name: Upload validated source cache bridge
+        uses: actions/upload-artifact@v4
+        with:
+          name: v2-gate4-source-cache-bridge-${{ github.run_id }}
+          retention-days: 3
+          if-no-files-found: error
+          compression-level: 1
+          path: data/cache/v2/source/
