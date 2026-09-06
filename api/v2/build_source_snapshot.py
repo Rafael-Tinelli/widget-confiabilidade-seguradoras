@@ -48,6 +48,8 @@ from api.v2.source_cache import (
     CachedSource,
     SourceCacheError,
     acquire_with_validated_cache,
+    finish_source_acquisition,
+    start_source_acquisition,
     utc_now,
 )
 from api.v2.source_snapshot import SourceObservation, write_source_lineage
@@ -636,12 +638,24 @@ def build_source_snapshot(
     write_classification_inventory(classification, classification_path)
 
     receita_source_path = source_dir / "receita_cnpj_lifecycle.json"
+    receita_started = start_source_acquisition(
+        source_id="receita_cnpj_lifecycle",
+        source_url=RECEITA_CNPJ_OPEN_DATA_URL,
+    )
     receita = _receita_snapshot(
         classification=classification,
         destination=receita_source_path,
         cache_dir=cache_dir,
         existing_snapshot=existing_receita_snapshot,
         context=context,
+    )
+    finish_source_acquisition(
+        started=receita_started,
+        source_id="receita_cnpj_lifecycle",
+        context=context,
+        observation=receita.observation,
+        used_cache=receita.used_cache,
+        current_error=receita.current_error,
     )
     all_results = [*preliminary, receita]
     write_source_lineage(

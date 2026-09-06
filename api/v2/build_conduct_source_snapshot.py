@@ -27,7 +27,13 @@ from api.v2.consumer_gov_receita_resolution import (
     DEFAULT_RECEITA_IDENTITY_SNAPSHOT,
 )
 from api.v2.generation import BuildContext
-from api.v2.source_cache import CachedSource, SourceCacheError, utc_now
+from api.v2.source_cache import (
+    CachedSource,
+    SourceCacheError,
+    finish_source_acquisition,
+    start_source_acquisition,
+    utc_now,
+)
 from api.v2.source_snapshot import SourceObservation, write_source_lineage
 
 DEFAULT_CACHE_DIR = Path("data/cache/v2/conduct")
@@ -440,15 +446,43 @@ def build_conduct_source_snapshot(
 ) -> dict[str, Any]:
     cache_dir.mkdir(parents=True, exist_ok=True)
 
+    consumer_started = start_source_acquisition(
+        source_id="consumer_gov_core",
+        source_url=CONSUMER_SOURCE_URL,
+    )
     consumer = _consumer_observation(cache_dir=cache_dir)
-    if consumer.to_lineage(context).state == "unavailable":
+    consumer_lineage = consumer.to_lineage(context)
+    finish_source_acquisition(
+        started=consumer_started,
+        source_id="consumer_gov_core",
+        context=context,
+        observation=consumer,
+        used_cache=consumer_lineage.freshness_method == "validated_cache_fallback",
+        current_error=(
+            None if consumer_lineage.state == "fresh" else consumer.state_reason
+        ),
+    )
+    if consumer_lineage.state == "unavailable":
         write_source_lineage(lineage_path, [consumer], context)
         raise ConductSourceSnapshotError("Consumer.gov core source is unavailable")
 
     identity = build_identity_experiment()
     _write_json(CONSUMER_IDENTITY_PATH, identity)
 
+    receita_started = start_source_acquisition(
+        source_id="receita_consumer_identity",
+        source_url=RECEITA_CNPJ_OPEN_DATA_URL,
+    )
     receita = _receita_observation(cache_dir=cache_dir)
+    receita_lineage = receita.to_lineage(context)
+    finish_source_acquisition(
+        started=receita_started,
+        source_id="receita_consumer_identity",
+        context=context,
+        observation=receita,
+        used_cache=receita_lineage.freshness_method == "validated_cache_fallback",
+        current_error=(None if receita_lineage.state == "fresh" else receita.state_reason),
+    )
     observations = [consumer, receita]
     write_source_lineage(lineage_path, observations, context)
     states = {
