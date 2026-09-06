@@ -96,11 +96,13 @@ jobs:
           }, indent=2))
           PY
 
-      - name: Upload validated source cache bridge
+      - name: Upload validated Receita cache bootstrap
         uses: actions/upload-artifact@v4
         with:
-          name: v2-gate4-source-cache-bridge-${{ github.run_id }}
+          name: v2-receita-cache-bootstrap-${{ github.run_id }}
           retention-days: 3
           if-no-files-found: error
-          compression-level: 1
-          path: data/cache/v2/source/
+          compression-level: 6
+          path: |
+            data/cache/v2/source/receita_cnpj_lifecycle.json
+            data/cache/v2/source/receita_cnpj_lifecycle.meta.json
