@@ -1,0 +1,99 @@
+name: Fontes de Reclamações Disponíveis
+
+on:
+  schedule:
+    - cron: "17 11 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: complaint-source-availability-watch
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install runtime dependency
+        run: python -m pip install "requests>=2.31.0"
+
+      - name: Probe official complaint-data sources
+        run: |
+          set -euo pipefail
+          python -m api.v2.complaint_source_watch \
+            --output /tmp/complaint-source-events.json \
+            --confirm-delay 45
+          cat /tmp/complaint-source-events.json
+
+      - name: Open GitHub issue for confirmed material changes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          ASSIGNEE: Rafael-Tinelli
+        run: |
+          set -euo pipefail
+
+          count="$(jq -r '.event_count' /tmp/complaint-source-events.json)"
+          if [ "$count" = "0" ]; then
+            echo "No material complaint-source change detected."
+            exit 0
+          fi
+
+          jq -c '.events[]' /tmp/complaint-source-events.json | while IFS= read -r event; do
+            key="$(jq -r '.key' <<<"$event")"
+            title="$(jq -r '.title' <<<"$event")"
+            source="$(jq -r '.source' <<<"$event")"
+            summary="$(jq -r '.summary' <<<"$event")"
+            marker="<!-- complaint-source-watch:${key} -->"
+
+            if gh api --paginate "repos/${REPOSITORY}/issues?state=all&per_page=100" | grep -Fq "$marker"; then
+              echo "Notification already exists for ${key}; skipping duplicate issue."
+              continue
+            fi
+
+            evidence="$(jq -r '.evidence | tojson' <<<"$event")"
+            urls="$(jq -r '.urls[] | "- " + .' <<<"$event")"
+            checked_at="$(jq -r '.checked_at' /tmp/complaint-source-events.json)"
+
+            cat > /tmp/complaint-source-issue.md <<EOF
+          ${marker}
+          ## Mudança material detectada
+
+          **Fonte:** ${source}
+
+          **Resumo:** ${summary}
+
+          **Detectado em:** ${checked_at}
+
+          ### Evidência observacional
+
+          \`${evidence}\`
+
+          ### URLs oficiais
+
+          ${urls}
+
+          ### Regra operacional
+
+          Esta Issue é apenas uma notificação. O sensor não altera dados de produção, metodologia, Full Generation, publicação no HostGator ou qualquer outro workflow. A fonte deve ser revisada metodologicamente antes de qualquer integração.
+          EOF
+
+            gh issue create \
+              --repo "$REPOSITORY" \
+              --title "$title" \
+              --body-file /tmp/complaint-source-issue.md \
+              --assignee "$ASSIGNEE"
+          done
