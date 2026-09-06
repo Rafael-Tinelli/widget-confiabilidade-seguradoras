@@ -67,6 +67,11 @@ def _atomic_json(payload: dict, destination: Path) -> None:
             temp.unlink()
 
 
+def _is_susep_source_url(source_url: str) -> bool:
+    folded = source_url.casefold()
+    return "susep.gov.br" in folded or "gov.br/susep/" in folded
+
+
 def _susep_fetch_deadline_seconds(source_url: str) -> float | None:
     """Return the hard wall-clock budget for current SUSEP fetches.
 
@@ -75,8 +80,11 @@ def _susep_fetch_deadline_seconds(source_url: str) -> float | None:
     yielding a small amount of data before each socket read timeout. The Gate 4
     runner is Linux, so SIGALRM gives the current fetch a true wall-clock cap and
     lets the existing validated-cache fallback run normally after expiry.
+
+    SUSEP currently serves relevant sources from both susep.gov.br hosts and the
+    gov.br/susep namespace, so both official surfaces receive the same budget.
     """
-    if "susep.gov.br" not in source_url.casefold():
+    if not _is_susep_source_url(source_url):
         return None
 
     raw = os.getenv("V2_SUSEP_FETCH_DEADLINE_SECONDS", "").strip()
@@ -147,6 +155,45 @@ def _log_acquisition_event(event: str, **fields: object) -> None:
         + json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str),
         file=sys.stderr,
         flush=True,
+    )
+
+
+def start_source_acquisition(
+    *,
+    source_id: str,
+    source_url: str,
+    deadline_seconds: float | None = None,
+) -> float:
+    """Emit a real-time source start record and return its monotonic start time."""
+    started = time.monotonic()
+    _log_acquisition_event(
+        "start",
+        source_id=source_id,
+        source_url=source_url,
+        deadline_seconds=deadline_seconds,
+    )
+    return started
+
+
+def finish_source_acquisition(
+    *,
+    started: float,
+    source_id: str,
+    context: BuildContext,
+    observation: SourceObservation,
+    used_cache: bool,
+    current_error: str | None = None,
+) -> None:
+    """Emit the matching source end record without altering lineage semantics."""
+    lineage = observation.to_lineage(context)
+    _log_acquisition_event(
+        "end",
+        source_id=source_id,
+        state=lineage.state,
+        freshness_method=lineage.freshness_method,
+        used_cache=used_cache,
+        duration_seconds=round(time.monotonic() - started, 3),
+        current_error=current_error,
     )
 
 
@@ -227,22 +274,19 @@ def acquire_with_validated_cache(
         raise SourceCacheError("cache identity differs from requested source")
 
     deadline_seconds = _susep_fetch_deadline_seconds(source_url)
-    started = time.monotonic()
-    _log_acquisition_event(
-        "start",
+    started = start_source_acquisition(
         source_id=source_id,
         source_url=source_url,
         deadline_seconds=deadline_seconds,
     )
 
     def finish(result: AcquisitionResult) -> AcquisitionResult:
-        lineage = result.observation.to_lineage(context)
-        _log_acquisition_event(
-            "end",
+        finish_source_acquisition(
+            started=started,
             source_id=source_id,
-            state=lineage.state,
+            context=context,
+            observation=result.observation,
             used_cache=result.used_cache,
-            duration_seconds=round(time.monotonic() - started, 3),
             current_error=result.current_error,
         )
         return result
