@@ -1,9 +1,9 @@
-name: Refresh data
+name: Refresh data (manual legacy only)
 
+# Recurring execution retired after the canonical v2 generation handoff.
+# Keep workflow_dispatch only for deliberate legacy recovery/forensics.
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "17 6 * * 0"
 
 permissions:
   contents: write
