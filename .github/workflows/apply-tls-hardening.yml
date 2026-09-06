@@ -1,0 +1,80 @@
+name: Temporary apply SUSEP TLS hardening
+
+on:
+  push:
+    branches:
+      - ops/enforce-susep-tls-verification
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout hardening branch
+        uses: actions/checkout@v4
+        with:
+          ref: ops/enforce-susep-tls-verification
+          fetch-depth: 0
+
+      - name: Enforce TLS verification across workflow callers
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          root = Path('.github/workflows')
+          replacements = {
+              'SES_ALLOW_INSECURE_SSL: "1"': 'SES_ALLOW_INSECURE_SSL: "0"',
+              'SUSEP_LICENSED_VERIFY_SSL: "0"': 'SUSEP_LICENSED_VERIFY_SSL: "1"',
+              'SUSEP_SPECIAL_VERIFY_SSL: "0"': 'SUSEP_SPECIAL_VERIFY_SSL: "1"',
+          }
+          changed = []
+          counts = {old: 0 for old in replacements}
+          for path in sorted(root.glob('*.yml')):
+              if path.name == 'apply-tls-hardening.yml':
+                  continue
+              text = path.read_text(encoding='utf-8')
+              updated = text
+              for old, new in replacements.items():
+                  count = updated.count(old)
+                  counts[old] += count
+                  updated = updated.replace(old, new)
+              if updated != text:
+                  path.write_text(updated, encoding='utf-8')
+                  changed.append(path.as_posix())
+
+          if not changed:
+              raise SystemExit('TLS hardening changed no workflow files')
+
+          remaining = []
+          for path in sorted(root.glob('*.yml')):
+              if path.name == 'apply-tls-hardening.yml':
+                  continue
+              text = path.read_text(encoding='utf-8')
+              for old in replacements:
+                  if old in text:
+                      remaining.append(f'{path}: {old}')
+          if remaining:
+              raise SystemExit('insecure workflow overrides remain: ' + ' | '.join(remaining))
+
+          print('TLS_HARDENING_CHANGED_FILES=' + str(len(changed)))
+          for path in changed:
+              print('TLS_HARDENING_CHANGED ' + path)
+          for old, count in counts.items():
+              print(f'TLS_HARDENING_REPLACEMENTS {old} count={count}')
+          PY
+
+      - name: Remove temporary applicator and commit exact workflow-only change
+        run: |
+          set -euo pipefail
+          rm .github/workflows/apply-tls-hardening.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .github/workflows
+          git diff --cached --check
+          git diff --cached --stat
+          git commit -m "chore(ops): enforce SUSEP TLS verification in workflows"
+          git push origin HEAD:ops/enforce-susep-tls-verification
