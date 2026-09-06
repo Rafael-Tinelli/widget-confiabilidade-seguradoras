@@ -1,5 +1,7 @@
-name: Refresh Receita lifecycle
+name: Refresh Receita lifecycle (manual only)
 
+# Recurring execution retired after the canonical v2 generation handoff.
+# Keep workflow_dispatch only for deliberate lifecycle recovery/forensics.
 on:
   workflow_dispatch:
     inputs:
@@ -8,8 +10,6 @@ on:
         required: false
         default: false
         type: boolean
-  schedule:
-    - cron: "41 7 * * 1"
 
 permissions:
   contents: write
