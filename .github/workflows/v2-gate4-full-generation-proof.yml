@@ -31,9 +31,9 @@ jobs:
       V2_SOURCE_HEAD_SHA: ${{ github.sha }}
       V2_BUILD_ID: v2-gate4-full-${{ github.run_id }}-a${{ github.run_attempt }}
       V2_SOURCE_CACHE_DIR: data/cache/v2/source
-      SES_ALLOW_INSECURE_SSL: "1"
-      SUSEP_LICENSED_VERIFY_SSL: "0"
-      SUSEP_SPECIAL_VERIFY_SSL: "0"
+      SES_ALLOW_INSECURE_SSL: "0"
+      SUSEP_LICENSED_VERIFY_SSL: "1"
+      SUSEP_SPECIAL_VERIFY_SSL: "1"
       SUSEP_SANDBOX_VERIFY_SSL: "1"
 
     steps:

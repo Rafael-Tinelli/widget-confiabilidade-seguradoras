@@ -171,7 +171,7 @@ jobs:
       - name: Collect current SUSEP regulatory sensor state
         continue-on-error: true
         env:
-          SUSEP_LICENSED_VERIFY_SSL: "0"
+          SUSEP_LICENSED_VERIFY_SSL: "1"
           SUSEP_SANDBOX_VERIFY_SSL: "1"
         run: |
           set -euo pipefail
