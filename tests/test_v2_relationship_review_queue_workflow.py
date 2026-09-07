@@ -8,9 +8,16 @@ def test_relationship_review_queue_is_exact_run_main_only_and_non_authoritative(
     workflow = WORKFLOW.read_text(encoding="utf-8")
 
     for required in (
+        "V2 Production Generation Schedule",
         "V2 Gate 4 Full Generation Proof",
         "github.event.workflow_run.head_branch == 'main'",
         "relationship review queue accepts only a Full Generation from main",
+        "v2-production-generation-handoff-${upstream_run_id}-a${upstream_attempt}",
+        "automatic handoff source run id mismatch",
+        "automatic handoff run attempt mismatch",
+        "automatic handoff source head sha mismatch",
+        "automatic handoff build id mismatch",
+        "automatic handoff artifact name mismatch",
         'gh run download "$SOURCE_RUN_ID"',
         "v2-gate4-full-generation-${source_run_id}-a${run_attempt}",
         "candidate_assertion_effect",
@@ -44,6 +51,8 @@ def test_singleton_issue_has_one_automatic_owner_when_market_sensors_are_enabled
 
     assert "vars.V2_MARKET_SENSOR_AUTOMATION_ENABLED != 'true'" in base_workflow
     assert "vars.V2_MARKET_SENSOR_AUTOMATION_ENABLED == 'true'" in market_workflow
+    assert "V2 Production Generation Schedule" in base_workflow
+    assert "V2 Production Generation Schedule" in market_workflow
     assert "[v2] Relationship review queue" in base_workflow
     assert "[v2] Relationship review queue" in market_workflow
     assert "relationship_watchdog_with_market_sensors.json" in market_workflow
