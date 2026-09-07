@@ -145,11 +145,15 @@ def test_publication_workflow_uses_exact_successful_main_generation_only():
     workflow = PUBLICATION_WORKFLOW.read_text(encoding="utf-8")
 
     for required in (
+        "V2 Production Generation Schedule",
         "V2 Gate 4 Full Generation Proof",
         "V2_HOSTGATOR_DEPLOY_ENABLED",
         "github.event.workflow_run.head_branch == 'main'",
         "source Full Generation did not conclude successfully",
         "HostGator publication accepts only a Full Generation from main",
+        "v2-production-generation-handoff-",
+        "source-run.json",
+        "automatic handoff build id mismatch",
         'gh run download "$SOURCE_RUN_ID"',
         "v2-gate4-full-generation-${source_run_id}-a${run_attempt}",
         "install_public_generation verify",
@@ -213,11 +217,19 @@ def test_publication_workflow_uses_only_pinned_ephemeral_ssh_trust():
     assert not Path("ops/hostgator/known_hosts").exists()
 
 
-def test_production_scheduler_is_gated_and_triggers_canonical_workflow_on_main():
+def test_production_scheduler_is_gated_and_tracks_exact_canonical_workflow_on_main():
     workflow = SCHEDULE_WORKFLOW.read_text(encoding="utf-8")
 
-    assert "V2_PRODUCTION_AUTOMATION_ENABLED" in workflow
-    assert "v2-gate4-full-generation-proof.yml" in workflow
-    assert '--ref main' in workflow
-    assert "schedule:" in workflow
-    assert "actions: write" in workflow
+    for required in (
+        "V2_PRODUCTION_AUTOMATION_ENABLED",
+        "v2-gate4-full-generation-proof.yml",
+        '--ref main',
+        "schedule:",
+        "actions: write",
+        "github-actions[bot]",
+        "automatic Full Generation did not conclude successfully",
+        "source-run.json",
+        "actions/upload-artifact@v4",
+        "v2-production-generation-handoff-",
+    ):
+        assert required in workflow
