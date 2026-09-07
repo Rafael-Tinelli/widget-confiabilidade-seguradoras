@@ -9,6 +9,7 @@ cutover_root = ROOT / "deployment" / "production-cutover"
 production = (cutover_root / "index.php").read_text(encoding="utf-8")
 redirects = (cutover_root / "legacy-state-redirects.php").read_text(encoding="utf-8")
 css = (ROOT / "assets" / "ranking-v2.css").read_text(encoding="utf-8")
+telemetry = (ROOT / "assets" / "unknown-market-telemetry-r5.js").read_text(encoding="utf-8")
 
 
 def sha256(path: Path) -> str:
@@ -20,10 +21,12 @@ def replace_once(source: str, old: str, new: str) -> str:
     return source.replace(old, new)
 
 
-# Pin the exact staging bytes that passed HostGator QA on 2026-09-04.
+# Pin the exact R5.3 staging bytes that passed HostGator QA on 2026-09-04.
+# Phase D is additive in production: the approved staging shell and the R5.3 core JS/CSS remain unchanged.
 assert sha256(ROOT / "index2.php") == "54115ed4b91505a6490ae5afb9846375a950e6ee43765991e567e795d28051f9"
 assert sha256(ROOT / "assets" / "ranking-v2.js") == "ceba67d7de5e037027888f521a6640d7285dcfad341a1b497f0260795b13273f"
 assert sha256(ROOT / "assets" / "ranking-v2.css") == "616d654007e6d231d3bb9a6fec2f2d62cbd16e3021dde3cafd68325ad1958350"
+assert sha256(ROOT / "assets" / "unknown-market-telemetry-r5.js") == "dd4626e79d91580b04779a39f6f485c56393b9d7bfd613b57961d809a4cdbcf0"
 
 # Mobile hero DOM/visual order: title -> primary search -> explanation.
 assert php.count('id="rk2-population"') == 1
@@ -39,9 +42,12 @@ assert '/ranking-seguradoras/assets/ranking-v2.css?v=17' in php
 assert '/ranking-seguradoras/assets/ranking-v2.js?v=16' in php
 assert '/ranking-seguradoras/assets/ranking-v2.css?v=17' in production
 assert '/ranking-seguradoras/assets/ranking-v2.js?v=16' in production
+assert '/ranking-seguradoras/assets/unknown-market-telemetry-r5.js?v=1' in production
+assert '/ranking-seguradoras/api/v2/unknown-market-query.php' in production
+assert 'data-unknown-market-query-endpoint=' in production
 
-# Production must remain a mechanical derivative of the exact staging bytes.
-# These are the only five intentional differences in the cutover candidate.
+# Production remains a mechanical derivative of the exact staging bytes.
+# The original five cutover differences are preserved; Phase D adds only three telemetry wiring differences.
 expected_production = php
 for old, new in (
     (
@@ -64,9 +70,21 @@ for old, new in (
         '$rk2_page_url    = "/ranking-seguradoras/index2.php";',
         '$rk2_page_url    = "/ranking-seguradoras/";',
     ),
+    (
+        '$rk2_page_url    = "/ranking-seguradoras/";',
+        '$rk2_page_url    = "/ranking-seguradoras/";\n$rk2_unknown_market_query_endpoint = "/ranking-seguradoras/api/v2/unknown-market-query.php";',
+    ),
+    (
+        '<script src="/ranking-seguradoras/assets/ranking-v2.js?v=16" defer></script>',
+        '<script src="/ranking-seguradoras/assets/ranking-v2.js?v=16" defer></script>\n<script src="/ranking-seguradoras/assets/unknown-market-telemetry-r5.js?v=1" defer></script>',
+    ),
+    (
+        '  data-page-url="<?php echo htmlspecialchars($rk2_page_url, ENT_QUOTES, \'UTF-8\'); ?>"\n>',
+        '  data-page-url="<?php echo htmlspecialchars($rk2_page_url, ENT_QUOTES, \'UTF-8\'); ?>"\n  data-unknown-market-query-endpoint="<?php echo htmlspecialchars($rk2_unknown_market_query_endpoint, ENT_QUOTES, \'UTF-8\'); ?>"\n>',
+    ),
 ):
     expected_production = replace_once(expected_production, old, new)
-assert production == expected_production, "production candidate drifted from approved R5.3 staging"
+assert production == expected_production, "production candidate drifted from approved R5.3 staging + Phase D telemetry wiring"
 
 payload_files = {
     path.relative_to(cutover_root).as_posix()
@@ -78,6 +96,20 @@ assert payload_files == {
     "index.php",
     "legacy-state-redirects.php",
 }
+
+# Phase D telemetry is observational, same-origin and isolated from methodology/search logic.
+assert 'root.dataset.unknownMarketQueryEndpoint' in telemetry
+assert 'endpoint.origin !== window.location.origin' in telemetry
+assert 'root.dataset.loadState !== "ready"' in telemetry
+assert 'suggestions.querySelector("[data-suggestion-index]")' in telemetry
+assert 'suggestions.querySelector(".rk2-suggestion-empty")' in telemetry
+assert 'JSON.stringify({ query: normalized })' in telemetry
+assert 'credentials: "omit"' in telemetry
+assert 'keepalive: true' in telemetry
+assert '}, 800);' in telemetry
+assert "document.cookie" not in telemetry
+assert "localStorage" not in telemetry
+assert "sessionStorage" not in telemetry
 
 # Legacy HTTP parameters collapse into fragment-only application states.
 assert redirects.index("$_GET['perfil']") < redirects.index("$_GET['comparar']") < redirects.index("$_GET['q']")
@@ -92,4 +124,4 @@ assert '.rk2--result-mode .rk2-hero__explain' in css
 assert '.rk2-list-tools .rk2-field{flex:0 0 auto;width:100%}' in css
 assert css.count("{") == css.count("}")
 
-print("R5.3 final frontend structure and HostGator byte identity: PASS")
+print("R5.3 core integrity + Phase D production telemetry wiring: PASS")
