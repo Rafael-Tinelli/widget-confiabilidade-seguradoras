@@ -3,6 +3,9 @@ name: V2 Production Generation Schedule
 on:
   schedule:
     - cron: "17 9 * * 1"
+    # Temporary Phase C2 end-to-end automatic publication proof for 2026-09-07 17:25 UTC.
+    # Remove immediately after the scheduled publication proof is captured.
+    - cron: "25 17 * * 1"
   workflow_dispatch:
 
 permissions:
