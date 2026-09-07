@@ -18,6 +18,7 @@ $page_robots = "index, follow, max-image-preview:large";
 
 $rk2_public_base = "/ranking-seguradoras/data/v2/public";
 $rk2_page_url    = "/ranking-seguradoras/";
+$rk2_unknown_market_query_endpoint = "/ranking-seguradoras/api/v2/unknown-market-query.php";
 ?>
 <!DOCTYPE html>
 <html lang="pt-BR">
@@ -59,6 +60,7 @@ $rk2_schema = [
 ); ?></script>
 <link rel="stylesheet" href="/ranking-seguradoras/assets/ranking-v2.css?v=17">
 <script src="/ranking-seguradoras/assets/ranking-v2.js?v=16" defer></script>
+<script src="/ranking-seguradoras/assets/unknown-market-telemetry-r5.js?v=1" defer></script>
 <script src="/JS/formulario.js" defer></script>
 <script src="/JS/efeitos-visuais.js" defer></script>
 </head>
@@ -72,6 +74,7 @@ $rk2_schema = [
   aria-busy="true"
   data-public-base="<?php echo htmlspecialchars($rk2_public_base, ENT_QUOTES, 'UTF-8'); ?>"
   data-page-url="<?php echo htmlspecialchars($rk2_page_url, ENT_QUOTES, 'UTF-8'); ?>"
+  data-unknown-market-query-endpoint="<?php echo htmlspecialchars($rk2_unknown_market_query_endpoint, ENT_QUOTES, 'UTF-8'); ?>"
 >
   <section class="rk2-hero" id="consultar" aria-labelledby="rk2-title">
     <div class="rk2-shell rk2-hero__grid">

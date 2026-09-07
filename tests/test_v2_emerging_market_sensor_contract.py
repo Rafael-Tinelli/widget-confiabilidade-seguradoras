@@ -30,7 +30,7 @@ def test_hostgator_bridge_keeps_storage_and_snapshot_secret_outside_public_html(
     assert ".htaccess" in source
 
 
-def test_frontend_telemetry_is_disabled_by_default_and_same_origin_only():
+def test_prepared_react_telemetry_remains_same_origin_and_private():
     source = (ROOT / "widget-ui/src/unknownMarketTelemetry.js").read_text(
         encoding="utf-8"
     )
@@ -41,6 +41,31 @@ def test_frontend_telemetry_is_disabled_by_default_and_same_origin_only():
     assert "document.cookie" not in source
     assert "localStorage" not in source
     assert "sessionStorage" not in source
+
+
+def test_r5_production_telemetry_requires_ready_catalog_and_zero_results():
+    source = (
+        ROOT / "ranking-seguradoras/assets/unknown-market-telemetry-r5.js"
+    ).read_text(encoding="utf-8")
+    production = (
+        ROOT / "ranking-seguradoras/deployment/production-cutover/index.php"
+    ).read_text(encoding="utf-8")
+
+    assert "root.dataset.unknownMarketQueryEndpoint" in source
+    assert "endpoint.origin !== window.location.origin" in source
+    assert 'root.dataset.loadState !== "ready"' in source
+    assert 'suggestions.querySelector("[data-suggestion-index]")' in source
+    assert 'suggestions.querySelector(".rk2-suggestion-empty")' in source
+    assert 'JSON.stringify({ query: normalized })' in source
+    assert 'credentials: "omit"' in source
+    assert "keepalive: true" in source
+    assert "document.cookie" not in source
+    assert "localStorage" not in source
+    assert "sessionStorage" not in source
+
+    assert "/ranking-seguradoras/api/v2/unknown-market-query.php" in production
+    assert "data-unknown-market-query-endpoint=" in production
+    assert "/ranking-seguradoras/assets/unknown-market-telemetry-r5.js?v=1" in production
 
 
 def test_market_sensor_workflow_is_guarded_and_uses_exact_full_generation():
