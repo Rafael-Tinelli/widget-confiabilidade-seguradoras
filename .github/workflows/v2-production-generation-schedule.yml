@@ -3,9 +3,9 @@ name: V2 Production Generation Schedule
 on:
   schedule:
     - cron: "17 9 * * 1"
-    # Temporary Phase C1 proof window for 2026-09-07 13:43 UTC.
+    # Temporary Phase C1 proof window after workflow disable/enable re-registration.
     # Remove immediately after the scheduled-event proof is captured.
-    - cron: "43 13 * * 1"
+    - cron: "35 15 * * 1"
   workflow_dispatch:
 
 permissions:
