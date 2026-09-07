@@ -33,8 +33,18 @@ def test_market_sensor_workflow_is_guarded_and_uses_exact_full_generation():
         ROOT / ".github/workflows/v2-emerging-market-identity-sensors.yml"
     ).read_text(encoding="utf-8")
     assert "V2_MARKET_SENSOR_AUTOMATION_ENABLED == 'true'" in source
+    assert "V2 Production Generation Schedule" in source
+    assert "V2 Gate 4 Full Generation Proof" in source
+    assert "v2-production-generation-handoff-${upstream_run_id}-a${upstream_attempt}" in source
+    assert "automatic handoff source run id mismatch" in source
+    assert "automatic handoff run attempt mismatch" in source
+    assert "automatic handoff source head sha mismatch" in source
+    assert "automatic handoff build id mismatch" in source
+    assert "automatic handoff artifact name mismatch" in source
     assert "source_run_id" in source
     assert "source Full Generation did not conclude successfully" in source
+    assert "automatic market sensors accept only a Full Generation from main" in source
+    assert "ref: ${{ steps.source.outputs.head_sha }}" in source
     assert "latest successful" not in source.lower()
     assert "V2_PRODUCTION_AUTOMATION_ENABLED" not in source
     assert "google-github-actions/auth@v3" in source
