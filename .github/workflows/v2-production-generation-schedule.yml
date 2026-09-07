@@ -17,13 +17,124 @@ jobs:
   trigger-full-generation:
     if: vars.V2_PRODUCTION_AUTOMATION_ENABLED == 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 360
     steps:
-      - name: Trigger canonical Full Generation on main
+      - name: Trigger and prove canonical Full Generation on main
+        id: source
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          gh workflow run v2-gate4-full-generation-proof.yml \
+          workflow="v2-gate4-full-generation-proof.yml"
+
+          before_id=$(gh api \
+            "repos/$GITHUB_REPOSITORY/actions/workflows/$workflow/runs?event=workflow_dispatch&branch=main&per_page=1" \
+            --jq '.workflow_runs[0].id // 0')
+
+          gh workflow run "$workflow" \
             --repo "$GITHUB_REPOSITORY" \
             --ref main
+
+          source_run_id=""
+          resolve_deadline=$((SECONDS + 120))
+          while (( SECONDS < resolve_deadline )); do
+            mapfile -t candidates < <(
+              gh api \
+                "repos/$GITHUB_REPOSITORY/actions/workflows/$workflow/runs?event=workflow_dispatch&branch=main&per_page=20" \
+                --jq ".workflow_runs[] | select(.id > $before_id and .actor.login == \"github-actions[bot]\") | .id"
+            )
+            if [[ ${#candidates[@]} -eq 1 ]]; then
+              source_run_id="${candidates[0]}"
+              break
+            fi
+            if [[ ${#candidates[@]} -gt 1 ]]; then
+              printf 'ambiguous automatic Full Generation runs after dispatch: %s\n' "${candidates[*]}" >&2
+              exit 1
+            fi
+            sleep 3
+          done
+
+          [[ "$source_run_id" =~ ^[0-9]+$ ]] || {
+            echo "automatic Full Generation run was not materialized within 120 seconds" >&2
+            exit 1
+          }
+
+          wait_deadline=$((SECONDS + 21000))
+          while (( SECONDS < wait_deadline )); do
+            run_json=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$source_run_id")
+            status=$(jq -r '.status' <<<"$run_json")
+            if [[ "$status" == "completed" ]]; then
+              break
+            fi
+            sleep 30
+          done
+
+          run_json=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$source_run_id")
+          workflow_name=$(jq -r '.name' <<<"$run_json")
+          event_name=$(jq -r '.event' <<<"$run_json")
+          actor_login=$(jq -r '.actor.login' <<<"$run_json")
+          conclusion=$(jq -r '.conclusion' <<<"$run_json")
+          head_branch=$(jq -r '.head_branch' <<<"$run_json")
+          head_sha=$(jq -r '.head_sha' <<<"$run_json")
+          run_attempt=$(jq -r '.run_attempt' <<<"$run_json")
+
+          [[ "$workflow_name" == "V2 Gate 4 Full Generation Proof" ]] || {
+            echo "resolved run is not the canonical Full Generation workflow" >&2
+            exit 1
+          }
+          [[ "$event_name" == "workflow_dispatch" ]] || {
+            echo "automatic Full Generation must be a workflow_dispatch child" >&2
+            exit 1
+          }
+          [[ "$actor_login" == "github-actions[bot]" ]] || {
+            echo "automatic Full Generation was not dispatched by the scheduler token" >&2
+            exit 1
+          }
+          [[ "$conclusion" == "success" ]] || {
+            echo "automatic Full Generation did not conclude successfully" >&2
+            exit 1
+          }
+          [[ "$head_branch" == "main" ]] || {
+            echo "automatic Full Generation did not run from main" >&2
+            exit 1
+          }
+          [[ "$head_sha" =~ ^[0-9a-f]{40}$ ]] || {
+            echo "automatic Full Generation has invalid source head sha" >&2
+            exit 1
+          }
+          [[ "$run_attempt" =~ ^[0-9]+$ ]] || {
+            echo "automatic Full Generation has invalid run attempt" >&2
+            exit 1
+          }
+
+          build_id="v2-gate4-full-${source_run_id}-a${run_attempt}"
+          artifact_name="v2-gate4-full-generation-${source_run_id}-a${run_attempt}"
+          mkdir -p "$RUNNER_TEMP/v2-production-handoff"
+          jq -n \
+            --argjson source_run_id "$source_run_id" \
+            --argjson source_run_attempt "$run_attempt" \
+            --arg source_head_sha "$head_sha" \
+            --arg build_id "$build_id" \
+            --arg artifact_name "$artifact_name" \
+            '{
+              source_run_id: $source_run_id,
+              source_run_attempt: $source_run_attempt,
+              source_head_sha: $source_head_sha,
+              build_id: $build_id,
+              artifact_name: $artifact_name
+            }' > "$RUNNER_TEMP/v2-production-handoff/source-run.json"
+
+          {
+            echo "run_id=$source_run_id"
+            echo "run_attempt=$run_attempt"
+            echo "head_sha=$head_sha"
+            echo "build_id=$build_id"
+            echo "artifact_name=$artifact_name"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Upload exact automatic source handoff
+        uses: actions/upload-artifact@v4
+        with:
+          name: v2-production-generation-handoff-${{ github.run_id }}-a${{ github.run_attempt }}
+          retention-days: 14
+          path: ${{ runner.temp }}/v2-production-handoff/source-run.json
