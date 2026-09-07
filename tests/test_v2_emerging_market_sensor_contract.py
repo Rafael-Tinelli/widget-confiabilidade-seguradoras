@@ -15,6 +15,21 @@ def test_hostgator_bridge_persists_only_aggregate_query_fields():
     assert "query_only_contract_required" in source
 
 
+def test_hostgator_bridge_keeps_storage_and_snapshot_secret_outside_public_html():
+    source = (ROOT / "ops/hostgator/unknown-market-query-endpoint.php").read_text(
+        encoding="utf-8"
+    )
+    assert "sanida-v2-evergreen/telemetry/config.php" in source
+    assert "dirname($documentRoot)" in source
+    assert "storage_must_be_outside_public_html" in source
+    assert "V2_UNKNOWN_QUERY_DB_PATH" in source
+    assert "V2_UNKNOWN_QUERY_SNAPSHOT_TOKEN" in source
+    assert "configured_db_path()" in source
+    assert "configured_snapshot_token()" in source
+    assert "snapshot_token' => '<random secret>'" in source
+    assert ".htaccess" in source
+
+
 def test_frontend_telemetry_is_disabled_by_default_and_same_origin_only():
     source = (ROOT / "widget-ui/src/unknownMarketTelemetry.js").read_text(
         encoding="utf-8"

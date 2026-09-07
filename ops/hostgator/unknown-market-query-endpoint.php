@@ -9,9 +9,22 @@ declare(strict_types=1);
  * an aggregated normalized query plus timestamps/counters. It intentionally does not
  * read or persist IP address, cookies, user identifiers, e-mail, CPF or session IDs.
  *
- * Required environment:
+ * Configuration may come from environment variables:
  *   V2_UNKNOWN_QUERY_DB_PATH=/absolute/path/outside/public_html/unknown-market.sqlite
  *   V2_UNKNOWN_QUERY_SNAPSHOT_TOKEN=<random secret used only by the admin GET snapshot>
+ *
+ * On the Sanida HostGator deployment the preferred configuration is a private PHP
+ * file outside public_html, resolved from DOCUMENT_ROOT as:
+ *   ../sanida-v2-evergreen/telemetry/config.php
+ *
+ * It must return only deployment values, for example:
+ *   return [
+ *       'db_path' => '/absolute/private/path/unknown-market.sqlite',
+ *       'snapshot_token' => '<random secret>',
+ *   ];
+ *
+ * Environment variables, when present, override the private file. No secret belongs
+ * in the public endpoint, repository, .htaccess or frontend.
  */
 
 const V2_NOISE_QUERIES = [
@@ -33,6 +46,59 @@ function json_response(int $status, array $payload): never
     header('Cache-Control: no-store');
     echo json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     exit;
+}
+
+function private_telemetry_config_path(): string
+{
+    $documentRoot = rtrim((string) ($_SERVER['DOCUMENT_ROOT'] ?? ''), '/');
+    if ($documentRoot === '' || !str_starts_with($documentRoot, '/')) {
+        return '';
+    }
+    return dirname($documentRoot) . '/sanida-v2-evergreen/telemetry/config.php';
+}
+
+function private_telemetry_config(): array
+{
+    static $config = null;
+    if (is_array($config)) {
+        return $config;
+    }
+
+    $config = [];
+    $path = private_telemetry_config_path();
+    if ($path === '' || !is_file($path)) {
+        return $config;
+    }
+
+    $loaded = require $path;
+    if (!is_array($loaded)) {
+        json_response(503, ['status' => 'unavailable', 'reason' => 'private_config_invalid']);
+    }
+
+    foreach (['db_path', 'snapshot_token'] as $key) {
+        if (array_key_exists($key, $loaded) && is_string($loaded[$key])) {
+            $config[$key] = trim($loaded[$key]);
+        }
+    }
+    return $config;
+}
+
+function configured_db_path(): string
+{
+    $environment = trim((string) (getenv('V2_UNKNOWN_QUERY_DB_PATH') ?: ''));
+    if ($environment !== '') {
+        return $environment;
+    }
+    return (string) (private_telemetry_config()['db_path'] ?? '');
+}
+
+function configured_snapshot_token(): string
+{
+    $environment = trim((string) (getenv('V2_UNKNOWN_QUERY_SNAPSHOT_TOKEN') ?: ''));
+    if ($environment !== '') {
+        return $environment;
+    }
+    return (string) (private_telemetry_config()['snapshot_token'] ?? '');
 }
 
 function looks_like_forbidden_personal_query(string $value): bool
@@ -90,9 +156,14 @@ function is_eligible_market_query(string $normalized): bool
 
 function database(): PDO
 {
-    $path = getenv('V2_UNKNOWN_QUERY_DB_PATH') ?: '';
-    if ($path === '') {
+    $path = configured_db_path();
+    if ($path === '' || !str_starts_with($path, '/')) {
         json_response(503, ['status' => 'unavailable', 'reason' => 'storage_not_configured']);
+    }
+
+    $documentRoot = rtrim((string) ($_SERVER['DOCUMENT_ROOT'] ?? ''), '/');
+    if ($documentRoot !== '' && ($path === $documentRoot || str_starts_with($path, $documentRoot . '/'))) {
+        json_response(503, ['status' => 'unavailable', 'reason' => 'storage_must_be_outside_public_html']);
     }
 
     $directory = dirname($path);
@@ -121,7 +192,7 @@ function database(): PDO
 
 function require_snapshot_token(): void
 {
-    $expected = getenv('V2_UNKNOWN_QUERY_SNAPSHOT_TOKEN') ?: '';
+    $expected = configured_snapshot_token();
     $authorization = $_SERVER['HTTP_AUTHORIZATION'] ?? '';
     $provided = str_starts_with($authorization, 'Bearer ')
         ? substr($authorization, 7)
