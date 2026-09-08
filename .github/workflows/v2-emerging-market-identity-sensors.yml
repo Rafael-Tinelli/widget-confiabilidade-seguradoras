@@ -45,9 +45,7 @@ jobs:
       GSC_SERVICE_ACCOUNT: ${{ secrets.GSC_SERVICE_ACCOUNT }}
       GSC_PROPERTY: ${{ vars.GSC_PROPERTY }}
       GSC_RANKING_PAGE_URL: ${{ vars.GSC_RANKING_PAGE_URL }}
-      UNKNOWN_QUERY_SNAPSHOT_URL: ${{ secrets.V2_UNKNOWN_QUERY_SNAPSHOT_URL }}
-      UNKNOWN_QUERY_SNAPSHOT_TOKEN: ${{ secrets.V2_UNKNOWN_QUERY_SNAPSHOT_TOKEN }}
-      UNKNOWN_QUERY_ORIGIN_IP: ${{ secrets.V2_HOSTGATOR_HOST }}
+      HOSTGATOR_SNAPSHOT_SSH_CONFIGURED: ${{ secrets.V2_HOSTGATOR_HOST != '' && secrets.V2_HOSTGATOR_USER != '' && secrets.V2_HOSTGATOR_SSH_KEY != '' && secrets.V2_HOSTGATOR_KNOWN_HOSTS != '' }}
 
     steps:
       - name: Resolve automatic source handoff
@@ -336,24 +334,136 @@ jobs:
             --output "$RUNNER_TEMP/gsc_market_queries.json"
 
       - name: Collect privacy-minimized HostGator aggregate snapshot
-        if: >-
-          env.UNKNOWN_QUERY_SNAPSHOT_URL != '' &&
-          env.UNKNOWN_QUERY_SNAPSHOT_TOKEN != '' &&
-          env.UNKNOWN_QUERY_ORIGIN_IP != ''
+        if: env.HOSTGATOR_SNAPSHOT_SSH_CONFIGURED == 'true'
         continue-on-error: true
+        env:
+          SSH_HOST: ${{ secrets.V2_HOSTGATOR_HOST }}
+          SSH_USER: ${{ secrets.V2_HOSTGATOR_USER }}
+          SSH_PRIVATE_KEY: ${{ secrets.V2_HOSTGATOR_SSH_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.V2_HOSTGATOR_KNOWN_HOSTS }}
+          SSH_PORT: ${{ vars.V2_HOSTGATOR_SSH_PORT }}
         run: |
           set -euo pipefail
-          [[ "$UNKNOWN_QUERY_ORIGIN_IP" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || {
-            echo "V2_HOSTGATOR_HOST must contain the HostGator origin IPv4 address for direct snapshot collection" >&2
+          : "${SSH_HOST:?missing V2_HOSTGATOR_HOST secret}"
+          : "${SSH_USER:?missing V2_HOSTGATOR_USER secret}"
+          : "${SSH_PRIVATE_KEY:?missing V2_HOSTGATOR_SSH_KEY secret}"
+          : "${SSH_KNOWN_HOSTS:?missing V2_HOSTGATOR_KNOWN_HOSTS secret}"
+          SSH_PORT=${SSH_PORT:-22}
+          [[ "$SSH_HOST" =~ ^[A-Za-z0-9.-]+$ ]] || exit 1
+          [[ "$SSH_USER" =~ ^[A-Za-z0-9._-]+$ ]] || exit 1
+          [[ "$SSH_PORT" =~ ^[0-9]+$ ]] || exit 1
+          (( SSH_PORT >= 1 && SSH_PORT <= 65535 )) || exit 1
+
+          ssh_dir="$RUNNER_TEMP/v2-market-sensor-ssh"
+          key_file="$ssh_dir/private_key"
+          known_hosts_file="$ssh_dir/known_hosts"
+          cleanup_ssh() {
+            rm -f -- "$key_file" "$known_hosts_file"
+            rmdir -- "$ssh_dir" 2>/dev/null || true
+          }
+          trap cleanup_ssh EXIT
+
+          umask 077
+          install -d -m 700 "$ssh_dir"
+          install -m 600 /dev/null "$key_file"
+          install -m 600 /dev/null "$known_hosts_file"
+          printf '%s\n' "$SSH_PRIVATE_KEY" | tr -d '\r' > "$key_file"
+          printf '%s\n' "$SSH_KNOWN_HOSTS" | tr -d '\r' > "$known_hosts_file"
+
+          ssh-keygen -y -P '' -f "$key_file" >/dev/null || {
+            echo "V2_HOSTGATOR_SSH_KEY is not a valid unencrypted private key" >&2
             exit 1
           }
-          curl --fail --silent --show-error --location \
-            --max-time 30 \
-            --noproxy '*' \
-            --resolve "sanida.com.br:443:$UNKNOWN_QUERY_ORIGIN_IP" \
-            --header "Authorization: Bearer $UNKNOWN_QUERY_SNAPSHOT_TOKEN" \
-            --output "$RUNNER_TEMP/widget_unknown_queries.json" \
-            "$UNKNOWN_QUERY_SNAPSHOT_URL"
+          ssh-keygen -l -f "$known_hosts_file" >/dev/null || {
+            echo "V2_HOSTGATOR_KNOWN_HOSTS has no valid host public key" >&2
+            exit 1
+          }
+          known_host_lookup="$SSH_HOST"
+          if [[ "$SSH_PORT" != "22" ]]; then
+            known_host_lookup="[$SSH_HOST]:$SSH_PORT"
+          fi
+          ssh-keygen -F "$known_host_lookup" -f "$known_hosts_file" >/dev/null || {
+            echo "V2_HOSTGATOR_KNOWN_HOSTS does not pin the configured host and port" >&2
+            exit 1
+          }
+
+          remote="$SSH_USER@$SSH_HOST"
+          ssh_opts=(
+            -T
+            -i "$key_file"
+            -p "$SSH_PORT"
+            -o BatchMode=yes
+            -o IdentitiesOnly=yes
+            -o StrictHostKeyChecking=yes
+            -o UserKnownHostsFile="$known_hosts_file"
+            -o GlobalKnownHostsFile=/dev/null
+            -o UpdateHostKeys=no
+          )
+
+          rm -f "$RUNNER_TEMP/widget_unknown_queries.json"
+          ssh "${ssh_opts[@]}" "$remote" "php" \
+            > "$RUNNER_TEMP/widget_unknown_queries.json" <<'PHP'
+          <?php
+          declare(strict_types=1);
+
+          $home = rtrim((string) getenv('HOME'), '/');
+          if ($home === '' || !str_starts_with($home, '/')) {
+              fwrite(STDERR, "remote HOME is unavailable\n");
+              exit(1);
+          }
+
+          $configPath = $home . '/sanida-v2-evergreen/telemetry/config.php';
+          if (!is_file($configPath)) {
+              fwrite(STDERR, "private telemetry config is unavailable\n");
+              exit(1);
+          }
+          $config = require $configPath;
+          $dbPath = is_array($config) ? trim((string) ($config['db_path'] ?? '')) : '';
+          if ($dbPath === '' || !str_starts_with($dbPath, '/')) {
+              fwrite(STDERR, "private telemetry database path is invalid\n");
+              exit(1);
+          }
+          if (!is_file($dbPath)) {
+              fwrite(STDERR, "private telemetry database is unavailable\n");
+              exit(1);
+          }
+
+          $db = new SQLite3($dbPath, SQLITE3_OPEN_READONLY);
+          $result = $db->query(
+              'SELECT normalized_query, first_seen, last_seen, count, distinct_day_count ' .
+              'FROM unknown_market_queries ORDER BY count DESC, normalized_query ASC'
+          );
+          if ($result === false) {
+              fwrite(STDERR, "aggregate snapshot query failed\n");
+              exit(1);
+          }
+
+          $rows = [];
+          while (($row = $result->fetchArray(SQLITE3_ASSOC)) !== false) {
+              $rows[] = [
+                  'normalized_query' => (string) $row['normalized_query'],
+                  'first_seen' => (string) $row['first_seen'],
+                  'last_seen' => (string) $row['last_seen'],
+                  'count' => (int) $row['count'],
+                  'distinct_day_count' => (int) $row['distinct_day_count'],
+              ];
+          }
+          $db->close();
+
+          echo json_encode([
+              'artifact' => 'v2_widget_unknown_market_query_snapshot',
+              'privacy_contract' => 'aggregated_query_only_no_personal_or_session_identifiers',
+              'queries' => $rows,
+          ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES), "\n";
+          PHP
+
+          jq -e '
+            .artifact == "v2_widget_unknown_market_query_snapshot" and
+            .privacy_contract == "aggregated_query_only_no_personal_or_session_identifiers" and
+            (.queries | type == "array")
+          ' "$RUNNER_TEMP/widget_unknown_queries.json" >/dev/null
+          query_count=$(jq -r '.queries | length' "$RUNNER_TEMP/widget_unknown_queries.json")
+          echo "HostGator aggregate snapshot collected over pinned SSH: ${query_count} normalized queries"
 
       - name: Build compact non-authoritative candidate registry
         run: |
