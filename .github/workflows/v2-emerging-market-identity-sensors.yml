@@ -47,6 +47,7 @@ jobs:
       GSC_RANKING_PAGE_URL: ${{ vars.GSC_RANKING_PAGE_URL }}
       UNKNOWN_QUERY_SNAPSHOT_URL: ${{ secrets.V2_UNKNOWN_QUERY_SNAPSHOT_URL }}
       UNKNOWN_QUERY_SNAPSHOT_TOKEN: ${{ secrets.V2_UNKNOWN_QUERY_SNAPSHOT_TOKEN }}
+      UNKNOWN_QUERY_ORIGIN_IP: ${{ secrets.V2_HOSTGATOR_HOST }}
 
     steps:
       - name: Resolve automatic source handoff
@@ -335,12 +336,20 @@ jobs:
             --output "$RUNNER_TEMP/gsc_market_queries.json"
 
       - name: Collect privacy-minimized HostGator aggregate snapshot
-        if: env.UNKNOWN_QUERY_SNAPSHOT_URL != '' && env.UNKNOWN_QUERY_SNAPSHOT_TOKEN != ''
+        if: >-
+          env.UNKNOWN_QUERY_SNAPSHOT_URL != '' &&
+          env.UNKNOWN_QUERY_SNAPSHOT_TOKEN != '' &&
+          env.UNKNOWN_QUERY_ORIGIN_IP != ''
         continue-on-error: true
         run: |
           set -euo pipefail
+          [[ "$UNKNOWN_QUERY_ORIGIN_IP" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || {
+            echo "V2_HOSTGATOR_HOST must contain the HostGator origin IPv4 address for direct snapshot collection" >&2
+            exit 1
+          }
           curl --fail --silent --show-error --location \
             --max-time 30 \
+            --resolve "sanida.com.br:443:$UNKNOWN_QUERY_ORIGIN_IP" \
             --header "Authorization: Bearer $UNKNOWN_QUERY_SNAPSHOT_TOKEN" \
             --output "$RUNNER_TEMP/widget_unknown_queries.json" \
             "$UNKNOWN_QUERY_SNAPSHOT_URL"
