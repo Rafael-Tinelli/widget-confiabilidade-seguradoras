@@ -92,6 +92,26 @@ def test_market_sensor_workflow_is_guarded_and_uses_exact_full_generation():
     assert "automatic_registry_mutation" not in source or "forbidden" in source
 
 
+def test_market_sensor_hostgator_snapshot_uses_pinned_read_only_ssh():
+    source = (
+        ROOT / ".github/workflows/v2-emerging-market-identity-sensors.yml"
+    ).read_text(encoding="utf-8")
+    assert "V2_HOSTGATOR_SSH_KEY" in source
+    assert "V2_HOSTGATOR_KNOWN_HOSTS" in source
+    assert "BatchMode=yes" in source
+    assert "IdentitiesOnly=yes" in source
+    assert "StrictHostKeyChecking=yes" in source
+    assert "GlobalKnownHostsFile=/dev/null" in source
+    assert "UpdateHostKeys=no" in source
+    assert "SQLITE3_OPEN_READONLY" in source
+    assert "aggregated_query_only_no_personal_or_session_identifiers" in source
+    assert "HostGator aggregate snapshot collected over pinned SSH" in source
+    assert "V2_UNKNOWN_QUERY_SNAPSHOT_TOKEN" not in source
+    assert "V2_UNKNOWN_QUERY_SNAPSHOT_URL" not in source
+    assert "--resolve" not in source
+    assert "--noproxy" not in source
+
+
 def test_gsc_collector_never_contains_credentials_in_payload_contract():
     source = (ROOT / "tools/fetch_gsc_market_queries.py").read_text(encoding="utf-8")
     assert 'os.getenv("GSC_ACCESS_TOKEN", "")' in source
