@@ -1,24 +1,54 @@
 # Ranking de Seguradoras Sanida — Pipeline de Dados e Metodologia v2
 
-> **Status do projeto:** fundação metodológica, operacional e frontend/SEO concluídas em Draft; **§19.1–§19.7 formalmente fechados no branch de trabalho**; frontend R5.3 ativo em produção desde 05/09/2026; rollback do frontend disponível; automações de geração/publicação e sensores permanecem desativados.
-> **Branch de trabalho:** `refactor/v2-data-foundation`.  
-> **PR:** #1 permanece **Draft**. O cutover do frontend não autoriza merge em `main`, publicação automática de dados, cron ou sensores.
-> **Produto principal:** consulta de identidade + avaliação semântica individual + comparação lado a lado; leaderboards unidimensionais e coleções semânticas são exploração secundária.  
-> **Ranking geral:** continua bloqueado (`ranking_eligible = 0`).  
-> **Frontend:** PHP/HTML/CSS/JS no HostGator consome contratos públicos prontos; **não recalcula metodologia**. O build Vite no CI é prova de compilabilidade, não deploy do frontend.  
-> **Marco crítico de 29/08/2026:** corrigido o numerador de `PLA/CMR`. O pipeline deve usar `NovoPla` (`new_pla`) como PLA prudencial final; `plajustado` (`pla_adjusted`) permanece somente como evidência intermediária da fonte. Artifacts gerados antes dessa correção não devem ser tratados como atuais para capital, assessment combinado ou leaderboards dependentes de capital.  
-> **Prova de fechamento do §19.1:** Full Generation Proof #49, run `33567550092`, head `7993dbabd1cf3cd21181c88d072aed4ce5573538`, concluída com sucesso; artifact `9824434275`, SHA-256 `d0ccb6ce274542015431ae9fde0084c12941d1983ce06527bf6872e442244431`.
+> **Status operacional:** v2 ativa em produção, com frontend R5.3, geração semanal, publicação automática HostGator e descoberta evergreen observacional habilitadas.  
+> **Branch canônico:** `main`.  
+> **Ranking geral:** bloqueado por contrato (`general_ranking_allowed = false`, `ranking_eligible = 0`).  
+> **Score geral:** proibido (`general_score_allowed = false`).  
+> **Frontend:** PHP/HTML/CSS/JS consome contratos públicos prontos; **não recalcula metodologia**.  
+> **GSC:** compatível com a arquitetura, porém deliberadamente **opcional e não configurado**.  
+> **Cron HostGator:** nenhum. Toda a automação de produção ocorre no GitHub Actions.
 
-Este README é o **contrato operacional do projeto**. A consolidação coberta por este ciclo foi concluída até o §19.7: metodologia/dados, potencial informacional do frontend, evergreen, publicação HostGator preparada, limpeza do repositório, revisão funcional/UX, comunicação pública, SEO técnico/semântico, acabamento visual, integração final, staging real e rollback operacional. Após autorização separada, o frontend R5.3 foi promovido para a URL de produção e reconciliado por hash, HTTP, SEO e smoke funcional. A competência de **descoberta evergreen de novas identidades de mercado** permanece sem ativação operacional; merge, geração/publicação automática, cron e sensores continuam sujeitos a gates próprios.
+Este README é o **contrato operacional corrente do projeto**. Documentos de auditoria e fechamento anteriores continuam válidos como fotografias históricas, mas não devem prevalecer sobre este README nem sobre os closeouts das Fases C e D quando a pergunta for sobre o runtime atual.
 
-Documentação principal:
+Estado consolidado em 07/09/2026 (BRT):
+
+```text
+MAIN_BRANCH                              main
+PRODUCTION_FRONTEND_R5_3                PASS
+V2_PRODUCTION_AUTOMATION_ENABLED        true
+V2_HOSTGATOR_DEPLOY_ENABLED             true
+V2_MARKET_SENSOR_AUTOMATION_ENABLED     true
+WEEKLY_FULL_GENERATION                  ACTIVE
+AUTO_HOSTGATOR_PUBLICATION              ACTIVE
+MARKET_SENSORS                          ACTIVE
+WIDGET_UNKNOWN_QUERY_TELEMETRY          ACTIVE
+SQLITE_PRIVATE                          ACTIVE
+EVERGREEN_SNAPSHOT                      PINNED_SSH_READONLY
+GSC                                     OPTIONAL_NOT_CONFIGURED
+COMPLAINT_SOURCE_WATCH                  ACTIVE
+HOSTGATOR_CRON                          NONE
+GENERAL_SCORE_ALLOWED                   false
+GENERAL_RANKING_ALLOWED                 false
+RANKING_ELIGIBLE                        0
+```
+
+## Documentação operacional principal
+
+Para o estado atual de produção, ler primeiro:
+
+- `docs/phase-c-production-automation-closeout.md` — geração semanal e publicação automática;
+- `docs/phase-d-evergreen-closeout.md` — sensores, telemetria, SQLite e snapshot SSH;
+- `docs/post-cutover-repository-housekeeping.md` — limpeza pós-cutover e autoridade documental atual;
+- `docs/production-frontend-cutover.md` — cutover do frontend R5.3;
+- `ranking-seguradoras/deployment/production-cutover/INSTALLACAO-HOSTGATOR.md` — instalação e rollback.
+
+Contratos metodológicos e técnicos centrais:
 
 - `docs/section-19-1-methodology-data-audit-closure.md`;
 - `docs/section-19-2-frontend-information-audit.md`;
 - `docs/section-19-3-19-4-evergreen-hostgator-publication.md`;
 - `docs/section-19-5-repository-cleanup.md`;
 - `docs/section-19-7-final-consolidation.md`;
-- `docs/production-frontend-cutover.md`;
 - `docs/emerging-market-identity-coverage.md`;
 - `docs/emerging-market-discovery-audit.md`;
 - `docs/financial-methodology-closure.md`;
@@ -30,8 +60,6 @@ Documentação principal:
 - `docs/ranking-eligibility-preflight.md`;
 - `docs/exploratory-leaderboards-contract.md`;
 - `docs/public-search-profile-contract.md`.
-
-Regras marcadas como **EXPERIMENTAL**, **DIAGNÓSTICO**, **LEGACY**, **INVALIDATED** ou **PENDENTE** nunca podem vazar silenciosamente para o frontend público.
 
 ---
 
@@ -63,9 +91,9 @@ O consumidor não deve precisar conhecer `PLA/CMR`, `ILT`, `observed/expected`, 
 
 ---
 
-# 2. Princípio central
+# 2. Princípio metodológico central
 
-A ordem metodológica permanece:
+A ordem permanece:
 
 ```text
 identidade correta
@@ -85,6 +113,22 @@ Regra de projeto:
 > **identidade correta → dado correto → período correto → comparação correta → conclusão útil → explicação transparente.**
 
 É proibido produzir conclusão primeiro e procurar justificativa depois.
+
+Guardrails permanentes:
+
+```text
+general_score_allowed = false
+general_ranking_allowed = false
+ranking_eligible = 0
+null != 0
+missing != zero
+brand != legal_entity
+group != succession
+risk_carrier_relation != complaint_transfer
+fuzzy_search != identity_resolution
+```
+
+Nenhuma ativação operacional de C ou D alterou esses contratos.
 
 ---
 
@@ -108,9 +152,10 @@ O repositório é responsável por:
 - auditoria e invariantes;
 - testes;
 - geração dos JSONs públicos;
-- workflows e artifacts.
+- workflows, artifacts e publicação;
+- telemetria observacional de busca sem resultado.
 
-O frontend público fica fora da metodologia. Sua função é pesquisar, navegar, formatar e renderizar contratos já fechados. A única exceção operacional é a emissão opcional de **telemetria observacional de busca sem resultado**, sem autoridade metodológica e desabilitada enquanto o endpoint não estiver explicitamente configurado.
+O frontend público fica fora da metodologia. Sua função é pesquisar, navegar, formatar e renderizar contratos já fechados.
 
 ```text
 php_may_recompute_methodology = false
@@ -130,9 +175,11 @@ PHP/JS não podem:
 - decidir missingness;
 - inventar desempate.
 
+A telemetria do frontend é exceção **operacional**, não metodológica: registra apenas consultas elegíveis sem resultado para observação futura.
+
 ---
 
-# 4. Arquitetura-alvo
+# 4. Arquitetura de produção
 
 ```text
 FONTES OFICIAIS / PÚBLICAS
@@ -142,8 +189,7 @@ FONTES OFICIAIS / PÚBLICAS
     ├── SUSEP — regimes especiais
     ├── SUSEP — Sandbox
     ├── Receita Federal — lifecycle/CNPJ
-    ├── BDR / SusepCon quando publicamente consumível
-    └── Consumer.gov
+    └── Consumer.gov / fallback validado quando necessário
     │
     ▼
 COLETA + CACHE + VALIDAÇÃO
@@ -167,44 +213,85 @@ COMPARABILIDADE / RECONCILIAÇÃO
 CONTRATOS SEMÂNTICOS
     │
     ▼
-JSONs PÚBLICOS
+PACOTE PÚBLICO VERSIONADO
     │
     ▼
-PHP + CSS + JS
+HOSTGATOR — instalação atômica current/previous
+    │
+    ▼
+PHP + CSS + JS R5.3
 ```
 
-A descoberta evergreen de identidades emergentes funciona em paralelo e **não é autoridade metodológica**:
-
-```text
-SUSEP licensed delta ─┐
-SUSEP Sandbox delta ──┤
-Consumer.gov/watchdog ┤
-widget unknown query ─┼→ observations
-GSC unresolved query ─┘
-                         ↓
-              market candidate registry
-                         ↓
-            assertion_effect = none
-            score_effect = none
-            complaint_transfer_effect = none
-            automatic_registry_mutation = forbidden
-                         ↓
-              relationship_watchdog
-                         ↓
-               review queue única
-                         ↓
-              resolução source-backed
-                         ↓
-                registry canônico
-```
-
-Sensores podem descobrir; somente evidência adequada pode autorizar identidade/relação pública.
+O pacote público é produzido pelo backend. O frontend apenas o consome.
 
 ---
 
-# 5. Identidade, busca e relações
+# 5. Fontes de reclamações e Conduta
 
-## 5.1. Identidade antes da avaliação
+A camada de Conduta permanece conservadora.
+
+Regras permanentes:
+
+```text
+no_cross_source_stitching = true
+absence_is_not_zero = true
+zero_complaints_is_not_automatic_favorability = true
+```
+
+Situação operacional das fontes:
+
+- SusepCon permanece histórico/congelado enquanto não houver retomada pública consumível;
+- BDR/SUSEP existe como obrigação de envio regulatório, mas não é integrado ao pipeline sem base pública adequada;
+- Consumer.gov pode usar `validated_cache_fallback` quando a fonte corrente estiver indisponível;
+- fallback validado e explicitamente `stale` não é, por si só, falha metodológica;
+- o workflow `V2 Complaint Source Watch` monitora recuperação de fontes de forma independente da geração/publicação.
+
+Nenhuma fonte nova deve ser costurada com outra apenas para preencher ausência.
+
+---
+
+# 6. Pilar econômico-financeiro
+
+Dimensões principais:
+
+| Dimensão | Referência | Papel |
+|---|---|---|
+| Capital regulatório | PLA/CMR | eixo principal |
+| Liquidez | ILT | eixo principal |
+| Liquidez corrente | ILC | diagnóstico complementar |
+| Operação | ICA/IC | contexto longitudinal |
+| Rentabilidade | ILPL | diagnóstico apenas |
+
+Não há score financeiro numérico.
+
+## 6.1. Regra crítica de PLA/CMR
+
+A fonte `Ses_pl_margem.csv` preserva, entre outros:
+
+```text
+plajustado  → pla_adjusted
+NovoPla     → new_pla
+CMR         → cmr
+```
+
+A regra vigente é:
+
+```text
+PLA/CMR = new_pla / cmr
+```
+
+`pla_adjusted` é evidência intermediária e não pode substituir silenciosamente `new_pla`.
+
+Consequências:
+
+- `new_pla` ausente → métrica indisponível;
+- CMR zero → evidência inutilizável, não desempenho zero;
+- o frontend não recalcula essa razão;
+- qualquer mudança futura exige revisão metodológica formal.
+
+---
+
+# 7. Identidade, busca e relações
 
 Para registros SUSEP/SES:
 
@@ -217,10 +304,6 @@ Pessoa jurídica:
 ```text
 legal_entity_id = cnpj:<CNPJ>
 ```
-
-A Receita Federal complementa lifecycle cadastral; não concede licença nem substitui a SUSEP.
-
-## 5.2. Busca mais ampla que assessment
 
 A busca pública pode localizar:
 
@@ -239,56 +322,27 @@ A busca pública pode localizar:
 
 Ser pesquisável não significa ser elegível para assessment ordinário.
 
-## 5.3. Fuzzy matching
-
-```text
-fuzzy search → ordenar candidatos
-fuzzy search ≠ decidir identidade
-```
-
-A mesma regra vale para a descoberta evergreen: similaridade pode sugerir investigação, mas não pode fundir candidates ou resolver identidade automaticamente.
-
-## 5.4. Relações
-
-O backend pode preservar:
-
-- `incorporated_into`;
-- sucessores;
-- grupo econômico observado;
-- marca;
-- `brand_of`;
-- `risk_carrier`;
-- relações especiais de subject/carrier/portfólio.
-
 Guardrails:
 
 ```text
-brand ≠ legal_entity
-same_group ≠ succession
-same_group ≠ acquisition
-same_group ≠ joint_venture
-risk_carrier_relation ≠ complaint_transfer
+brand != legal_entity
+same_group != succession
+same_group != acquisition
+same_group != joint_venture
+risk_carrier_relation != complaint_transfer
 ```
 
-Casos públicos importantes já materializados:
-
-- Azos ↔ Companhia Excelsior de Seguros, preservando Azos como `insurtech_platform` e a Excelsior como `risk_carrier` documentado;
-- Youse ↔ Caixa Seguradora, sem colapsar a identidade regulatória Youse nem transferir exposição/reclamações automaticamente;
-- Loovi ↔ LTI Seguros;
-- HDI Seguros × HDI Global no grupo TALANX, mantendo identidades distintas;
-- Zurich com necessidade de reconciliação temporal;
-- Bradesco Seguros com divisão de carteira;
-- entidades históricas com sucessão explícita quando documentada.
+Fuzzy matching pode ordenar candidatos, nunca decidir identidade.
 
 ---
 
-# 6. Contrato público de busca e perfil
+# 8. Contrato público de busca e perfil
 
 Contrato canônico:
 
 `docs/public-search-profile-contract.md`
 
-Arquivos:
+Arquivos principais:
 
 ```text
 data/derived/v2/public/search_index.json
@@ -296,890 +350,120 @@ data/derived/v2/public/profile_manifest.json
 data/derived/v2/public/profiles/*.json
 ```
 
-No build que fechou esse contrato em 28/08/2026:
+`search_index.json` resolve busca e desambiguação. `profile_manifest.json` resolve perfil → arquivo. Cada perfil contém identidade, relações, sinais disponíveis, semântica de ausência e contexto suficiente para o frontend não inventar lógica.
+
+Semântica obrigatória:
 
 ```text
-entidades lifecycle                               492
-marcas verificadas                                 13
-perfis públicos                                   505
-entradas de busca                                 505
-seguradoras ordinárias atuais no lifecycle        159
-com payload de assessment daquele snapshot        157
-participantes Sandbox                              12
+null != 0
 ```
-
-Esses números são snapshot histórico, não constantes metodológicas. O contrato público corrente é validado pelo Gate 4 e sua fotografia atual deve ser lida nos artifacts da geração correspondente.
-
-`search_index.json` resolve busca e desambiguação. `profile_manifest.json` resolve perfil → arquivo. Cada arquivo de `profiles/` contém identidade, relações, sinais disponíveis, semântica de ausência e contexto suficiente para o frontend não inventar lógica.
-
-### Semântica obrigatória
-
-```text
-null ≠ 0
-```
-
-Exemplo Youse:
-
-- reclamações podem existir;
-- `expected_complaints` pode ser `null`;
-- `pressure_ratio` pode ser `null`;
-- prêmio bruto zero pode existir na fonte;
-- esse zero pode ser explicitamente marcado como **não exibível como tamanho da operação**.
 
 O frontend deve respeitar `availability`, `public_use`, `zero_semantics` e `meaning`.
 
----
-
-# 7. Pilar econômico-financeiro
-
-## 7.1. Arquitetura
-
-| Dimensão | Referência | Papel |
-|---|---|---|
-| Capital regulatório | PLA/CMR | eixo principal |
-| Liquidez | ILT | eixo principal |
-| Liquidez corrente | ILC | diagnóstico complementar |
-| Operação | ICA/IC | contexto longitudinal |
-| Rentabilidade | ILPL | diagnóstico apenas |
-
-Não há score financeiro numérico.
-
-## 7.2. Correção crítica de PLA/CMR — 29/08/2026
-
-Foi identificado um erro de interpretação de campo no pipeline de capital.
-
-A fonte `Ses_pl_margem.csv` preserva, entre outros:
-
-```text
-plajustado  → normalizado como pla_adjusted
-NovoPla     → normalizado como new_pla
-CMR         → cmr
-```
-
-O pipeline antigo calculava:
-
-```text
-pla_adjusted / CMR
-```
-
-Isso utilizava um valor intermediário e gerava falsos alertas prudenciais em casos materiais, inclusive Porto Seguro.
-
-A regra corrigida é:
-
-```text
-PLA/CMR = new_pla / cmr
-```
-
-Contrato atual no código:
-
-```text
-CAPITAL_PLA_SOURCE_FIELD = "new_pla"
-CAPITAL_PLA_RAW_INTERMEDIATE_FIELD = "pla_adjusted"
-```
-
-Consequências obrigatórias:
-
-- `new_pla` é o numerador prudencial do PLA/CMR;
-- `pla_adjusted` continua preservado como evidência intermediária/bruta;
-- **não existe fallback silencioso** de `new_pla` para `pla_adjusted`;
-- se `new_pla` estiver ausente, a métrica fica indisponível;
-- CMR zero continua sendo evidência inutilizável, não desempenho zero;
-- a seleção da competência financeira madura deve usar a mesma semântica de derivabilidade de `new_pla / CMR`.
-
-Versões após a correção:
-
-```text
-FINANCIAL_EVIDENCE_VERSION = 2.0-draft-evidence-profile-4
-MATURITY_POLICY_VERSION     = 2.0-draft-financial-period-maturity-3
-```
-
-Testes regressivos foram adicionados para impedir retorno ao numerador antigo.
-
-### Integridade da ingestão financeira SES
-
-O leitor financeiro falha fechado para linha CSV malformada, identificador FIP,
-`damesano` ou `CMPID` não inteiro, competência que não seja `AAAAMM` válida,
-número malformado e valor não finito. Notação científica finita publicada pela
-própria SUSEP continua aceita e preservada; caracteres desconhecidos nunca são
-apagados para fabricar um número aparentemente válido.
-
-Duplicatas de capital são contabilizadas por entidade e competência. Uma
-competência duplicada não participa da cobertura de maturidade nem deriva
-`new_pla / CMR`, pois escolher uma das linhas seria depender da ordem física do
-arquivo. O registro bruto permanece visível para investigação, sem virar score,
-ranking ou conclusão adversa automática.
-
-Os componentes de balanço usados nas fórmulas são aceitos somente no quadro
-oficial correspondente (`22A`, `22P` ou `23`). Um `CMPID` conhecido no quadro
-errado interrompe a geração, em vez de contaminar silenciosamente a fórmula.
-
-### Regra de invalidação
-
-Artifacts anteriores a essa correção que contenham:
-
-- sinal de capital;
-- assessment conjunto dependente de capital;
-- coleções financeiras;
-- leaderboard `highest_pla_cmr_ratio`;
-- semântica pública derivada do capital;
-
-**não devem ser tratados como atuais.** A cadeia dependente foi posteriormente regenerada e validada durante o §19.1, inclusive pela Full Generation Proof #49.
-
-Contagens históricas como “14 seguradoras abaixo do CMR” pertencem ao build anterior e permanecem **invalidadas para uso corrente**.
-
-## 7.3. Competência financeira madura
-
-```text
-última competência observada ≠ última competência madura
-```
-
-A política escolhe a competência comum mais recente com cobertura suficiente de capital derivável e alinhamento com as demais fontes financeiras.
-
-A maturidade não pode usar semântica diferente da métrica final: após a correção, derivabilidade de capital significa `new_pla` disponível + `CMR > 0`.
-
-## 7.4. Capital
-
-Estados:
-
-```text
-capital_below_cmr
-capital_meets_or_exceeds_cmr
-capital_signal_unavailable
-```
-
-Regras:
-
-- `PLA/CMR < 1`: insuficiência observada frente ao CMR na competência analisada;
-- `PLA/CMR >= 1`: requisito observado atendido;
-- não afirmar insolvência automaticamente;
-- excesso de capital não gera recompensa linear;
-- histórico curto altera confiança, não desempenho.
-
-## 7.5. Liquidez
-
-ILT é o indicador principal. ILC é diagnóstico complementar.
-
-A referência `1,0` do ILT é paridade aritmética, **não threshold prudencial oficial da SUSEP**.
-
-```text
-ilt_below_arithmetic_parity
-ilt_at_or_above_arithmetic_parity
-ilt_signal_unavailable
-```
-
-Capital e liquidez são não compensatórios: um não apaga materialmente o outro.
-
-## 7.6. Operação
-
-ICA/IC permanecem contexto longitudinal:
-
-```text
-balanced_persistent
-improved
-recent_pressure
-persistent_pressure
-indeterminate
-```
-
-Não formam terceiro score financeiro.
+Números de entidades/perfis registrados em documentos antigos são snapshots históricos; o estado corrente deve ser lido no artifact da Full Generation correspondente.
 
 ---
 
-# 8. Pilar de Conduta
+# 9. Frontend R5.3 em produção
 
-Pergunta central:
+O frontend R5.3 está ativo em produção e foi reconciliado por bytes/hash, HTTP, SEO e smoke funcional.
 
-> **Há reclamações acima do que seria esperado para o tamanho comparável da operação, e esse sinal é suficientemente robusto e persistente?**
-
-O contrato de Conduta não responde simplesmente “quem tem mais reclamações”.
-
-## 8.1. Cascata de fontes
+Arquivos principais:
 
 ```text
-P1  BDR / SusepCon atual e publicamente consumível
- ↓
-P2  Consumer.gov Base Completa autêntica + SES
- ↓
-P3  Consumer.gov core preservado + SES
- ↓
-P0  evidência indisponível
+ranking-seguradoras/index2.php
+ranking-seguradoras/assets/ranking-v2.js
+ranking-seguradoras/assets/ranking-v2.css
 ```
-
-Regra:
-
-```text
-series_policy = no_cross_source_stitching
-```
-
-Fontes diferentes não são costuradas em uma falsa série longitudinal.
-
-## 8.2. Exposição
-
-A exposição econômica aprovada para seguros é:
-
-```text
-source                         Ses_seguros.csv
-approved denominator           premio_direto
-diagnostic companion           premio_ganho
-```
-
-Previdência e capitalização não entram no denominador de seguros.
-
-## 8.3. Evidência observada não é pressão comparável
-
-```text
-conduct_evidence_state ≠ pressure_comparability_state
-```
-
-Uma empresa pode ter reclamações observadas e ainda não permitir cálculo proporcional seguro.
-
-## 8.4. Subject, marca e carrier
-
-```text
-consumer-facing subject
-↔ relação documentada
-↔ risk carrier(s)
-```
-
-Relações fornecem contexto; não transferem automaticamente reclamações ou produção.
-
-### Youse
-
-Youse permanece uma identidade regulatória atual. Condições contratuais atuais podem identificar a Caixa Seguradora como garantidora/carrier de produtos Youse, mas isso não autoriza usar automaticamente a produção total da Caixa como denominador das reclamações da Youse nem colapsar as duas identidades.
-
-### Loovi / LTI
-
-A evidência Consumer.gov é atribuída à LTI Seguros. O perfil da marca Loovi pode apresentar esse contexto explicando a relação, sem transformar a marca em pessoa jurídica avaliada.
-
-## 8.5. Estatística e tempo
-
-O contrato distingue:
-
-- acima do esperado;
-- abaixo do esperado;
-- sem diferença clara;
-- conclusão sensível ao denominador;
-- histórico temporal insuficiente;
-- pressão não comparável;
-- persistência;
-- tendência;
-- satisfação sample-aware.
-
-Resposta/finalização no Consumer.gov não prova resolução.
-
----
-
-# 9. Sandbox
-
-Sandbox continua fora do benchmark ordinário.
-
-```text
-ordinary_ranking_effect = none
-```
-
-Participantes Sandbox podem ser pesquisados e receber contexto próprio de identidade e Conduta.
-
-Loovi ↔ LTI é o caso público mais desenvolvido no contrato atual.
-
-Sandbox não herda assessment ordinário e não contamina baseline ordinário.
-
-Sociedades cooperativas de seguros também possuem semântica própria e não entram no benchmark ordinário por presunção.
-
----
-
-# 10. Avaliação entre pilares
-
-A arquitetura combinada é:
-
-```text
-noncompensatory_state_matrix_with_adverse_qualifiers
-```
-
-Não existe média ponderada entre Financeiro e Conduta.
-
-A avaliação conjunta deve dizer **onde** existe sinal adverso e onde a evidência está incompleta, sem criar uma taxa de câmbio artificial entre capital, liquidez e reclamações.
-
-Estados públicos podem incluir:
-
-```text
-no_current_core_adverse_signal
-conduct_pressure_only
-liquidity_pressure_only
-liquidity_and_conduct_pressure
-capital_shortfall_without_conduct_pressure
-capital_shortfall_and_conduct_pressure
-evidence_incomplete_for_joint_assessment
-```
-
-### Estado após a auditoria de capital
-
-A cadeia dependente de capital foi **regenerada e validada** com `new_pla / CMR`. As contagens correntes devem ser lidas nos artifacts da geração integrada; contagens anteriores à correção permanecem históricas/invalidadas para uso corrente.
-
-O desenho semântico não compensatório permaneceu válido após a auditoria.
-
----
-
-# 11. Assessment e ranking
-
-Os gates permanecem separados:
-
-```text
-regulatory_universe_eligible
-→ assessment_eligible
-→ ranking_eligible
-```
-
-`assessment_eligible` significa que há evidência suficiente e comparável para publicar a avaliação conjunta daquela versão. Não é selo de qualidade.
-
-`ranking_eligible` permanece `0` para ranking geral.
-
-A existência de leaderboards unidimensionais não abre ranking composto.
-
-Regra dos leaderboards:
-
-> **a própria métrica deve definir a ordem.**
-
-Exemplos autorizados pelo contrato exploratório:
-
-```text
-largest_by_direct_premium
-highest_pla_cmr_ratio
-highest_ilt
-lowest_conduct_pressure_ratio
-highest_conduct_pressure_ratio
-```
-
-O leaderboard de PLA/CMR já foi reconstruído e validado após a correção de `new_pla`.
-
-Coleções semânticas permanecem `ordered = false`.
-
-Não suportados:
-
-```text
-ranking_geral
-mais_popular
-emergente_promissora
-consagrada_exemplar
-crescimento_de_premio
-```
-
----
-
-# 12. JSONs públicos
-
-Existem duas famílias complementares.
-
-## 12.1. Busca/perfil
-
-```text
-public/search_index.json
-public/profile_manifest.json
-public/profiles/*.json
-```
-
-## 12.2. Exploração/comparação
-
-```text
-public/insurer_explorer.json
-public/explore_index.json
-public/leaderboards/*.json
-public/collections/*.json
-```
-
-No servidor da Sanida, o frontend deve consumir a estrutura consolidada em:
-
-```text
-/ranking-seguradoras/data/v2/public/
-```
-
-A publicação de produção preparada em §19.3–§19.4 sincroniza somente um pacote público validado e inteiro, sem reconstruir metodologia no HostGator.
-
-Os artifacts de descoberta (`market_identity_candidates`, watchdog aumentado e review queue) são **operacionais/observacionais** e não fazem parte do pacote público apenas por terem sido detectados.
-
----
-
-# 13. Frontend público
-
-A direção atual da página é:
-
-```text
-Consulta e comparação de seguradoras
-```
-
-Fluxo principal:
-
-```text
-buscar nome conhecido pelo usuário
-→ confirmar identidade
-→ resposta rápida
-→ relações importantes
-→ sinais centrais em bom português
-→ comparar 2–4 seguradoras
-→ explorar lista/rankings por critério
-→ metodologia sob demanda
-```
-
-Princípios de UX:
-
-- usuário deve manter sensação de controle;
-- busca deve ser fácil de refazer;
-- navegação não pode sobrepor header global;
-- elementos internos não devem usar tags genéricas que colidam com CSS global (`header`, `footer`, `article`) quando classes neutras resolvem melhor;
-- nenhuma bandeja/sticky deve competir com o menu da Sanida sem necessidade funcional inequívoca;
-- desktop e mobile devem possuir composições próprias quando a comparação em matriz não couber;
-- complexidade técnica entra progressivamente;
-- cor deve comunicar função e semântica, não ornamentação.
-
-### Semântica visual
-
-Direção:
-
-```text
-azul   → navegação/informação neutra
-verde  → sinal favorável naquele critério
-vermelho → alerta material naquele critério
-âmbar   → cautela/atenção
-cinza   → ausência, inconclusão ou neutralidade
-```
-
-### Comparador
-
-Desktop: critérios na coluna esquerda e seguradoras nas colunas seguintes.
-
-Leitura visual permitida:
-
-```text
-✓  sem alerta naquele critério
-✕  alerta
-!  atenção/cautela
-≈  sem diferença clara
-—  sem conclusão segura
-```
-
-Mobile: reorganizar por seguradora, sem esmagar matriz horizontal.
-
----
-
-# 14. SEO e linguagem pública
-
-SEO orienta a arquitetura sem sacrificar a experiência.
-
-Território semântico prioritário da página:
-
-- consulta e comparação de seguradoras;
-- seguradoras autorizadas pela SUSEP;
-- lista de seguradoras;
-- seguradoras confiáveis;
-- maiores seguradoras do Brasil;
-- rankings por critérios objetivos;
-- consulta de identidade/regulação.
-
-Evitar disputar intencionalmente termos específicos de ramos de seguro quando existirem páginas próprias, reduzindo risco de canibalização.
-
-Headings públicos devem permanecer naturais, por exemplo:
-
-```text
-Consulta e comparação de seguradoras
-Lista de seguradoras autorizadas pela SUSEP
-Maiores seguradoras do Brasil e outros rankings por critérios objetivos
-Como saber se uma seguradora é confiável?
-```
-
-Termos de bastidor como `v2`, `active_licensed`, `ordinary`, `snapshot`, `lifecycle` e nomes internos de states não devem aparecer ao consumidor sem necessidade explicativa.
-
----
-
-# 15. Evergreen e zero manutenção
-
-A meta operacional é **zero manutenção editorial/técnica recorrente, ou o mais próximo possível disso**.
-
-Essa meta possui duas dimensões que não podem ser confundidas:
-
-```text
-zero manutenção rotineira de descoberta
-≠
-zero intervenção humana para resolver qualquer identidade ambígua
-```
-
-Após configuração/ativação operacional, o sistema não deve depender de alguém lembrar de procurar novas seguradoras, exportar GSC manualmente, comparar listas SUSEP à mão ou revisar semanalmente o mercado. Sensores regulatórios e de demanda devem executar automaticamente e tornar exceções visíveis.
-
-Para relações ambíguas — por exemplo insurtech vs corretora, plataforma vs marca, MGA/distribuidora, `risk_carrier`, sucessão ou transferência de carteira — revisão source-backed continua deliberadamente necessária. Essa revisão é tratamento de exceção material, não manutenção periódica.
 
 Princípios:
 
-1. fonte oficial/pública sempre que possível;
-2. cache validado;
-3. fallback sem mudança de semântica;
-4. workflow reproduzível;
-5. artifacts públicos versionados;
-6. publicação automática ou sincronização automática para o HostGator;
-7. validação antes de promoção;
-8. rollback simples;
-9. nenhuma curadoria periódica de números que possa ser derivada automaticamente;
-10. nenhuma curadoria periódica do catálogo regulado que possa ser descoberta automaticamente;
-11. curadoria apenas para fatos relacionais/identidades realmente não automatizáveis;
-12. detecção nunca equivale a afirmação.
+- resposta humana antes do jargão;
+- comparação lado a lado sem vencedor artificial;
+- perfis adaptativos por tipo de identidade;
+- ausência e incomparabilidade explicitadas;
+- metodologia fora do JavaScript;
+- estado funcional compartilhável sem criar inventário massivo de páginas SEO.
 
-A implementação preparada no §19.3–§19.4 segue:
+A v1 e `public-pre-r5-live` permanecem preservados como capacidade de rollback conforme documentação de cutover.
 
-```text
-fonte muda
-→ Full Generation coleta/cacheia
-→ valida schemas/invariantes
-→ reconstrói contratos na mesma geração
-→ valida regressões
-→ produz pacote público único
-→ publicador baixa o artifact exato daquele run
-→ HostGator verifica novamente
-→ troca atômica de current
-→ previous permanece disponível para rollback
-→ frontend consome
-```
-
-A descoberta de mercado acrescenta:
-
-```text
-fonte regulatória muda OU demanda desconhecida aparece
-→ observation
-→ candidate não autoritativo
-→ watchdog/review queue
-→ resolução source-backed quando necessária
-→ registry canônico
-→ evergreen nas gerações seguintes
-```
-
-### Potencial por classe
-
-- **nova seguradora licenciada:** alta automação. `apply_licensed_classification()` materializa FIP oficial novo mesmo quando ainda não existe no SES;
-- **novo Sandbox:** alta automação por CNPJ oficial exato e materialização específica;
-- **nova cooperativa de seguros:** automatizável sob o contrato atual quando o nome legal oficial é inequívoco; mudança de taxonomia SUSEP falha fechado e exige modelagem explícita;
-- **insurtech/plataforma/marca/corretora:** descoberta automática orientada por busca sem resultado e GSC; resolução canônica permanece source-backed;
-- **novo tipo regulatório desconhecido:** deve interromper/falhar fechado em vez de ser silenciosamente classificado.
-
-Limite consciente: uma identidade não regulada que nunca aparece nas fontes observadas e nunca produz demanda no widget/GSC pode permanecer desconhecida. O sistema não pretende varrer toda a internet; combina reconhecimento regulatório com relevância demonstrada por demanda real.
-
-Nunca:
-
-```text
-workflow parcial
-→ JSON incompleto sobrescreve produção
-```
-
-Nem:
-
-```text
-sensor
-→ fuzzy/inferência
-→ registry público
-```
-
-A automação de geração/publicação e os sensores de mercado permanecem desabilitados após o cutover do frontend. O PR Draft e cada gate operacional exigem autorização deliberada própria.
+`/PHP/head-global.php` não faz parte do pipeline metodológico e não deve ser alterado por housekeeping operacional deste projeto.
 
 ---
 
-# 16. Workflows e dependências
+# 10. Fase C — geração e publicação automáticas
 
-Autoridades automáticas da consolidação:
+Status: **FECHADA / ATIVA EM PRODUÇÃO**.
 
-- `CI`;
-- `V2 Gate 4 Evergreen Contract`;
-- `V2 Gate 4 Full Generation Proof`.
-
-Publicação automática de dados/cron preparados, porém ainda gated após o cutover do frontend:
-
-- `V2 HostGator Public Package Sync`;
-- `V2 Production Generation Schedule`.
-
-Descoberta evergreen preparada, porém gated até configuração operacional:
-
-- `V2 Emerging Market Identity Sensors`;
-- `V2 Relationship Review Queue`.
-
-O workflow de sensores exige:
+Cadência permanente:
 
 ```text
-vars.V2_MARKET_SENSOR_AUTOMATION_ENABLED == true
+V2 Production Generation Schedule
+cron: 17 9 * * 1
+segunda-feira 09:17 UTC
 ```
 
-quando executado automaticamente após Full Generation bem-sucedida em `main`. GSC e o snapshot HostGator são opcionais e explicitam `not_configured`/`unavailable` sem invalidar Gate 4.
+A materialização do evento `schedule` no GitHub Actions é best-effort; o requisito operacional é atualização semanal, não SLA de minuto exato.
 
-Workflows especializados permanecem úteis como validação diagnóstica/manual quando necessário, incluindo:
-
-- `V2 Foundation Validation`;
-- `V2 Classification Validation`;
-- `V2 Lifecycle Relationships Validation`;
-- `V2 Eligibility Validation`;
-- `V2 Financial Evidence Validation`;
-- `V2 Liquidity Experiment`;
-- `V2 Operating Experiment`;
-- `V2 Financial Methodology Closure`;
-- `V2 Consumer.gov Conduct Evidence`;
-- `V2 Receita Consumer.gov Identity Experiment`;
-- `V2 Conduct Comparative Preflight`;
-- `V2 Conduct Coverage Reconciliation`;
-- `V2 Conduct Comparative Calibration v2`;
-- `V2 Conduct Credibility Diagnostic`;
-- `V2 Conduct Portfolio Mix Diagnostic`;
-- `V2 Conduct Methodology Closure`;
-- `V2 Sandbox Brand Conduct Evidence`;
-- `V2 Cross-Pillar Calibration Stage 1`;
-- `V2 Cross-Pillar Coverage Audit`;
-- `V2 Cross-Pillar Architecture Stage 2`;
-- `V2 Cross-Pillar Assessment Semantic Contract`;
-- `V2 Assessment Eligibility Contract`;
-- `V2 Ranking Eligibility Preflight`;
-- `V2 Exploratory Leaderboards Contract`;
-- `V2 Public Search Profile Contract`.
-
-Classificação corrente:
+Cadeia:
 
 ```text
-produção/fundação v2 -> KEEP
-diagnóstico v2       -> DIAGNOSTIC
-produção/histórico v1 -> LEGACY preservado para rollback após o cutover
-redundante/temporário -> DELETE somente após prova de ausência de dependência
+schedule
+→ V2 Gate 4 Full Generation Proof em main
+→ validação da geração exata
+→ handoff determinístico
+→ V2 HostGator Public Package Sync
+→ artifact exato daquele run
+→ validação build_id/source_head_sha/package_sha256
+→ SSH com known_hosts pinado
+→ instalação atômica current/previous
+→ manifesto público HTTP
+```
+
+Guardrails de segurança:
+
+```text
+SUSEP TLS verification                 REQUIRED
+BaseCompleta hard wall-clock deadline  900s
+validated cache fallback               PRESERVED
+no cross-source stitching              PRESERVED
+StrictHostKeyChecking                   yes
+pinned known_hosts                      REQUIRED
+rollback capability                    AVAILABLE
+HostGator cron                          NONE
+legacy recurring V1 writers            OFF
+```
+
+Workflows principais:
+
+```text
+.github/workflows/v2-production-generation-schedule.yml
+.github/workflows/v2-gate4-full-generation-proof.yml
+.github/workflows/v2-hostgator-publication.yml
 ```
 
 ---
 
-# 17. Validações obrigatórias
+# 11. Fase D — Evergreen
 
-O pipeline deve falhar diante de situações como:
+Status: **FECHADA / ATIVA EM PRODUÇÃO**.
 
-- `entity_id` duplicado;
-- CNPJ incompatível duplicado;
-- marca apontando para entidade inexistente;
-- referência pública (`*_profile_id`) apontando para perfil inexistente;
-- SSPE recebendo semântica ou assessment de seguradora ordinária;
-- Sandbox vazando para benchmark ordinário;
-- cooperativa vazando para benchmark ordinário por presunção;
-- previdência/capitalização vazando para exposição de seguros;
-- reclamações transferidas silenciosamente de subject para carrier;
-- pressão calculada sem denominador comparável;
-- fonte sem período;
-- valores não finitos;
-- queda anormal de cobertura;
-- alteração inesperada de schema;
-- alteração desconhecida da taxonomia de entidades licenciadas SUSEP;
-- `null` convertido em zero;
-- zero bruto exibido com semântica errada;
-- score produzido por artifact que proíbe scoring;
-- pilar ausente tratado como neutralidade;
-- subset incompleto apresentado como ranking integral;
-- avaliação incompleta escondendo alerta disponível;
-- frontend reconstruindo lógica de backend;
-- `PLA/CMR` calculado com campo diferente de `new_pla`;
-- fallback silencioso de `new_pla` para `pla_adjusted`;
-- competência madura calculada com regra de capital diferente da usada no assessment;
-- artifact público dependente de capital gerado com versão anterior do Financial Evidence;
-- reconstrução do pacote final misturando artifacts de gerações diferentes;
-- candidate de descoberta com `assertion_effect` diferente de `none`;
-- candidate de descoberta alterando score, reclamações ou registry;
-- fuzzy resolvendo automaticamente identidade emergente;
-- valor observacional não confiável quebrando/injetando markup na review queue.
-
-Sensores de demanda indisponíveis **não** devem invalidar Gate 4; sua ausência precisa aparecer explicitamente como estado do sensor e nunca como evidência negativa de inexistência.
-
----
-
-# 18. Correção de capital — arquivos alterados
-
-A correção de 29/08/2026 foi aplicada somente no branch de trabalho e manteve `main` intacta.
-
-Arquivos centrais:
+Fontes operacionais:
 
 ```text
-api/v2/financial_evidence.py
-api/v2/financial_periods.py
-tests/test_v2_financial_evidence.py
-tests/test_v2_financial_evidence_inventory.py
-tests/test_v2_financial_periods.py
-tests/test_v2_susep_financial_evidence.py
+SUSEP licensed delta      ACTIVE
+SUSEP Sandbox delta       ACTIVE
+widget unknown queries    ACTIVE
+GSC                       OPTIONAL / NOT CONFIGURED
 ```
 
-O conjunto de testes inclui regressão onde `plajustado` indicaria falsamente razão abaixo de 1 enquanto `NovoPla` mostra requisito atendido. A regra correta deve vencer.
-
----
-
-# 19. Fase atual — CONSOLIDAÇÃO FINAL DA V2 FECHADA
-
-A consolidação metodológica, informacional, operacional, de frontend e de integração está formalmente encerrada até o §19.7. O gate READY foi consumido por uma autorização posterior e específica; o frontend R5.3 está ativo em produção, sem ativar as demais camadas operacionais:
+Decisão explícita:
 
 ```text
-SECTION_19_1_STATUS = CLOSED
-SECTION_19_2_STATUS = CLOSED
-SECTION_19_3_STATUS = CLOSED_IN_ARCHITECTURE_AND_CODE
-SECTION_19_3_DISCOVERY_STATUS = CLOSED_IN_ARCHITECTURE_AND_CODE
-SECTION_19_4_STATUS = CLOSED_IN_ARCHITECTURE_AND_CODE
-SECTION_19_5_STATUS = CLOSED
-SECTION_19_6_STATUS = CLOSED
-SECTION_19_7_STATUS = CLOSED
-READY_FOR_CUTOVER = YES
-ROLLBACK_PROVADO_NO_AMBIENTE_REAL = true
-PRODUCTION_CUTOVER_STATUS = COMPLETE
-production_cutover_authorized = consumed
-PRODUCTION_FRONTEND_R5_3 = PASS
-V2_PRODUCTION_AUTOMATION_ENABLED = false
-V2_HOSTGATOR_DEPLOY_ENABLED = false
-V2_MARKET_SENSOR_AUTOMATION_ENABLED = false
-market_sensor_production_enabled = false
-SSH_TRUST_HARDENING_IN_CODE = PASS
-DEDICATED_HOSTGATOR_ACTIONS_KEY_LOGIN = PASS
-V2_HOSTGATOR_SECRETS_CONFIGURED = true
-V2_HOSTGATOR_VARIABLES_CONFIGURED = true
-GITHUB_ACTIONS_SSH_RUNTIME_VALIDATION = NOT_EXECUTED
+GSC_REQUIRED_FOR_EVERGREEN = false
 ```
 
-## 19.1. Auditoria geral de metodologia e dados — **FECHADO**
-
-Status formal:
-
-```text
-SECTION_19_1_STATUS = CLOSED
-closed_at = 2026-09-01
-methodology_recalibration_required = false
-ranking_gate_opened = false
-production_cutover_authorized_by_19_1 = false
-```
-
-Documento de encerramento:
-
-`docs/section-19-1-methodology-data-audit-closure.md`
-
-A auditoria percorreu a cadeia **fonte → parsing → identidade/período → unidade/sinal/missingness → denominador/fórmula → artifacts → contratos semânticos → JSON público → pacote Gate 4**.
-
-Critérios cumpridos:
-
-- fórmulas críticas revisadas desde a fonte até o JSON público;
-- amostras e casos suspeitos confrontados com a cadeia real;
-- erros de unidade, campo, sinal, período, denominador, missingness e parsing investigados explicitamente;
-- bugs reais corrigidos na camada de origem adequada;
-- regressões adicionadas para impedir retorno das falhas;
-- documentação corrente reconciliada com artifacts atuais;
-- contrato público final incorporado ao caminho canônico do Gate 4;
-- lineage/freshness/cache preservados sem fingir que cache antigo é fonte fresca;
-- pacote público validado como geração única e com rollback verificável.
-
-Principais correções consolidadas no §19.1:
-
-- `PLA/CMR = new_pla / CMR`, sem fallback para `pla_adjusted`;
-- ingestão financeira SES fail-closed para valores/IDs/períodos/quadros malformados;
-- pressão de Conduta anual alinhada mês a mês em Calibration, Credibility, Portfolio Mix e Closure;
-- missingness, zero, negativo e mercado sem reclamações preservados como estados distintos;
-- períodos consecutivos e contadores inteiros validados sem truncamento silencioso;
-- finalização regulatória de SSPE incorporada ao Gate 4 canônico;
-- validator público incorporado ao empacotamento;
-- referências públicas para perfis inexistentes passam a falhar fechado;
-- política de `latest successful artifacts` removida do contrato corrente em favor de `same-generation workspace`/`build_id` único.
-
-Prova canônica final:
-
-```text
-V2 Gate 4 Full Generation Proof #49
-run        33567550092
-head       7993dbabd1cf3cd21181c88d072aed4ce5573538
-conclusion success
-artifact   9824434275
-sha256     d0ccb6ce274542015431ae9fde0084c12941d1983ce06527bf6872e442244431
-```
-
-Snapshot operacional pós-auditoria, apenas como fotografia:
-
-```text
-regulatory_universe     156
-conduct_comparable      101
-conduct_not_comparable   55
-assessment_eligible      82
-ranking_eligible          0
-```
-
-A descoberta `plajustado` × `NovoPla` permanece o precedente operacional: aparência de plausibilidade não substitui auditoria da semântica da fonte.
-
-## 19.2. Auditoria do potencial informacional do frontend — **FECHADO**
-
-Documento:
-
-`docs/section-19-2-frontend-information-audit.md`
-
-Resultado final:
-
-```text
-17 capacidades auditadas
-17 PUBLIC_READY
-17 FRONTEND_USED
-0 PUBLIC_PARTIAL conhecido
-0 BACKEND_GAP conhecido
-0 FRONTEND_GAP conhecido
-```
-
-O caminho ativo foi migrado do endpoint/score v1 para os contratos públicos v2. A auditoria também:
-
-- publicou explicitamente a janela de Conduta `2025-07 → 2026-06` no backend público;
-- manteve aliases na semântica correta de marca, sem contaminar legal entities;
-- ligou lifecycle, sucessões, grupos, marcas, risk carriers, Conduta, Sandbox, sinais financeiros, períodos, comparabilidade, confiança, limites, leaderboards e coleções;
-- corrigiu busca por CNPJ/código SUSEP digitados com pontuação sem fuzzy identity assignment;
-- incorporou build Vite ao CI como prova de compilabilidade.
-
-Provas finais do frontend funcional:
-
-```text
-CI #1406                      success
-V2 Gate 4 Evergreen #246      success
-Full Generation #51           success para a projeção pública de período
-```
-
-## 19.3. Evergreen / zero manutenção — **FECHADO EM ARQUITETURA E CÓDIGO**
-
-Documento conjunto com §19.4:
-
-`docs/section-19-3-19-4-evergreen-hostgator-publication.md`
-
-Implementação consolidada:
-
-- fontes/cache preservam `fresh`, `stale` e `unavailable` sem maquiagem temporal;
-- Full Generation continua sendo a geração canônica única;
-- artifact de publicação é identificado pelo run exato, nunca por “latest successful”;
-- publicação HostGator reaproveita o mesmo `distribution_manifest` e o mesmo instalador verificado;
-- staging/incoming, `current`, `previous` e rollback foram definidos e testados;
-- o instalador de rollback fica persistido no HostGator;
-- falha de fonte ou de nova geração não derruba a geração anterior já servida.
-
-O build Vite no CI continua sendo validação do frontend, não publicação no HostGator.
-
-### 19.3.1. Descoberta evergreen de novas identidades — **FECHADO EM ARQUITETURA E CÓDIGO**
-
-Documentos:
-
-- `docs/emerging-market-identity-coverage.md`;
-- `docs/emerging-market-discovery-audit.md`.
-
-A auditoria diferenciou atualização das empresas conhecidas de descoberta de empresas ainda desconhecidas.
-
-Resultado:
-
-```text
-new licensed insurer
-→ fonte SUSEP licenciadas
-→ FIP novo pode ser materializado mesmo sem presença prévia no SES
-→ perfil pesquisável sob taxonomia conhecida
-
-new Sandbox participant
-→ CNPJ oficial exato
-→ identidade Sandbox própria
-→ fora do benchmark ordinário
-
-new cooperative
-→ subtype insurance_cooperative sob contrato atual
-→ pesquisável
-→ fora do ordinary benchmark
-→ nova taxonomia SUSEP desconhecida falha fechado
-
-new insurtech / platform / brand / broker
-→ unknown widget query e/ou GSC
-→ candidate observacional
-→ source-backed review
-→ canonical registry somente após resolução
-```
+Detectar automaticamente não significa afirmar automaticamente.
 
 Todo candidate emergente preserva:
 
@@ -1191,239 +475,206 @@ automatic_registry_mutation = forbidden
 blocking = false
 ```
 
-A expectativa de manutenção é:
+A fusão automática só pode usar âncora determinística adequada. Similaridade não resolve identidade.
+
+## 11.1. Telemetria de busca sem resultado
+
+O frontend registra somente consultas elegíveis quando:
 
 ```text
-routine_discovery_maintenance = zero_after_setup
-human_exception_review = required_when_identity_or_relationship_is_ambiguous
+catálogo pronto
++ zero resultados
++ query elegível
++ endpoint same-origin configurado
 ```
 
-Isso significa que o sistema pode automatizar a **observação** de novas empresas sem automatizar afirmações arriscadas.
-
-Full Generation integrada posterior à implementação regulatória/cooperativa:
+Cadeia:
 
 ```text
-V2 Gate 4 Full Generation Proof #66
-run        33666689092
-head       1a14bab84c85ba88919f5e5b2e6e8221e6cbd212
-build_id   v2-gate4-full-33666689092-a1
-conclusion success
-stage_count 25
-watchdog_blocking_drift 0
-ranking_eligible 0
-artifact   9861836318
-digest     sha256:f45ce9b8b1cb8bbd7ec09734bad77189e2ded4b1aa0ce8aeee43f717de84bff8
+browser
+→ endpoint same-origin
+→ query normalizada
+→ SQLite privado fora de public_html
 ```
 
-A ativação operacional ainda depende de configuração deliberada do endpoint HostGator, GSC/WIF e `V2_MARKET_SENSOR_AUTOMATION_ENABLED`; isso não reabre a arquitetura.
-
-## 19.4. Cron jobs e publicação — **FECHADO EM ARQUITETURA E CÓDIGO**
-
-Arquivos principais:
+Persistência mínima:
 
 ```text
-.github/workflows/v2-hostgator-publication.yml
-.github/workflows/v2-production-generation-schedule.yml
-ops/hostgator/install_v2_public_remote.sh
+normalized_query
+first_seen
+last_seen
+last_seen_day
+count
+distinct_day_count
 ```
 
-Semântica:
+Não são persistidos IP, cookie, sessão, e-mail, CPF ou identificador pessoal.
+
+Threshold atual:
 
 ```text
-cron gated
-→ dispara Full Generation canônica em main
-→ somente success em main autoriza publicador
-→ baixa artifact exato daquele run
-→ verifica build_id + source_head_sha + package_sha256
-→ envia geração inteira ao HostGator
-→ verifica novamente
-→ troca current atomicamente
-→ mantém previous
+widget_min_count = 2
+widget_min_distinct_days = 2
 ```
 
-Os gates de automação permanecem desligados no Draft, mesmo com o frontend R5.3 já ativo:
+Abaixo do threshold, a observação pode permanecer `observed`; ao atingir o threshold, pode virar `review_required`. Isso não cria identidade pública.
+
+## 11.2. Snapshot agregado do HostGator
+
+A leitura administrativa final não usa exceção Cloudflare.
 
 ```text
-V2_PRODUCTION_AUTOMATION_ENABLED
-V2_HOSTGATOR_DEPLOY_ENABLED
-V2_MARKET_SENSOR_AUTOMATION_ENABLED
+visitante/widget POST
+→ Cloudflare + Bot Fight Mode + regras normais
+→ endpoint PHP
+→ SQLite privado
+
+GitHub market sensor
+→ SSH HostGator autenticado
+→ known_hosts pinado
+→ PHP remoto somente leitura
+→ SQLite SQLITE3_OPEN_READONLY
+→ JSON agregado
 ```
 
-O cutover do frontend foi concluído em 05/09/2026; o hardening da confiança SSH e o provisionamento dos secrets/variables também estão concluídos, com chave dedicada testada e todos os gates mantidos em `false`. A leitura dos secrets por um runner do GitHub permanece não executada enquanto o workflow não estiver no branch default. A próxima ativação operacional ainda exige ação deliberada: merge autorizado em `main`, Full Generation canônica e publicação manual controlada antes de habilitar o cron. A ativação dos sensores de demanda exige adicionalmente provisionamento do endpoint de unknown query e, para GSC, credenciais WIF/service account e configuração da propriedade/URL.
-
-## 19.5. Limpeza do repositório — **FECHADO**
-
-Documento:
-
-`docs/section-19-5-repository-cleanup.md`
-
-Classificação aplicada:
+Propriedades obrigatórias:
 
 ```text
-KEEP       — produção/fundação atual
-DIAGNOSTIC — auditoria ainda útil
-LEGACY     — histórico reprodutível / v1 preservada para rollback após o cutover
-DELETE     — redundante/obsoleto/temporário com ausência de dependência confirmada
+BatchMode=yes
+IdentitiesOnly=yes
+StrictHostKeyChecking=yes
+GlobalKnownHostsFile=/dev/null
+UpdateHostKeys=no
+SQLITE3_OPEN_READONLY
 ```
 
-Remoções confirmadas:
+O workflow não faz `scp` do SQLite, não altera o banco e remove o material SSH efêmero ao final.
 
-- `widget-ui/src/InsurerScoreModal.jsx` — modal de score v1 morto;
-- `data/raw/consumidor_gov/tmp68ikpili.csv` — temporário rastreado acidentalmente;
-- `teste_consumidor.py` — scratch manual obsoleto.
-
-Foram preservados deliberadamente:
-
-- workflows e scripts v1 ainda necessários para histórico/rollback até aposentadoria explicitamente autorizada;
-- `widget-ui/dist/` como LEGACY, após a cópia real do HostGator provar que
-  `widget.js`/`widget.css` de produção correspondem exatamente a esse bundle;
-- experimentos/diagnósticos v2 que preservam a justificativa metodológica;
-- snapshots regulatórios canônicos;
-- `verify_extraction.sh` como LEGACY/manual only;
-- duplicações históricas cujo caminho ainda pode ser consumidor do v1.
-
-A limpeza é protegida por `tests/test_v2_repository_cleanup.py`.
-
-## 19.6. Revisão do frontend e SEO — **FECHADO**
-
-Status formal:
+Workflow principal:
 
 ```text
-SECTION_19_6_STATUS = CLOSED
-closed_at = 2026-09-03
-methodology_reopened = false
-ranking_gate_opened = false
-production_cutover_authorized_by_19_6 = false
+.github/workflows/v2-emerging-market-identity-sensors.yml
 ```
 
-O §19.6 comparou o frontend v2 com os pontos úteis da experiência anterior e consolidou somente o que continuava compatível com a metodologia atual. O trabalho foi executado sobre a superfície de teste do HostGator, sem substituir `index.php` de produção.
-
-Foram consolidados:
-
-- busca com desambiguação e precedência adequada para seguradoras ordinárias sem apagar marcas, históricas, Sandbox ou outras identidades;
-- perfis adaptativos para seguradora ordinária, marca, `market_identity`, participante Sandbox e entidade histórica;
-- navegação reversível e preservação de comparação, filtros, paginação e contexto sem barras persistentes de estado;
-- compartilhamento de perfil e comparação;
-- comparação entre 2–4 seguradoras sem vencedor artificial;
-- acessibilidade por teclado/ARIA nas buscas e controles principais;
-- tratamento explícito de indisponibilidade, dados incompletos e `null ≠ 0`;
-- interpretação progressiva: resposta humana → sinais → identificação/regulação → números explicados → metodologia e fontes;
-- helper de números restrito a **o que é / por que importa / como interpretar**, deixando fórmulas, variáveis, fontes, fundamentos e salvaguardas para a seção metodológica;
-- organização de Conduta em reclamações observadas, tamanho comparável da operação e referência proporcional para interpretação;
-- linguagem pública sem vazamento desnecessário de nomes de backend, arquivos, fields ou states internos.
-
-### SEO e arquitetura de estado
-
-A investigação cruzou GSC, oportunidades de palavras-chave, capacidade real da ferramenta e risco de expansão artificial. A decisão final é conservadora:
-
-```text
-/ranking-seguradoras/
-→ documento SEO principal
-→ canonical próprio
-→ território genérico de consulta, confiabilidade, SUSEP, comparação e rankings objetivos
-
-#consulta=...
-#perfil=...
-#comparar=...
-→ estado funcional/compartilhável
-→ não tratado como inventário de páginas SEO
-```
-
-Decisões consolidadas:
-
-- não criar automaticamente uma URL indexável por seguradora;
-- não transformar volume de busca por marca em justificativa suficiente para página;
-- páginas editoriais futuras sobre marcas exigem **tese própria**, valor independente e diferença material em relação a outras páginas do site e à SERP;
-- parâmetros antigos de estado devem ser consolidados no cutover, sem criar superfície indexável paralela;
-- SEO orienta `title`, meta description, headings, arquitetura semântica e cobertura de intenção sem degradar o português;
-- não criar ranking geral ou linguagem absoluta para satisfazer palavra-chave.
-
-### Direção visual consolidada
-
-A direção de acabamento ficou definida como:
-
-> **tecnologia aplicada + inteligência sobre dados + confiança + clareza**, com aparência editorial/profissional e linguagem visual sóbria.
-
-Evitar:
-
-- estética genérica de dashboard SaaS;
-- roxo/gradiente “IA” como linguagem principal;
-- neon e glassmorphism gratuito;
-- excesso de cards, badges, sombras e elementos flutuantes;
-- densidade visual que concorra com a interpretação dos dados.
-
-O acabamento final do §19.6 consolidou hierarquia, alinhamento, densidade, responsividade e os componentes novos de identificação, números explicados e metodologia sem alterar o contrato metodológico.
-
-O fechamento do §19.6 **não autoriza cutover, merge em `main`, ativação de cron nem publicação automática**.
-
-## 19.7. Lapidação final e consolidação da v2 — **FECHADO — READY FOR CUTOVER**
-
-Objetivo: produzir a última revisão integrada antes de decidir se a v2 está tecnicamente pronta para uma decisão posterior de cutover. Esta etapa não reabre os §§19.1–19.6 por preferência ou por existência de alternativas; somente regressão objetiva, inconsistência concreta ou falha de integração justifica correção em área já fechada.
-
-O frontend efetivamente observado no HostGator foi versionado, reconciliado com o head global, protegido por manifesto/hash da geração pública e incorporado ao CI. A revisão preservou o bundle v1 que atendia produção e preparou arquivos separados de staging, cutover e rollback. Em 05/09/2026, uma autorização posterior e específica promoveu o candidato R5.3 para produção; a v1 passou a permanecer somente como backup de rollback.
-
-Provas finais consolidadas:
-
-```text
-GitHub R5.3 / HostGator bytes              PASS
-CI #1486                                   PASS
-V2 Gate 4 Evergreen Contract #326          PASS
-HostGator staging                          PASS
-Full Generation #69 / build_id             PASS
-rollback real para public-pre-r5-live      PASS
-519 JSONs / 505 perfis legado              PASS
-legacy aggregate SHA256                    PASS
-search_index legado HTTP = local           PASS
-retorno atômico ao current/R5              PASS
-manifest R5 pós-retorno HTTP = local       PASS
-smoke curto pós-retorno                    PASS
-```
-
-A primeira migração não possuía `previous`; por isso a prova real de rollback foi o caso especial via diretório preservado `public-pre-r5-live`. Não afirmar que o rollback normal do instalador por `previous` foi exercitado.
-
-O relatório completo, a evidência operacional e o gate binário estão em:
-
-`docs/section-19-7-final-consolidation.md`
-
-O registro do cutover de produção está em:
-
-`docs/production-frontend-cutover.md`
-
-O roteiro de instalação, prova de rollback e restrições de cutover está em:
-
-`ranking-seguradoras/deployment/production-cutover/INSTALLACAO-HOSTGATOR.md`
-
-Estado formal:
-
-```text
-SECTION_19_7_STATUS = CLOSED
-READY_FOR_CUTOVER = YES
-ROLLBACK_PROVADO_NO_AMBIENTE_REAL = true
-PRODUCTION_CUTOVER_STATUS = COMPLETE
-production_cutover_authorized = consumed
-PRODUCTION_FRONTEND_R5_3 = PASS
-V2_PRODUCTION_AUTOMATION_ENABLED = false
-V2_HOSTGATOR_DEPLOY_ENABLED = false
-V2_MARKET_SENSOR_AUTOMATION_ENABLED = false
-market_sensor_production_enabled = false
-SSH_TRUST_HARDENING_IN_CODE = PASS
-DEDICATED_HOSTGATOR_ACTIONS_KEY_LOGIN = PASS
-V2_HOSTGATOR_SECRETS_CONFIGURED = true
-V2_HOSTGATOR_VARIABLES_CONFIGURED = true
-GITHUB_ACTIONS_SSH_RUNTIME_VALIDATION = NOT_EXECUTED
-```
-
-O gate READY não autorizava produção por si só; ele foi consumido somente após autorização explícita separada. O cutover concluído também **não autoriza** merge, alteração de `main`, ativação de cron/publicador/sensores nem remoção da v1 ou dos backups legados.
+Quando `V2_MARKET_SENSOR_AUTOMATION_ENABLED == true`, esse workflow assume a atualização automática da issue singleton de revisão porque renderiza o superset de relações + candidates emergentes.
 
 ---
 
-# 20. O que não fazer
+# 12. GSC
+
+Google Search Console **não é requisito de produção** para o Evergreen.
+
+Estado esperado sem configuração:
+
+```text
+gsc_query = unavailable
+```
+
+Isso não degrada:
+
+- SUSEP licensed delta;
+- SUSEP Sandbox delta;
+- telemetria do widget;
+- Full Generation;
+- publicação HostGator;
+- Gate 4.
+
+A integração pode ser retomada no futuro se houver benefício operacional demonstrado. Até lá, não se deve criar dependência de WIF/service account apenas para completar um sensor opcional.
+
+---
+
+# 13. HostGator e rollback
+
+Estruturas operacionais principais:
+
+```text
+publication root:
+/home1/sanid210/sanida-v2-publication
+
+public package root:
+/home1/sanid210/public_html/ranking-seguradoras/data/v2/public
+
+backup preservado:
+/home1/sanid210/public_html/ranking-seguradoras/data/v2/public-pre-r5-live
+
+evergreen private root:
+/home1/sanid210/sanida-v2-evergreen
+```
+
+O HostGator não é scheduler da v2. Não criar cron para geração/publicação.
+
+A publicação usa geração inteira e troca atômica entre `current` e `previous`; o rollback não deve ser removido durante limpezas de repositório ou deploy.
+
+---
+
+# 14. Workflows operacionais
+
+Camada permanente de produção:
+
+```text
+V2 Production Generation Schedule
+V2 Gate 4 Full Generation Proof
+V2 HostGator Public Package Sync
+V2 Emerging Market Identity Sensors
+V2 Complaint Source Watch
+V2 Relationship Review Queue
+```
+
+Os writers antigos permanecem sem recorrência automática e só podem ser usados deliberadamente para recuperação/forense quando ainda existirem:
+
+```text
+Refresh data (manual legacy only)
+refresh-receita-lifecycle.yml
+update-susep-sandbox.yml
+```
+
+Não restaurar schedules antigos.
+
+Workflows experimentais/diagnósticos preservados não são autoridade de produção apenas por existirem no repositório.
+
+---
+
+# 15. Validações obrigatórias
+
+O pipeline deve falhar diante de situações como:
+
+- `entity_id` duplicado;
+- CNPJ incompatível duplicado;
+- marca apontando para entidade inexistente;
+- referência pública apontando para perfil inexistente;
+- SSPE recebendo semântica de seguradora ordinária;
+- Sandbox vazando para benchmark ordinário;
+- cooperativa vazando para benchmark ordinário por presunção;
+- previdência/capitalização vazando para exposição de seguros;
+- reclamações transferidas silenciosamente de subject para carrier;
+- pressão calculada sem denominador comparável;
+- fonte sem período;
+- valores não finitos;
+- queda anormal de cobertura;
+- alteração inesperada de schema;
+- alteração desconhecida da taxonomia SUSEP;
+- `null` convertido em zero;
+- score produzido por artifact que proíbe scoring;
+- subset incompleto apresentado como ranking integral;
+- frontend reconstruindo lógica do backend;
+- `PLA/CMR` calculado com campo diferente de `new_pla`;
+- fallback silencioso de `new_pla` para `pla_adjusted`;
+- reconstrução do pacote final misturando artifacts de gerações diferentes;
+- candidate evergreen com `assertion_effect` diferente de `none`;
+- candidate evergreen alterando score, reclamações ou registry;
+- fuzzy resolvendo automaticamente identidade emergente.
+
+Sensores de demanda indisponíveis não devem invalidar Gate 4; sua ausência precisa aparecer explicitamente como estado do sensor.
+
+---
+
+# 16. O que não fazer
 
 Não:
 
-- reabrir score para “facilitar” UI;
+- reabrir score para facilitar UI;
 - escolher peso Financeiro × Conduta arbitrariamente;
-- usar ranking geral para satisfazer palavra-chave;
+- criar ranking geral para satisfazer palavra-chave;
 - premiar excesso de PLA/CMR ou ILT sem novo contrato;
 - tratar ausência como zero;
 - tratar incomparabilidade como neutralidade;
@@ -1435,95 +686,68 @@ Não:
 - permitir PHP/JS corrigir backend;
 - transformar demanda desconhecida em identidade pública automaticamente;
 - permitir candidate observacional mutar o registry;
-- publicar artifacts antigos após mudança metodológica;
-- manter processo manual só porque funciona em teste;
-- apagar código experimental antes de confirmar dependências;
-- alterar `main` antes do encerramento e autorização explícita do cutover.
+- publicar artifact de feature branch ou run falho;
+- ignorar hashes de pacote/manifesto;
+- relaxar TLS ou `known_hosts` para fazer coleta passar;
+- remover o hard deadline da BaseCompleta sem evidência concreta;
+- reativar cron HostGator;
+- reativar writers V1 recorrentes;
+- apagar `public-pre-r5-live`;
+- integrar BDR/SusepCon sem fonte pública consumível e contrato próprio;
+- transformar GSC opcional em dependência sem benefício demonstrado.
 
 ---
 
-# 21. Critério de sucesso da consolidação
+# 17. Histórico de consolidação
 
-Para o escopo §19.1–§19.7 e a extensão de descoberta evergreen do §19.3, os critérios técnicos, informacionais, operacionais e de experiência foram atendidos no branch Draft/superfície de teste:
+Os §§19.1–19.7 foram a trilha de fechamento que levou ao estado atual. Documentos dessa etapa podem dizer corretamente, **naquele momento**, que `main`, publicação ou sensores ainda não estavam autorizados.
 
-- fórmulas críticas foram auditadas da fonte ao JSON público;
-- regressões cobrem bugs materiais conhecidos;
-- artifacts dependentes do novo PLA foram reconstruídos e validados;
-- o frontend ativo consome identidade, relações, avaliação e limites do contrato v2;
-- linguagem pública e `public_use` são respeitados;
-- a publicação de dados possui mecanismo versionado, exato por run e atômico preparado para HostGator;
-- cron/publicação têm dependência clara e falha segura;
-- nova seguradora licenciada pode ser materializada automaticamente mesmo sem presença prévia no SES;
-- novo Sandbox pode ser materializado por identidade oficial própria;
-- cooperativas possuem subtipo explícito e não entram no benchmark ordinário por presunção;
-- buscas desconhecidas/GSC podem alimentar candidates sem efeito público;
-- candidates são operacionalmente visíveis sem permitir assertion/score/complaint transfer/registry mutation;
-- valores observacionais não confiáveis são neutralizados antes de renderização na fila de revisão;
-- arquivos experimentais/legacy foram classificados conservadoramente;
-- documentação central incorpora a diferença entre evergreen de dados conhecidos e evergreen de descoberta;
-- busca, navegação, comparação e estados compartilháveis foram estabilizados no frontend v2;
-- identidades complexas são apresentadas sem colapsar marca, pessoa jurídica, sucessão, Sandbox ou `risk_carrier`;
-- números técnicos receberam interpretação progressiva sem deslocar a metodologia para o JavaScript;
-- a arquitetura SEO concentra a superfície indexável no hub e evita geração massiva de páginas por marca;
-- a linguagem visual foi consolidada em tecnologia aplicada, inteligência de dados, confiança e clareza, sem estética de dashboard genérico;
-- staging real R5.3, geração pública e bytes versionados foram reconciliados;
-- rollback real da primeira migração foi provado via `public-pre-r5-live`, com conteúdo legado efetivamente servido por HTTP;
-- o retorno atômico ao R5 e o smoke pós-retorno foram aprovados;
-- `main` e a produção HostGator não foram alterados durante a consolidação do §19.7; o frontend foi promovido depois, sob autorização específica e registrada separadamente.
+Essas afirmações são snapshots históricos e não descrevem mais o runtime.
 
-A cobertura evergreen operacional em produção só passa a existir após configuração/ativação deliberada dos sensores; isso é uma etapa operacional separada da arquitetura já fechada.
+Sequência operacional concluída:
 
-O §19.7 está encerrado sem blocker técnico objetivo conhecido. Seu gate READY foi consumido pelo cutover autorizado em 05/09/2026; isso não abriu autorização de merge ou automação.
+```text
+§19.1 metodologia/dados                  CLOSED
+§19.2 frontend information audit         CLOSED
+§19.3 evergreen architecture             CLOSED
+§19.4 HostGator publication architecture CLOSED
+§19.5 repository cleanup                 CLOSED
+§19.6 frontend/UX/SEO                    CLOSED
+§19.7 final consolidation                CLOSED
+FRONTEND R5.3 CUTOVER                    COMPLETE
+FASE C PRODUCTION AUTOMATION             CLOSED / ACTIVE
+FASE D EVERGREEN                         CLOSED / ACTIVE
+POST-CUTOVER HOUSEKEEPING                COMPLETE
+```
+
+O antigo branch `refactor/v2-data-foundation` e branches temporários das fases de implantação não são branches canônicos de desenvolvimento após o cutover. O branch de produção e referência corrente é `main`.
 
 ---
 
-# 22. Diretriz final
+# 18. Critério de manutenção futura
 
-A v2 não existe para reproduzir a v1 com outros números.
+Áreas fechadas não devem ser reabertas apenas porque outra abordagem seria possível.
 
-Ela deve preservar o que a engenharia anterior fazia bem:
+Mudanças posteriores devem responder a pelo menos uma destas condições:
+
+- bug objetivo;
+- regressão;
+- mudança de fonte oficial;
+- mudança de schema/taxonomia;
+- quebra de contrato público;
+- necessidade operacional concreta;
+- nova evidência metodológica suficiente para um processo formal separado.
+
+O objetivo de manutenção é preservar:
 
 - automação;
 - cache;
 - snapshots;
 - rastreabilidade;
 - busca rápida;
-- utilidade ao consumidor.
-
-E eliminar o que era frágil:
-
-- universo mal delimitado;
-- matching tratado como verdade;
-- score sobre dados incompletos;
-- proxies excessivos;
-- mistura de pessoa jurídica, marca e carrier;
-- mistura de domínios de produto;
-- frontend recalculando metodologia;
-- falsa precisão de uma ordem total;
-- jargão antes da resposta humana;
-- processos manuais permanentes;
-- catálogo que só conhece empresas porque alguém lembrou de cadastrá-las;
-- artifacts experimentais vazando para produto.
-
-Estado final da consolidação:
-
-```text
-§19.1 FECHADO
-→ §19.2 FECHADO
-→ §19.3 FECHADO EM ARQUITETURA/CÓDIGO
-   ↳ DESCOBERTA EVERGREEN FECHADA EM ARQUITETURA/CÓDIGO
-→ §19.4 FECHADO EM ARQUITETURA/CÓDIGO
-→ §19.5 FECHADO
-→ §19.6 FECHADO — FRONTEND / UX / COMUNICAÇÃO / SEO
-→ §19.7 FECHADO — READY FOR CUTOVER
-→ ROLLBACK REAL PROVADO
-→ FRONTEND R5.3 EM PRODUÇÃO — CUTOVER CONCLUÍDO
-→ V1 E PUBLIC-PRE-R5-LIVE PRESERVADOS PARA ROLLBACK
-→ SENSORES DE MERCADO EM PRODUÇÃO AINDA NÃO CONFIGURADOS/ATIVADOS
-→ MERGE / GERAÇÃO AUTOMÁTICA / PUBLICAÇÃO AUTOMÁTICA CONTINUAM PENDENTES DE AUTORIZAÇÃO
-```
-
-Áreas fechadas não devem ser reabertas apenas porque outra abordagem seria possível. Mudanças posteriores devem responder a evidência objetiva de bug, regressão, mudança de fonte/contrato ou necessidade operacional concreta.
+- utilidade ao consumidor;
+- segurança de publicação;
+- separação entre detecção automática e afirmação pública.
 
 ---
 
