@@ -15,6 +15,8 @@ Para o estado atual de produção, os documentos de fechamento prevalecem sobre 
 
 Documentos anteriores que registram flags como `false`, produção ainda não ativada, cutover ainda não autorizado ou sensores apenas preparados devem ser lidos como **snapshots históricos da etapa em que foram escritos**, e não como o estado operacional atual.
 
+Isso inclui o bloco de status pré-cutover ainda presente no topo do `README.md`. Até uma futura revisão editorial integral do README, esse bloco não deve prevalecer sobre os closeouts C/D nem sobre este housekeeping para descrever o runtime atual.
+
 Estado operacional consolidado:
 
 ```text
@@ -92,6 +94,7 @@ Não se deve reescrever retrospectivamente documentos de auditoria/fechamento ap
 
 Exemplos de arquivos que podem conter estados antigos de flags e ainda assim continuam válidos como registro histórico:
 
+- `README.md` — especialmente o bloco de status pré-cutover;
 - `docs/production-frontend-cutover.md`;
 - `docs/section-19-7-final-consolidation.md`;
 - `docs/section-19-3-19-4-evergreen-hostgator-publication.md`;
