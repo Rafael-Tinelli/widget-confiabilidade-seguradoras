@@ -349,6 +349,7 @@ jobs:
           }
           curl --fail --silent --show-error --location \
             --max-time 30 \
+            --noproxy '*' \
             --resolve "sanida.com.br:443:$UNKNOWN_QUERY_ORIGIN_IP" \
             --header "Authorization: Bearer $UNKNOWN_QUERY_SNAPSHOT_TOKEN" \
             --output "$RUNNER_TEMP/widget_unknown_queries.json" \
