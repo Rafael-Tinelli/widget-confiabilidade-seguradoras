@@ -24,6 +24,7 @@ jobs:
         run: |
           set -euo pipefail
           python ops/maintenance/apply_tool01_audit_fixes.py
+          sed -i '1{/^\\$/d;}' ranking-seguradoras/tests/r6-tool01-audit-regressions.mjs
           node --check ranking-seguradoras/assets/ranking-v2.js
           node ranking-seguradoras/tests/r6-tool01-audit-regressions.mjs
 
