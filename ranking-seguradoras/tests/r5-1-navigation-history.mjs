@@ -63,7 +63,7 @@ globalThis.history = {
 let source = fs.readFileSync(jsPath, 'utf8');
 source = source.replace(/\n\s*init\(\);\n\}\)\(\);\s*$/, `
   globalThis.__rk2NavigationTest = {
-    state, updateURL, originForElement
+    state, updateURL, originForElement, formatThresholdRatio, compareVisual, generationCoherenceError, isGenerationCoherenceError, recoveryButton
   };
 })();
 `);
@@ -129,5 +129,39 @@ assert.deepEqual(t.originForElement(profileElement), {
   label: 'Voltar ao perfil anterior',
   profileId: APS,
 });
+
+
+// TOOL-01 audit N01: below-expected conduct remains a neutral but available conclusion.
+assert.deepEqual(t.compareVisual({ state: 'below_expected_with_sufficient_evidence', tone: 'neutral' }), {
+  symbol: '↓', tone: 'neutral', label: 'Reclamações abaixo do esperado; conclusão disponível',
+});
+assert.deepEqual(t.compareVisual({ state: 'not_distinguishable_from_expected', tone: 'neutral' }), {
+  symbol: '≈', tone: 'neutral', label: 'Sem diferença clara',
+});
+assert.deepEqual(t.compareVisual({ state: 'pressure_unavailable_not_comparable', tone: 'missing' }), {
+  symbol: '—', tone: 'missing', label: 'Sem conclusão segura',
+});
+
+// TOOL-01 audit N05: display rounding must not erase which side of the 1.00 boundary a ratio is on.
+assert.equal(t.formatThresholdRatio(0.9951396368149357, 1, 2), '< 1,00');
+assert.equal(t.formatThresholdRatio(1.0049, 1, 2), '> 1,00');
+assert.equal(t.formatThresholdRatio(1, 1, 2), '1,00');
+assert.equal(t.formatThresholdRatio(0.94, 1, 2), '0,94');
+
+// TOOL-01 audit N02: generation incoherence gets a full-reload action; transient errors retain same-generation retry.
+const generationError = t.generationCoherenceError('A verificação de integridade da geração pública falhou.');
+assert.equal(t.isGenerationCoherenceError(generationError), true);
+assert.equal(t.isGenerationCoherenceError(new Error('Falha de rede')), false);
+const generationAction = t.recoveryButton(generationError, 'data-retry-profile="entity:fip:005177"', 'data-reload-profile="entity:fip:005177"');
+assert.ok(generationAction.includes('data-reload-profile="entity:fip:005177"'));
+assert.ok(generationAction.includes('Recarregar dados'));
+assert.ok(!generationAction.includes('data-retry-profile'));
+const transientAction = t.recoveryButton(new Error('Falha de rede'), 'data-retry-profile="entity:fip:005177"', 'data-reload-profile="entity:fip:005177"');
+assert.ok(transientAction.includes('data-retry-profile="entity:fip:005177"'));
+assert.ok(transientAction.includes('Tentar novamente'));
+assert.ok(!transientAction.includes('data-reload-profile'));
+assert.match(source, /window\.location\.replace\(profileShareURL\(reloadProfile\.dataset\.reloadProfile\)\)/);
+assert.match(source, /window\.location\.replace\(comparisonShareURL\(\)\)/);
+assert.match(source, /persistCurrentViewState\(\{ force: true \}\);\s*window\.location\.reload\(\)/);
 
 console.log('R5.1 navigation history regression checks: PASS');

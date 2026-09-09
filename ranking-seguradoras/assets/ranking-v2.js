@@ -240,6 +240,19 @@
     });
   }
 
+  function formatThresholdRatio(value, threshold = 1, decimals = 2) {
+    const number = finite(value);
+    const reference = finite(threshold);
+    if (number === null || reference === null) return "Não disponível";
+
+    const scale = 10 ** decimals;
+    const sameDisplayedBucket = Math.round(number * scale) === Math.round(reference * scale);
+    if (number !== reference && sameDisplayedBucket) {
+      return `${number < reference ? "<" : ">"} ${formatNumber(reference, decimals)}`;
+    }
+    return formatNumber(number, decimals);
+  }
+
   function formatInteger(value) {
     const number = finite(value);
     return number === null ? "Não disponível" : Math.round(number).toLocaleString("pt-BR");
@@ -348,6 +361,25 @@
     return bytesToHex(await globalThis.crypto.subtle.digest("SHA-256", bytes));
   }
 
+  const GENERATION_COHERENCE_ERROR_CODE = "RK2_GENERATION_COHERENCE";
+
+  function generationCoherenceError(message) {
+    const error = new Error(message);
+    error.code = GENERATION_COHERENCE_ERROR_CODE;
+    return error;
+  }
+
+  function isGenerationCoherenceError(error) {
+    return error?.code === GENERATION_COHERENCE_ERROR_CODE;
+  }
+
+  function recoveryButton(error, retryAttributes, reloadAttributes) {
+    const generationChanged = isGenerationCoherenceError(error);
+    const attributes = generationChanged ? reloadAttributes : retryAttributes;
+    const label = generationChanged ? "Recarregar dados" : "Tentar novamente";
+    return `<button class="rk2-btn rk2-btn--ghost" type="button" ${attributes}>${label}</button>`;
+  }
+
   async function loadDistributionManifest() {
     const path = `${PUBLIC_BASE}/distribution_manifest.json`;
     const response = await fetch(path, { credentials: "same-origin", cache: "no-cache" });
@@ -396,7 +428,9 @@
   async function fetchJSON(relativePath, expectedArtifact) {
     const safePath = safePublicPath(relativePath);
     const expectedDigest = state.manifestFiles.get(safePath);
-    if (!expectedDigest) throw new Error("O arquivo solicitado não pertence à geração pública ativa.");
+    if (!expectedDigest) {
+      throw generationCoherenceError("O arquivo solicitado não pertence à geração pública ativa.");
+    }
 
     const response = await fetch(`${PUBLIC_BASE}/${safePath}`, {
       credentials: "same-origin",
@@ -407,7 +441,7 @@
     const raw = await response.text();
     const actualDigest = await sha256Text(raw);
     if (actualDigest !== expectedDigest) {
-      throw new Error("A verificação de integridade da geração pública falhou.");
+      throw generationCoherenceError("A verificação de integridade da geração pública falhou.");
     }
 
     let payload;
@@ -1336,7 +1370,12 @@
     } catch (error) {
       if (requestToken !== state.profileRequestToken) return false;
       console.error(error);
-      els.result.innerHTML = `<div class="rk2-result-shell"><div class="rk2-error"><strong>Não foi possível abrir o perfil.</strong><p>${esc(error.message)}</p><button class="rk2-btn rk2-btn--ghost" type="button" data-retry-profile="${esc(profileId)}">Tentar novamente</button></div></div>`;
+      const action = recoveryButton(
+        error,
+        `data-retry-profile="${esc(profileId)}"`,
+        `data-reload-profile="${esc(profileId)}"`,
+      );
+      els.result.innerHTML = `<div class="rk2-result-shell"><div class="rk2-error"><strong>Não foi possível abrir o perfil.</strong><p>${esc(error.message)}</p>${action}</div></div>`;
       return false;
     }
   }
@@ -1456,7 +1495,7 @@
         tone: s?.tone || "missing",
         label: LABELS.capital[s?.state] || "Sem conclusão",
         text: publicText(s?.plain_language || "Dado não disponível."),
-        metric: ratio !== null ? `PLA/CMR ${formatNumber(ratio, 2)}` : "",
+        metric: ratio !== null ? `PLA/CMR ${formatThresholdRatio(ratio, 1, 2)}` : "",
       };
     }
 
@@ -1469,7 +1508,7 @@
         tone: s?.tone || "missing",
         label: LABELS.liquidity[s?.state] || "Sem conclusão",
         text: publicText(s?.plain_language || "Dado não disponível."),
-        metric: ratio !== null ? `ILT ${formatNumber(ratio, 2)}` : "",
+        metric: ratio !== null ? `ILT ${formatThresholdRatio(ratio, 1, 2)}` : "",
       };
     }
 
@@ -1519,7 +1558,13 @@
     const tone = signal?.tone || "missing";
     const stateName = signal?.state || "";
 
-    // Conduta sem diferença clara é informativa, não favorável/adversa.
+    // Conduta abaixo do esperado é uma conclusão direcional disponível, mas permanece neutra:
+    // isoladamente, não prova melhor atendimento nem maior qualidade.
+    if (stateName === "below_expected_with_sufficient_evidence") {
+      return { symbol: "↓", tone: "neutral", label: "Reclamações abaixo do esperado; conclusão disponível" };
+    }
+
+    // Conduta sem diferença clara também é informativa, não favorável/adversa.
     if (stateName === "not_distinguishable_from_expected") {
       return { symbol: "≈", tone: "neutral", label: "Sem diferença clara" };
     }
@@ -1660,6 +1705,7 @@
         <span><b class="rk2-cmp-mark" data-tone="favorable">✓</b> sem alerta</span>
         <span><b class="rk2-cmp-mark" data-tone="adverse">✕</b> alerta</span>
         <span><b class="rk2-cmp-mark" data-tone="caution">!</b> atenção</span>
+        <span><b class="rk2-cmp-mark" data-tone="neutral">↓</b> abaixo do esperado</span>
         <span><b class="rk2-cmp-mark" data-tone="neutral">≈</b> sem diferença clara</span>
         <span><b class="rk2-cmp-mark" data-tone="missing">—</b> sem conclusão</span>
       </div>
@@ -1712,7 +1758,7 @@
         <div class="rk2-error">
           <strong>Não foi possível montar a comparação.</strong>
           <p>${esc(error.message)}</p>
-          <button class="rk2-btn rk2-btn--ghost" type="button" data-retry-comparison>Tentar novamente</button>
+          ${recoveryButton(error, "data-retry-comparison", "data-reload-comparison")}
         </div>
       `;
     }
@@ -1830,7 +1876,8 @@
     } catch (error) {
       if (requestToken !== state.boardRequestToken) return;
       console.error(error);
-      els.boardPanel.innerHTML = `<div class="rk2-error"><strong>Não foi possível carregar esse recorte.</strong><p>${esc(error.message)}</p><button class="rk2-btn rk2-btn--ghost" type="button" data-retry-board data-board-kind="${esc(kind)}" data-board-id="${esc(id)}">Tentar novamente</button></div>`;
+      const retryAttributes = `data-retry-board data-board-kind="${esc(kind)}" data-board-id="${esc(id)}"`;
+      els.boardPanel.innerHTML = `<div class="rk2-error"><strong>Não foi possível carregar esse recorte.</strong><p>${esc(error.message)}</p>${recoveryButton(error, retryAttributes, "data-reload-board")}</div>`;
     }
   }
 
@@ -2143,6 +2190,25 @@
       const back = event.target.closest("[data-history-back]");
       if (back) {
         history.back();
+        return;
+      }
+
+      const reloadProfile = event.target.closest("[data-reload-profile]");
+      if (reloadProfile) {
+        window.location.replace(profileShareURL(reloadProfile.dataset.reloadProfile));
+        return;
+      }
+
+      const reloadComparison = event.target.closest("[data-reload-comparison]");
+      if (reloadComparison) {
+        window.location.replace(comparisonShareURL());
+        return;
+      }
+
+      const reloadBoard = event.target.closest("[data-reload-board]");
+      if (reloadBoard) {
+        persistCurrentViewState({ force: true });
+        window.location.reload();
         return;
       }
 
