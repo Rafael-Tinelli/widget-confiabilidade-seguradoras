@@ -1,21 +1,24 @@
 # Housekeeping pós-cutover — Fases C e D
 
-Status: **pronto para merge após CI**.
+Status: **FECHADO**.
 
-Data: 07/09/2026 (BRT).
+Data original: 07/09/2026 (BRT).  
+Reconciliação final do remake: 09/09/2026 (BRT).
 
 Este documento registra a limpeza de repositório posterior ao fechamento operacional das Fases C e D. Ele não reabre metodologia, frontend, Conduta, publicação ou contratos públicos.
 
 ## 1. Autoridade operacional atual
 
-Para o estado atual de produção, os documentos de fechamento prevalecem sobre fotografias anteriores do projeto:
+Para o estado atual de produção, os documentos de fechamento e o README corrente prevalecem sobre fotografias anteriores do projeto:
 
+- `README.md` — contrato operacional corrente;
 - `docs/phase-c-production-automation-closeout.md` — geração/publicação automáticas;
-- `docs/phase-d-evergreen-closeout.md` — descoberta evergreen em produção.
+- `docs/phase-d-evergreen-closeout.md` — descoberta evergreen em produção;
+- este documento — housekeeping e encerramento de migração.
 
 Documentos anteriores que registram flags como `false`, produção ainda não ativada, cutover ainda não autorizado ou sensores apenas preparados devem ser lidos como **snapshots históricos da etapa em que foram escritos**, e não como o estado operacional atual.
 
-Isso inclui o bloco de status pré-cutover ainda presente no topo do `README.md`. Até uma futura revisão editorial integral do README, esse bloco não deve prevalecer sobre os closeouts C/D nem sobre este housekeeping para descrever o runtime atual.
+O README já foi reconciliado e agora declara explicitamente a v2 como ativa em produção e `main` como branch canônico.
 
 Estado operacional consolidado:
 
@@ -57,14 +60,26 @@ path = .github/workflows/tmp-export-v2-validated-source-cache.yml
 
 Após o cutover e as provas de Full Generation em `main`, esse bridge deixou de fazer parte do caminho operacional permanente. Mantê-lo aumentaria superfície de manutenção e conservaria uma dependência artificial do branch de migração.
 
-Por isso este housekeeping remove:
+Por isso o housekeeping removeu:
 
 - `.github/workflows/v2-main-source-cache-seed.yml`;
 - `tests/test_v2_main_source_cache_seed.py`.
 
 A remoção não altera a geração semanal, os caches normais da Full Generation nem os fallbacks validados já existentes.
 
-## 3. Evergreen — arquitetura final
+## 3. Triggers do branch de migração aposentados
+
+Depois da consolidação de `main`, não há razão operacional para workflows manterem gatilhos de `push` restritos ao antigo branch `refactor/v2-data-foundation`.
+
+Na reconciliação final foram retirados esses triggers mortos de:
+
+- `.github/workflows/v2-gate4-full-generation-proof.yml`;
+- `.github/workflows/v2-gate4-conduct-cache-bootstrap.yml`;
+- `.github/workflows/v2-gate4-source-snapshot-integration.yml`.
+
+Os workflows continuam disponíveis por `workflow_dispatch` quando essa execução explícita fizer sentido. A automação semanal de produção permanece separada e continua despachando a Full Generation canônica em `main`.
+
+## 4. Evergreen — arquitetura final
 
 A Fase D terminou com:
 
@@ -86,41 +101,62 @@ V2_UNKNOWN_QUERY_SNAPSHOT_URL
 V2_UNKNOWN_QUERY_SNAPSHOT_TOKEN
 ```
 
-O token local do endpoint no HostGator pode permanecer para uso administrativo local; ele não é necessário para a coleta automática do sensor via SSH.
+A existência ou exclusão desses secrets não pode ser verificada por leitura do repositório. Se ainda existirem em **Settings → Secrets and variables → Actions**, podem ser removidos. O token local do endpoint no HostGator pode permanecer para uso administrativo local; ele não é necessário para a coleta automática do sensor via SSH.
 
-## 4. Documentação histórica
+## 5. Documentação histórica
 
 Não se deve reescrever retrospectivamente documentos de auditoria/fechamento apenas para fazer todas as fotografias históricas mostrarem o estado atual.
 
 Exemplos de arquivos que podem conter estados antigos de flags e ainda assim continuam válidos como registro histórico:
 
-- `README.md` — especialmente o bloco de status pré-cutover;
 - `docs/production-frontend-cutover.md`;
 - `docs/section-19-7-final-consolidation.md`;
 - `docs/section-19-3-19-4-evergreen-hostgator-publication.md`;
 - `docs/emerging-market-discovery-audit.md`;
 - `docs/emerging-market-identity-coverage.md`.
 
-Quando a pergunta for **"qual é o estado atual?"**, usar os closeouts C/D e este housekeeping, não a fotografia histórica isolada.
+Quando a pergunta for **"qual é o estado atual?"**, usar o README corrente, os closeouts C/D e este housekeeping, não a fotografia histórica isolada.
 
-## 5. Branches
+## 6. Legado V1 preservado deliberadamente
 
-Branches temporários de diagnóstico, cutover, Phase C e Phase D podem ser removidos depois que seus PRs/commits relevantes estiverem materializados em `main`.
+A limpeza final do remake não transforma preservação histórica em obrigação de apagar tudo o que contém `v1` ou `legacy`.
 
-A limpeza de branches é deliberadamente separada deste PR para que a exclusão de refs não seja confundida com mudança de conteúdo versionado.
+Continuam deliberadamente preservados, quando ainda existentes:
 
-O antigo `refactor/v2-data-foundation` também deve ser tratado como branch de migração concluída. Antes de removê-lo, basta confirmar que não há commit material não incorporado a `main`; o antigo workflow `tmp-export-v2-validated-source-cache.yml` não deve ser promovido como infraestrutura permanente.
+- builders e artefatos V1 necessários à reprodução histórica;
+- workflows V1 sem recorrência automática, disponíveis apenas para recuperação/forense explícita;
+- `widget-ui/dist/` e testes correspondentes enquanto úteis à reprodução do estado anterior;
+- `verify_extraction.sh` como ferramenta manual de legado;
+- diagnósticos e experimentos V2 que documentam por que decisões metodológicas foram aceitas ou rejeitadas.
 
-## 6. Fora de escopo
+Uma eventual **purga do legado** é outra decisão de manutenção e não é requisito para declarar o remake encerrado.
+
+## 7. Branches
+
+`main` é a única autoridade canônica de desenvolvimento e produção após o cutover.
+
+Branches temporários de correção ou housekeeping devem ser removidos depois do merge dos seus PRs. A exclusão de refs é uma ação de repositório separada do conteúdo versionado e não altera o estado funcional da aplicação.
+
+## 8. Correção final da auditoria TOOL-01
+
+Em 09/09/2026, o PR #26 incorporou as últimas correções localizadas identificadas pela auditoria pós-remake:
+
+- N01 — semântica visual de Conduta no comparador;
+- N02 — recuperação coerente após troca de geração;
+- N05 — apresentação de razões junto à fronteira `1,00`.
+
+Essas correções não alteraram metodologia, fontes, elegibilidade, score, ranking, geração, sensores ou publicação. O CI pós-merge ficou verde.
+
+## 9. Fora de escopo
 
 Este housekeeping não autoriza:
 
 - alteração de score, ranking ou metodologia;
 - mudança de Conduta;
-- mudança do frontend R5.3;
+- mudança estrutural do frontend R5.3;
 - mudança de publicação HostGator;
 - reativação de cron HostGator;
-- reativação de writers V1;
+- reativação recorrente de writers V1;
 - integração BDR/SusepCon;
 - ativação de GSC;
 - relaxamento de TLS, `known_hosts`, deadlines ou fallback validado.
@@ -128,10 +164,12 @@ Este housekeeping não autoriza:
 Conclusão:
 
 ```text
-POST_CUTOVER_REPOSITORY_HOUSEKEEPING = DOCUMENTED
+POST_CUTOVER_REPOSITORY_HOUSEKEEPING = CLOSED
 MIGRATION_CACHE_BRIDGE = RETIRED
-CURRENT_OPERATIONAL_AUTHORITY = PHASE_C_CLOSEOUT + PHASE_D_CLOSEOUT
+MIGRATION_BRANCH_TRIGGERS = RETIRED
+CURRENT_OPERATIONAL_AUTHORITY = README + PHASE_C_CLOSEOUT + PHASE_D_CLOSEOUT
+LEGACY_PURGE_REQUIRED_FOR_REMAKE_CLOSE = false
 METHODOLOGY_CHANGED = false
-FRONTEND_CHANGED = false
+FRONTEND_ARCHITECTURE_CHANGED = false
 PUBLICATION_CHANGED = false
 ```
