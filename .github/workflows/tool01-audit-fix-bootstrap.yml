@@ -24,18 +24,67 @@ jobs:
         run: |
           set -euo pipefail
           python ops/maintenance/apply_tool01_audit_fixes.py
-          sed -i '1{/^\\$/d;}' ranking-seguradoras/tests/r6-tool01-audit-regressions.mjs
+          git checkout -- .github/workflows/ci.yml
+          rm -f ranking-seguradoras/tests/r6-tool01-audit-regressions.mjs
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('ranking-seguradoras/tests/r5-1-navigation-history.mjs')
+          source = path.read_text(encoding='utf-8')
+          old = '    state, updateURL, originForElement\n'
+          new = '    state, updateURL, originForElement, formatThresholdRatio, compareVisual, generationCoherenceError, isGenerationCoherenceError, recoveryButton\n'
+          if source.count(old) != 1:
+              raise SystemExit('R5.1 test API anchor not found exactly once')
+          source = source.replace(old, new, 1)
+          anchor = "console.log('R5.1 navigation history regression checks: PASS');"
+          assertions = r'''
+          // TOOL-01 audit N01: below-expected conduct remains a neutral but available conclusion.
+          assert.deepEqual(t.compareVisual({ state: 'below_expected_with_sufficient_evidence', tone: 'neutral' }), {
+            symbol: '↓', tone: 'neutral', label: 'Reclamações abaixo do esperado; conclusão disponível',
+          });
+          assert.deepEqual(t.compareVisual({ state: 'not_distinguishable_from_expected', tone: 'neutral' }), {
+            symbol: '≈', tone: 'neutral', label: 'Sem diferença clara',
+          });
+          assert.deepEqual(t.compareVisual({ state: 'pressure_unavailable_not_comparable', tone: 'missing' }), {
+            symbol: '—', tone: 'missing', label: 'Sem conclusão segura',
+          });
+
+          // TOOL-01 audit N05: display rounding must not erase which side of the 1.00 boundary a ratio is on.
+          assert.equal(t.formatThresholdRatio(0.9951396368149357, 1, 2), '< 1,00');
+          assert.equal(t.formatThresholdRatio(1.0049, 1, 2), '> 1,00');
+          assert.equal(t.formatThresholdRatio(1, 1, 2), '1,00');
+          assert.equal(t.formatThresholdRatio(0.94, 1, 2), '0,94');
+
+          // TOOL-01 audit N02: generation incoherence gets a full-reload action; transient errors retain same-generation retry.
+          const generationError = t.generationCoherenceError('A verificação de integridade da geração pública falhou.');
+          assert.equal(t.isGenerationCoherenceError(generationError), true);
+          assert.equal(t.isGenerationCoherenceError(new Error('Falha de rede')), false);
+          const generationAction = t.recoveryButton(generationError, 'data-retry-profile="entity:fip:005177"', 'data-reload-profile="entity:fip:005177"');
+          assert.ok(generationAction.includes('data-reload-profile="entity:fip:005177"'));
+          assert.ok(generationAction.includes('Recarregar dados'));
+          assert.ok(!generationAction.includes('data-retry-profile'));
+          const transientAction = t.recoveryButton(new Error('Falha de rede'), 'data-retry-profile="entity:fip:005177"', 'data-reload-profile="entity:fip:005177"');
+          assert.ok(transientAction.includes('data-retry-profile="entity:fip:005177"'));
+          assert.ok(transientAction.includes('Tentar novamente'));
+          assert.ok(!transientAction.includes('data-reload-profile'));
+          assert.match(source, /window\.location\.replace\(profileShareURL\(reloadProfile\.dataset\.reloadProfile\)\)/);
+          assert.match(source, /window\.location\.replace\(comparisonShareURL\(\)\)/);
+          assert.match(source, /persistCurrentViewState\(\{ force: true \}\);\s*window\.location\.reload\(\)/);
+
+          '''
+          if source.count(anchor) != 1:
+              raise SystemExit('R5.1 final assertion anchor not found exactly once')
+          source = source.replace(anchor, assertions + anchor, 1)
+          path.write_text(source, encoding='utf-8')
+          PY
           node --check ranking-seguradoras/assets/ranking-v2.js
-          node ranking-seguradoras/tests/r6-tool01-audit-regressions.mjs
+          node ranking-seguradoras/tests/r5-1-navigation-history.mjs
 
       - name: Commit repaired frontend
         run: |
           set -euo pipefail
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add ranking-seguradoras/assets/ranking-v2.js \
-                  ranking-seguradoras/tests/r6-tool01-audit-regressions.mjs \
-                  .github/workflows/ci.yml
+          git add ranking-seguradoras/assets/ranking-v2.js ranking-seguradoras/tests/r5-1-navigation-history.mjs
           git diff --cached --check
           git commit -m 'fix(frontend): address TOOL-01 audit regressions'
           git push origin HEAD:fix/tool01-audit-n01-n02-n05
