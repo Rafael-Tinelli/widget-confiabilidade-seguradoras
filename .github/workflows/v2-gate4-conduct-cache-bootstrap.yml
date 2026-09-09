@@ -1,15 +1,10 @@
 name: V2 Gate 4 Conduct Cache Bootstrap
 
+# Supporting bootstrap kept as an explicit maintenance action. The canonical
+# production Full Generation runs from main and restores/validates this cache
+# without relying on the retired migration branch.
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - refactor/v2-data-foundation
-    paths:
-      - ".github/workflows/v2-gate4-conduct-cache-bootstrap.yml"
-      - "api/v2/bootstrap_conduct_consumer_cache.py"
-      - "api/v2/build_conduct_source_snapshot.py"
-      - "tests/test_v2_conduct_consumer_bootstrap.py"
 
 permissions:
   contents: read
