@@ -288,3 +288,59 @@ def test_incompatible_receita_cache_triggers_fresh_refresh(tmp_path: Path, monke
         payload["meta"]["gate4_cache_contract_version"]
         == RECEITA_LIFECYCLE_CACHE_CONTRACT_VERSION
     )
+
+
+def test_receita_unavailable_reports_current_and_fallback_failures(
+    tmp_path: Path,
+    monkeypatch,
+):
+    classification = _classification()
+    current_target_hash = regulatory_target_universe_hash(classification["entities"])
+    cache_dir = tmp_path / "cache"
+    cache_dir.mkdir()
+    cache = CachedSource(
+        source_id="receita_cnpj_lifecycle",
+        source_url=RECEITA_CNPJ_OPEN_DATA_URL,
+        content_path=cache_dir / "receita_cnpj_lifecycle.json",
+        metadata_path=cache_dir / "receita_cnpj_lifecycle.meta.json",
+    )
+    stale = tmp_path / "stale.json"
+    stale.write_text(
+        json.dumps(
+            _receita_payload(
+                "e" * 64,
+                version=RECEITA_LIFECYCLE_CACHE_CONTRACT_VERSION,
+            ),
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    cache.store(stale, fetched_at="2026-08-31T00:00:00Z")
+
+    monkeypatch.setattr(
+        "api.v2.build_source_snapshot.discover_latest_release",
+        lambda: (_ for _ in ()).throw(ConnectionError("official manifest unavailable")),
+    )
+    context = BuildContext(
+        build_id="v2-test",
+        source_head_sha="a" * 40,
+        generated_at="2026-08-31T00:00:00Z",
+        workflow_run_id="test",
+        workflow_run_attempt=1,
+    )
+    destination = tmp_path / "receita.json"
+    result = _receita_snapshot(
+        classification=classification,
+        destination=destination,
+        cache_dir=cache_dir,
+        existing_snapshot=tmp_path / "missing-existing.json",
+        context=context,
+    )
+
+    assert result.used_cache is False
+    assert result.current_error is not None
+    assert "ConnectionError: official manifest unavailable" in result.current_error
+    assert "fallback cache validation failed: SourceSnapshotError" in result.current_error
+    assert "target-universe hash differs from current classification" in result.current_error
+    assert result.observation.state_reason == result.current_error
+    assert current_target_hash != "e" * 64
