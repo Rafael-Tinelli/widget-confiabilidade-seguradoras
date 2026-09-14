@@ -277,13 +277,14 @@ def test_receita_legacy_cache_projects_extra_removed_cnpjs(
     assert {record["cnpj"] for record in payload["records"]} == set(current_cnpjs)
 
 
-def test_receita_cache_blocks_new_current_cnpj_not_resolved_in_cache(
+def test_receita_cache_projects_small_unresolved_current_cnpj_delta(
     tmp_path: Path,
     monkeypatch,
 ):
     _disable_golden_check(monkeypatch)
     classification = _classification()
-    cached_cnpjs = _classification_cnpjs(classification)[:-1]
+    current_cnpjs = _classification_cnpjs(classification)
+    cached_cnpjs = current_cnpjs[:-1]
     source = tmp_path / "missing-current.json"
     source.write_text(
         json.dumps(
@@ -298,13 +299,21 @@ def test_receita_cache_blocks_new_current_cnpj_not_resolved_in_cache(
     cache = _receita_cache(tmp_path)
     cache.store(source, fetched_at="2026-08-31T00:00:00Z")
 
-    with pytest.raises(SourceSnapshotError, match="does not cover the current CNPJ population"):
-        _materialize_compatible_receita_cache(
-            cache=cache,
-            destination=tmp_path / "materialized.json",
-            entities=classification["entities"],
-            target_hash=regulatory_target_universe_hash(classification["entities"]),
-        )
+    destination = tmp_path / "materialized.json"
+    _, migrated = _materialize_compatible_receita_cache(
+        cache=cache,
+        destination=destination,
+        entities=classification["entities"],
+        target_hash=regulatory_target_universe_hash(classification["entities"]),
+    )
+
+    payload = json.loads(destination.read_text(encoding="utf-8"))
+    assert migrated is True
+    assert payload["status"] == "partial"
+    assert payload["meta"]["target_count"] == len(current_cnpjs)
+    assert payload["meta"]["resolved_count"] == len(cached_cnpjs)
+    assert payload["meta"]["unresolved_count"] == 1
+    assert payload["unresolved_cnpjs"] == [current_cnpjs[-1]]
 
 
 def test_receita_cache_rejects_unknown_contract_version(tmp_path: Path, monkeypatch):
@@ -455,12 +464,13 @@ def test_receita_unavailable_migrates_legacy_cache_when_cnpjs_are_covered(
     assert "compatible cache migrated to v2" in (result.observation.state_reason or "")
 
 
-def test_receita_unavailable_reports_missing_current_cnpj(
+def test_receita_unavailable_preserves_small_missing_current_cnpj_as_partial(
     tmp_path: Path,
     monkeypatch,
 ):
     _disable_golden_check(monkeypatch)
     classification = _classification()
+    current_cnpjs = _classification_cnpjs(classification)
     cache_dir = tmp_path / "cache"
     cache_dir.mkdir()
     cache = CachedSource(
@@ -475,7 +485,7 @@ def test_receita_unavailable_reports_missing_current_cnpj(
             _receita_payload(
                 "e" * 64,
                 version="v2-receita-lifecycle-1",
-                cnpjs=_classification_cnpjs(classification)[:-1],
+                cnpjs=current_cnpjs[:-1],
             ),
             ensure_ascii=False,
         ),
@@ -488,18 +498,25 @@ def test_receita_unavailable_reports_missing_current_cnpj(
         lambda: (_ for _ in ()).throw(ConnectionError("official manifest unavailable")),
     )
     destination = tmp_path / "receita.json"
+    context = _context()
     result = _receita_snapshot(
         classification=classification,
         destination=destination,
         cache_dir=cache_dir,
         existing_snapshot=tmp_path / "missing-existing.json",
-        context=_context(),
+        context=context,
     )
 
-    assert result.used_cache is False
+    assert result.used_cache is True
     assert result.current_error is not None
     assert "ConnectionError: official manifest unavailable" in result.current_error
-    assert "fallback cache validation failed: SourceSnapshotError" in result.current_error
-    assert "does not cover the current CNPJ population" in result.current_error
-    assert "added=1" in result.current_error
-    assert result.observation.state_reason == result.current_error
+    lineage = result.observation.to_lineage(context)
+    assert lineage.state == "stale"
+    assert lineage.freshness_method == "validated_cache_fallback"
+    payload = json.loads(destination.read_text(encoding="utf-8"))
+    assert payload["status"] == "partial"
+    assert payload["meta"]["unresolved_count"] == 1
+    assert payload["unresolved_cnpjs"] == [current_cnpjs[-1]]
+    assert "legal crosscheck unavailable for 1 current CNPJs" in (
+        result.observation.state_reason or ""
+    )
