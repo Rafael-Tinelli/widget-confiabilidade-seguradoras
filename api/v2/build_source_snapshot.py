@@ -477,7 +477,11 @@ def _receita_snapshot(
         OSError,
         ValueError,
         json.JSONDecodeError,
-    ):
+    ) as exc:
+        fallback_error = f"fallback cache validation failed: {type(exc).__name__}: {exc}"
+        current_error = (
+            f"{current_error}; {fallback_error}" if current_error else fallback_error
+        )
         if destination.exists():
             destination.unlink()
         observation = SourceObservation(
