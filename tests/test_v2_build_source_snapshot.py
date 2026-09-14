@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import zipfile
+from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -48,14 +49,20 @@ def _write_base(path: Path, *, companies: int = 120) -> None:
         archive.writestr("SES_Balanco.csv", "Coenti;damesano;conta;valor\n")
 
 
-def _receita_payload(target_hash: str, *, version: str | None = None) -> dict:
+def _receita_payload(
+    target_hash: str,
+    *,
+    version: str | None = None,
+    cnpjs: list[str] | None = None,
+) -> dict:
+    resolved_cnpjs = cnpjs or [f"{index:014d}" for index in range(300)]
     records = [
-        {"cnpj": f"{index:014d}", "cadastral_status": "active"}
-        for index in range(300)
+        {"cnpj": cnpj, "cadastral_status": "active"}
+        for cnpj in resolved_cnpjs
     ]
     meta = {
-        "target_count": 300,
-        "resolved_count": 300,
+        "target_count": len(records),
+        "resolved_count": len(records),
         "unresolved_count": 0,
         "files_scanned": ["Estabelecimentos0.zip"],
         "target_universe_hash": target_hash,
@@ -106,6 +113,20 @@ def _classification(count: int = 300) -> dict:
     }
 
 
+def _classification_cnpjs(classification: dict) -> list[str]:
+    return [str(entity["cnpj"]) for entity in classification["entities"]]
+
+
+def _context() -> BuildContext:
+    return BuildContext(
+        build_id="v2-test",
+        source_head_sha="a" * 40,
+        generated_at="2026-08-31T00:00:00Z",
+        workflow_run_id="test",
+        workflow_run_attempt=1,
+    )
+
+
 def test_gate4_ses_master_is_derived_only_from_materialized_files(tmp_path: Path):
     lista = tmp_path / "LISTAEMPRESAS.csv"
     base = tmp_path / "BaseCompleta.zip"
@@ -143,15 +164,45 @@ def test_listaempresas_validation_requires_cnpj_mapping(tmp_path: Path):
         validate_listaempresas(lista)
 
 
-def test_receita_legacy_cache_is_promoted_without_changing_acquisition_time(
+def test_target_hash_ignores_mutable_regulatory_attributes():
+    classification = _classification()
+    changed = deepcopy(classification)
+    changed["entities"][0]["legal_name"] = "NOVO NOME S.A."
+    changed["entities"][0]["regulatory_status"] = "special_regime"
+    changed["entities"][0]["regulatory_regime"] = "special"
+    changed["entities"][0]["entity_type"] = "open_pension_entity"
+
+    assert regulatory_target_universe_hash(classification["entities"]) == (
+        regulatory_target_universe_hash(changed["entities"])
+    )
+
+
+def test_target_hash_changes_when_cnpj_population_changes():
+    classification = _classification()
+    reduced = {"entities": classification["entities"][:-1]}
+
+    assert regulatory_target_universe_hash(classification["entities"]) != (
+        regulatory_target_universe_hash(reduced["entities"])
+    )
+
+
+def test_receita_legacy_v1_cache_is_promoted_by_current_cnpj_coverage(
     tmp_path: Path,
     monkeypatch,
 ):
     _disable_golden_check(monkeypatch)
-    target_hash = "a" * 64
+    classification = _classification()
+    current_hash = regulatory_target_universe_hash(classification["entities"])
     legacy = tmp_path / "legacy.json"
     legacy.write_text(
-        json.dumps(_receita_payload(target_hash), ensure_ascii=False),
+        json.dumps(
+            _receita_payload(
+                "a" * 64,
+                version="v2-receita-lifecycle-1",
+                cnpjs=_classification_cnpjs(classification),
+            ),
+            ensure_ascii=False,
+        ),
         encoding="utf-8",
     )
     cache = _receita_cache(tmp_path)
@@ -159,31 +210,109 @@ def test_receita_legacy_cache_is_promoted_without_changing_acquisition_time(
     cache.store(legacy, fetched_at=original_fetched_at)
 
     destination = tmp_path / "materialized.json"
-    fetched_at, promoted = _materialize_compatible_receita_cache(
+    fetched_at, migrated = _materialize_compatible_receita_cache(
         cache=cache,
         destination=destination,
-        target_hash=target_hash,
+        entities=classification["entities"],
+        target_hash=current_hash,
     )
 
     payload = json.loads(destination.read_text(encoding="utf-8"))
-    assert promoted is True
+    assert migrated is True
     assert fetched_at == original_fetched_at
     assert (
         payload["meta"]["gate4_cache_contract_version"]
         == RECEITA_LIFECYCLE_CACHE_CONTRACT_VERSION
+    )
+    assert payload["meta"]["target_universe_hash"] == current_hash
+    assert payload["meta"]["target_universe_hash_method"] == "sorted_normalized_cnpjs_v1"
+    assert payload["meta"]["gate4_cache_migration"]["from_contract"] == (
+        "v2-receita-lifecycle-1"
     )
     assert json.loads(cache.metadata_path.read_text(encoding="utf-8"))["fetched_at"] == (
         original_fetched_at
     )
 
 
+def test_receita_legacy_cache_projects_extra_removed_cnpjs(
+    tmp_path: Path,
+    monkeypatch,
+):
+    _disable_golden_check(monkeypatch)
+    classification = _classification()
+    current_cnpjs = _classification_cnpjs(classification)
+    cached_cnpjs = [*current_cnpjs, "99999999999999"]
+    source = tmp_path / "superset.json"
+    source.write_text(
+        json.dumps(
+            _receita_payload(
+                "b" * 64,
+                version="v2-receita-lifecycle-1",
+                cnpjs=cached_cnpjs,
+            )
+        ),
+        encoding="utf-8",
+    )
+    cache = _receita_cache(tmp_path)
+    cache.store(source, fetched_at="2026-08-31T00:00:00Z")
+
+    destination = tmp_path / "materialized.json"
+    _, migrated = _materialize_compatible_receita_cache(
+        cache=cache,
+        destination=destination,
+        entities=classification["entities"],
+        target_hash=regulatory_target_universe_hash(classification["entities"]),
+    )
+
+    payload = json.loads(destination.read_text(encoding="utf-8"))
+    assert migrated is True
+    assert payload["meta"]["target_count"] == len(current_cnpjs)
+    assert payload["meta"]["resolved_count"] == len(current_cnpjs)
+    assert {record["cnpj"] for record in payload["records"]} == set(current_cnpjs)
+
+
+def test_receita_cache_blocks_new_current_cnpj_not_resolved_in_cache(
+    tmp_path: Path,
+    monkeypatch,
+):
+    _disable_golden_check(monkeypatch)
+    classification = _classification()
+    cached_cnpjs = _classification_cnpjs(classification)[:-1]
+    source = tmp_path / "missing-current.json"
+    source.write_text(
+        json.dumps(
+            _receita_payload(
+                "c" * 64,
+                version="v2-receita-lifecycle-1",
+                cnpjs=cached_cnpjs,
+            )
+        ),
+        encoding="utf-8",
+    )
+    cache = _receita_cache(tmp_path)
+    cache.store(source, fetched_at="2026-08-31T00:00:00Z")
+
+    with pytest.raises(SourceSnapshotError, match="does not cover the current CNPJ population"):
+        _materialize_compatible_receita_cache(
+            cache=cache,
+            destination=tmp_path / "materialized.json",
+            entities=classification["entities"],
+            target_hash=regulatory_target_universe_hash(classification["entities"]),
+        )
+
+
 def test_receita_cache_rejects_unknown_contract_version(tmp_path: Path, monkeypatch):
     _disable_golden_check(monkeypatch)
-    target_hash = "b" * 64
+    classification = _classification()
+    target_hash = regulatory_target_universe_hash(classification["entities"])
     source = tmp_path / "future.json"
     source.write_text(
         json.dumps(
-            _receita_payload(target_hash, version="v2-receita-lifecycle-999"),
+            _receita_payload(
+                target_hash,
+                version="v2-receita-lifecycle-999",
+                cnpjs=_classification_cnpjs(classification),
+            ),
             ensure_ascii=False,
         ),
         encoding="utf-8",
@@ -195,31 +324,8 @@ def test_receita_cache_rejects_unknown_contract_version(tmp_path: Path, monkeypa
         _materialize_compatible_receita_cache(
             cache=cache,
             destination=tmp_path / "materialized.json",
+            entities=classification["entities"],
             target_hash=target_hash,
-        )
-
-
-def test_receita_cache_rejects_different_target_universe(tmp_path: Path, monkeypatch):
-    _disable_golden_check(monkeypatch)
-    source = tmp_path / "wrong-universe.json"
-    source.write_text(
-        json.dumps(
-            _receita_payload(
-                "c" * 64,
-                version=RECEITA_LIFECYCLE_CACHE_CONTRACT_VERSION,
-            ),
-            ensure_ascii=False,
-        ),
-        encoding="utf-8",
-    )
-    cache = _receita_cache(tmp_path)
-    cache.store(source, fetched_at="2026-08-31T00:00:00Z")
-
-    with pytest.raises(SourceSnapshotError, match="target-universe hash"):
-        _materialize_compatible_receita_cache(
-            cache=cache,
-            destination=tmp_path / "materialized.json",
-            target_hash="d" * 64,
         )
 
 
@@ -237,7 +343,11 @@ def test_incompatible_receita_cache_triggers_fresh_refresh(tmp_path: Path, monke
     future = tmp_path / "future.json"
     future.write_text(
         json.dumps(
-            _receita_payload(target_hash, version="v2-receita-lifecycle-999"),
+            _receita_payload(
+                target_hash,
+                version="v2-receita-lifecycle-999",
+                cnpjs=_classification_cnpjs(classification),
+            ),
             ensure_ascii=False,
         ),
         encoding="utf-8",
@@ -255,6 +365,7 @@ def test_incompatible_receita_cache_triggers_fresh_refresh(tmp_path: Path, monke
         payload = _receita_payload(
             target_hash,
             version=RECEITA_LIFECYCLE_CACHE_CONTRACT_VERSION,
+            cnpjs=_classification_cnpjs(classification),
         )
         write_snapshot_atomic(payload, output)
         return payload
@@ -263,24 +374,17 @@ def test_incompatible_receita_cache_triggers_fresh_refresh(tmp_path: Path, monke
         "api.v2.build_source_snapshot.refresh_receita_lifecycle",
         fake_refresh,
     )
-    context = BuildContext(
-        build_id="v2-test",
-        source_head_sha="a" * 40,
-        generated_at="2026-08-31T00:00:00Z",
-        workflow_run_id="test",
-        workflow_run_attempt=1,
-    )
     destination = tmp_path / "receita.json"
     result = _receita_snapshot(
         classification=classification,
         destination=destination,
         cache_dir=cache_dir,
         existing_snapshot=tmp_path / "missing-existing.json",
-        context=context,
+        context=_context(),
     )
 
     assert result.used_cache is False
-    lineage = result.observation.to_lineage(context)
+    lineage = result.observation.to_lineage(_context())
     assert lineage.state == "fresh"
     assert lineage.freshness_method == "current_fetch"
     payload = json.loads(destination.read_text(encoding="utf-8"))
@@ -290,12 +394,12 @@ def test_incompatible_receita_cache_triggers_fresh_refresh(tmp_path: Path, monke
     )
 
 
-def test_receita_unavailable_reports_current_and_fallback_failures(
+def test_receita_unavailable_migrates_legacy_cache_when_cnpjs_are_covered(
     tmp_path: Path,
     monkeypatch,
 ):
+    _disable_golden_check(monkeypatch)
     classification = _classification()
-    current_target_hash = regulatory_target_universe_hash(classification["entities"])
     cache_dir = tmp_path / "cache"
     cache_dir.mkdir()
     cache = CachedSource(
@@ -309,7 +413,8 @@ def test_receita_unavailable_reports_current_and_fallback_failures(
         json.dumps(
             _receita_payload(
                 "e" * 64,
-                version=RECEITA_LIFECYCLE_CACHE_CONTRACT_VERSION,
+                version="v2-receita-lifecycle-1",
+                cnpjs=_classification_cnpjs(classification),
             ),
             ensure_ascii=False,
         ),
@@ -321,14 +426,8 @@ def test_receita_unavailable_reports_current_and_fallback_failures(
         "api.v2.build_source_snapshot.discover_latest_release",
         lambda: (_ for _ in ()).throw(ConnectionError("official manifest unavailable")),
     )
-    context = BuildContext(
-        build_id="v2-test",
-        source_head_sha="a" * 40,
-        generated_at="2026-08-31T00:00:00Z",
-        workflow_run_id="test",
-        workflow_run_attempt=1,
-    )
     destination = tmp_path / "receita.json"
+    context = _context()
     result = _receita_snapshot(
         classification=classification,
         destination=destination,
@@ -337,10 +436,64 @@ def test_receita_unavailable_reports_current_and_fallback_failures(
         context=context,
     )
 
+    assert result.used_cache is True
+    assert result.current_error is not None
+    assert "ConnectionError: official manifest unavailable" in result.current_error
+    lineage = result.observation.to_lineage(context)
+    assert lineage.state == "stale"
+    payload = json.loads(destination.read_text(encoding="utf-8"))
+    assert (
+        payload["meta"]["gate4_cache_contract_version"]
+        == RECEITA_LIFECYCLE_CACHE_CONTRACT_VERSION
+    )
+    assert "compatible cache migrated to v2" in (result.observation.state_reason or "")
+
+
+def test_receita_unavailable_reports_missing_current_cnpj(
+    tmp_path: Path,
+    monkeypatch,
+):
+    _disable_golden_check(monkeypatch)
+    classification = _classification()
+    cache_dir = tmp_path / "cache"
+    cache_dir.mkdir()
+    cache = CachedSource(
+        source_id="receita_cnpj_lifecycle",
+        source_url=RECEITA_CNPJ_OPEN_DATA_URL,
+        content_path=cache_dir / "receita_cnpj_lifecycle.json",
+        metadata_path=cache_dir / "receita_cnpj_lifecycle.meta.json",
+    )
+    stale = tmp_path / "stale.json"
+    stale.write_text(
+        json.dumps(
+            _receita_payload(
+                "e" * 64,
+                version="v2-receita-lifecycle-1",
+                cnpjs=_classification_cnpjs(classification)[:-1],
+            ),
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    cache.store(stale, fetched_at="2026-08-31T00:00:00Z")
+
+    monkeypatch.setattr(
+        "api.v2.build_source_snapshot.discover_latest_release",
+        lambda: (_ for _ in ()).throw(ConnectionError("official manifest unavailable")),
+    )
+    destination = tmp_path / "receita.json"
+    result = _receita_snapshot(
+        classification=classification,
+        destination=destination,
+        cache_dir=cache_dir,
+        existing_snapshot=tmp_path / "missing-existing.json",
+        context=_context(),
+    )
+
     assert result.used_cache is False
     assert result.current_error is not None
     assert "ConnectionError: official manifest unavailable" in result.current_error
     assert "fallback cache validation failed: SourceSnapshotError" in result.current_error
-    assert "target-universe hash differs from current classification" in result.current_error
+    assert "does not cover the current CNPJ population" in result.current_error
+    assert "added=1" in result.current_error
     assert result.observation.state_reason == result.current_error
-    assert current_target_hash != "e" * 64
