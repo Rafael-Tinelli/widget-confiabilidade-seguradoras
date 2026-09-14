@@ -37,6 +37,7 @@ from api.v2.build_classification_inventory import (
 )
 from api.v2.generation import BuildContext
 from api.v2.refresh_receita_lifecycle import (
+    DEFAULT_MIN_COVERAGE,
     LEGACY_RECEITA_LIFECYCLE_CACHE_CONTRACT_VERSIONS,
     RECEITA_LIFECYCLE_CACHE_CONTRACT_VERSION,
     ReceitaRefreshValidationError,
@@ -321,6 +322,16 @@ def _payload_record_cnpjs(payload: dict[str, Any]) -> set[str]:
     }
 
 
+def _payload_unresolved_cnpjs(payload: dict[str, Any]) -> list[str]:
+    return sorted(
+        {
+            cnpj
+            for raw in list(payload.get("unresolved_cnpjs") or [])
+            if (cnpj := normalize_cnpj_v2(raw)) is not None
+        }
+    )
+
+
 def _cnpj_delta_message(current: set[str], cached: set[str]) -> str:
     added = sorted(current - cached)
     removed = sorted(cached - current)
@@ -328,6 +339,10 @@ def _cnpj_delta_message(current: set[str], cached: set[str]) -> str:
         f"added={len(added)} removed={len(removed)} "
         f"added_sample={added[:5]} removed_sample={removed[:5]}"
     )
+
+
+def _current_population_coverage(current: set[str], cached: set[str]) -> float:
+    return len(current & cached) / len(current) if current else 0.0
 
 
 def _validate_receita_cache_payload(
@@ -339,11 +354,12 @@ def _validate_receita_cache_payload(
     """Validate cache compatibility and report whether it needs v2 projection.
 
     Contract v2 hashes only normalized CNPJs because those are the exact keys consumed by
-    Receita filtering and Lifecycle attachment. Legacy caches used a broader hash that also
-    included mutable regulatory attributes. A legacy or hash-mismatched cache is reusable
-    only when its resolved records cover every CNPJ required by the current classification.
-    Extra historical CNPJs are safe to project away; a current CNPJ missing from the cache
-    always fails closed and requires an official Receita refresh.
+    Receita filtering and lifecycle attachment. Receita is a legal cross-check, while SUSEP
+    remains authoritative for licensing. A cache may therefore be reused when it still
+    covers at least the same 95% threshold accepted by the official bulk collector; newly
+    licensed CNPJs absent from the cached Receita slice become explicit unresolved cross-checks.
+    A material coverage loss, an unsupported cache contract, or invalid cached evidence still
+    fails closed.
     """
     version = _receita_payload_contract_version(payload)
     if version is None:
@@ -359,17 +375,26 @@ def _validate_receita_cache_payload(
 
     meta = payload.get("meta") or {}
     cached_target_hash = str(meta.get("target_universe_hash") or "")
-    if version == RECEITA_LIFECYCLE_CACHE_CONTRACT_VERSION and cached_target_hash == target_hash:
-        return False
-
     current_cnpjs = _current_target_cnpjs(entities)
     cached_resolved_cnpjs = _payload_record_cnpjs(payload)
     missing_current = current_cnpjs - cached_resolved_cnpjs
-    if missing_current:
+    coverage = _current_population_coverage(current_cnpjs, cached_resolved_cnpjs)
+    if coverage < DEFAULT_MIN_COVERAGE:
         raise SourceSnapshotError(
-            "Receita lifecycle cache does not cover the current CNPJ population: "
+            f"Receita lifecycle cache current-population coverage {coverage:.2%} "
+            f"is below {DEFAULT_MIN_COVERAGE:.2%}: "
             + _cnpj_delta_message(current_cnpjs, cached_resolved_cnpjs)
         )
+
+    if version == RECEITA_LIFECYCLE_CACHE_CONTRACT_VERSION and cached_target_hash == target_hash:
+        expected_resolved = len(current_cnpjs & cached_resolved_cnpjs)
+        if (
+            int(meta.get("target_count") or 0) == len(current_cnpjs)
+            and int(meta.get("resolved_count") or 0) == expected_resolved
+            and int(meta.get("unresolved_count") or 0) == len(missing_current)
+            and set(_payload_unresolved_cnpjs(payload)) == missing_current
+        ):
+            return False
     return True
 
 
@@ -390,25 +415,32 @@ def _project_receita_cache_to_current_population(
         for record in records
         if (cnpj := normalize_cnpj_v2(record.get("cnpj"))) is not None
     }
-    if projected_cnpjs != current_cnpjs:
+    missing_current = current_cnpjs - projected_cnpjs
+    coverage = _current_population_coverage(current_cnpjs, projected_cnpjs)
+    if coverage < DEFAULT_MIN_COVERAGE:
         raise SourceSnapshotError(
-            "Receita lifecycle cache projection lost current CNPJs: "
+            f"Receita lifecycle cache projection coverage {coverage:.2%} "
+            f"is below {DEFAULT_MIN_COVERAGE:.2%}: "
             + _cnpj_delta_message(current_cnpjs, projected_cnpjs)
         )
 
     version = _receita_payload_contract_version(payload) or "unversioned"
     projected = dict(payload)
+    projected["status"] = "partial" if missing_current else "ok"
     projected["records"] = records
+    projected["unresolved_cnpjs"] = sorted(missing_current)
     meta = dict(payload.get("meta") or {})
     meta["target_count"] = len(current_cnpjs)
     meta["resolved_count"] = len(records)
-    meta["unresolved_count"] = 0
+    meta["unresolved_count"] = len(missing_current)
     meta["target_universe_hash"] = target_hash
     meta["target_universe_hash_method"] = "sorted_normalized_cnpjs_v1"
     meta["gate4_cache_contract_version"] = RECEITA_LIFECYCLE_CACHE_CONTRACT_VERSION
     meta["gate4_cache_migration"] = {
         "from_contract": version,
-        "method": "resolved_current_cnpj_coverage_projection",
+        "method": "current_cnpj_projection_with_explicit_unresolved_crosscheck",
+        "current_population_coverage": coverage,
+        "unresolved_current_cnpjs": sorted(missing_current),
     }
     projected["meta"] = meta
     validate_refresh_payload(projected)
@@ -422,7 +454,7 @@ def _materialize_compatible_receita_cache(
     entities: list[dict[str, Any]],
     target_hash: str,
 ) -> tuple[str, bool]:
-    """Materialize a cache only when it safely covers the current CNPJ population."""
+    """Materialize a safe Receita cache, preserving explicit unresolved cross-checks."""
     fetched_at = cache.materialize(destination)
     payload = json.loads(destination.read_text(encoding="utf-8"))
     rewrite_required = _validate_receita_cache_payload(
@@ -492,19 +524,31 @@ def _receita_snapshot(
                     )
                     destination.unlink(missing_ok=True)
                 else:
-                    observation = SourceObservation(
-                        source_id=source_id,
-                        source_url=source_url,
-                        snapshot_path=destination,
-                        fetched_at=fetched_at,
-                        current_validation_succeeded=True,
-                        state_reason=(
-                            "official release period unchanged and Receita CNPJ target "
-                            "population compatible"
-                            + ("; compatible cache migrated to v2" if migrated else "")
-                        ),
+                    materialized_payload = json.loads(
+                        destination.read_text(encoding="utf-8")
                     )
-                    return AcquisitionResult(observation=observation, used_cache=True)
+                    unresolved_current = _payload_unresolved_cnpjs(materialized_payload)
+                    if unresolved_current:
+                        cache_validation_error = (
+                            "current cache validation incomplete: "
+                            f"{len(unresolved_current)} current CNPJs lack Receita lifecycle "
+                            f"evidence; sample={unresolved_current[:5]}; official refresh required"
+                        )
+                        destination.unlink(missing_ok=True)
+                    else:
+                        observation = SourceObservation(
+                            source_id=source_id,
+                            source_url=source_url,
+                            snapshot_path=destination,
+                            fetched_at=fetched_at,
+                            current_validation_succeeded=True,
+                            state_reason=(
+                                "official release period unchanged and Receita CNPJ target "
+                                "population compatible"
+                                + ("; compatible cache migrated to v2" if migrated else "")
+                            ),
+                        )
+                        return AcquisitionResult(observation=observation, used_cache=True)
 
         temp = destination.with_suffix(destination.suffix + ".incoming")
         if temp.exists():
@@ -543,6 +587,8 @@ def _receita_snapshot(
             entities=entities,
             target_hash=target_hash,
         )
+        fallback_payload = json.loads(destination.read_text(encoding="utf-8"))
+        unresolved_current = _payload_unresolved_cnpjs(fallback_payload)
         load_filtered_lifecycle_snapshot(destination)
     except (
         SourceCacheError,
@@ -571,6 +617,12 @@ def _receita_snapshot(
             current_error=current_error,
         )
 
+    unresolved_note = (
+        "; legal crosscheck unavailable for "
+        f"{len(unresolved_current)} current CNPJs sample={unresolved_current[:5]}"
+        if unresolved_current
+        else ""
+    )
     observation = SourceObservation(
         source_id=source_id,
         source_url=source_url,
@@ -579,6 +631,7 @@ def _receita_snapshot(
         state_reason=(
             f"{current_error}; using CNPJ-population-validated Receita lifecycle cache"
             + ("; compatible cache migrated to v2" if migrated else "")
+            + unresolved_note
         ),
     )
     return AcquisitionResult(
