@@ -14,7 +14,11 @@ from api.v2.refresh_receita_lifecycle import (
 
 def _payload(target=300, resolved=300, *, versioned=True):
     records = [
-        {"cnpj": f"{i:014d}", "cadastral_status": "active"}
+        {
+            "cnpj": f"{i + 10000000000000:014d}",
+            "legal_name": f"SEGURADORA TESTE {i} S.A.",
+            "cadastral_status": "active",
+        }
         for i in range(resolved)
     ]
     meta = {
@@ -65,7 +69,10 @@ def test_refresh_validation_rejects_missing_target_hash(monkeypatch):
 
 def test_refresh_validation_rejects_material_drop(monkeypatch):
     _disable_golden_check(monkeypatch)
-    previous = [{"cnpj": str(i)} for i in range(310)]
+    previous = [
+        {"cnpj": f"{i + 10000000000000:014d}"}
+        for i in range(310)
+    ]
     with pytest.raises(ReceitaRefreshValidationError, match="dropped"):
         validate_refresh_payload(
             _payload(target=300, resolved=290),
