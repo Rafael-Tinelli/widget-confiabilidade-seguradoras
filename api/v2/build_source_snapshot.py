@@ -30,12 +30,14 @@ from api.sources.susep_special_regimes import (
     SPECIAL_REGIME_URLS,
     fetch_special_regime_records,
 )
+from api.utils.identifiers import normalize_cnpj_v2
 from api.v2.build_classification_inventory import (
     build_classification_inventory,
     write_classification_inventory,
 )
 from api.v2.generation import BuildContext
 from api.v2.refresh_receita_lifecycle import (
+    LEGACY_RECEITA_LIFECYCLE_CACHE_CONTRACT_VERSIONS,
     RECEITA_LIFECYCLE_CACHE_CONTRACT_VERSION,
     ReceitaRefreshValidationError,
     refresh_receita_lifecycle,
@@ -303,67 +305,140 @@ def _receita_payload_contract_version(payload: dict[str, Any]) -> str | None:
     return value or None
 
 
+def _current_target_cnpjs(entities: list[dict[str, Any]]) -> set[str]:
+    return {
+        cnpj
+        for entity in entities
+        if (cnpj := normalize_cnpj_v2(entity.get("cnpj"))) is not None
+    }
+
+
+def _payload_record_cnpjs(payload: dict[str, Any]) -> set[str]:
+    return {
+        cnpj
+        for record in list(payload.get("records") or [])
+        if (cnpj := normalize_cnpj_v2(record.get("cnpj"))) is not None
+    }
+
+
+def _cnpj_delta_message(current: set[str], cached: set[str]) -> str:
+    added = sorted(current - cached)
+    removed = sorted(cached - current)
+    return (
+        f"added={len(added)} removed={len(removed)} "
+        f"added_sample={added[:5]} removed_sample={removed[:5]}"
+    )
+
+
 def _validate_receita_cache_payload(
     payload: dict[str, Any],
     *,
+    entities: list[dict[str, Any]],
     target_hash: str,
-    allow_legacy_unversioned: bool,
-) -> None:
-    cached_target_hash = str(
-        (payload.get("meta") or {}).get("target_universe_hash") or ""
-    )
-    if cached_target_hash != target_hash:
+) -> bool:
+    """Validate cache compatibility and report whether it needs v2 projection.
+
+    Contract v2 hashes only normalized CNPJs because those are the exact keys consumed by
+    Receita filtering and Lifecycle attachment. Legacy caches used a broader hash that also
+    included mutable regulatory attributes. A legacy or hash-mismatched cache is reusable
+    only when its resolved records cover every CNPJ required by the current classification.
+    Extra historical CNPJs are safe to project away; a current CNPJ missing from the cache
+    always fails closed and requires an official Receita refresh.
+    """
+    version = _receita_payload_contract_version(payload)
+    if version is None:
+        validate_refresh_payload(payload, allow_legacy_unversioned=True)
+    elif version in LEGACY_RECEITA_LIFECYCLE_CACHE_CONTRACT_VERSIONS:
+        validate_refresh_payload(payload, allow_legacy_contract_versions=True)
+    elif version == RECEITA_LIFECYCLE_CACHE_CONTRACT_VERSION:
+        validate_refresh_payload(payload)
+    else:
         raise SourceSnapshotError(
-            "Receita lifecycle cache target-universe hash differs from current classification"
+            f"unsupported Receita lifecycle cache contract version: {version}"
         )
-    validate_refresh_payload(
-        payload,
-        allow_legacy_unversioned=allow_legacy_unversioned,
-    )
+
+    meta = payload.get("meta") or {}
+    cached_target_hash = str(meta.get("target_universe_hash") or "")
+    if version == RECEITA_LIFECYCLE_CACHE_CONTRACT_VERSION and cached_target_hash == target_hash:
+        return False
+
+    current_cnpjs = _current_target_cnpjs(entities)
+    cached_resolved_cnpjs = _payload_record_cnpjs(payload)
+    missing_current = current_cnpjs - cached_resolved_cnpjs
+    if missing_current:
+        raise SourceSnapshotError(
+            "Receita lifecycle cache does not cover the current CNPJ population: "
+            + _cnpj_delta_message(current_cnpjs, cached_resolved_cnpjs)
+        )
+    return True
+
+
+def _project_receita_cache_to_current_population(
+    payload: dict[str, Any],
+    *,
+    entities: list[dict[str, Any]],
+    target_hash: str,
+) -> dict[str, Any]:
+    current_cnpjs = _current_target_cnpjs(entities)
+    records = [
+        dict(record)
+        for record in list(payload.get("records") or [])
+        if normalize_cnpj_v2(record.get("cnpj")) in current_cnpjs
+    ]
+    projected_cnpjs = {
+        cnpj
+        for record in records
+        if (cnpj := normalize_cnpj_v2(record.get("cnpj"))) is not None
+    }
+    if projected_cnpjs != current_cnpjs:
+        raise SourceSnapshotError(
+            "Receita lifecycle cache projection lost current CNPJs: "
+            + _cnpj_delta_message(current_cnpjs, projected_cnpjs)
+        )
+
+    version = _receita_payload_contract_version(payload) or "unversioned"
+    projected = dict(payload)
+    projected["records"] = records
+    meta = dict(payload.get("meta") or {})
+    meta["target_count"] = len(current_cnpjs)
+    meta["resolved_count"] = len(records)
+    meta["unresolved_count"] = 0
+    meta["target_universe_hash"] = target_hash
+    meta["target_universe_hash_method"] = "sorted_normalized_cnpjs_v1"
+    meta["gate4_cache_contract_version"] = RECEITA_LIFECYCLE_CACHE_CONTRACT_VERSION
+    meta["gate4_cache_migration"] = {
+        "from_contract": version,
+        "method": "resolved_current_cnpj_coverage_projection",
+    }
+    projected["meta"] = meta
+    validate_refresh_payload(projected)
+    return projected
 
 
 def _materialize_compatible_receita_cache(
     *,
     cache: CachedSource,
     destination: Path,
+    entities: list[dict[str, Any]],
     target_hash: str,
 ) -> tuple[str, bool]:
-    """Materialize current cache and promote only structurally compatible legacy v0.
-
-    The pre-version Gate 4 cache is accepted only when it passes the complete current
-    Receita lifecycle validation and belongs to the exact current target universe.
-    Promotion adds only the explicit cache-contract version, preserves the original
-    fetched_at timestamp and rewrites the cached SHA-256 accordingly. Unknown non-empty
-    versions fail closed instead of being guessed compatible.
-    """
+    """Materialize a cache only when it safely covers the current CNPJ population."""
     fetched_at = cache.materialize(destination)
     payload = json.loads(destination.read_text(encoding="utf-8"))
-    version = _receita_payload_contract_version(payload)
-    if version is None:
-        _validate_receita_cache_payload(
+    rewrite_required = _validate_receita_cache_payload(
+        payload,
+        entities=entities,
+        target_hash=target_hash,
+    )
+    if rewrite_required:
+        payload = _project_receita_cache_to_current_population(
             payload,
+            entities=entities,
             target_hash=target_hash,
-            allow_legacy_unversioned=True,
         )
-        payload.setdefault("meta", {})[
-            "gate4_cache_contract_version"
-        ] = RECEITA_LIFECYCLE_CACHE_CONTRACT_VERSION
-        validate_refresh_payload(payload)
         write_snapshot_atomic(payload, destination)
         cache.store(destination, fetched_at=fetched_at)
-        return fetched_at, True
-
-    if version != RECEITA_LIFECYCLE_CACHE_CONTRACT_VERSION:
-        raise SourceSnapshotError(
-            f"unsupported Receita lifecycle cache contract version: {version}"
-        )
-
-    _validate_receita_cache_payload(
-        payload,
-        target_hash=target_hash,
-        allow_legacy_unversioned=False,
-    )
-    return fetched_at, False
+    return fetched_at, rewrite_required
 
 
 def _receita_snapshot(
@@ -395,14 +470,12 @@ def _receita_snapshot(
             cached_period = str(
                 (cached_payload.get("source") or {}).get("reference_period") or ""
             )
-            cached_target_hash = str(
-                (cached_payload.get("meta") or {}).get("target_universe_hash") or ""
-            )
-            if cached_period == release.period and cached_target_hash == target_hash:
+            if cached_period == release.period:
                 try:
-                    fetched_at, promoted = _materialize_compatible_receita_cache(
+                    fetched_at, migrated = _materialize_compatible_receita_cache(
                         cache=cache,
                         destination=destination,
+                        entities=entities,
                         target_hash=target_hash,
                     )
                 except (
@@ -426,9 +499,9 @@ def _receita_snapshot(
                         fetched_at=fetched_at,
                         current_validation_succeeded=True,
                         state_reason=(
-                            "official release period, cache contract and regulatory target "
-                            "hash unchanged"
-                            + ("; compatible legacy cache promoted" if promoted else "")
+                            "official release period unchanged and Receita CNPJ target "
+                            "population compatible"
+                            + ("; compatible cache migrated to v2" if migrated else "")
                         ),
                     )
                     return AcquisitionResult(observation=observation, used_cache=True)
@@ -464,9 +537,10 @@ def _receita_snapshot(
         )
 
     try:
-        fetched_at, promoted = _materialize_compatible_receita_cache(
+        fetched_at, migrated = _materialize_compatible_receita_cache(
             cache=cache,
             destination=destination,
+            entities=entities,
             target_hash=target_hash,
         )
         load_filtered_lifecycle_snapshot(destination)
@@ -503,8 +577,8 @@ def _receita_snapshot(
         snapshot_path=destination,
         fetched_at=fetched_at,
         state_reason=(
-            f"{current_error}; using hash-validated Receita lifecycle cache"
-            + ("; compatible legacy cache promoted" if promoted else "")
+            f"{current_error}; using CNPJ-population-validated Receita lifecycle cache"
+            + ("; compatible cache migrated to v2" if migrated else "")
         ),
     )
     return AcquisitionResult(

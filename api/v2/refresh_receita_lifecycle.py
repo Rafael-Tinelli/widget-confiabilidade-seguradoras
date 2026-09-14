@@ -21,10 +21,14 @@ from api.sources.ses import extract_ses_master_and_financials
 from api.sources.susep_licensed import fetch_licensed_entities
 from api.sources.susep_sandbox import fetch_sandbox_participants
 from api.sources.susep_special_regimes import fetch_special_regime_records
+from api.utils.identifiers import normalize_cnpj_v2
 from api.v2.build_classification_inventory import build_classification_inventory
 
 DEFAULT_MIN_COVERAGE = 0.95
-RECEITA_LIFECYCLE_CACHE_CONTRACT_VERSION = "v2-receita-lifecycle-1"
+RECEITA_LIFECYCLE_CACHE_CONTRACT_VERSION = "v2-receita-lifecycle-2"
+LEGACY_RECEITA_LIFECYCLE_CACHE_CONTRACT_VERSIONS = frozenset(
+    {"v2-receita-lifecycle-1"}
+)
 
 
 class ReceitaRefreshValidationError(RuntimeError):
@@ -53,27 +57,20 @@ def _existing_metadata(
     return period, target_hash, contract_version
 
 
+def regulatory_target_cnpjs(entities: list[dict[str, Any]]) -> list[str]:
+    """Return the exact normalized CNPJ population consumed by Receita filtering."""
+    return sorted(
+        {
+            cnpj
+            for entity in entities
+            if (cnpj := normalize_cnpj_v2(entity.get("cnpj"))) is not None
+        }
+    )
+
+
 def regulatory_target_universe_hash(entities: list[dict[str, Any]]) -> str:
-    """Hash the exact CNPJ target population used for Receita lifecycle filtering."""
-    rows: list[str] = []
-    for entity in entities:
-        cnpj = str(entity.get("cnpj") or "").strip()
-        if not cnpj:
-            continue
-        rows.append(
-            "|".join(
-                [
-                    str(entity.get("entity_id") or ""),
-                    cnpj,
-                    str(entity.get("legal_name") or "").strip(),
-                    str(entity.get("entity_type") or "unknown"),
-                    str(entity.get("regulatory_subtype") or ""),
-                    str(entity.get("regulatory_regime") or "unknown"),
-                    str(entity.get("regulatory_status") or "unknown"),
-                ]
-            )
-        )
-    canonical = "\n".join(sorted(set(rows))).encode("utf-8")
+    """Hash only the exact CNPJ target population used by Receita lifecycle filtering."""
+    canonical = "\n".join(regulatory_target_cnpjs(entities)).encode("utf-8")
     return hashlib.sha256(canonical).hexdigest()
 
 
@@ -83,6 +80,7 @@ def validate_refresh_payload(
     min_coverage: float = DEFAULT_MIN_COVERAGE,
     previous_records: list[dict[str, Any]] | None = None,
     allow_legacy_unversioned: bool = False,
+    allow_legacy_contract_versions: bool = False,
 ) -> None:
     source = payload.get("source") or {}
     meta = payload.get("meta") or {}
@@ -97,8 +95,12 @@ def validate_refresh_payload(
 
     contract_version = str(meta.get("gate4_cache_contract_version") or "").strip()
     if contract_version != RECEITA_LIFECYCLE_CACHE_CONTRACT_VERSION:
-        legacy_allowed = allow_legacy_unversioned and not contract_version
-        if not legacy_allowed:
+        unversioned_allowed = allow_legacy_unversioned and not contract_version
+        legacy_version_allowed = (
+            allow_legacy_contract_versions
+            and contract_version in LEGACY_RECEITA_LIFECYCLE_CACHE_CONTRACT_VERSIONS
+        )
+        if not unversioned_allowed and not legacy_version_allowed:
             raise ReceitaRefreshValidationError(
                 "unsupported Receita lifecycle cache contract version: "
                 f"{contract_version or 'missing'}"
@@ -130,7 +132,11 @@ def validate_refresh_payload(
             f"Receita lifecycle coverage {coverage:.2%} is below {min_coverage:.2%}"
         )
 
-    cnpjs = [row.get("cnpj") for row in records]
+    cnpjs = [normalize_cnpj_v2(row.get("cnpj")) for row in records]
+    if any(cnpj is None for cnpj in cnpjs):
+        raise ReceitaRefreshValidationError(
+            "Receita lifecycle snapshot contains invalid CNPJ"
+        )
     if len(cnpjs) != len(set(cnpjs)):
         raise ReceitaRefreshValidationError("Receita lifecycle snapshot has duplicate CNPJ")
 
@@ -186,6 +192,7 @@ def refresh_receita_lifecycle(
     payload = refresh_filtered_lifecycle(target_entities, release=resolved_release)
     meta = payload.setdefault("meta", {})
     meta["target_universe_hash"] = target_hash
+    meta["target_universe_hash_method"] = "sorted_normalized_cnpjs_v1"
     meta["gate4_cache_contract_version"] = RECEITA_LIFECYCLE_CACHE_CONTRACT_VERSION
 
     previous_records = None
@@ -220,7 +227,7 @@ def main() -> None:
         action="store_true",
         help=(
             "Refresh even when the stored Receita cache-contract version, reference "
-            "period and regulatory target-universe hash are current."
+            "period and CNPJ target-universe hash are current."
         ),
     )
     args = parser.parse_args()
@@ -240,7 +247,7 @@ def main() -> None:
         print(
             "Receita lifecycle refresh skipped: "
             f"contract={existing_contract_version} reference_period={release.period} "
-            "and target_universe_hash unchanged"
+            "and CNPJ target_universe_hash unchanged"
         )
         return
 
