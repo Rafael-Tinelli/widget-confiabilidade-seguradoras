@@ -81,7 +81,7 @@ def _legacy_payload(resolved: int) -> dict[str, object]:
 def _disable_golden_check(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         "api.v2.refresh_receita_lifecycle.load_verified_lifecycle_snapshot",
-        lambda: [],
+        list,
     )
 
 
