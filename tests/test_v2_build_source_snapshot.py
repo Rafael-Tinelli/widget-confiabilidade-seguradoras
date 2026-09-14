@@ -55,10 +55,16 @@ def _receita_payload(
     version: str | None = None,
     cnpjs: list[str] | None = None,
 ) -> dict:
-    resolved_cnpjs = cnpjs or [f"{index:014d}" for index in range(300)]
+    resolved_cnpjs = cnpjs or [
+        f"{index + 10000000000000:014d}" for index in range(300)
+    ]
     records = [
-        {"cnpj": cnpj, "cadastral_status": "active"}
-        for cnpj in resolved_cnpjs
+        {
+            "cnpj": cnpj,
+            "legal_name": f"SEGURADORA CACHE {index} S.A.",
+            "cadastral_status": "active",
+        }
+        for index, cnpj in enumerate(resolved_cnpjs)
     ]
     meta = {
         "target_count": len(records),
