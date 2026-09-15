@@ -233,3 +233,7 @@ def test_production_scheduler_is_gated_and_tracks_exact_canonical_workflow_on_ma
         "v2-production-generation-handoff-",
     ):
         assert required in workflow
+
+    assert workflow.count("- cron:") == 2
+    assert '- cron: "17 9 * * 1"' in workflow
+    assert '- cron: "17 6 * * 4"' in workflow

@@ -1,12 +1,13 @@
 # FASE C — Automação de Produção — Fechamento
 
-Data: 07/09/2026.
+Data: 07/09/2026.  
+Atualização operacional de cadência: 15/09/2026.
 
-Status: **FECHADA — automação semanal de geração e publicação HostGator comprovada ponta a ponta**.
+Status: **FECHADA — automação recorrente de geração e publicação HostGator comprovada ponta a ponta**.
 
 ## Escopo preservado
 
-A FASE C ficou restrita a geração semanal V2 e publicação automática no HostGator. Não houve ativação de FASE D, market sensors, GSC, telemetry ou SQLite; não houve alteração de metodologia, ranking, scoring ou frontend.
+A FASE C ficou restrita à geração V2 recorrente e publicação automática no HostGator. Não houve ativação de FASE D, market sensors, GSC, telemetry ou SQLite; não houve alteração de metodologia, ranking, scoring ou frontend.
 
 ## Estado operacional final
 
@@ -20,11 +21,15 @@ Cadência permanente:
 
 ```text
 V2 Production Generation Schedule
-cron: 17 9 * * 1
-segunda-feira 09:17 UTC
+janela principal:   cron 17 9 * * 1  — segunda-feira 09:17 UTC
+janela de retomada: cron 17 6 * * 4  — quinta-feira 06:17 UTC
 ```
 
-Os horários de materialização do `schedule` no GitHub Actions são best-effort; durante a prova foram observados atrasos de horas. A cadência semanal permanece adequada porque o requisito é atualização semanal, não SLA de horário exato.
+A segunda janela foi adicionada em 15/09/2026 depois de observar indisponibilidade intermitente de fontes oficiais: `BaseCompleta.zip` da SUSEP chegou a funcionar lentamente em uma geração e retornar HTTP 500 na geração seguinte; o WebDAV da Receita encerrou conexão sem resposta. A janela adicional usa exatamente a mesma Full Generation, o mesmo contrato `fresh/stale/unavailable` e os mesmos caches validados. Não há TTL novo, aging policy, mudança metodológica ou tratamento especial do dado: a finalidade é somente oferecer às fontes oficiais uma segunda oportunidade semanal em dia e horário diferentes.
+
+O Consumer.gov continua sendo tentado naturalmente em cada Full Generation. Sua indisponibilidade observada por falha de resolução DNS não foi tratada como simples sobrecarga de horário.
+
+Os horários de materialização do `schedule` no GitHub Actions são best-effort; durante a prova foram observados atrasos de horas. O requisito operacional continua sendo atualização recorrente confiável, não SLA de minuto exato.
 
 ## Prova C1
 
@@ -115,6 +120,7 @@ package_sha256=47d0acfce4402e2754282184d1b1e2728978cc74d95265138ad6817c572aeeb2
 
 ```text
 C1_WEEKLY_GENERATION_ENABLED              PASS
+SECOND_WEEKLY_RECOVERY_WINDOW             PASS
 SCHEDULED_EVENT_PROOF                     PASS
 FULL_GENERATION_FROM_MAIN                 PASS
 SOURCE_TIMING                             PASS
