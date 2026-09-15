@@ -2,6 +2,7 @@ import json
 
 from api.v2.build_consumer_gov_receita_identity import (
     CACHE_KEY_VERSION,
+    TARGET_UNIVERSE_HASH_METHOD,
     _cache_key,
     _existing_cache_key,
     target_universe_hash,
@@ -9,19 +10,23 @@ from api.v2.build_consumer_gov_receita_identity import (
 )
 
 
-def _entity(entity_id: str, cnpj: str) -> dict:
-    return {"entity_id": entity_id, "cnpj": cnpj}
+def _entity(entity_id: str, cnpj: str | None, legal_name: str = "SEGURADORA") -> dict:
+    return {"entity_id": entity_id, "cnpj": cnpj, "legal_name": legal_name}
 
 
-def test_target_universe_hash_is_order_independent_and_input_sensitive() -> None:
+def test_target_universe_hash_is_bound_only_to_valid_cnpj_population() -> None:
     first = [
-        _entity("fip:000001", "11.111.111/0001-11"),
-        _entity("fip:000002", "22.222.222/0001-22"),
+        _entity("fip:000001", "11.111.111/0001-11", "SEGURADORA A"),
+        _entity("fip:000002", "22.222.222/0001-22", "SEGURADORA B"),
     ]
-    reversed_rows = list(reversed(first))
+    equivalent = [
+        _entity("changed-id", "22.222.222/0001-22", "OUTRO NOME"),
+        _entity("another-id", "11.111.111/0001-11", "NOME ALTERADO"),
+        _entity("fip:sem-cnpj", None, "SEM CNPJ"),
+    ]
     changed = [*first, _entity("fip:000003", "33.333.333/0001-33")]
 
-    assert target_universe_hash(first) == target_universe_hash(reversed_rows)
+    assert target_universe_hash(first) == target_universe_hash(equivalent)
     assert target_universe_hash(first) != target_universe_hash(changed)
 
 
@@ -48,6 +53,7 @@ def test_existing_snapshot_is_reusable_only_with_complete_gate4_cache_key(tmp_pa
 
     assert _existing_cache_key(path) == expected
     assert expected["version"] == CACHE_KEY_VERSION
+    assert expected["target_universe_hash_method"] == TARGET_UNIVERSE_HASH_METHOD
 
     path.write_text(
         json.dumps(
