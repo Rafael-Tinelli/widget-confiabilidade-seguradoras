@@ -13,6 +13,7 @@ from api.v2.build_conduct_source_snapshot import (
     _materialize_consumer_manifest,
     _validate_consumer_manifest,
 )
+from api.v2.build_consumer_gov_receita_identity import CACHE_KEY_VERSION
 
 
 def test_consumer_manifest_content_key_ignores_provenance_timestamp() -> None:
@@ -119,9 +120,10 @@ def test_receita_cache_reuse_requires_current_schema_universe_and_provider_hashe
 ) -> None:
     path = tmp_path / "receita.json"
     key = {
-        "version": "v2-consumer-receita-identity-1",
+        "version": CACHE_KEY_VERSION,
         "reference_period": "2026-08",
         "target_universe_hash": "a" * 64,
+        "target_universe_hash_method": "sorted_normalized_cnpjs_v1",
         "unresolved_provider_hash": "b" * 64,
     }
     path.write_text(
