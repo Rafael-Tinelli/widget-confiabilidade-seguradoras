@@ -2,7 +2,12 @@ name: V2 Production Generation Schedule
 
 on:
   schedule:
+    # Primary weekly production generation.
     - cron: "17 9 * * 1"
+    # Second acquisition window: different weekday/time so intermittent official
+    # sources (notably SUSEP BaseCompleta and Receita WebDAV) get another chance
+    # to recover without changing the validated stale-cache publication contract.
+    - cron: "17 6 * * 4"
   workflow_dispatch:
 
 permissions:
