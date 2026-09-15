@@ -6,12 +6,12 @@ from pathlib import Path
 import pytest
 
 from api.sources.receita_cnpj import RECEITA_CNPJ_OPEN_DATA_URL
+from api.v2.build_conduct_source_snapshot import _receita_observation
 from api.v2.build_consumer_gov_receita_identity import (
     CACHE_KEY_VERSION,
     target_universe_hash,
     unresolved_provider_hash,
 )
-from api.v2.build_conduct_source_snapshot import _receita_observation
 from api.v2.conduct_receita_cache_fallback import (
     ConductReceitaCacheCompatibilityError,
     materialize_additions_only_cache,
