@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import string
 from pathlib import Path
 from typing import Any
 
@@ -8,6 +9,8 @@ from api.utils.identifiers import normalize_cnpj_v2
 from api.utils.name_cleaner import normalize_name_key
 from api.v2.build_consumer_gov_receita_identity import (
     CACHE_KEY_VERSION,
+    LEGACY_CACHE_KEY_VERSIONS,
+    TARGET_UNIVERSE_HASH_METHOD,
     _load_inputs,
     target_universe_hash,
     unresolved_provider_hash,
@@ -33,6 +36,11 @@ def _current_provider_keys(providers: list[str]) -> set[str]:
         for provider in providers
         if (key := normalize_name_key(str(provider or "")))
     }
+
+
+def _valid_sha256(value: Any) -> bool:
+    text = str(value or "")
+    return len(text) == 64 and all(char in string.hexdigits for char in text)
 
 
 def _cache_evidence_sets(
@@ -75,24 +83,37 @@ def validate_additions_only_cache(
 ) -> dict[str, Any]:
     """Prove that stale Conduct identity evidence is safe under a growing universe.
 
-    The prior snapshot must have been complete for its own target universe and provider
-    query set. Reuse is allowed only when every old target CNPJ is still present in the
-    current universe and every currently unresolved Consumer.gov provider already has a
-    cached Receita query row. New current CNPJs are therefore the only permitted target
-    delta; they remain without canonical Receita evidence until a fresh official build.
+    Current v2 snapshots bind their target hash to exactly the normalized CNPJs queried
+    by Receita. Legacy v1 snapshots used a broader entity-id/CNPJ hash that can include
+    entities without a usable CNPJ, even though those rows were never materialized in
+    the filtered Receita snapshot. For v1, file integrity plus complete filtered CNPJ
+    and provider evidence is therefore the migration authority; the old target hash is
+    retained only as provenance and is not falsely reconstructed from filtered records.
     """
     if payload.get("artifact") != "v2_receita_cnpj_identity":
         raise ConductReceitaCacheCompatibilityError(
             "unexpected Receita Conduct identity cache artifact"
         )
 
-    key = (payload.get("meta") or {}).get("gate4_cache_key")
-    if not isinstance(key, dict) or str(key.get("version") or "") != CACHE_KEY_VERSION:
+    meta = payload.get("meta") or {}
+    key = meta.get("gate4_cache_key")
+    if not isinstance(key, dict):
         raise ConductReceitaCacheCompatibilityError(
-            "Receita Conduct identity cache key is missing or unsupported"
+            "Receita Conduct identity cache key is missing"
+        )
+    contract_version = str(key.get("version") or "")
+    supported_versions = {CACHE_KEY_VERSION, *LEGACY_CACHE_KEY_VERSIONS}
+    if contract_version not in supported_versions:
+        raise ConductReceitaCacheCompatibilityError(
+            f"unsupported Receita Conduct identity cache contract: {contract_version or 'missing'}"
+        )
+    if not _valid_sha256(key.get("target_universe_hash")) or not _valid_sha256(
+        key.get("unresolved_provider_hash")
+    ):
+        raise ConductReceitaCacheCompatibilityError(
+            "Receita Conduct identity cache key contains invalid hashes"
         )
 
-    meta = payload.get("meta") or {}
     try:
         target_count = int(meta.get("target_cnpjs"))
         enriched_count = int(meta.get("target_cnpjs_enriched"))
@@ -124,11 +145,24 @@ def validate_additions_only_cache(
             "stale Receita Conduct canonical records are missing entity_id"
         )
 
-    reconstructed_universe_hash = target_universe_hash(canonical_records)
-    if reconstructed_universe_hash != str(key.get("target_universe_hash") or ""):
-        raise ConductReceitaCacheCompatibilityError(
-            "stale Receita Conduct cache target hash does not match its canonical records"
+    is_legacy = contract_version in LEGACY_CACHE_KEY_VERSIONS
+    if is_legacy:
+        target_hash_validation = (
+            "legacy_v1_not_reconstructible_from_filtered_records; "
+            "content_hash_and_complete_filtered_cnpj_coverage_validated"
         )
+    else:
+        if str(key.get("target_universe_hash_method") or "") != TARGET_UNIVERSE_HASH_METHOD:
+            raise ConductReceitaCacheCompatibilityError(
+                "current Receita Conduct cache target hash method is missing or unsupported"
+            )
+        reconstructed_universe_hash = target_universe_hash(canonical_records)
+        if reconstructed_universe_hash != str(key.get("target_universe_hash") or ""):
+            raise ConductReceitaCacheCompatibilityError(
+                "stale Receita Conduct cache target hash does not match its canonical records"
+            )
+        target_hash_validation = "current_v2_reconstructed_from_filtered_cnpjs"
+
     reconstructed_provider_hash = unresolved_provider_hash(cached_provider_names)
     if reconstructed_provider_hash != str(key.get("unresolved_provider_hash") or ""):
         raise ConductReceitaCacheCompatibilityError(
@@ -150,9 +184,11 @@ def validate_additions_only_cache(
         )
 
     added_cnpjs = sorted(current_cnpjs - cached_cnpjs)
-    if universe_hash != str(key.get("target_universe_hash") or "") and not added_cnpjs:
+    if not is_legacy and not added_cnpjs and universe_hash != str(
+        key.get("target_universe_hash") or ""
+    ):
         raise ConductReceitaCacheCompatibilityError(
-            "Receita Conduct universe hash changed without an additions-only CNPJ delta"
+            "current Receita Conduct universe hash changed without an additions-only CNPJ delta"
         )
 
     missing_provider_keys = sorted(current_provider_keys - cached_provider_keys)
@@ -164,6 +200,9 @@ def validate_additions_only_cache(
 
     return {
         "mode": "current_target_additions_only_current_providers_covered",
+        "cache_contract_version": contract_version,
+        "legacy_cache_contract": is_legacy,
+        "target_hash_validation": target_hash_validation,
         "cached_target_count": len(cached_cnpjs),
         "current_target_count": len(current_cnpjs),
         "added_current_cnpj_count": len(added_cnpjs),

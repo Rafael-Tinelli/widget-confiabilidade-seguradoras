@@ -14,7 +14,9 @@ from api.v2.build_consumer_gov_157_experiment import ELIGIBILITY_PATH
 from api.v2.consumer_gov_receita_resolution import DEFAULT_RECEITA_IDENTITY_SNAPSHOT
 
 CONSUMER_IDENTITY_PATH = Path("data/derived/v2/consumer_gov_identity_experiment.json")
-CACHE_KEY_VERSION = "v2-consumer-receita-identity-1"
+CACHE_KEY_VERSION = "v2-consumer-receita-identity-2"
+LEGACY_CACHE_KEY_VERSIONS = frozenset({"v2-consumer-receita-identity-1"})
+TARGET_UNIVERSE_HASH_METHOD = "sorted_normalized_cnpjs_v1"
 
 
 def _stable_hash(value: Any) -> str:
@@ -27,20 +29,22 @@ def _stable_hash(value: Any) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
-def target_universe_hash(entities: list[dict[str, Any]]) -> str:
-    rows = sorted(
+def target_universe_cnpjs(entities: list[dict[str, Any]]) -> list[str]:
+    cnpjs = sorted(
         {
-            (
-                str(entity.get("entity_id") or entity.get("id") or "").strip(),
-                normalize_cnpj_v2(entity.get("cnpj")) or "",
-            )
+            cnpj
             for entity in entities
-            if str(entity.get("entity_id") or entity.get("id") or "").strip()
+            if (cnpj := normalize_cnpj_v2(entity.get("cnpj"))) is not None
         }
     )
-    if not rows:
-        raise RuntimeError("cannot hash an empty Consumer.gov Receita target universe")
-    return _stable_hash(rows)
+    if not cnpjs:
+        raise RuntimeError("cannot hash an empty Consumer.gov Receita CNPJ target universe")
+    return cnpjs
+
+
+def target_universe_hash(entities: list[dict[str, Any]]) -> str:
+    """Hash exactly the CNPJ population queried in the filtered Receita build."""
+    return _stable_hash(target_universe_cnpjs(entities))
 
 
 def unresolved_provider_hash(providers: list[str]) -> str:
@@ -66,6 +70,7 @@ def _cache_key(
         "version": CACHE_KEY_VERSION,
         "reference_period": reference_period,
         "target_universe_hash": universe_hash,
+        "target_universe_hash_method": TARGET_UNIVERSE_HASH_METHOD,
         "unresolved_provider_hash": provider_hash,
     }
 
@@ -84,6 +89,9 @@ def _existing_cache_key(path: Path) -> dict[str, str] | None:
         "version": str(value.get("version") or ""),
         "reference_period": str(value.get("reference_period") or ""),
         "target_universe_hash": str(value.get("target_universe_hash") or ""),
+        "target_universe_hash_method": str(
+            value.get("target_universe_hash_method") or ""
+        ),
         "unresolved_provider_hash": str(value.get("unresolved_provider_hash") or ""),
     }
 
@@ -130,7 +138,7 @@ def build_snapshot(
     if not force and existing_key == expected_key:
         print(
             "Receita Consumer.gov identity build skipped: stored snapshot cache key "
-            "matches current release, regulatory universe and unresolved providers"
+            "matches current release, CNPJ target population and unresolved providers"
         )
         return None
 
@@ -141,6 +149,7 @@ def build_snapshot(
     )
     meta = payload.setdefault("meta", {})
     meta["gate4_cache_key"] = expected_key
+    meta["target_universe_hash_method"] = TARGET_UNIVERSE_HASH_METHOD
     write_snapshot(payload, output)
     return payload
 
