@@ -8,7 +8,6 @@ from api.utils.identifiers import normalize_cnpj_v2
 from api.utils.name_cleaner import normalize_name_key
 from api.v2.build_consumer_gov_receita_identity import (
     CACHE_KEY_VERSION,
-    _existing_cache_key,
     _load_inputs,
     target_universe_hash,
     unresolved_provider_hash,
