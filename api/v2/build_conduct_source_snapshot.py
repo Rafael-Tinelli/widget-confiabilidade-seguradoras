@@ -23,6 +23,7 @@ from api.v2.build_consumer_gov_receita_identity import (
     target_universe_hash,
     unresolved_provider_hash,
 )
+from api.v2.conduct_receita_cache_fallback import materialize_additions_only_cache
 from api.v2.consumer_gov_receita_resolution import (
     DEFAULT_RECEITA_IDENTITY_SNAPSHOT,
 )
@@ -409,16 +410,21 @@ def _receita_observation(*, cache_dir: Path) -> SourceObservation:
     except Exception as exc:  # noqa: BLE001 - acquisition boundary records arbitrary source failures
         current_error = f"{type(exc).__name__}: {exc}"
 
+    partial_diagnostic: dict[str, Any] | None = None
     try:
-        if not _cache_matches_current_inputs(
+        if _cache_matches_current_inputs(
             cache.content_path,
             universe_hash,
             provider_hash,
         ):
-            raise ConductSourceSnapshotError(
-                "cached Receita identity does not match current universe/provider hashes"
+            fetched_at = cache.materialize(DEFAULT_RECEITA_IDENTITY_SNAPSHOT)
+        else:
+            fetched_at, partial_diagnostic = materialize_additions_only_cache(
+                cache=cache,
+                destination=DEFAULT_RECEITA_IDENTITY_SNAPSHOT,
+                universe_hash=universe_hash,
+                provider_hash=provider_hash,
             )
-        fetched_at = cache.materialize(DEFAULT_RECEITA_IDENTITY_SNAPSHOT)
     except (OSError, ValueError, SourceCacheError, ConductSourceSnapshotError) as exc:
         DEFAULT_RECEITA_IDENTITY_SNAPSHOT.unlink(missing_ok=True)
         return SourceObservation(
@@ -429,12 +435,21 @@ def _receita_observation(*, cache_dir: Path) -> SourceObservation:
             state_reason=f"{current_error}; cache invalid: {type(exc).__name__}: {exc}",
         )
 
+    if partial_diagnostic is not None:
+        state_reason = (
+            f"{current_error}; using additions-only compatible hash-validated Receita cache; "
+            f"added_current_cnpjs={partial_diagnostic['added_current_cnpj_count']}; "
+            f"current_providers={partial_diagnostic['current_provider_count']} all covered"
+        )
+    else:
+        state_reason = f"{current_error}; using compatible hash-validated Receita cache"
+
     return SourceObservation(
         source_id=cache.source_id,
         source_url=cache.source_url,
         snapshot_path=DEFAULT_RECEITA_IDENTITY_SNAPSHOT,
         fetched_at=fetched_at,
-        state_reason=f"{current_error}; using compatible hash-validated Receita cache",
+        state_reason=state_reason,
     )
 
 
