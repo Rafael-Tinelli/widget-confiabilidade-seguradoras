@@ -5,7 +5,7 @@ on:
     branches:
       - audit/consumer-gov-provider-labels-20260916
     paths:
-      - scripts/audit_consumer_gov_provider_labels.py
+      - scripts/audit_consumer_gov_provider_labels_standalone.py
       - .github/workflows/audit-consumer-gov-provider-labels.yml
   workflow_dispatch:
 
@@ -24,13 +24,8 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Install project dependencies
-        run: python -m pip install -r requirements.txt
-
       - name: Run 12-month provider-label audit
-        env:
-          PYTHONPATH: .
-        run: python scripts/audit_consumer_gov_provider_labels.py
+        run: python scripts/audit_consumer_gov_provider_labels_standalone.py
 
       - name: Upload audit report
         uses: actions/upload-artifact@v4
