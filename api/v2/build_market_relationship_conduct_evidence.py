@@ -4,12 +4,9 @@ import json
 from pathlib import Path
 from typing import Any
 
+import api.v2.market_relationship_conduct_core as core
 from api.v2.build_consumer_gov_identity_experiment import OUTPUT_PATH as IDENTITY_PATH
 from api.v2.consumer_gov_conduct_core import load_monthly_entries
-from api.v2.market_relationship_conduct_core import (
-    build_market_relationship_conduct_evidence as _build_market_relationship_conduct,
-    utc_now,
-)
 
 LIFECYCLE_PATH = Path("data/derived/v2/entity_lifecycle_relationship_inventory.json")
 OUTPUT_PATH = Path("data/derived/v2/market_relationship_conduct_evidence.json")
@@ -29,7 +26,7 @@ def build_market_relationship_conduct_evidence(
     *,
     entry_loader=None,
 ) -> dict[str, Any]:
-    return _build_market_relationship_conduct(
+    return core.build_market_relationship_conduct_evidence(
         lifecycle,
         identity,
         entry_loader=entry_loader or _load_entries_from_source,
@@ -87,8 +84,6 @@ def build_legacy_sandbox_projection(payload: dict[str, Any]) -> dict[str, Any]:
             for relation in all_bearers
             if str(relation.get("entity_id") or "") in bearer_by_id
         ]
-        # The old contract is singular. Never collapse a multi-carrier relationship
-        # into a misleading one-carrier Sandbox card.
         if len(all_bearers) != 1 or len(sandbox_relations) != 1:
             continue
         relation = sandbox_relations[0]
@@ -138,7 +133,7 @@ def build_legacy_sandbox_projection(payload: dict[str, Any]) -> dict[str, Any]:
     return {
         "artifact": "v2_sandbox_brand_conduct_evidence",
         "version": "2.0-compat-from-market-relationship-conduct-1",
-        "generated_at": payload.get("generated_at") or utc_now(),
+        "generated_at": payload.get("generated_at") or core.utc_now(),
         "status": "compatibility_projection",
         "assessment_role": "legacy_sandbox_projection_only",
         "scoring": "forbidden_in_this_artifact",
