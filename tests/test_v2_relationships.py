@@ -133,3 +133,81 @@ def test_brand_resolves_target_without_inheriting_score():
 
     assert brands[0]["relationships"][0]["target_entity_id"] == "fip:004367"
     assert "score" not in brands[0]
+
+
+def test_verified_market_identity_survives_brand_materialization():
+    entities = [
+        {
+            **_entity("sandbox:lti", None, "47006254000180", "LTI SEGUROS S.A."),
+            "entity_type": "sandbox_participant",
+            "regulatory_regime": "sandbox",
+            "regulatory_status": "temporary_authorized",
+        }
+    ]
+    registry = {
+        "brands": [
+            {
+                "brand_id": "brand:loovi",
+                "name": "Loovi",
+                "aliases": ["Loovi Seguros"],
+                "market_identity": {
+                    "kind": "insurance_distribution_company",
+                    "public_label": "Representante de seguros",
+                    "legal_name": "CW TECHNOLOGY LTDA.",
+                    "cnpj": "34.504.257/0001-00",
+                    "distribution_role": "insurance_representative",
+                    "distribution_role_state": "verified",
+                    "evidence": {"authority": "Loovi", "fact": "verified"},
+                },
+                "relationships": [
+                    {
+                        "relationship_type": "risk_carrier",
+                        "target_cnpj": "47006254000180",
+                        "status": "current",
+                    }
+                ],
+            }
+        ]
+    }
+
+    brand = materialize_brands(entities, registry)[0]
+
+    assert brand["market_identity"]["legal_name"] == "CW TECHNOLOGY LTDA."
+    assert brand["market_identity"]["cnpj"] == "34504257000100"
+    assert brand["market_identity"]["distribution_role"] == "insurance_representative"
+    assert brand["market_identity"]["distribution_role_state"] == "verified"
+    assert brand["relationships"][0]["target_entity_id"] == "sandbox:lti"
+    assert "score" not in brand
+
+
+def test_verified_distribution_role_requires_evidence():
+    entities = [
+        {
+            **_entity("sandbox:lti", None, "47006254000180", "LTI SEGUROS S.A."),
+            "entity_type": "sandbox_participant",
+            "regulatory_regime": "sandbox",
+        }
+    ]
+    registry = {
+        "brands": [
+            {
+                "brand_id": "brand:loovi",
+                "name": "Loovi",
+                "market_identity": {
+                    "legal_name": "CW TECHNOLOGY LTDA.",
+                    "cnpj": "34504257000100",
+                    "distribution_role": "insurance_representative",
+                    "distribution_role_state": "verified",
+                },
+                "relationships": [
+                    {
+                        "relationship_type": "risk_carrier",
+                        "target_cnpj": "47006254000180",
+                    }
+                ],
+            }
+        ]
+    }
+
+    with pytest.raises(RelationshipConflictError, match="requires evidence"):
+        materialize_brands(entities, registry)
