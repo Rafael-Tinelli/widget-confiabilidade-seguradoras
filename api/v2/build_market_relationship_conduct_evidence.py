@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
@@ -9,6 +10,7 @@ from api.v2.build_consumer_gov_identity_experiment import OUTPUT_PATH as IDENTIT
 from api.v2.consumer_gov_conduct_core import load_monthly_entries
 
 LIFECYCLE_PATH = Path("data/derived/v2/entity_lifecycle_relationship_inventory.json")
+CONSUMER_CONDUCT_PATH = Path("data/derived/v2/consumer_gov_conduct_evidence.json")
 OUTPUT_PATH = Path("data/derived/v2/market_relationship_conduct_evidence.json")
 LEGACY_SANDBOX_OUTPUT_PATH = Path(
     "data/derived/v2/sandbox_brand_conduct_evidence.json"
@@ -20,17 +22,115 @@ def _load_entries_from_source(month: str) -> dict[str, Any]:
     return entries
 
 
+def _canonical_conduct_summary(row: dict[str, Any]) -> dict[str, Any]:
+    totals = row.get("totals") or {}
+    return {
+        "complaints": totals.get("complaints"),
+        "responded": totals.get("responded"),
+        "response_rate": totals.get("response_rate"),
+        "finalized": totals.get("finalized"),
+        "finalized_rate": totals.get("finalized_rate"),
+        "satisfaction_count": totals.get("satisfaction_count"),
+        "average_satisfaction": totals.get("average_satisfaction"),
+        "film": row.get("film") or {},
+        "monthly": row.get("monthly") or [],
+        "provider_labels": [],
+        "conduct_source": "canonical_consumer_gov_conduct_evidence",
+    }
+
+
+def _apply_canonical_risk_bearer_conduct(
+    payload: dict[str, Any],
+    consumer_conduct: dict[str, Any],
+) -> dict[str, Any]:
+    """Reuse the already-closed ordinary-insurer Conduct resolution.
+
+    The generic relationship layer must not solve an ordinary insurer's Consumer.gov
+    identity a second time with a narrower resolver. For entities already present in
+    ``consumer_gov_conduct_evidence`` the canonical Conduct artifact wins exactly.
+    Raw direct resolution remains only a fallback for risk bearers outside that
+    ordinary assessment universe (for example Sandbox participants).
+    """
+
+    if consumer_conduct.get("artifact") != "v2_consumer_gov_conduct_evidence":
+        raise ValueError("unexpected canonical Consumer.gov Conduct artifact")
+
+    expected_months = list((payload.get("source") or {}).get("months") or [])
+    canonical_months = list((consumer_conduct.get("source") or {}).get("months") or [])
+    if expected_months != canonical_months:
+        raise ValueError(
+            "market relationship Conduct window differs from canonical Consumer.gov Conduct"
+        )
+
+    canonical_by_id = {
+        str(row.get("entity_id") or ""): _canonical_conduct_summary(row)
+        for row in consumer_conduct.get("entities") or []
+        if row.get("entity_id")
+    }
+
+    output = deepcopy(payload)
+    overridden_ids: set[str] = set()
+
+    for bearer in output.get("risk_bearers") or []:
+        entity_id = str(bearer.get("entity_id") or "")
+        summary = canonical_by_id.get(entity_id)
+        if summary is None:
+            bearer["conduct_source"] = "relationship_direct_fallback"
+            continue
+        bearer["conduct_summary"] = deepcopy(summary)
+        bearer["conduct_source"] = "canonical_consumer_gov_conduct_evidence"
+        overridden_ids.add(entity_id)
+
+    for brand in output.get("brands") or []:
+        for bearer in brand.get("risk_bearers") or []:
+            entity_id = str(bearer.get("entity_id") or "")
+            summary = canonical_by_id.get(entity_id)
+            if summary is None:
+                bearer["conduct_source"] = "relationship_direct_fallback"
+                continue
+            bearer["conduct_summary"] = deepcopy(summary)
+            bearer["conduct_source"] = "canonical_consumer_gov_conduct_evidence"
+            overridden_ids.add(entity_id)
+
+    unique_bearers = {
+        str(row.get("entity_id") or ""): row
+        for row in output.get("risk_bearers") or []
+        if row.get("entity_id")
+    }
+    resolved_total = sum(
+        int((row.get("conduct_summary") or {}).get("complaints") or 0)
+        for row in unique_bearers.values()
+    )
+
+    summary = dict(output.get("summary") or {})
+    summary["canonical_risk_bearers"] = len(overridden_ids)
+    summary["direct_fallback_risk_bearers"] = len(unique_bearers) - len(overridden_ids)
+    summary["resolved_risk_bearer_complaints"] = resolved_total
+    output["summary"] = summary
+
+    policy = dict(output.get("policy") or {})
+    policy["canonical_ordinary_conduct_precedes_relationship_reresolution"] = True
+    policy["ordinary_risk_bearer_conduct_must_match_canonical_conduct_artifact"] = True
+    output["policy"] = policy
+    output["version"] = "2.0-draft-market-relationship-conduct-2"
+    return output
+
+
 def build_market_relationship_conduct_evidence(
     lifecycle: dict[str, Any],
     identity: dict[str, Any],
     *,
     entry_loader=None,
+    consumer_conduct: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    return core.build_market_relationship_conduct_evidence(
+    payload = core.build_market_relationship_conduct_evidence(
         lifecycle,
         identity,
         entry_loader=entry_loader or _load_entries_from_source,
     )
+    if consumer_conduct is not None:
+        payload = _apply_canonical_risk_bearer_conduct(payload, consumer_conduct)
+    return payload
 
 
 def build_legacy_sandbox_projection(payload: dict[str, Any]) -> dict[str, Any]:
@@ -162,7 +262,12 @@ def build_legacy_sandbox_projection(payload: dict[str, Any]) -> dict[str, Any]:
 def build_from_files() -> tuple[dict[str, Any], dict[str, Any]]:
     lifecycle = json.loads(LIFECYCLE_PATH.read_text(encoding="utf-8"))
     identity = json.loads(IDENTITY_PATH.read_text(encoding="utf-8"))
-    payload = build_market_relationship_conduct_evidence(lifecycle, identity)
+    consumer_conduct = json.loads(CONSUMER_CONDUCT_PATH.read_text(encoding="utf-8"))
+    payload = build_market_relationship_conduct_evidence(
+        lifecycle,
+        identity,
+        consumer_conduct=consumer_conduct,
+    )
     legacy = build_legacy_sandbox_projection(payload)
     return payload, legacy
 
