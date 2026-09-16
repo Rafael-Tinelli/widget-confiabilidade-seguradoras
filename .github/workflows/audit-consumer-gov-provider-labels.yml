@@ -1,0 +1,38 @@
+name: Audit Consumer.gov provider labels
+
+on:
+  push:
+    branches:
+      - audit/consumer-gov-provider-labels-20260916
+    paths:
+      - scripts/audit_consumer_gov_provider_labels.py
+      - .github/workflows/audit-consumer-gov-provider-labels.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Run 12-month provider-label audit
+        run: python scripts/audit_consumer_gov_provider_labels.py
+
+      - name: Upload audit report
+        uses: actions/upload-artifact@v4
+        with:
+          name: consumer-gov-provider-label-audit
+          path: |
+            consumer_gov_provider_label_audit.json
+            consumer_gov_provider_label_audit.md
+          if-no-files-found: error
+          retention-days: 14
