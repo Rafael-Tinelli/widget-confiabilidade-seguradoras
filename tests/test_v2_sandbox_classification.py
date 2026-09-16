@@ -103,19 +103,56 @@ def test_cancelled_sandbox_does_not_downgrade_later_ordinary_license():
     assert classified[0]["evidence"]["sandbox"]["regulatory_status"] == "sandbox_authorization_cancelled"
 
 
-def test_current_sandbox_and_current_ordinary_license_conflict_fails_closed():
-    entities = [
-        _entity(
-            fip="000111",
-            cnpj="43095690000112",
-            status="active_licensed",
-            regime="ordinary",
-            entity_type="insurer",
-        )
-    ]
+def test_current_sandbox_scope_precedes_generic_current_license_for_same_insurer_cnpj():
+    entity = _entity(
+        fip="001988",
+        cnpj="47006254000180",
+        status="active_licensed",
+        regime="ordinary",
+        entity_type="insurer",
+    )
+    entity["evidence"]["licensed_entities"] = {
+        "matched": True,
+        "cnpj": "47006254000180",
+        "entity_type": "insurer",
+    }
 
-    with pytest.raises(ClassificationConflictError, match="Sandbox CNPJ"):
+    classified, unresolved = apply_sandbox_classification(
+        [entity],
+        [_sandbox(cnpj="47006254000180")],
+    )
+
+    assert unresolved == []
+    assert classified[0]["entity_type"] == "insurer"
+    assert classified[0]["regulatory_regime"] == "sandbox"
+    assert classified[0]["regulatory_status"] == "temporary_authorized"
+    assert classified[0]["evidence"]["licensed_entities"]["matched"] is True
+    assert classified[0]["evidence"]["sandbox"]["cnpj"] == "47006254000180"
+    assert classified[0]["evidence"]["regulatory_scope_resolution"] == {
+        "policy": "active_sandbox_scope_precedes_generic_current_license",
+        "licensed_status": "active_licensed",
+        "licensed_regime": "ordinary",
+        "resolved_regime": "sandbox",
+        "resolved_status": "temporary_authorized",
+    }
+
+
+def test_current_sandbox_still_rejects_non_insurer_overlap():
+    entity = _entity(
+        fip="000111",
+        cnpj="43095690000112",
+        status="active_licensed",
+        regime="ordinary",
+        entity_type="broker",
+    )
+    entity["evidence"]["licensed_entities"] = {
+        "matched": True,
+        "cnpj": "43095690000112",
+        "entity_type": "broker",
+    }
+
+    with pytest.raises(ClassificationConflictError, match="non-insurer"):
         apply_sandbox_classification(
-            entities,
+            [entity],
             [_sandbox(cnpj="43095690000112")],
         )
