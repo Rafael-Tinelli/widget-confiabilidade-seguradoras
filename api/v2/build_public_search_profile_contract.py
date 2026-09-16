@@ -15,7 +15,7 @@ CONDUCT_RELATIONSHIPS_PATH = Path(
 )
 OUTPUT_PATH = Path("data/derived/v2/public_search_profile_contract.json")
 PUBLIC_DIR = Path("data/derived/v2/public")
-VERSION = "2.0-public-search-profile-contract-1"
+VERSION = "2.0-public-search-profile-contract-2"
 
 
 class PublicSearchProfileContractError(RuntimeError):
@@ -371,9 +371,9 @@ def _conduct_public(
             )
             language = (
                 "Há reclamações registradas contra esta empresa, mas existe relação "
-                f"documentada com {names or 'outra seguradora'} como responsável pelo "
+                f"documentada com {names or 'outra entidade'} como responsável pelo "
                 "risco dos produtos considerados. Não usamos automaticamente toda a "
-                "produção da outra seguradora para dimensionar essas reclamações, pois "
+                "produção da entidade relacionada para dimensionar essas reclamações, pois "
                 "isso poderia distorcer a comparação."
             )
     tone = {
@@ -553,6 +553,10 @@ def _direct_relationships(
                 "relationship_type": relation.get("relationship_type"),
                 "target_profile_id": f"entity:{target_id}",
                 "target_name": _entity_name(target) if target else None,
+                "target_regulatory_label": _regulatory_label(target) if target else None,
+                "target_regulatory_regime": (
+                    target.get("regulatory_regime") if target else None
+                ),
                 "effective_date": relation.get("effective_date"),
                 "evidence": relation.get("evidence") or {},
             }
@@ -572,6 +576,7 @@ def _incoming_brands(entity_id: str, brands: list[dict[str, Any]]) -> list[dict[
                     "brand_id": brand.get("brand_id"),
                     "name": brand.get("name"),
                     "aliases": brand.get("aliases") or [],
+                    "market_identity": brand.get("market_identity"),
                     "relationship_type": relation.get("relationship_type"),
                     "status": relation.get("status"),
                     "scope": relation.get("scope"),
@@ -628,7 +633,10 @@ def _sandbox_metrics(totals: dict[str, Any]) -> dict[str, Any]:
     return {
         "complaints": _metric(
             totals.get("complaints"),
-            meaning="Reclamações observadas contra a entidade Sandbox na janela preservada.",
+            meaning=(
+                "Reclamações observadas contra a entidade participante do Sandbox na "
+                "janela preservada."
+            ),
             zero_semantics="observed_zero_is_not_a_favorable_finding",
         ),
         "responded": _metric(
@@ -654,6 +662,43 @@ def _sandbox_metrics(totals: dict[str, Any]) -> dict[str, Any]:
         "average_satisfaction": _metric(
             totals.get("average_satisfaction"),
             meaning="Média de satisfação entre quem avaliou, dependente da amostra.",
+        ),
+    }
+
+
+def _brand_subject_metrics(totals: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "complaints": _metric(
+            totals.get("complaints"),
+            meaning=(
+                "Reclamações observadas diretamente contra a identidade distribuidora/"
+                "representante na janela preservada."
+            ),
+            zero_semantics="observed_zero_is_not_a_favorable_finding",
+        ),
+        "responded": _metric(
+            totals.get("responded"),
+            meaning="Reclamações da distribuidora com resposta registrada.",
+        ),
+        "response_rate": _metric(
+            totals.get("response_rate"),
+            meaning="Taxa de resposta observada da distribuidora; não equivale a resolução.",
+        ),
+        "finalized": _metric(
+            totals.get("finalized"),
+            meaning="Reclamações da distribuidora finalizadas; finalização não prova solução.",
+        ),
+        "finalized_rate": _metric(
+            totals.get("finalized_rate"),
+            meaning="Taxa de finalização observada da distribuidora.",
+        ),
+        "satisfaction_count": _metric(
+            totals.get("satisfaction_count"),
+            meaning="Quantidade de avaliações de satisfação da distribuidora preservadas.",
+        ),
+        "average_satisfaction": _metric(
+            totals.get("average_satisfaction"),
+            meaning="Média de satisfação entre quem avaliou a distribuidora.",
         ),
     }
 
@@ -687,11 +732,11 @@ def _sandbox_conduct_for_entity(
     )
     return {
         "availability": "available",
-        "source_role": "sandbox_carrier_conduct_context",
+        "source_role": "sandbox_risk_bearer_conduct_context",
         "plain_language": (
             "Há evidência de reclamações do Consumer.gov associada a esta entidade "
-            "Sandbox. Esses dados são contexto de Conduta e não recebem a mesma razão de "
-            "pressão usada para seguradoras ordinárias."
+            "participante do Sandbox. Esses dados pertencem a esta entidade e não devem "
+            "ser atribuídos automaticamente a uma marca ou distribuidora relacionada."
         ),
         "provider_labels": carrier.get("consumer_gov_provider_labels_observed") or [],
         "metrics": metrics,
@@ -713,23 +758,84 @@ def _sandbox_brand_context(
     )
     if row is None:
         return None
-    summary = row.get("carrier_conduct_summary") or {}
+
+    carrier_summary = row.get("carrier_conduct_summary") or {}
+    brand_summary = row.get("brand_subject_conduct_summary") or {}
+    market_identity = dict(row.get("market_identity") or {})
+    risk_bearer = {
+        "public_role_label": "Entidade que assume o risco",
+        "profile_id": f"entity:{row.get('risk_carrier_entity_id')}",
+        "name": row.get("risk_carrier_name"),
+        "cnpj": row.get("risk_carrier_cnpj"),
+        "regulatory_class": row.get("risk_carrier_regulatory_class")
+        or "Participante do Sandbox regulatório",
+        "regulatory_scope": row.get("regulatory_scope") or "sandbox",
+        "product_scope": row.get("product_scope"),
+    }
+    distributor = {
+        "identity_state": market_identity.get("identity_state") or (
+            "verified" if market_identity else "unresolved"
+        ),
+        "public_label": market_identity.get("public_label"),
+        "legal_name": market_identity.get("legal_name"),
+        "trade_name": market_identity.get("trade_name"),
+        "cnpj": market_identity.get("cnpj") or row.get("representative_cnpj"),
+        "distribution_role": row.get("distribution_role")
+        or market_identity.get("distribution_role"),
+        "distribution_role_state": row.get("distribution_role_state")
+        or market_identity.get("distribution_role_state")
+        or "unverified",
+        "public_note": market_identity.get("public_note"),
+        "evidence": market_identity.get("evidence") or {},
+    }
+
+    brand_subject_conduct = {
+        "availability": "available",
+        "source_role": "consumer_gov_distributor_subject",
+        "provider_labels": row.get("brand_subject_provider_labels_observed") or [],
+        "metrics": _brand_subject_metrics(brand_summary),
+        "trajectory_context": _sandbox_film(brand_summary.get("film")),
+        "attribution_note": row.get("brand_subject_attribution_note"),
+        "plain_language": (
+            "Estes números pertencem às reclamações que a fonte permite atribuir "
+            "diretamente à distribuidora/representante. Eles permanecem separados dos "
+            "números da entidade que assume o risco."
+        ),
+    }
+    carrier_context = {
+        "availability": "available",
+        "source_role": "sandbox_risk_bearer_conduct_context",
+        "provider_labels": carrier_summary.get("provider_labels") or [],
+        "metrics": _sandbox_metrics(carrier_summary),
+        "trajectory_context": _sandbox_film(carrier_summary.get("film")),
+        "attribution_note": row.get("carrier_attribution_note")
+        or row.get("attribution_note"),
+        "plain_language": (
+            f"Estes números são do Consumer.gov contra "
+            f"{row.get('risk_carrier_name') or 'a entidade participante do Sandbox'}, "
+            "que assume o risco no arranjo documentado. Eles são contexto da relação e "
+            "não reclamações da distribuidora."
+        ),
+    }
+
+    # Backward-compatible top-level keys remain during the frontend migration, but
+    # the authoritative v2 contract is the explicit distributor/risk_bearer split.
     return {
         "availability": "available",
-        "risk_carrier_profile_id": f"entity:{row.get('risk_carrier_entity_id')}",
-        "risk_carrier_name": row.get("risk_carrier_name"),
-        "risk_carrier_cnpj": row.get("risk_carrier_cnpj"),
-        "product_scope": row.get("product_scope"),
+        "distributor": distributor,
+        "risk_bearer": risk_bearer,
+        "brand_subject_conduct": brand_subject_conduct,
+        "carrier_conduct_context": carrier_context,
+        "risk_carrier_profile_id": risk_bearer["profile_id"],
+        "risk_carrier_name": risk_bearer["name"],
+        "risk_carrier_cnpj": risk_bearer["cnpj"],
+        "risk_carrier_regulatory_class": risk_bearer["regulatory_class"],
+        "product_scope": risk_bearer["product_scope"],
         "conduct_scope": row.get("conduct_scope"),
-        "attribution_note": row.get("attribution_note"),
-        "plain_language": (
-            f"O Consumer.gov registra esta evidência contra "
-            f"{row.get('risk_carrier_name') or 'a seguradora Sandbox vinculada'}, entidade "
-            "regulada relacionada à marca. O dado é contexto da relação verificada e não "
-            "reclamação exclusiva da marca."
-        ),
-        "metrics": _sandbox_metrics(summary),
-        "trajectory_context": _sandbox_film(summary.get("film")),
+        "attribution_note": carrier_context["attribution_note"],
+        "plain_language": carrier_context["plain_language"],
+        "metrics": carrier_context["metrics"],
+        "trajectory_context": carrier_context["trajectory_context"],
         "evidence": row.get("evidence") or [],
     }
 
@@ -746,18 +852,64 @@ def _brand_profile(
         target = by_id.get(target_id)
         target_name = _entity_name(target) if target else target_id
         target_names.append(target_name)
+        relationship_type = relation.get("relationship_type")
         relationships.append(
             {
-                "relationship_type": relation.get("relationship_type"),
+                "relationship_type": relationship_type,
+                "public_role_label": (
+                    "Entidade que assume o risco"
+                    if relationship_type == "risk_carrier"
+                    else "Relação documentada"
+                ),
                 "target_profile_id": f"entity:{target_id}",
                 "target_entity_id": target_id,
                 "target_name": target_name,
+                "target_entity_type": target.get("entity_type") if target else None,
+                "target_regulatory_regime": (
+                    target.get("regulatory_regime") if target else None
+                ),
+                "target_regulatory_label": _regulatory_label(target) if target else None,
                 "status": relation.get("status"),
                 "scope": relation.get("scope"),
                 "evidence": relation.get("evidence") or {},
             }
         )
     targets = ", ".join(target_names) if target_names else "nenhuma entidade resolvida"
+    market_identity = dict(brand.get("market_identity") or {})
+    role_label = str(market_identity.get("public_label") or "").strip()
+    legal_name = str(market_identity.get("legal_name") or "").strip()
+    risk_relations = [
+        item for item in relationships if item.get("relationship_type") == "risk_carrier"
+    ]
+    risk_text = "; ".join(
+        "{} ({})".format(
+            item.get("target_name") or "entidade não resolvida",
+            item.get("target_regulatory_label") or "classe regulatória não resolvida",
+        )
+        for item in risk_relations
+    )
+
+    if market_identity:
+        quick_answer = (
+            f"{brand.get('name')} é a marca pela qual "
+            f"{legal_name or 'uma pessoa jurídica identificada'} atua"
+            f"{f' como {role_label.lower()}' if role_label else ''}. "
+            f"A entidade que assume o risco no arranjo documentado é "
+            f"{risk_text or targets}. A ferramenta mantém distribuidora/representante, "
+            "marca e entidade de risco separadas, inclusive nas reclamações e nas "
+            "avaliações."
+        )
+    else:
+        quick_answer = (
+            f"{brand.get('name')} é uma marca, não uma pessoa jurídica que herda "
+            f"avaliação. A relação documentada aponta para {targets}. A ferramenta "
+            "mantém marca e entidade regulada separadas para não transferir dados ou "
+            "conclusões indevidamente."
+        )
+
+    sandbox_context = _sandbox_brand_context(
+        str(brand["brand_id"]), sandbox_payload
+    )
     return {
         "profile_id": str(brand["brand_id"]),
         "profile_kind": "brand",
@@ -766,26 +918,26 @@ def _brand_profile(
             "name": brand.get("name"),
             "aliases": brand.get("aliases") or [],
             "entity_type": "brand",
+            "market_identity": market_identity or None,
         },
         "public_summary": {
-            "headline": f"{brand.get('name')}: marca identificada no cadastro de relações",
-            "quick_answer": (
-                f"{brand.get('name')} é uma marca, não uma pessoa jurídica que herda "
-                f"avaliação. A relação documentada aponta para {targets}. A ferramenta "
-                "mantém marca e entidade regulada separadas para não transferir dados ou "
-                "conclusões indevidamente."
+            "headline": (
+                f"{brand.get('name')}: {role_label}"
+                if role_label
+                else f"{brand.get('name')}: marca identificada no cadastro de relações"
             ),
+            "quick_answer": quick_answer,
         },
         "relationships": relationships,
         "assessment": {
             "availability": "not_applicable",
             "reason": "brand_never_inherits_entity_assessment",
         },
-        "sandbox_conduct_context": _sandbox_brand_context(
-            str(brand["brand_id"]), sandbox_payload
-        ),
+        "sandbox_conduct_context": sandbox_context,
         "limits": [
             "A marca não herda avaliação ou posição da entidade relacionada.",
+            "A entidade que assume o risco deve ser exibida com sua classe regulatória real, inclusive quando participa do Sandbox.",
+            "Reclamações da distribuidora/representante e da entidade de risco permanecem separadas.",
             "Relação de marca/risk carrier não autoriza transferir reclamações sem política de atribuição.",
         ],
     }
@@ -876,16 +1028,36 @@ def _search_entry(profile: dict[str, Any]) -> dict[str, Any]:
     if profile["profile_kind"] == "brand":
         name = str(identity.get("name") or profile["profile_id"])
         aliases = list(identity.get("aliases") or [])
-        cnpj = None
+        market_identity = identity.get("market_identity") or {}
+        cnpj = market_identity.get("cnpj")
         fip_code = None
         filter_bucket = "brands"
         entity_type = "brand"
         targets = ", ".join(
-            str(item.get("target_name") or "")
+            "{}{}".format(
+                str(item.get("target_name") or ""),
+                (
+                    f" ({item.get('target_regulatory_label')})"
+                    if item.get("target_regulatory_label")
+                    else ""
+                ),
+            )
             for item in profile.get("relationships") or []
             if item.get("target_name")
         )
-        disambiguation = f"Marca{f' · relacionada a {targets}' if targets else ''}"
+        pieces = [
+            market_identity.get("public_label") or "Marca",
+            market_identity.get("legal_name"),
+            f"CNPJ {cnpj}" if cnpj else None,
+            f"risco: {targets}" if targets else None,
+        ]
+        disambiguation = " · ".join(str(piece) for piece in pieces if piece)
+        extra_terms = [
+            market_identity.get("legal_name"),
+            market_identity.get("trade_name"),
+            market_identity.get("public_label"),
+            market_identity.get("distribution_role"),
+        ]
     else:
         name = str(
             identity.get("display_name")
@@ -904,7 +1076,8 @@ def _search_entry(profile: dict[str, Any]) -> dict[str, Any]:
             f"SUSEP {fip_code}" if fip_code else None,
         ]
         disambiguation = " · ".join(str(piece) for piece in pieces if piece)
-    terms = [name, *aliases, cnpj, fip_code]
+        extra_terms = []
+    terms = [name, *aliases, *extra_terms, cnpj, fip_code]
     return {
         "search_id": f"search:{profile['profile_id']}",
         "profile_id": profile["profile_id"],
@@ -1038,6 +1211,9 @@ def build_public_search_profile_contract(
             "raw_zero_may_be_relabelled_as_missing": False,
             "zero_complaints_is_automatically_favorable": False,
             "sandbox_enters_ordinary_ranking": False,
+            "risk_bearer_label_must_reflect_regulatory_class": True,
+            "distributor_and_risk_bearer_conduct_must_remain_separate": True,
+            "unverified_distribution_role_may_not_be_presented_as_verified": True,
             "php_may_recompute_methodology": False,
             "profile_progression": [
                 "quick_answer",
@@ -1061,6 +1237,11 @@ def build_public_search_profile_contract(
             "sandbox_entity_profiles": len(sandbox),
             "sandbox_profiles_with_conduct_context": sum(
                 profile.get("sandbox_conduct") is not None for profile in sandbox
+            ),
+            "brand_profiles_with_market_identity": sum(
+                bool((profile.get("identity") or {}).get("market_identity"))
+                for profile in profiles
+                if profile.get("profile_kind") == "brand"
             ),
         },
         "public_output_contract": {

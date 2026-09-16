@@ -45,13 +45,24 @@ def _brand_registry() -> dict:
             {
                 "brand_id": "brand:loovi",
                 "name": "Loovi",
-                "aliases": ["Loovi Seguros"],
+                "aliases": ["Loovi Seguros", "Loovi Technology"],
                 "representative_cnpj": "34504257000100",
+                "market_identity": {
+                    "identity_state": "verified",
+                    "kind": "consumer_facing_company",
+                    "public_label": "Representante de seguros",
+                    "legal_name": "CW TECHNOLOGY LTDA.",
+                    "trade_name": "LOOVI TECHNOLOGY",
+                    "cnpj": "34504257000100",
+                    "distribution_role": "insurance_representative",
+                    "distribution_role_state": "verified",
+                    "evidence": {"authority": "Loovi", "fact": "verified role"},
+                },
                 "risk_carrier_cnpj": "47006254000180",
                 "risk_carrier_name": "LTI Seguros S.A.",
                 "product_scope": "seguro automotivo",
                 "conduct_context_policy": (
-                    "carrier_level_context_not_brand_exclusive_attribution"
+                    "separate_distributor_subject_from_carrier_context"
                 ),
                 "evidence": [{"authority": "Loovi", "fact": "verified"}],
             }
@@ -59,9 +70,14 @@ def _brand_registry() -> dict:
     }
 
 
-def _entry(complaints: int) -> dict:
-    return {
-        "display_name": "LTI Seguros",
+def _entry(
+    complaints: int,
+    *,
+    display_name: str = "LTI Seguros",
+    cnpj: str | None = None,
+) -> dict:
+    payload = {
+        "display_name": display_name,
         "statistics": {
             "complaintsCount": complaints,
             "respondedCount": complaints,
@@ -71,6 +87,9 @@ def _entry(complaints: int) -> dict:
             "scoreSum": float(complaints * 3),
         },
     }
+    if cnpj:
+        payload["cnpj"] = cnpj
+    return payload
 
 
 def _patch_monthly_loader(monkeypatch, by_month: dict[str, dict]) -> None:
@@ -99,23 +118,33 @@ def test_loovi_gets_lti_carrier_context_without_entering_ordinary_ranking(
 
     assert payload["ordinary_ranking_effect"] == "none"
     assert payload["summary"]["sandbox_complaints_resolved"] == 100
+    assert payload["summary"]["direct_brand_subject_complaints"] == 0
     brand = payload["brands"][0]
     assert brand["brand_id"] == "brand:loovi"
     assert brand["risk_carrier_entity_id"] == "sandbox:lti"
+    assert brand["risk_carrier_regulatory_class"] == (
+        "Participante do Sandbox regulatório"
+    )
     assert brand["carrier_conduct_summary"]["complaints"] == 100
+    assert brand["brand_subject_conduct_summary"]["complaints"] == 0
     assert brand["ordinary_ranking_effect"] == "none"
-    note = brand["attribution_note"]
+    assert brand["market_identity"]["legal_name"] == "CW TECHNOLOGY LTDA."
+    assert brand["distribution_role"] == "insurance_representative"
+    assert brand["distribution_role_state"] == "verified"
+    note = brand["carrier_attribution_note"]
     assert "registered against the verified Sandbox risk carrier" in note
-    assert "must not be described as brand-exclusive complaints" in note
+    assert "not complaints of the distributor" in note
 
 
-def test_generic_loovi_provider_label_is_not_transferred_to_lti(monkeypatch) -> None:
+def test_generic_loovi_provider_label_stays_with_loovi_and_is_not_transferred_to_lti(
+    monkeypatch,
+) -> None:
     by_month = {
         month: {
-            "loovi": {
-                "display_name": "Loovi",
-                "statistics": {"complaintsCount": 50},
-            }
+            "loovi": _entry(
+                50,
+                display_name="Loovi",
+            )
         }
         for month in MONTHS
     }
@@ -126,7 +155,59 @@ def test_generic_loovi_provider_label_is_not_transferred_to_lti(monkeypatch) -> 
         brand_registry=_brand_registry(),
     )
     assert payload["summary"]["sandbox_complaints_resolved"] == 0
-    assert payload["brands"][0]["carrier_conduct_summary"]["complaints"] == 0
+    assert payload["summary"]["direct_brand_subject_complaints"] == 600
+    brand = payload["brands"][0]
+    assert brand["carrier_conduct_summary"]["complaints"] == 0
+    assert brand["brand_subject_conduct_summary"]["complaints"] == 600
+    assert brand["brand_subject_provider_labels_observed"] == [
+        {"provider": "Loovi", "complaints": 600}
+    ]
+
+
+def test_representative_cnpj_resolves_brand_even_when_display_label_varies(
+    monkeypatch,
+) -> None:
+    by_month = {
+        month: {
+            "cw": _entry(
+                7 if index == 0 else 0,
+                display_name="CW Technology Ltda",
+                cnpj="34504257000100",
+            )
+        }
+        for index, month in enumerate(MONTHS)
+    }
+    _patch_monthly_loader(monkeypatch, by_month)
+    payload = build_sandbox_brand_conduct_evidence(
+        _eligibility(),
+        _identity(),
+        brand_registry=_brand_registry(),
+    )
+    brand = payload["brands"][0]
+    assert brand["brand_subject_conduct_summary"]["complaints"] == 7
+    assert brand["carrier_conduct_summary"]["complaints"] == 0
+
+
+def test_source_cnpj_blocks_brand_label_override(monkeypatch) -> None:
+    by_month = {
+        month: {
+            "loovi": _entry(
+                8 if index == 0 else 0,
+                display_name="Loovi",
+                cnpj="47006254000180",
+            )
+        }
+        for index, month in enumerate(MONTHS)
+    }
+    _patch_monthly_loader(monkeypatch, by_month)
+    payload = build_sandbox_brand_conduct_evidence(
+        _eligibility(),
+        _identity(),
+        brand_registry=_brand_registry(),
+    )
+    brand = payload["brands"][0]
+    assert brand["brand_subject_conduct_summary"]["complaints"] == 0
+    assert brand["carrier_conduct_summary"]["complaints"] == 8
 
 
 def test_generic_noncarrier_brand_guards_are_source_backed() -> None:

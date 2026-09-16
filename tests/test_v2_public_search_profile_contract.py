@@ -223,7 +223,7 @@ def test_missing_values_remain_null_and_youse_zero_is_not_operation_size():
     assert "CAIXA SEGURADORA" in profile["assessment"]["conduct"]["plain_language"]
 
 
-def test_loovi_brand_resolves_to_lti_without_inheriting_assessment():
+def test_loovi_exposes_distributor_and_sandbox_risk_bearer_without_mixing_conduct():
     lti = _base_entity(
         "cnpj:47006254000180",
         cnpj="47006254000180",
@@ -232,10 +232,23 @@ def test_loovi_brand_resolves_to_lti_without_inheriting_assessment():
         regime="sandbox",
         status="temporary_authorized",
     )
+    market_identity = {
+        "identity_state": "verified",
+        "kind": "insurance_distribution_company",
+        "public_label": "Representante de seguros",
+        "legal_name": "CW TECHNOLOGY LTDA.",
+        "trade_name": "LOOVI TECHNOLOGY",
+        "cnpj": "34504257000100",
+        "distribution_role": "insurance_representative",
+        "distribution_role_state": "verified",
+        "public_note": "Loovi é operada pela CW Technology.",
+        "evidence": {"authority": "Loovi", "fact": "verified"},
+    }
     brand = {
         "brand_id": "brand:loovi",
         "name": "Loovi",
         "aliases": ["Loovi Seguros", "Loovi Technology"],
+        "market_identity": market_identity,
         "relationships": [
             {
                 "relationship_type": "risk_carrier",
@@ -246,7 +259,7 @@ def test_loovi_brand_resolves_to_lti_without_inheriting_assessment():
             }
         ],
     }
-    totals = {
+    carrier_totals = {
         "complaints": 1329,
         "responded": 1286,
         "response_rate": 0.9676,
@@ -255,6 +268,15 @@ def test_loovi_brand_resolves_to_lti_without_inheriting_assessment():
         "satisfaction_count": 619,
         "average_satisfaction": 2.6446,
     }
+    distributor_totals = {
+        "complaints": 17,
+        "responded": 16,
+        "response_rate": 0.9412,
+        "finalized": 17,
+        "finalized_rate": 1.0,
+        "satisfaction_count": 8,
+        "average_satisfaction": 3.1,
+    }
     sandbox = {
         "artifact": "v2_sandbox_brand_conduct_evidence",
         "carriers": [
@@ -262,7 +284,8 @@ def test_loovi_brand_resolves_to_lti_without_inheriting_assessment():
                 "entity_id": "cnpj:47006254000180",
                 "cnpj": "47006254000180",
                 "legal_name": "LTI Seguros S.A.",
-                "totals": totals,
+                "regulatory_public_label": "Participante do Sandbox regulatório",
+                "totals": carrier_totals,
                 "consumer_gov_provider_labels_observed": [
                     {"provider": "LTI Seguros", "complaints": 1329}
                 ],
@@ -272,13 +295,36 @@ def test_loovi_brand_resolves_to_lti_without_inheriting_assessment():
         "brands": [
             {
                 "brand_id": "brand:loovi",
+                "representative_cnpj": "34504257000100",
+                "market_identity": market_identity,
+                "distribution_role": "insurance_representative",
+                "distribution_role_state": "verified",
                 "risk_carrier_entity_id": "cnpj:47006254000180",
                 "risk_carrier_cnpj": "47006254000180",
                 "risk_carrier_name": "LTI Seguros S.A.",
+                "risk_carrier_regulatory_class": (
+                    "Participante do Sandbox regulatório"
+                ),
+                "regulatory_scope": "sandbox",
                 "product_scope": "seguro automotivo",
-                "conduct_scope": "carrier_level_context_for_verified_brand_relationship",
-                "attribution_note": "Carrier-level context, not brand-exclusive.",
-                "carrier_conduct_summary": {**totals, "film": {"months_observed": 12}},
+                "conduct_scope": "separate_distributor_subject_and_carrier_context",
+                "brand_subject_provider_labels_observed": [
+                    {"provider": "Loovi", "complaints": 17}
+                ],
+                "brand_subject_attribution_note": "Direct distributor subject only.",
+                "carrier_attribution_note": "Carrier context only.",
+                "brand_subject_conduct_summary": {
+                    **distributor_totals,
+                    "film": {"months_observed": 4},
+                    "provider_labels": [{"provider": "Loovi", "complaints": 17}],
+                },
+                "carrier_conduct_summary": {
+                    **carrier_totals,
+                    "film": {"months_observed": 12},
+                    "provider_labels": [
+                        {"provider": "LTI Seguros", "complaints": 1329}
+                    ],
+                },
                 "evidence": [{"authority": "Loovi"}],
             }
         ],
@@ -295,13 +341,43 @@ def test_loovi_brand_resolves_to_lti_without_inheriting_assessment():
     lti_profile = profiles["entity:cnpj:47006254000180"]
 
     assert loovi["assessment"]["availability"] == "not_applicable"
-    assert loovi["relationships"][0]["target_profile_id"] == (
-        "entity:cnpj:47006254000180"
+    assert loovi["identity"]["market_identity"]["legal_name"] == "CW TECHNOLOGY LTDA."
+    assert loovi["identity"]["market_identity"]["distribution_role"] == (
+        "insurance_representative"
     )
-    assert loovi["sandbox_conduct_context"]["metrics"]["complaints"]["value"] == 1329
-    assert "LTI Seguros" in loovi["sandbox_conduct_context"]["plain_language"]
+    relationship = loovi["relationships"][0]
+    assert relationship["public_role_label"] == "Entidade que assume o risco"
+    assert relationship["target_profile_id"] == "entity:cnpj:47006254000180"
+    assert relationship["target_regulatory_label"] == (
+        "Participante do Sandbox regulatório"
+    )
+    assert relationship["target_regulatory_regime"] == "sandbox"
+
+    context = loovi["sandbox_conduct_context"]
+    assert context["distributor"]["legal_name"] == "CW TECHNOLOGY LTDA."
+    assert context["distributor"]["distribution_role_state"] == "verified"
+    assert context["risk_bearer"]["name"] == "LTI Seguros S.A."
+    assert context["risk_bearer"]["regulatory_class"] == (
+        "Participante do Sandbox regulatório"
+    )
+    assert context["brand_subject_conduct"]["metrics"]["complaints"]["value"] == 17
+    assert context["carrier_conduct_context"]["metrics"]["complaints"]["value"] == 1329
+    assert "distribuidora" in context["brand_subject_conduct"]["plain_language"].lower()
+    assert "não reclamações da distribuidora" in context[
+        "carrier_conduct_context"
+    ]["plain_language"].lower()
+
     assert lti_profile["sandbox_conduct"]["metrics"]["complaints"]["value"] == 1329
+    assert lti_profile["regulatory"]["label"] == "Participante do Sandbox regulatório"
     assert lti_profile["assessment"]["availability"] == "not_applicable"
+
+    loovi_search = next(
+        row for row in payload["search_index"] if row["profile_id"] == "brand:loovi"
+    )
+    assert loovi_search["cnpj"] == "34504257000100"
+    assert "cw technology" in loovi_search["search_text"]
+    assert "representante de seguros" in loovi_search["disambiguation"].lower()
+    assert "participante do sandbox" in loovi_search["disambiguation"].lower()
 
 
 def test_same_susep_group_keeps_distinct_hdi_entities():
@@ -397,6 +473,9 @@ def test_search_index_contains_entities_and_brands_without_fuzzy_identity_decisi
     assert payload["publication_policy"][
         "frontend_may_use_fuzzy_search_to_decide_identity"
     ] is False
+    assert payload["publication_policy"][
+        "distributor_and_risk_bearer_conduct_must_remain_separate"
+    ] is True
     brand_entry = next(
         row for row in payload["search_index"] if row["profile_id"] == "brand:teste"
     )

@@ -1,6 +1,6 @@
 {
-  "schema_version": "1.2",
-  "note": "Source-backed canonical relationship registry for facts that cannot be derived safely from SES identity alone. Corporate succession records are event-driven and only added with explicit documentary support. Durable brand, trade-name, market-identity and product-to-risk-carrier relationships belong here so every downstream source can reuse them; source-specific wrappers remain outside this registry. Optional market_identity metadata describes a separately identifiable consumer-facing company or platform without making it a regulated insurer or transferring the related insurer's assessment.",
+  "schema_version": "1.3",
+  "note": "Source-backed canonical relationship registry for facts that cannot be derived safely from SES identity alone. Corporate succession records are event-driven and only added with explicit documentary support. Durable brand, trade-name, market-identity and product-to-risk-carrier relationships belong here so every downstream source can reuse them; source-specific wrappers remain outside this registry. Optional market_identity metadata describes a separately identifiable consumer-facing company or platform without making it a regulated insurer or transferring the related insurer's assessment. A market identity may also carry a verified distribution role; that role remains separate from the regulatory class of the entity that assumes the insurance risk.",
   "corporate_relationships": [
     {
       "relationship_type": "incorporated_into",
@@ -310,6 +310,21 @@
       "brand_id": "brand:loovi",
       "name": "Loovi",
       "aliases": ["Loovi Seguros", "Loovi Technology"],
+      "market_identity": {
+        "kind": "insurance_distribution_company",
+        "public_label": "Representante de seguros",
+        "legal_name": "CW TECHNOLOGY LTDA.",
+        "trade_name": "LOOVI TECHNOLOGY",
+        "cnpj": "34504257000100",
+        "distribution_role": "insurance_representative",
+        "distribution_role_state": "verified",
+        "public_note": "Loovi é o nome comercial usado pela CW Technology Ltda., CNPJ 34.504.257/0001-00. A própria Loovi identifica essa pessoa jurídica como representante de seguros da LTI Seguros S.A.; marca, representante e entidade que assume o risco permanecem separadas na ferramenta.",
+        "evidence": {
+          "authority": "Loovi",
+          "url": "https://informacoes.loovi.com.br/conteudos-institucionais/seguranca-e-regulacao",
+          "fact": "A Loovi informa que CW Technology Ltda., CNPJ 34.504.257/0001-00, nome fantasia LOOVI TECHNOLOGY, é representante de seguros da LTI Seguros S.A."
+        }
+      },
       "relationships": [
         {
           "relationship_type": "risk_carrier",
@@ -318,8 +333,8 @@
           "scope": "seguro automotivo comercializado pela Loovi e garantido pela LTI Seguros S.A.",
           "evidence": {
             "authority": "Loovi",
-            "url": "https://www.loovi.com.br/faq",
-            "fact": "A Loovi declara ser representante da LTI Seguros S.A. e comercializar seguro automotivo por meio da seguradora Sandbox."
+            "url": "https://informacoes.loovi.com.br/conteudos-institucionais/seguranca-e-regulacao",
+            "fact": "A Loovi informa que a LTI Seguros S.A. é responsável pela emissão das apólices e pelo cumprimento das coberturas e que CW Technology Ltda. atua como representante de seguros."
           }
         }
       ]

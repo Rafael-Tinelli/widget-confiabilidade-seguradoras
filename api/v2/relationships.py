@@ -242,6 +242,44 @@ def apply_economic_groups(
     return sorted(output, key=lambda item: item["entity_id"]), normalized_groups
 
 
+def _validated_market_identity(
+    brand_id: str,
+    raw: Any,
+) -> dict[str, Any] | None:
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise RelationshipConflictError(
+            f"Brand {brand_id} market_identity must be an object"
+        )
+    market_identity = deepcopy(raw)
+    cnpj_raw = market_identity.get("cnpj")
+    if cnpj_raw is not None:
+        cnpj = normalize_cnpj_v2(cnpj_raw)
+        if not cnpj:
+            raise RelationshipConflictError(
+                f"Brand {brand_id} market_identity has invalid CNPJ: {cnpj_raw}"
+            )
+        market_identity["cnpj"] = cnpj
+
+    role_state = str(market_identity.get("distribution_role_state") or "").strip()
+    if role_state and role_state not in {"verified", "unverified"}:
+        raise RelationshipConflictError(
+            f"Brand {brand_id} has unsupported distribution_role_state: {role_state}"
+        )
+    if role_state == "verified":
+        if not str(market_identity.get("distribution_role") or "").strip():
+            raise RelationshipConflictError(
+                f"Brand {brand_id} verified distribution role is missing"
+            )
+        evidence = market_identity.get("evidence")
+        if not isinstance(evidence, dict) or not evidence:
+            raise RelationshipConflictError(
+                f"Brand {brand_id} verified distribution role requires evidence"
+            )
+    return market_identity
+
+
 def materialize_brands(
     entities: list[dict[str, Any]],
     registry: dict[str, Any],
@@ -250,6 +288,8 @@ def materialize_brands(
 
     A brand has no score. ``risk_carrier`` points to the entity that may be
     assessed later; it never transfers that entity's assessment to the brand.
+    A separately verified consumer-facing company/distributor is preserved in
+    ``market_identity`` without turning it into a regulated insurer.
     """
     cnpj_to_id = _cnpj_index(entities)
     brands: list[dict[str, Any]] = []
@@ -274,20 +314,24 @@ def materialize_brands(
             relation["target_entity_id"] = target_id
             resolved_relationships.append(relation)
 
-        brands.append(
-            {
-                "brand_id": brand_id,
-                "name": str(brand.get("name") or "").strip(),
-                "aliases": sorted(
-                    {
-                        str(alias).strip()
-                        for alias in (brand.get("aliases") or [])
-                        if str(alias).strip()
-                    }
-                ),
-                "relationships": resolved_relationships,
-            }
+        materialized = {
+            "brand_id": brand_id,
+            "name": str(brand.get("name") or "").strip(),
+            "aliases": sorted(
+                {
+                    str(alias).strip()
+                    for alias in (brand.get("aliases") or [])
+                    if str(alias).strip()
+                }
+            ),
+            "relationships": resolved_relationships,
+        }
+        market_identity = _validated_market_identity(
+            brand_id, brand.get("market_identity")
         )
+        if market_identity is not None:
+            materialized["market_identity"] = market_identity
+        brands.append(materialized)
 
     return sorted(brands, key=lambda item: item["brand_id"])
 
@@ -309,6 +353,12 @@ def relationship_summary(
         for brand in brands
         for relation in brand.get("relationships") or []
     )
+    market_identities = sum(bool(item.get("market_identity")) for item in brands)
+    verified_distribution_roles = sum(
+        str((item.get("market_identity") or {}).get("distribution_role_state") or "")
+        == "verified"
+        for item in brands
+    )
     return {
         "corporate_relationships_resolved": len(corporate_resolved),
         "economic_groups_count": len(groups),
@@ -317,4 +367,6 @@ def relationship_summary(
         "brands_count": len(brands),
         "brand_relationships_count": brand_relations,
         "brand_risk_carrier_relationships_count": risk_carriers,
+        "brand_market_identities_count": market_identities,
+        "verified_distribution_roles_count": verified_distribution_roles,
     }
