@@ -27,6 +27,12 @@ def test_loovi_is_canonical_sandbox_risk_carrier_relationship():
     brand = _brands_by_id()["brand:loovi"]
     assert brand["name"] == "Loovi"
     assert "Loovi Seguros" in brand["aliases"]
+    market = brand["market_identity"]
+    assert market["legal_name"] == "CW TECHNOLOGY LTDA."
+    assert market["cnpj"] == "34504257000100"
+    assert market["distribution_role"] == "insurance_representative"
+    assert market["distribution_role_state"] == "verified"
+    assert market["public_label"] == "Representante de seguros"
     relation = brand["relationships"][0]
     assert relation["relationship_type"] == "risk_carrier"
     assert relation["target_cnpj"] == "47006254000180"
@@ -61,6 +67,11 @@ def test_sandbox_brand_wrapper_cannot_drift_from_canonical_relationship():
     assert sandbox["risk_carrier_cnpj"] == canonical_relation["target_cnpj"]
     assert sandbox["name"] == canonical["name"]
     assert set(sandbox["aliases"]) <= set(canonical["aliases"])
+    assert sandbox["representative_cnpj"] == canonical["market_identity"]["cnpj"]
+    assert sandbox["market_identity"]["distribution_role"] == (
+        canonical["market_identity"]["distribution_role"]
+    )
+    assert sandbox["market_identity"]["distribution_role_state"] == "verified"
     assert sandbox["evidence"]
 
 
