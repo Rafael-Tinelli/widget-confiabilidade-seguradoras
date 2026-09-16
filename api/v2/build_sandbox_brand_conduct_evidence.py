@@ -15,23 +15,21 @@ generic artifact and the legacy Sandbox-only compatibility projection.
 
 import json
 
-from api.v2.build_market_relationship_conduct_evidence import (
-    LEGACY_SANDBOX_OUTPUT_PATH as OUTPUT_PATH,
-    OUTPUT_PATH as MARKET_RELATIONSHIP_OUTPUT_PATH,
-    build_from_files as build_market_relationship_from_files,
-    build_legacy_sandbox_projection,
-)
+import api.v2.build_market_relationship_conduct_evidence as market_conduct
+
+OUTPUT_PATH = market_conduct.LEGACY_SANDBOX_OUTPUT_PATH
+MARKET_RELATIONSHIP_OUTPUT_PATH = market_conduct.OUTPUT_PATH
 
 
 def build_sandbox_brand_conduct_evidence(
     market_relationship_payload: dict,
 ) -> dict:
     """Return the legacy Sandbox projection from the generic conduct artifact."""
-    return build_legacy_sandbox_projection(market_relationship_payload)
+    return market_conduct.build_legacy_sandbox_projection(market_relationship_payload)
 
 
 def main() -> None:
-    payload, legacy = build_market_relationship_from_files()
+    payload, legacy = market_conduct.build_from_files()
     MARKET_RELATIONSHIP_OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
     MARKET_RELATIONSHIP_OUTPUT_PATH.write_text(
         json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
