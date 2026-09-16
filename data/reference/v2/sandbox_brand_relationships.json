@@ -1,23 +1,39 @@
 {
-  "schema_version": "1.0",
-  "note": "Verified consumer-facing brand relationships for Sandbox carriers. Carrier-level Consumer.gov conduct may be exposed as contextual evidence for a verified brand, but the artifact must preserve that the complaints are registered against the carrier unless the source itself names the brand. Sandbox evidence never enters the ordinary-insurer ranking or ordinary market baseline.",
+  "schema_version": "1.1",
+  "note": "Verified consumer-facing brand relationships for Sandbox risk carriers. The public contract must expose the consumer-facing distributor/representative as its own market identity, keep its Consumer.gov complaints separate from carrier complaints, and describe the carrier by its actual regulatory class. Carrier-level Consumer.gov conduct may be exposed as contextual evidence for a verified brand, but the artifact must preserve that the complaints are registered against the carrier unless the source itself identifies the distributor. Sandbox evidence never enters the ordinary-insurer ranking or ordinary market baseline.",
   "brands": [
     {
       "brand_id": "brand:loovi",
       "name": "Loovi",
       "aliases": ["Loovi Seguros", "Loovi Technology"],
       "representative_cnpj": "34504257000100",
+      "market_identity": {
+        "identity_state": "verified",
+        "kind": "consumer_facing_company",
+        "public_label": "Representante de seguros",
+        "legal_name": "CW TECHNOLOGY LTDA.",
+        "trade_name": "LOOVI TECHNOLOGY",
+        "cnpj": "34504257000100",
+        "distribution_role": "insurance_representative",
+        "distribution_role_state": "verified",
+        "public_note": "Loovi é o nome comercial usado pela CW Technology Ltda., que atua como representante de seguros da LTI Seguros S.A. A representante permanece uma identidade própria: suas reclamações e seu papel comercial não são transferidos automaticamente para a entidade que assume o risco.",
+        "evidence": {
+          "authority": "Loovi",
+          "url": "https://informacoes.loovi.com.br/conteudos-institucionais/seguranca-e-regulacao",
+          "fact": "A Loovi informa que CW Technology Ltda., CNPJ 34.504.257/0001-00, nome fantasia LOOVI TECHNOLOGY, é representante de seguros da LTI Seguros S.A."
+        }
+      },
       "risk_carrier_cnpj": "47006254000180",
       "risk_carrier_name": "LTI Seguros S.A.",
       "regulatory_scope": "sandbox",
       "product_scope": "seguro automotivo comercializado pela Loovi e garantido pela LTI Seguros S.A.",
-      "conduct_context_policy": "carrier_level_context_not_brand_exclusive_attribution",
+      "conduct_context_policy": "separate_distributor_subject_from_carrier_context",
       "ordinary_ranking_effect": "none",
       "evidence": [
         {
           "authority": "Loovi",
-          "url": "https://www.loovi.com.br/faq",
-          "fact": "A Loovi declara ser representante da LTI Seguros S.A. e comercializar seguro automotivo por meio da seguradora Sandbox."
+          "url": "https://informacoes.loovi.com.br/conteudos-institucionais/seguranca-e-regulacao",
+          "fact": "A Loovi identifica CW Technology Ltda. como representante de seguros da LTI Seguros S.A. e informa que a LTI é responsável pela emissão das apólices e pelas coberturas."
         },
         {
           "authority": "LTI Seguros",
@@ -27,7 +43,7 @@
         {
           "authority": "SUSEP",
           "url": "https://www.gov.br/susep/pt-br/assuntos/sandbox-regulatorio/seguradoras-participantes-do-sandbox-1",
-          "fact": "A SUSEP identifica LTI Seguros S.A., CNPJ 47.006.254/0001-80, como participante autorizada da 2ª edição do Sandbox para Seguros de Danos."
+          "fact": "A SUSEP identifica LTI Seguros S.A., CNPJ 47.006.254/0001-80, como participante autorizada da 2ª edição do Sandbox para Seguros de Danos, sob autorização temporária/experimental."
         }
       ]
     }
