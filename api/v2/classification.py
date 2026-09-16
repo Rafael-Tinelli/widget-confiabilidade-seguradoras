@@ -279,6 +279,11 @@ def apply_sandbox_classification(
     matching is prohibited. A record is applied only when its CNPJ maps to one
     and only one FIP-stable regulatory identity. Unmatched or ambiguous records
     are returned for audit instead of being converted into invented identities.
+
+    The generic licensed-entities source can also contain an active Sandbox
+    participant. When the same insurer CNPJ is present in both sources, the
+    Sandbox source is the more specific regulatory-scope evidence and therefore
+    determines the public regime/status while the licensed evidence is retained.
     """
     output = [deepcopy(item) for item in entities]
     indexes: dict[str, list[int]] = defaultdict(list)
@@ -312,19 +317,38 @@ def apply_sandbox_classification(
         if status == "temporary_authorized":
             current_status = entity.get("regulatory_status") or "unknown"
             current_regime = entity.get("regulatory_regime") or "unknown"
-            if current_status not in {"unknown", "temporary_authorized"} or current_regime not in {
-                "unknown",
-                "sandbox",
-            }:
-                raise ClassificationConflictError(
-                    f"Sandbox CNPJ {cnpj} maps to {entity['entity_id']} with current "
-                    f"status={current_status} regime={current_regime}"
-                )
             current_type = entity.get("entity_type") or "unknown"
+
             if current_type not in {"unknown", "insurer"}:
                 raise ClassificationConflictError(
                     f"Sandbox CNPJ {cnpj} maps to non-insurer {entity['entity_id']}"
                 )
+
+            licensed_overlap = (
+                current_type == "insurer"
+                and current_status == "active_licensed"
+                and current_regime == "ordinary"
+                and bool(evidence.get("licensed_entities"))
+            )
+            existing_sandbox_state = (
+                current_status in {"unknown", "temporary_authorized"}
+                and current_regime in {"unknown", "sandbox"}
+            )
+            if not (existing_sandbox_state or licensed_overlap):
+                raise ClassificationConflictError(
+                    f"Sandbox CNPJ {cnpj} maps to {entity['entity_id']} with current "
+                    f"status={current_status} regime={current_regime}"
+                )
+
+            if licensed_overlap:
+                evidence["regulatory_scope_resolution"] = {
+                    "policy": "active_sandbox_scope_precedes_generic_current_license",
+                    "licensed_status": current_status,
+                    "licensed_regime": current_regime,
+                    "resolved_regime": "sandbox",
+                    "resolved_status": "temporary_authorized",
+                }
+
             entity["entity_type"] = "insurer"
             entity["regulatory_regime"] = "sandbox"
             entity["regulatory_status"] = "temporary_authorized"
