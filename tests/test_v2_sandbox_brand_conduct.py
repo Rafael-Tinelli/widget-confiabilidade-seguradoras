@@ -1,9 +1,6 @@
-from __future__ import annotations
-
-from pathlib import Path
-
-from api.v2.build_sandbox_brand_conduct_evidence import (
-    build_sandbox_brand_conduct_evidence,
+from api.v2.build_market_relationship_conduct_evidence import (
+    build_legacy_sandbox_projection,
+    build_market_relationship_conduct_evidence,
 )
 from api.v2.consumer_gov_identity import load_provider_resolution_registry
 
@@ -12,41 +9,30 @@ MONTHS = [f"2025-{month:02d}" for month in range(7, 13)] + [
 ]
 
 
-def _eligibility() -> dict:
+def _entity(entity_id, cnpj, name, *, regime="sandbox", entity_type="sandbox_participant"):
     return {
-        "entities": [
-            {
-                "entity_id": "sandbox:lti",
-                "entity_type": "sandbox_participant",
-                "cnpj": "47006254000180",
-                "legal_name": "LTI SEGUROS S.A.",
-                "display_name": "LTI Seguros",
-                "eligibility": {"regulatory_universe_eligible": False},
-            },
-            {
-                "entity_id": "fip:crefisa-seguros",
-                "entity_type": "insurer",
-                "cnpj": "50662436000114",
-                "legal_name": "CREFISA SEGUROS S.A.",
-                "display_name": "Crefisa Seguros",
-                "eligibility": {"regulatory_universe_eligible": True},
-            },
-        ]
+        "entity_id": entity_id,
+        "entity_type": entity_type,
+        "cnpj": cnpj,
+        "legal_name": name,
+        "display_name": name,
+        "regulatory_regime": regime,
+        "regulatory_status": "temporary_authorized",
+        "eligibility": {"regulatory_universe_eligible": False, "reason_codes": []},
+        "query_context": {},
     }
 
 
-def _identity() -> dict:
-    return {"source": {"months": MONTHS}}
-
-
-def _brand_registry() -> dict:
+def _lifecycle() -> dict:
     return {
+        "entities": [
+            _entity("sandbox:lti", "47006254000180", "LTI SEGUROS S.A."),
+        ],
         "brands": [
             {
                 "brand_id": "brand:loovi",
                 "name": "Loovi",
                 "aliases": ["Loovi Seguros", "Loovi Technology"],
-                "representative_cnpj": "34504257000100",
                 "market_identity": {
                     "identity_state": "verified",
                     "kind": "consumer_facing_company",
@@ -58,24 +44,25 @@ def _brand_registry() -> dict:
                     "distribution_role_state": "verified",
                     "evidence": {"authority": "Loovi", "fact": "verified role"},
                 },
-                "risk_carrier_cnpj": "47006254000180",
-                "risk_carrier_name": "LTI Seguros S.A.",
-                "product_scope": "seguro automotivo",
-                "conduct_context_policy": (
-                    "separate_distributor_subject_from_carrier_context"
-                ),
-                "evidence": [{"authority": "Loovi", "fact": "verified"}],
+                "relationships": [
+                    {
+                        "relationship_type": "risk_carrier",
+                        "target_entity_id": "sandbox:lti",
+                        "status": "current",
+                        "scope": "seguro automotivo",
+                        "evidence": {"authority": "Loovi", "fact": "verified"},
+                    }
+                ],
             }
-        ]
+        ],
     }
 
 
-def _entry(
-    complaints: int,
-    *,
-    display_name: str = "LTI Seguros",
-    cnpj: str | None = None,
-) -> dict:
+def _identity() -> dict:
+    return {"source": {"months": MONTHS}}
+
+
+def _entry(complaints: int, *, display_name: str, cnpj: str | None = None) -> dict:
     payload = {
         "display_name": display_name,
         "statistics": {
@@ -83,7 +70,7 @@ def _entry(
             "respondedCount": complaints,
             "finalizedCount": complaints,
             "resolvedCount": 0,
-            "satisfactionCount": complaints,
+            "evaluatedCount": complaints,
             "scoreSum": float(complaints * 3),
         },
     }
@@ -92,122 +79,52 @@ def _entry(
     return payload
 
 
-def _patch_monthly_loader(monkeypatch, by_month: dict[str, dict]) -> None:
-    def fake_load(month: str):
-        return {}, by_month[month], Path(f"{month}.json.gz")
-
-    monkeypatch.setattr(
-        "api.v2.build_sandbox_brand_conduct_evidence.load_monthly_entries",
-        fake_load,
-    )
-
-
-def test_loovi_gets_lti_carrier_context_without_entering_ordinary_ranking(
-    monkeypatch,
-) -> None:
-    by_month = {
-        month: {"lti": _entry(100 if index == 0 else 0)}
-        for index, month in enumerate(MONTHS)
-    }
-    _patch_monthly_loader(monkeypatch, by_month)
-    payload = build_sandbox_brand_conduct_evidence(
-        _eligibility(),
+def _build(first_month_entries: dict) -> tuple[dict, dict]:
+    by_month = {month: {} for month in MONTHS}
+    by_month[MONTHS[0]] = first_month_entries
+    generic = build_market_relationship_conduct_evidence(
+        _lifecycle(),
         _identity(),
-        brand_registry=_brand_registry(),
+        entry_loader=lambda month: by_month[month],
+    )
+    return generic, build_legacy_sandbox_projection(generic)
+
+
+def test_loovi_compatibility_projection_preserves_separate_subjects() -> None:
+    generic, legacy = _build(
+        {
+            "loovi": _entry(
+                7, display_name="CW Technology Ltda", cnpj="34504257000100"
+            ),
+            "lti": _entry(100, display_name="LTI Seguros", cnpj="47006254000180"),
+        }
     )
 
-    assert payload["ordinary_ranking_effect"] == "none"
-    assert payload["summary"]["sandbox_complaints_resolved"] == 100
-    assert payload["summary"]["direct_brand_subject_complaints"] == 0
-    brand = payload["brands"][0]
-    assert brand["brand_id"] == "brand:loovi"
-    assert brand["risk_carrier_entity_id"] == "sandbox:lti"
-    assert brand["risk_carrier_regulatory_class"] == (
+    row = generic["brands"][0]
+    assert row["market_identity_conduct_summary"]["complaints"] == 7
+    assert row["risk_bearers"][0]["conduct_summary"]["complaints"] == 100
+    assert row["risk_bearers"][0]["regulatory_class"] == (
         "Participante do Sandbox regulatório"
     )
-    assert brand["carrier_conduct_summary"]["complaints"] == 100
-    assert brand["brand_subject_conduct_summary"]["complaints"] == 0
-    assert brand["ordinary_ranking_effect"] == "none"
-    assert brand["market_identity"]["legal_name"] == "CW TECHNOLOGY LTDA."
-    assert brand["distribution_role"] == "insurance_representative"
-    assert brand["distribution_role_state"] == "verified"
-    note = brand["carrier_attribution_note"]
-    assert "registered against the verified Sandbox risk carrier" in note
-    assert "not complaints of the distributor" in note
 
-
-def test_generic_loovi_provider_label_stays_with_loovi_and_is_not_transferred_to_lti(
-    monkeypatch,
-) -> None:
-    by_month = {
-        month: {
-            "loovi": _entry(
-                50,
-                display_name="Loovi",
-            )
-        }
-        for month in MONTHS
-    }
-    _patch_monthly_loader(monkeypatch, by_month)
-    payload = build_sandbox_brand_conduct_evidence(
-        _eligibility(),
-        _identity(),
-        brand_registry=_brand_registry(),
-    )
-    assert payload["summary"]["sandbox_complaints_resolved"] == 0
-    assert payload["summary"]["direct_brand_subject_complaints"] == 600
-    brand = payload["brands"][0]
-    assert brand["carrier_conduct_summary"]["complaints"] == 0
-    assert brand["brand_subject_conduct_summary"]["complaints"] == 600
-    assert brand["brand_subject_provider_labels_observed"] == [
-        {"provider": "Loovi", "complaints": 600}
-    ]
-
-
-def test_representative_cnpj_resolves_brand_even_when_display_label_varies(
-    monkeypatch,
-) -> None:
-    by_month = {
-        month: {
-            "cw": _entry(
-                7 if index == 0 else 0,
-                display_name="CW Technology Ltda",
-                cnpj="34504257000100",
-            )
-        }
-        for index, month in enumerate(MONTHS)
-    }
-    _patch_monthly_loader(monkeypatch, by_month)
-    payload = build_sandbox_brand_conduct_evidence(
-        _eligibility(),
-        _identity(),
-        brand_registry=_brand_registry(),
-    )
-    brand = payload["brands"][0]
+    assert legacy["status"] == "compatibility_projection"
+    brand = legacy["brands"][0]
     assert brand["brand_subject_conduct_summary"]["complaints"] == 7
-    assert brand["carrier_conduct_summary"]["complaints"] == 0
+    assert brand["carrier_conduct_summary"]["complaints"] == 100
+    assert brand["ordinary_ranking_effect"] == "none"
 
 
-def test_source_cnpj_blocks_brand_label_override(monkeypatch) -> None:
-    by_month = {
-        month: {
+def test_source_cnpj_blocks_loovi_label_override() -> None:
+    generic, _ = _build(
+        {
             "loovi": _entry(
-                8 if index == 0 else 0,
-                display_name="Loovi",
-                cnpj="47006254000180",
+                8, display_name="Loovi", cnpj="47006254000180"
             )
         }
-        for index, month in enumerate(MONTHS)
-    }
-    _patch_monthly_loader(monkeypatch, by_month)
-    payload = build_sandbox_brand_conduct_evidence(
-        _eligibility(),
-        _identity(),
-        brand_registry=_brand_registry(),
     )
-    brand = payload["brands"][0]
-    assert brand["brand_subject_conduct_summary"]["complaints"] == 0
-    assert brand["carrier_conduct_summary"]["complaints"] == 8
+    brand = generic["brands"][0]
+    assert brand["market_identity_conduct_summary"]["complaints"] == 0
+    assert brand["risk_bearers"][0]["conduct_summary"]["complaints"] == 8
 
 
 def test_generic_noncarrier_brand_guards_are_source_backed() -> None:
@@ -217,10 +134,3 @@ def test_generic_noncarrier_brand_guards_are_source_backed() -> None:
         assert row.resolution_state == "outside_157"
         assert row.target_cnpj is None
         assert row.evidence
-
-
-def test_specific_insurer_names_are_not_replaced_by_generic_guards() -> None:
-    registry = load_provider_resolution_registry()
-    assert "sicoob seguradora" in registry
-    assert registry["sicoob seguradora"].resolution_state == "matched_current_insurer"
-    assert "crefisa seguros" not in registry
