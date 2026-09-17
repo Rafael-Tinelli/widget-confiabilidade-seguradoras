@@ -35,3 +35,38 @@ def test_transport_change_preserves_exact_package_verification_and_atomic_instal
     assert archive in workflow
     assert installer in workflow
     assert workflow.index(verification) < workflow.index(archive) < workflow.index(installer)
+
+
+def test_hostgator_publication_reuses_one_ssh_transport_session():
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+
+    for required in (
+        'control_path="$RUNNER_TEMP/v2-hostgator-ssh/control-%C"',
+        "ControlMaster=auto",
+        "ControlPersist=120",
+        'ControlPath="$control_path"',
+    ):
+        assert required in workflow
+
+    # ssh and scp must share the same control socket instead of opening a fresh
+    # TCP/SSH handshake for each publication phase.
+    assert workflow.count('ControlPath="$control_path"') == 2
+
+
+def test_initial_ssh_retry_is_bounded_and_only_for_observed_transient_resets():
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+
+    assert "for attempt in 1 2 3; do" in workflow
+    assert "[[ $attempt -lt 3 ]]" in workflow
+    assert "kex_exchange_identification:" in workflow
+    assert "Connection reset by peer" in workflow
+    assert "sleep $(( attempt * 5 ))" in workflow
+    assert 'exit "$status"' in workflow
+
+    # Preserve the failing ssh exit code before any logging/grep changes $?.
+    assert "else\n              status=$?\n            fi" in workflow
+
+    # Authentication and host-key failures must not be explicitly classified
+    # as retryable conditions.
+    assert "Permission denied" not in workflow
+    assert "HOST IDENTIFICATION HAS CHANGED" not in workflow
