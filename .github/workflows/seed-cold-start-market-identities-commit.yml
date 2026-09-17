@@ -32,6 +32,9 @@ jobs:
           for line in source[start:]:
               if line == '          PY':
                   break
+              if line == '':
+                  block.append('')
+                  continue
               if not line.startswith('          '):
                   raise SystemExit(f'unexpected indentation in seed block: {line!r}')
               block.append(line[10:])
