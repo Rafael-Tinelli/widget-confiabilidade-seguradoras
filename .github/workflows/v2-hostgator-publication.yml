@@ -351,8 +351,10 @@ jobs:
           remote="$SSH_USER@$SSH_HOST"
           incoming="$PUBLICATION_ROOT/incoming/$BUILD_ID"
           transport_archive="$RUNNER_TEMP/v2-public-package.tar.gz"
+          control_path="$RUNNER_TEMP/v2-hostgator-ssh/control-%C"
+          connect_log="$RUNNER_TEMP/v2-hostgator-ssh/connect.err"
 
-          rm -f -- "$transport_archive"
+          rm -f -- "$transport_archive" "$connect_log"
           tar -C "$PACKAGE_DIR" -czf "$transport_archive" .
           python - "$transport_archive" <<'PY'
           import sys
@@ -383,6 +385,9 @@ jobs:
             -o UpdateHostKeys=no
             -o ServerAliveInterval=30
             -o ServerAliveCountMax=6
+            -o ControlMaster=auto
+            -o ControlPersist=120
+            -o ControlPath="$control_path"
           )
           scp_opts=(
             -i "$SSH_KEY_FILE"
@@ -395,10 +400,32 @@ jobs:
             -o UpdateHostKeys=no
             -o ServerAliveInterval=30
             -o ServerAliveCountMax=6
+            -o ControlMaster=auto
+            -o ControlPersist=120
+            -o ControlPath="$control_path"
           )
 
-          ssh "${ssh_opts[@]}" "$remote" \
-            "rm -rf '$incoming' && mkdir -p '$incoming'"
+          connected=false
+          for attempt in 1 2 3; do
+            : > "$connect_log"
+            if ssh "${ssh_opts[@]}" "$remote" \
+              "rm -rf '$incoming' && mkdir -p '$incoming'" \
+              2>"$connect_log"; then
+              connected=true
+              break
+            else
+              status=$?
+            fi
+            cat "$connect_log" >&2
+            if [[ $attempt -lt 3 ]] && \
+               grep -Eq 'kex_exchange_identification:.*(Connection reset by peer|Connection closed)|Connection (reset|closed) by .* port [0-9]+' "$connect_log"; then
+              sleep $(( attempt * 5 ))
+              continue
+            fi
+            exit "$status"
+          done
+          [[ "$connected" == "true" ]] || exit 255
+
           scp "${scp_opts[@]}" \
             "$transport_archive" \
             api/v2/install_public_generation.py \
@@ -420,11 +447,11 @@ jobs:
                '$incoming/install_public_generation.py'"
 
           ssh "${ssh_opts[@]}" "$remote" "rm -rf '$incoming'"
-          rm -f -- "$transport_archive"
+          rm -f -- "$transport_archive" "$connect_log"
 
       - name: Remove ephemeral SSH material
         if: always()
         run: |
           ssh_dir="$RUNNER_TEMP/v2-hostgator-ssh"
-          rm -f -- "$ssh_dir/private_key" "$ssh_dir/known_hosts"
+          rm -f -- "$ssh_dir/private_key" "$ssh_dir/known_hosts" "$ssh_dir/connect.err"
           rmdir -- "$ssh_dir" 2>/dev/null || true
