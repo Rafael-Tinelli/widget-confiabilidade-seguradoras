@@ -413,8 +413,9 @@ jobs:
               2>"$connect_log"; then
               connected=true
               break
+            else
+              status=$?
             fi
-            status=$?
             cat "$connect_log" >&2
             if [[ $attempt -lt 3 ]] && \
                grep -Eq 'kex_exchange_identification:.*(Connection reset by peer|Connection closed)|Connection (reset|closed) by .* port [0-9]+' "$connect_log"; then
