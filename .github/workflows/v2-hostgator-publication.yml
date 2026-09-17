@@ -205,6 +205,12 @@ jobs:
         with:
           ref: ${{ steps.source.outputs.head_sha }}
 
+      - name: Checkout publication transport control
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: .publication-control
+
       - name: Download exact artifact from source run
         env:
           GH_TOKEN: ${{ github.token }}
@@ -345,51 +351,7 @@ jobs:
           SSH_KNOWN_HOSTS_FILE: ${{ steps.ssh_trust.outputs.known_hosts_file }}
         run: |
           set -euo pipefail
-          SSH_PORT=${SSH_PORT:-22}
-          : "${SSH_KEY_FILE:?missing ephemeral SSH key path}"
-          : "${SSH_KNOWN_HOSTS_FILE:?missing ephemeral known_hosts path}"
-          remote="$SSH_USER@$SSH_HOST"
-          incoming="$PUBLICATION_ROOT/incoming/$BUILD_ID"
-          ssh_opts=(
-            -i "$SSH_KEY_FILE"
-            -p "$SSH_PORT"
-            -o BatchMode=yes
-            -o IdentitiesOnly=yes
-            -o StrictHostKeyChecking=yes
-            -o UserKnownHostsFile="$SSH_KNOWN_HOSTS_FILE"
-            -o GlobalKnownHostsFile=/dev/null
-            -o UpdateHostKeys=no
-          )
-          scp_opts=(
-            -i "$SSH_KEY_FILE"
-            -P "$SSH_PORT"
-            -o BatchMode=yes
-            -o IdentitiesOnly=yes
-            -o StrictHostKeyChecking=yes
-            -o UserKnownHostsFile="$SSH_KNOWN_HOSTS_FILE"
-            -o GlobalKnownHostsFile=/dev/null
-            -o UpdateHostKeys=no
-          )
-
-          ssh "${ssh_opts[@]}" "$remote" \
-            "rm -rf '$incoming' && mkdir -p '$incoming/package'"
-          scp "${scp_opts[@]}" -r "$PACKAGE_DIR"/* "$remote:$incoming/package/"
-          scp "${scp_opts[@]}" \
-            api/v2/install_public_generation.py \
-            ops/hostgator/install_v2_public_remote.sh \
-            "$remote:$incoming/"
-
-          ssh "${ssh_opts[@]}" "$remote" \
-            "chmod 700 '$incoming/install_v2_public_remote.sh' && \
-             bash '$incoming/install_v2_public_remote.sh' \
-               '$incoming/package' \
-               '$PUBLICATION_ROOT' \
-               '$PUBLIC_PATH' \
-               '$BUILD_ID' \
-               '$PACKAGE_SHA' \
-               '$incoming/install_public_generation.py'"
-
-          ssh "${ssh_opts[@]}" "$remote" "rm -rf '$incoming'"
+          bash .publication-control/ops/hostgator/publish_v2_public_via_ssh.sh
 
       - name: Remove ephemeral SSH material
         if: always()
