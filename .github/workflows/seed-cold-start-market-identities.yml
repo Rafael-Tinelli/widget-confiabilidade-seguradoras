@@ -1,0 +1,337 @@
+name: Seed cold-start market identities
+
+on:
+  push:
+    branches:
+      - feat/cold-start-market-identities
+    paths:
+      - .github/workflows/seed-cold-start-market-identities.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  seed:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/cold-start-market-identities
+
+      - name: Append source-backed market identities
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          path = Path('data/reference/v2/verified_relationships.json')
+          payload = json.loads(path.read_text(encoding='utf-8'))
+          brands = payload.setdefault('brands', [])
+
+          additions = [
+            {
+              'brand_id': 'brand:affinity-seguro-viagem',
+              'name': 'Affinity Seguro Viagem',
+              'aliases': ['Affinity Viagem'],
+              'market_identity': {
+                'kind': 'travel_insurance_brand',
+                'public_label': 'Sub-representante de seguros',
+                'legal_name': 'ASPAS TURISMO, VIAGENS E ASSISTENCIA INTERNACIONAL S/A',
+                'trade_name': 'AFFINITY SEGURO VIAGEM',
+                'cnpj': '17846647000131',
+                'distribution_role': 'insurance_subrepresentative',
+                'distribution_role_state': 'verified',
+                'public_note': 'Affinity Seguro Viagem é o nome fantasia da ASPAS. A página institucional atual identifica a ASPAS como sub-representante de seguros; a marca não deve ser confundida com o programa Affinity da Yelum Seguros.',
+                'evidence': {
+                  'authority': 'Affinity Seguro Viagem / Portal da Transparência',
+                  'url': 'https://www.affinityseguroviagem.com.br/quem-somos.html',
+                  'supporting_url': 'https://portaldatransparencia.gov.br/pessoa-juridica/17846647000131',
+                  'fact': 'A página institucional identifica ASPAS Turismo, Viagens e Assistência Internacional S/A, CNPJ 17.846.647/0001-31, como sub-representante; o cadastro federal identifica AFFINITY SEGURO VIAGEM como nome fantasia.'
+                }
+              },
+              'relationships': [
+                {
+                  'relationship_type': 'risk_carrier',
+                  'target_cnpj': '87163234000138',
+                  'status': 'current',
+                  'scope': 'seguro viagem Affinity, processo SUSEP 15414.610028/2026-11',
+                  'evidence': {
+                    'authority': 'Affinity Seguro Viagem',
+                    'url': 'https://www.affinityseguroviagem.com.br/quem-somos.html',
+                    'fact': 'A página institucional vigente identifica SABEMI SEGURADORA S.A., CNPJ 87.163.234/0001-38, como seguradora garantidora do seguro viagem Affinity.'
+                  }
+                }
+              ]
+            },
+            {
+              'brand_id': 'brand:assistente-de-viagem',
+              'name': 'Assistente de Viagem',
+              'aliases': ['Assistente de Viagem Seguro Viagem'],
+              'market_identity': {
+                'kind': 'travel_insurance_marketplace',
+                'public_label': 'Comparador / consolidadora de seguro viagem',
+                'legal_name': '3RI VIAGENS E TURISMO LTDA',
+                'trade_name': 'Assistente de Viagem',
+                'cnpj': '13711169000100',
+                'distribution_role': 'insurance_marketplace_consolidator',
+                'distribution_role_state': 'verified',
+                'public_note': 'A plataforma compara e comercializa planos de diferentes seguradoras e operadoras. Não existe um único risk carrier global que possa ser atribuído à marca sem considerar o plano efetivamente escolhido.',
+                'evidence': {
+                  'authority': 'Assistente de Viagem',
+                  'url': 'https://assistentedeviagem.com.br/seguro-viagem/quem-somos',
+                  'supporting_url': 'https://www.checkout.assistentedeviagem.com.br/seguro-viagem/quem-somos',
+                  'fact': 'O site identifica 3RI Viagens e Turismo, CNPJ 13.711.169/0001-00, e descreve o Assistente de Viagem como plataforma que compara planos de diferentes seguradoras e como consolidadora de seguradoras e operadoras de seguro viagem e assistência.'
+                }
+              },
+              'relationships': []
+            },
+            {
+              'brand_id': 'brand:allsafe',
+              'name': 'AllSafe',
+              'aliases': ['AllSafe Seguro Auto', 'All Safe'],
+              'market_identity': {
+                'kind': 'insurance_distribution_company',
+                'public_label': 'Representante de seguros',
+                'legal_name': 'PACTA GESTAO DE NEGOCIOS LTDA',
+                'trade_name': 'AllSafe Seguro Auto',
+                'cnpj': '33897006000162',
+                'distribution_role': 'insurance_representative',
+                'distribution_role_state': 'verified',
+                'public_note': 'AllSafe Seguro Auto é o nome comercial da PACTA e atua como representante autorizado da seguradora garantidora.',
+                'evidence': {
+                  'authority': 'AllSafe Seguro Auto',
+                  'url': 'https://allsafebrasil.com/regulatorio/',
+                  'fact': 'A página regulatória oficial informa que AllSafe Seguro Auto é o nome comercial da PACTA, CNPJ 33.897.006/0001-62, e que atua como representante autorizado da Split Risk Seguradora.'
+                }
+              },
+              'relationships': [
+                {
+                  'relationship_type': 'risk_carrier',
+                  'target_cnpj': '43505273000109',
+                  'status': 'current',
+                  'scope': 'produtos AllSafe Seguro Auto',
+                  'evidence': {
+                    'authority': 'AllSafe Seguro Auto',
+                    'url': 'https://allsafebrasil.com/regulatorio/',
+                    'fact': 'A página regulatória identifica Split Risk Seguradora S.A. como garantidora dos riscos e responsável pelas apólices.'
+                  }
+                }
+              ]
+            },
+            {
+              'brand_id': 'brand:assist-card',
+              'name': 'Assist Card',
+              'aliases': ['Assist-Card', 'Assist Card Brasil'],
+              'market_identity': {
+                'kind': 'travel_insurance_and_assistance_brand',
+                'public_label': 'Representante de seguros e distribuidora de assistência',
+                'legal_name': 'ASSIST-CARD DO BRASIL LTDA',
+                'trade_name': 'Assist Card',
+                'cnpj': '00027571000110',
+                'distribution_role': 'insurance_representative',
+                'distribution_role_state': 'verified',
+                'public_note': 'A Assist Card combina seguro viagem e assistência viagem. A Assist-Card do Brasil é representante de seguros e também distribui serviços de assistência; os prestadores de assistência não devem ser confundidos com a seguradora que assume o risco.',
+                'service_context': {
+                  'international_assistance_provider': 'ASSIST CARD SMALLINE S.A.',
+                  'national_assistance_provider': 'GLOBAL APOIO ADMINISTRATIVO A EMPRESA LTDA',
+                  'national_assistance_provider_cnpj': '31772960000101'
+                },
+                'evidence': {
+                  'authority': 'Assist Card Brasil',
+                  'url': 'https://www.assistcard.com/br/assistance-card',
+                  'fact': 'A página oficial informa que Assist-Card do Brasil Ltda., CNPJ 00.027.571/0001-10, é representante de seguros em caráter não exclusivo e distribuidora dos produtos de assistência internacional da Assist Card Smalline S.A. e nacional da Global Apoio Administrativo a Empresa Ltda.'
+                }
+              },
+              'relationships': [
+                {
+                  'relationship_type': 'risk_carrier',
+                  'target_cnpj': '17341270000169',
+                  'status': 'current',
+                  'scope': 'componente de seguro viagem dos produtos Assist Card',
+                  'evidence': {
+                    'authority': 'Assist Card Brasil',
+                    'url': 'https://www.assistcard.com/br/assistance-card',
+                    'fact': 'A divulgação regulatória oficial identifica STARR INTERNATIONAL BRASIL SEGURADORA S.A., CNPJ 17.341.270/0001-69, como seguradora relacionada ao componente de seguro viagem.'
+                  }
+                }
+              ]
+            },
+            {
+              'brand_id': 'brand:ituran',
+              'name': 'Ituran',
+              'aliases': ['Ituran com Seguro', 'Ituran Seguro', 'Ituran com Seguro Auto'],
+              'market_identity': {
+                'kind': 'vehicle_monitoring_insurance_platform',
+                'public_label': 'Monitoramento veicular com oferta de seguros parceiros',
+                'legal_name': 'ITURAN SERVICOS LTDA',
+                'trade_name': 'Ituran',
+                'cnpj': '16613061000164',
+                'distribution_role_state': 'unverified',
+                'public_note': 'A Ituran oferece monitoramento veicular combinado a apólices de seguradoras parceiras. A fonte oficial lista múltiplas seguradoras e não documenta, nesta evidência, uma única função jurídica global de corretora ou representante nem um carrier único para toda a marca.',
+                'evidence': {
+                  'authority': 'Ituran',
+                  'url': 'https://ituran.com.br/produtos/ituran-com-seguro/',
+                  'fact': 'A página oficial descreve Ituran com Seguro como combinação de monitoramento Ituran com apólices de múltiplas seguradoras parceiras; a aceitação e precificação dependem da seguradora selecionada.'
+                }
+              },
+              'relationships': []
+            },
+            {
+              'brand_id': 'brand:universal-assistance',
+              'name': 'Universal Assistance',
+              'aliases': ['Universal Assistance Seguro Viagem'],
+              'market_identity': {
+                'kind': 'travel_assistance_and_insurance_representative',
+                'public_label': 'Representante de seguros e assistência ao viajante',
+                'legal_name': 'ASISTBRAS - ASSISTENCIA AO VIAJANTE LTDA',
+                'trade_name': 'Universal Assistance',
+                'cnpj': '07139957000162',
+                'distribution_role': 'insurance_representative',
+                'distribution_role_state': 'verified',
+                'public_note': 'Universal Assistance é a identidade comercial da ASISTBRAS e oferece serviços de assistência ao viajante e cobertura securitária na qualidade de representante de seguros.',
+                'evidence': {
+                  'authority': 'Universal Assistance',
+                  'url': 'https://www.universal-assistance.com/mobile/politicas/portugues/pp.pdf',
+                  'supporting_url': 'https://www2.universal-assistance.com/br-pt/home',
+                  'fact': 'A política de privacidade identifica ASISTBRAS, CNPJ 07.139.957/0001-62, como Universal Assistance e declara a oferta de seguro viagem na qualidade de representante de seguradoras brasileiras; o site atual identifica Zurich Minas Brasil como garantidora.'
+                }
+              },
+              'relationships': [
+                {
+                  'relationship_type': 'risk_carrier',
+                  'target_cnpj': '17197385000121',
+                  'status': 'current',
+                  'scope': 'seguro viagem atualmente comercializado pela Universal Assistance no Brasil',
+                  'evidence': {
+                    'authority': 'Universal Assistance',
+                    'url': 'https://www2.universal-assistance.com/br-pt/home',
+                    'fact': 'O site oficial atual informa que o Seguro Viagem é garantido pela Zurich Minas Brasil Seguros S.A., CNPJ 17.197.385/0001-21.'
+                  }
+                }
+              ]
+            },
+            {
+              'brand_id': 'brand:vital-card',
+              'name': 'Vital Card',
+              'aliases': ['Vital Card Seguro Viagem', 'VitalCard'],
+              'market_identity': {
+                'kind': 'travel_insurance_brand',
+                'public_label': 'Representante de seguros / agência de viagens',
+                'legal_name': 'SCHULTZ-INGA TURISMO LTDA',
+                'trade_name': 'VITAL CARD',
+                'cnpj': '04628135000157',
+                'distribution_role': 'insurance_representative',
+                'distribution_role_state': 'verified',
+                'public_note': 'Vital Card é o nome fantasia da Schultz-Ingá Turismo. O seguro viagem é comercializado pela Schultz-Ingá; a própria Vital Card declara atuar como representante da ALLSEG, e a STZ Corretora de Seguros é indicada separadamente como corretora.',
+                'broker_context': {
+                  'legal_name': 'STZ CORRETORA DE SEGUROS LTDA',
+                  'cnpj': '12353171000183'
+                },
+                'evidence': {
+                  'authority': 'Vital Card',
+                  'url': 'https://www.vitalcard.com.br/allseg-seguradora',
+                  'supporting_url': 'https://www.vitalcard.com.br/termos/termo-de-uso',
+                  'fact': 'A Vital Card informa que atua como representante de seguros em nome da ALLSEG; o site identifica Schultz-Ingá Turismo Ltda., CNPJ 04.628.135/0001-57, como empresa que comercializa o seguro e a Vital Card como sua identidade comercial.'
+                }
+              },
+              'relationships': [
+                {
+                  'relationship_type': 'risk_carrier',
+                  'target_cnpj': '67865360000127',
+                  'status': 'current',
+                  'scope': 'seguro viagem Vital Card, processo SUSEP 15414.901206/2016-30',
+                  'evidence': {
+                    'authority': 'Vital Card',
+                    'url': 'https://www.vitalcard.com.br/allseg-seguradora',
+                    'fact': 'A página oficial identifica ALLSEG SEGURADORA S.A., CNPJ 67.865.360/0001-27, como seguradora responsável pelas garantias das coberturas Vital Card.'
+                  }
+                }
+              ]
+            }
+          ]
+
+          existing_ids = {str(item.get('brand_id')) for item in brands}
+          existing_market_cnpjs = {
+              str((item.get('market_identity') or {}).get('cnpj') or '')
+              for item in brands
+              if (item.get('market_identity') or {}).get('cnpj')
+          }
+          expected_existing = {'brand:loovi', 'brand:azos'}
+          missing_existing = expected_existing - existing_ids
+          if missing_existing:
+              raise SystemExit(f'expected existing curated brands missing: {sorted(missing_existing)}')
+
+          added = []
+          for item in additions:
+              if item['brand_id'] in existing_ids:
+                  raise SystemExit(f'duplicate brand_id already present: {item["brand_id"]}')
+              cnpj = str((item.get('market_identity') or {}).get('cnpj') or '')
+              if cnpj and cnpj in existing_market_cnpjs:
+                  raise SystemExit(f'duplicate market-identity CNPJ already present: {cnpj}')
+              brands.append(item)
+              existing_ids.add(item['brand_id'])
+              if cnpj:
+                  existing_market_cnpjs.add(cnpj)
+              added.append(item['brand_id'])
+
+          # Affinity from Yelum is deliberately not a new brand identity: the official
+          # Yelum page describes it as the insurer's own benefits/insurance program.
+          if 'brand:affinity-yelum' in existing_ids:
+              raise SystemExit('unexpected duplicate Yelum Affinity brand identity')
+
+          # Carrier targets must remain references to SUSEP entities, never new brand entries.
+          forbidden_insurer_brand_ids = {
+              'brand:sabemi', 'brand:split-risk', 'brand:starr',
+              'brand:zurich-minas-brasil', 'brand:allseg'
+          }
+          if existing_ids & forbidden_insurer_brand_ids:
+              raise SystemExit('cold-start must not add insurer duplicates')
+
+          payload['schema_version'] = '1.4'
+          payload['note'] = (
+              str(payload.get('note') or '').rstrip()
+              + ' Curated cold-start market identities are durable registry entries: '
+                'their admission does not depend on Sanida query volume. Search telemetry '
+                'may discover or prioritize candidates, but cannot silently remove an '
+                'already verified market identity.'
+          )
+          path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+          print(json.dumps({'added': added, 'brands_total': len(brands)}, ensure_ascii=False, indent=2))
+          PY
+
+      - name: Verify carrier CNPJs resolve in the current lifecycle inventory
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          registry = json.loads(Path('data/reference/v2/verified_relationships.json').read_text(encoding='utf-8'))
+          lifecycle = json.loads(Path('data/derived/v2/entity_lifecycle_relationship_inventory.json').read_text(encoding='utf-8'))
+          entity_cnpjs = {str(x.get('cnpj') or '') for x in lifecycle.get('entities', [])}
+          ids = {
+              'brand:affinity-seguro-viagem', 'brand:assistente-de-viagem',
+              'brand:allsafe', 'brand:assist-card', 'brand:ituran',
+              'brand:universal-assistance', 'brand:vital-card'
+          }
+          for brand in registry['brands']:
+              if brand.get('brand_id') not in ids:
+                  continue
+              for rel in brand.get('relationships', []):
+                  target = str(rel.get('target_cnpj') or '')
+                  if rel.get('relationship_type') == 'risk_carrier' and target not in entity_cnpjs:
+                      raise SystemExit(f'carrier target absent from current SUSEP-derived lifecycle: {brand["brand_id"]} -> {target}')
+          print('carrier-target verification: PASS')
+          PY
+
+      - name: Commit seeded registry
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/reference/v2/verified_relationships.json
+          git diff --cached --quiet && exit 0
+          git commit -m "feat: seed verified non-insurer market identities"
+          git push origin HEAD:feat/cold-start-market-identities
