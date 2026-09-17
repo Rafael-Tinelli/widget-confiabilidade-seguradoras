@@ -10,6 +10,7 @@ from api.v2.install_public_generation import verify_package
 
 HEAD = "a" * 40
 REMOTE_INSTALLER = Path("ops/hostgator/install_v2_public_remote.sh")
+TRANSPORT_HELPER = Path("ops/hostgator/publish_v2_public_via_ssh.sh")
 PYTHON_INSTALLER = Path("api/v2/install_public_generation.py")
 PUBLICATION_WORKFLOW = Path(".github/workflows/v2-hostgator-publication.yml")
 SCHEDULE_WORKFLOW = Path(".github/workflows/v2-production-generation-schedule.yml")
@@ -157,8 +158,8 @@ def test_publication_workflow_uses_exact_successful_main_generation_only():
         'gh run download "$SOURCE_RUN_ID"',
         "v2-gate4-full-generation-${source_run_id}-a${run_attempt}",
         "install_public_generation verify",
-        "StrictHostKeyChecking=yes",
         "V2_HOSTGATOR_KNOWN_HOSTS",
+        "publish_v2_public_via_ssh.sh",
     ):
         assert required in workflow
 
@@ -187,8 +188,32 @@ def test_manual_publication_is_explicit_and_independent_from_automatic_gate():
     )
 
 
+def test_publication_transport_uses_single_archive_retries_and_keepalives():
+    helper = TRANSPORT_HELPER.read_text(encoding="utf-8")
+
+    for required in (
+        "payload.tar.gz",
+        "tar -C",
+        'retry scp "${scp_opts[@]}" "$payload_archive"',
+        "TRANSFER_ATTEMPTS",
+        "ConnectTimeout=20",
+        "ServerAliveInterval=15",
+        "ServerAliveCountMax=4",
+        "TCPKeepAlive=yes",
+        "StrictHostKeyChecking=yes",
+        "IdentitiesOnly=yes",
+        "GlobalKnownHostsFile=/dev/null",
+        "UpdateHostKeys=no",
+    ):
+        assert required in helper
+
+    assert 'scp "${scp_opts[@]}" -r "$PACKAGE_DIR"/*' not in helper
+
+
 def test_publication_workflow_uses_only_pinned_ephemeral_ssh_trust():
     workflow = PUBLICATION_WORKFLOW.read_text(encoding="utf-8")
+    helper = TRANSPORT_HELPER.read_text(encoding="utf-8")
+    transport_contract = workflow + "\n" + helper
 
     for required in (
         "$RUNNER_TEMP/v2-hostgator-ssh",
@@ -204,14 +229,14 @@ def test_publication_workflow_uses_only_pinned_ephemeral_ssh_trust():
         "if: always()",
         "Remove ephemeral SSH material",
     ):
-        assert required in workflow
+        assert required in transport_contract
 
     for forbidden in (
         "ssh-keyscan",
         "StrictHostKeyChecking=no",
         "108.179.193.28",
     ):
-        assert forbidden not in workflow
+        assert forbidden not in transport_contract
 
     assert not Path(".github/known_hosts").exists()
     assert not Path("ops/hostgator/known_hosts").exists()
