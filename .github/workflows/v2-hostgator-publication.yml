@@ -205,6 +205,12 @@ jobs:
         with:
           ref: ${{ steps.source.outputs.head_sha }}
 
+      - name: Checkout publication transport control
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: .publication-control
+
       - name: Download exact artifact from source run
         env:
           GH_TOKEN: ${{ github.token }}
@@ -345,7 +351,7 @@ jobs:
           SSH_KNOWN_HOSTS_FILE: ${{ steps.ssh_trust.outputs.known_hosts_file }}
         run: |
           set -euo pipefail
-          bash ops/hostgator/publish_v2_public_via_ssh.sh
+          bash .publication-control/ops/hostgator/publish_v2_public_via_ssh.sh
 
       - name: Remove ephemeral SSH material
         if: always()
