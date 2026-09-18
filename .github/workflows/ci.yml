@@ -134,7 +134,6 @@ jobs:
           if [[ "$legacy_code" != "207" && "$modern_code" != "207" ]]; then
             exit 1
           fi
-          BASH
 
           python3 --version
           df -Pk "$HOME" | tail -n 1 | awk '{print "HOSTGATOR_HOME_KB_AVAILABLE=" $4}'
@@ -174,20 +173,24 @@ jobs:
           root = ET.parse(sys.argv[1]).getroot()
           ns = {"d": "DAV:"}
           sizes = []
+          reasons = []
           for response in root.findall("d:response", ns):
               href = unquote(response.findtext("d:href", default="", namespaces=ns))
               name = href.rstrip("/").rsplit("/", 1)[-1]
-              if not re.fullmatch(r"Estabelecimentos\\d+\\.zip", name, re.I):
-                  continue
               size_text = response.findtext(".//d:getcontentlength", default="0", namespaces=ns)
               size = int(size_text or 0)
-              sizes.append((name, size))
+              if re.fullmatch(r"Estabelecimentos\\d+\\.zip", name, re.I):
+                  sizes.append((name, size))
+              elif name.casefold() == "motivos.zip":
+                  reasons.append((name, size))
           print(f"ESTAB_FILE_COUNT={len(sizes)}")
           print(f"ESTAB_TOTAL_BYTES={sum(size for _, size in sizes)}")
           print(f"ESTAB_MAX_BYTES={max((size for _, size in sizes), default=0)}")
+          print(f"MOTIVOS_BYTES={sum(size for _, size in reasons)}")
           for name, size in sorted(sizes):
               print(f"ESTAB_FILE={name}:{size}")
           PY
+          BASH
 
       - name: Setup Node
         uses: actions/setup-node@v4
