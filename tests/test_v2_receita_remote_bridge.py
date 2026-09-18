@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import importlib.util
 from pathlib import Path
 
@@ -21,6 +22,12 @@ def _load_worker_module():
     spec.loader.exec_module(module)
     return module
 
+
+
+
+def test_remote_worker_syntax_remains_python39_compatible() -> None:
+    source = Path("ops/hostgator/receita_remote_worker.py").read_text(encoding="utf-8")
+    ast.parse(source, filename="receita_remote_worker.py", feature_version=(3, 9))
 
 def _release() -> ReceitaOpenDataRelease:
     return ReceitaOpenDataRelease(
