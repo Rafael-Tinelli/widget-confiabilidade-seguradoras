@@ -319,6 +319,13 @@ def first_csv_member(archive):
     return csv_like[0] if csv_like else members[0]
 
 
+def sanitized_csv_reader(raw):
+    """Read Receita CSV lines while tolerating isolated NUL padding bytes."""
+    text = io.TextIOWrapper(raw, encoding="latin1", newline="")
+    sanitized = (line.replace("\x00", "") for line in text)
+    return csv.reader(sanitized, delimiter=";", quotechar='"')
+
+
 def valid_cached_zip(path, expected_size):
     if not path.is_file():
         return False
@@ -371,8 +378,8 @@ def load_reason_map(path):
     with zipfile.ZipFile(str(path)) as archive:
         member = first_csv_member(archive)
         with archive.open(member) as raw:
-            text = io.TextIOWrapper(raw, encoding="latin1", newline="")
-            for row in csv.reader(text, delimiter=";", quotechar='"'):
+            reader = sanitized_csv_reader(raw)
+            for row in reader:
                 if len(row) < 2:
                     continue
                 code = str(row[0]).strip().zfill(2)
@@ -389,8 +396,8 @@ def load_code_map(path):
     with zipfile.ZipFile(str(path)) as archive:
         member = first_csv_member(archive)
         with archive.open(member) as raw:
-            text = io.TextIOWrapper(raw, encoding="latin1", newline="")
-            for row in csv.reader(text, delimiter=";", quotechar='"'):
+            reader = sanitized_csv_reader(raw)
+            for row in reader:
                 if len(row) < 2:
                     continue
                 code = digits(row[0])
@@ -477,8 +484,8 @@ def lifecycle_extract(session, release, payload, cache_dir):
         with zipfile.ZipFile(str(local)) as archive:
             member = first_csv_member(archive)
             with archive.open(member) as raw:
-                text = io.TextIOWrapper(raw, encoding="latin1", newline="")
-                for row in csv.reader(text, delimiter=";", quotechar='"'):
+                reader = sanitized_csv_reader(raw)
+            for row in reader:
                     if len(row) < 8:
                         continue
                     cnpj = normalize_cnpj("".join(str(part).strip() for part in row[:3]))
@@ -596,8 +603,8 @@ def identity_extract(session, release, payload, cache_dir):
         with zipfile.ZipFile(str(local)) as archive:
             member = first_csv_member(archive)
             with archive.open(member) as raw:
-                text = io.TextIOWrapper(raw, encoding="latin1", newline="")
-                for row in csv.reader(text, delimiter=";", quotechar='"'):
+                reader = sanitized_csv_reader(raw)
+            for row in reader:
                     if len(row) < 3:
                         continue
                     base = digits(row[0])
@@ -633,8 +640,8 @@ def identity_extract(session, release, payload, cache_dir):
         with zipfile.ZipFile(str(local)) as archive:
             member = first_csv_member(archive)
             with archive.open(member) as raw:
-                text = io.TextIOWrapper(raw, encoding="latin1", newline="")
-                for row in csv.reader(text, delimiter=";", quotechar='"'):
+                reader = sanitized_csv_reader(raw)
+            for row in reader:
                     if len(row) < 13:
                         continue
                     cnpj = normalize_cnpj("".join(str(part).strip() for part in row[:3]))
