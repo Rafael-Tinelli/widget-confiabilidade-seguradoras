@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from api.sources.receita_cnpj_bulk import _propfind
+import requests
+
+from api.sources.receita_cnpj_bulk import _configure_official_session, _propfind
 
 
 class _Response:
@@ -24,6 +26,9 @@ class _Response:
 class _Session:
     def __init__(self) -> None:
         self.calls = []
+        self.auth = ("legacy-token", "")
+        self.cookies = requests.cookies.RequestsCookieJar()
+        self.cookies.set("legacy", "cookie")
 
     def request(self, method, url, **kwargs):
         self.calls.append((method, url, kwargs))
@@ -44,3 +49,27 @@ def test_receita_public_webdav_propfind_sends_nextcloud_ajax_header() -> None:
     assert method == "PROPFIND"
     assert kwargs["headers"]["Depth"] == "1"
     assert kwargs["headers"]["X-Requested-With"] == "XMLHttpRequest"
+
+
+def test_receita_public_webdav_session_uses_current_public_share_contract() -> None:
+    session = requests.Session()
+    session.auth = ("legacy-token", "")
+    session.cookies.set("legacy", "cookie")
+
+    _configure_official_session(session)
+
+    assert session.auth is None
+    assert not session.cookies
+
+
+def test_receita_public_webdav_propfind_clears_auth_and_cookies_before_request() -> None:
+    session = _Session()
+
+    _propfind(
+        session,
+        "https://arquivos.receitafederal.gov.br/public.php/dav/files/token/",
+        retries=1,
+    )
+
+    assert session.auth is None
+    assert not session.cookies
