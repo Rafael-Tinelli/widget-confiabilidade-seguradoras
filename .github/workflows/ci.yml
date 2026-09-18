@@ -83,7 +83,6 @@ jobs:
           python -m pytest -q
 
       - name: TEMP diagnose Receita reachability from HostGator
-        if: ${{ secrets.V2_HOSTGATOR_HOST != '' && secrets.V2_HOSTGATOR_USER != '' && secrets.V2_HOSTGATOR_SSH_KEY != '' && secrets.V2_HOSTGATOR_KNOWN_HOSTS != '' }}
         env:
           SSH_HOST: ${{ secrets.V2_HOSTGATOR_HOST }}
           SSH_USER: ${{ secrets.V2_HOSTGATOR_USER }}
