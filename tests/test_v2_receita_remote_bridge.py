@@ -175,7 +175,9 @@ def test_remote_identity_extract_is_revalidated_and_finalized_locally(monkeypatc
                 {
                     "row": row,
                     "provider_matches": [
-                        ["empresa teste", "trade_name_surface_exact"]
+                        ["empresa teste", "legal_name_business_core"],
+                        ["empresa teste", "trade_name_surface_exact"],
+                        ["empresa teste", "trade_name_business_core"],
                     ],
                 }
             ],
