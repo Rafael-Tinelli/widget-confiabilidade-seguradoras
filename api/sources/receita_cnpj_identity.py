@@ -18,6 +18,7 @@ from api.sources.receita_cnpj_bulk import (
     ReceitaOpenDataError,
     ReceitaOpenDataRelease,
     _configure_official_session,
+    _sanitized_csv_reader,
     _download_zip,
     _first_csv_member,
     _propfind,
@@ -158,8 +159,7 @@ def _load_code_map(zip_path: Path) -> dict[str, str]:
     with zipfile.ZipFile(zip_path) as archive:
         member = _first_csv_member(archive)
         with archive.open(member) as raw:
-            text = io.TextIOWrapper(raw, encoding="latin1", newline="")
-            reader = csv.reader(text, delimiter=";", quotechar='"')
+            reader = _sanitized_csv_reader(raw)
             out: dict[str, str] = {}
             for row in reader:
                 if len(row) < 2:
@@ -364,8 +364,7 @@ def build_filtered_identity_snapshot(
                 with zipfile.ZipFile(local) as archive:
                     member = _first_csv_member(archive)
                     with archive.open(member) as raw:
-                        text = io.TextIOWrapper(raw, encoding="latin1", newline="")
-                        reader = csv.reader(text, delimiter=";", quotechar='"')
+                        reader = _sanitized_csv_reader(raw)
                         for row in reader:
                             if len(row) < 3:
                                 continue
@@ -398,8 +397,7 @@ def build_filtered_identity_snapshot(
                 with zipfile.ZipFile(local) as archive:
                     member = _first_csv_member(archive)
                     with archive.open(member) as raw:
-                        text = io.TextIOWrapper(raw, encoding="latin1", newline="")
-                        reader = csv.reader(text, delimiter=";", quotechar='"')
+                        reader = _sanitized_csv_reader(raw)
                         for row in reader:
                             if len(row) < 13:
                                 continue
