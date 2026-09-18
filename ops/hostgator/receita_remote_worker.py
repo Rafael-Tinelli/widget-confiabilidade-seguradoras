@@ -14,12 +14,12 @@ import fcntl
 import io
 import json
 import os
-import resource
-import sys
-import traceback
 import re
+import resource
 import shutil
+import sys
 import time
+import traceback
 import unicodedata
 import xml.etree.ElementTree as ET
 import zipfile
@@ -821,7 +821,7 @@ def main():
     exit_code = 0
     try:
         execute(args)
-    except BaseException:
+    except Exception:
         traceback.print_exc()
         exit_code = 1
     finally:
