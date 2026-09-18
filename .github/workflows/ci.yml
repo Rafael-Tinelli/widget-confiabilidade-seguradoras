@@ -136,37 +136,58 @@ jobs:
           fi
           BASH
 
-          tunnel_port=18080
-          ssh "${ssh_opts[@]}" \
-            -o ExitOnForwardFailure=yes \
-            -o ServerAliveInterval=20 \
-            -o ServerAliveCountMax=3 \
-            -N -D "127.0.0.1:$tunnel_port" "$remote" &
-          tunnel_pid=$!
-          cleanup_tunnel() {
-            kill "$tunnel_pid" 2>/dev/null || true
-            wait "$tunnel_pid" 2>/dev/null || true
-            rm -rf "$ssh_dir"
-          }
-          trap cleanup_tunnel EXIT
-          sleep 2
+          python3 --version
+          df -Pk "$HOME" | tail -n 1 | awk '{print "HOSTGATOR_HOME_KB_AVAILABLE=" $4}'
 
-          tunnel_final_url="$(curl -sS -L --socks5-hostname "127.0.0.1:$tunnel_port" \
-            --max-time 30 -o /dev/null -w '%{url_effective}' \
-            https://arquivos.receitafederal.gov.br/)"
-          tunnel_root_code="$(curl -sS -L --socks5-hostname "127.0.0.1:$tunnel_port" \
-            --max-time 30 -o /dev/null -w '%{http_code}' \
-            https://arquivos.receitafederal.gov.br/)"
-          tunnel_token="$(printf '%s' "$tunnel_final_url" | sed -n 's#.*\/index.php\/s\/\([^/?]*\).*#\1#p')"
-          tunnel_propfind="$(curl -sS --socks5-hostname "127.0.0.1:$tunnel_port" \
-            --max-time 30 -o /tmp/receita-tunnel.xml -w '%{http_code}' \
+          latest_period="$(python3 - /tmp/receita-modern.xml <<'PY'
+          import re
+          import sys
+          import xml.etree.ElementTree as ET
+
+          root = ET.parse(sys.argv[1]).getroot()
+          ns = {"d": "DAV:"}
+          periods = []
+          for response in root.findall("d:response", ns):
+              href = response.findtext("d:href", default="", namespaces=ns)
+              match = re.search(r"/(20\\d{2}-\\d{2})/?$", href)
+              if match:
+                  periods.append(match.group(1))
+          if not periods:
+              raise SystemExit("no monthly periods in remote CNPJ WebDAV root")
+          print(max(periods))
+          PY
+          )"
+          printf 'LATEST_PERIOD=%s\n' "$latest_period"
+
+          period_code="$(curl -sS --max-time 30 -o /tmp/receita-period.xml -w '%{http_code}' \
             -X PROPFIND -H 'Depth: 1' -H 'X-Requested-With: XMLHttpRequest' \
-            "https://arquivos.receitafederal.gov.br/public.php/dav/files/$tunnel_token/Dados/Cadastros/CNPJ/")"
-          printf 'TUNNEL_ROOT_CODE=%s\nTUNNEL_TOKEN_PRESENT=%s\nTUNNEL_PROPFIND=%s\n' \
-            "$tunnel_root_code" "$([[ -n "$tunnel_token" ]] && echo yes || echo no)" "$tunnel_propfind"
-          [[ "$tunnel_root_code" == "200" ]]
-          [[ -n "$tunnel_token" ]]
-          [[ "$tunnel_propfind" == "207" ]]
+            "$host/public.php/dav/files/$token/Dados/Cadastros/CNPJ/$latest_period/")"
+          printf 'PERIOD_PROPFIND=%s\n' "$period_code"
+          [[ "$period_code" == "207" ]]
+
+          python3 - /tmp/receita-period.xml <<'PY'
+          import re
+          import sys
+          import xml.etree.ElementTree as ET
+          from urllib.parse import unquote
+
+          root = ET.parse(sys.argv[1]).getroot()
+          ns = {"d": "DAV:"}
+          sizes = []
+          for response in root.findall("d:response", ns):
+              href = unquote(response.findtext("d:href", default="", namespaces=ns))
+              name = href.rstrip("/").rsplit("/", 1)[-1]
+              if not re.fullmatch(r"Estabelecimentos\\d+\\.zip", name, re.I):
+                  continue
+              size_text = response.findtext(".//d:getcontentlength", default="0", namespaces=ns)
+              size = int(size_text or 0)
+              sizes.append((name, size))
+          print(f"ESTAB_FILE_COUNT={len(sizes)}")
+          print(f"ESTAB_TOTAL_BYTES={sum(size for _, size in sizes)}")
+          print(f"ESTAB_MAX_BYTES={max((size for _, size in sizes), default=0)}")
+          for name, size in sorted(sizes):
+              print(f"ESTAB_FILE={name}:{size}")
+          PY
 
       - name: Setup Node
         uses: actions/setup-node@v4
