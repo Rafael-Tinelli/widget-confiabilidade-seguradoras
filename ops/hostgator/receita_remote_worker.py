@@ -10,6 +10,7 @@ HostGator is transport/compute only. Receita Federal remains the data authority.
 
 import argparse
 import csv
+import fcntl
 import io
 import json
 import re
@@ -511,7 +512,7 @@ def lifecycle_extract(session, release, payload, cache_dir):
             break
 
     unresolved = sorted(set(targets) - set(found))
-    names = ["Motivos.zip"] + scanned
+    names = ["Motivos.zip"] + release["establishment_files"]
     return {
         "artifact": "v2_receita_remote_lifecycle_extract",
         "generated_at": utc_now(),
@@ -677,7 +678,6 @@ def identity_extract(session, release, payload, cache_dir):
             "reference_period": release["period"],
             "ingestion_method": "official_nextcloud_webdav_bulk_filtered_identity",
             "retrieved_at": utc_now(),
-            "resource_metadata": release_metadata(release, metadata_names),
         },
         "targets": targets,
         "providers": providers,
@@ -731,19 +731,35 @@ def main():
     parser.add_argument("--cache-dir", required=True)
     args = parser.parse_args()
 
+    cache_root = Path(args.cache_dir)
+    cache_root.mkdir(parents=True, exist_ok=True)
+    lock_path = cache_root / ".worker.lock"
+
     session = configure_session()
     try:
-        release = discover_release(session)
-        if args.mode == "discover":
-            result = discover_payload(release)
-        else:
-            payload = load_input(args.input)
-            if args.mode == "lifecycle":
-                result = lifecycle_extract(session, release, payload, args.cache_dir)
+        with lock_path.open("a+", encoding="utf-8") as lock_handle:
+            fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX)
+            release = discover_release(session)
+            if args.mode == "discover":
+                result = discover_payload(release)
             else:
-                result = identity_extract(session, release, payload, args.cache_dir)
-        write_output(args.output, result)
-        prune_other_periods(args.cache_dir, release["period"])
+                payload = load_input(args.input)
+                if args.mode == "lifecycle":
+                    result = lifecycle_extract(
+                        session,
+                        release,
+                        payload,
+                        args.cache_dir,
+                    )
+                else:
+                    result = identity_extract(
+                        session,
+                        release,
+                        payload,
+                        args.cache_dir,
+                    )
+            write_output(args.output, result)
+            prune_other_periods(args.cache_dir, release["period"])
     finally:
         session.close()
 
