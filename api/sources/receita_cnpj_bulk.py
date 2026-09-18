@@ -20,13 +20,9 @@ from api.sources.receita_cnpj import normalize_receita_lifecycle_record
 from api.utils.identifiers import normalize_cnpj_v2
 
 OFFICIAL_CNPJ_HOST = "https://arquivos.receitafederal.gov.br"
-OFFICIAL_CNPJ_SHARE_TOKEN = "YggdBLfdninEJX9"
-OFFICIAL_CNPJ_SHARE_URL = (
-    f"{OFFICIAL_CNPJ_HOST}/index.php/s/{OFFICIAL_CNPJ_SHARE_TOKEN}"
-)
-OFFICIAL_CNPJ_DAV_ROOT = (
-    f"{OFFICIAL_CNPJ_HOST}/public.php/dav/files/{OFFICIAL_CNPJ_SHARE_TOKEN}/"
-)
+OFFICIAL_CNPJ_ROOT_URL = f"{OFFICIAL_CNPJ_HOST}/"
+OFFICIAL_CNPJ_DATASET_PATH = "Dados/Cadastros/CNPJ"
+PUBLIC_SHARE_RE = re.compile(r"/index\\.php/s/([^/?#]+)")
 
 STATUS_CODE_TO_LABEL = {
     "01": "NULA",
@@ -95,6 +91,38 @@ def _prepare_public_dav_request(session: requests.Session) -> None:
     # subsequent PROPFIND/GET attempts in the same requests.Session.
     session.auth = None
     session.cookies.clear()
+
+
+def _discover_public_share(
+    session: requests.Session,
+) -> tuple[str, str]:
+    """Resolve the current official public share and its CNPJ DAV root."""
+    _prepare_public_dav_request(session)
+    try:
+        response = session.get(
+            OFFICIAL_CNPJ_ROOT_URL,
+            timeout=DEFAULT_TIMEOUT,
+            allow_redirects=True,
+        )
+        response.raise_for_status()
+    except requests.RequestException as exc:
+        raise ReceitaOpenDataError(
+            f"Failed to resolve current Receita public share: {exc}"
+        ) from exc
+
+    match = PUBLIC_SHARE_RE.search(str(response.url))
+    if not match:
+        raise ReceitaOpenDataError(
+            "Receita root did not redirect to a recognizable public share: "
+            f"{response.url}"
+        )
+    token = match.group(1)
+    share_url = f"{OFFICIAL_CNPJ_HOST}/index.php/s/{token}"
+    dav_root = (
+        f"{OFFICIAL_CNPJ_HOST}/public.php/dav/files/{token}/"
+        f"{OFFICIAL_CNPJ_DATASET_PATH}/"
+    )
+    return share_url, dav_root
 
 
 def _dav_resources(xml_payload: bytes) -> list[dict[str, Any]]:
@@ -208,7 +236,8 @@ def discover_latest_release(
     _configure_official_session(sess)
 
     try:
-        root_resources = _propfind(sess, OFFICIAL_CNPJ_DAV_ROOT)
+        share_url, dav_root = _discover_public_share(sess)
+        root_resources = _propfind(sess, dav_root)
         periods = sorted(
             (
                 item["name"]
@@ -223,7 +252,7 @@ def discover_latest_release(
             )
 
         for period in periods:
-            release_url = urljoin(OFFICIAL_CNPJ_DAV_ROOT, period + "/")
+            release_url = urljoin(dav_root, period + "/")
             resources = _propfind(sess, release_url)
             files = {
                 item["name"]: item
@@ -261,7 +290,7 @@ def discover_latest_release(
                 if item["name"] in metadata_names
             )
             return ReceitaOpenDataRelease(
-                base_url=OFFICIAL_CNPJ_SHARE_URL,
+                base_url=share_url,
                 release_url=release_url,
                 period=period,
                 establishment_files=tuple(establishments),
@@ -284,6 +313,8 @@ def _download_zip(
     retries: int = 5,
 ) -> Path:
     destination.parent.mkdir(parents=True, exist_ok=True)
+    if destination.is_file() and zipfile.is_zipfile(destination):
+        return destination
     temp = destination.with_suffix(destination.suffix + ".part")
     last_error: Exception | None = None
 
@@ -431,6 +462,7 @@ def refresh_filtered_lifecycle(
     release: ReceitaOpenDataRelease | None = None,
     work_dir: Path | None = None,
     session: requests.Session | None = None,
+    retain_downloads: bool = False,
 ) -> dict[str, Any]:
     """Refresh lifecycle only for CNPJs in the v2 regulatory universe.
 
@@ -474,7 +506,8 @@ def refresh_filtered_lifecycle(
             root / resolved_release.reasons_file,
         )
         reason_map = load_reason_map(reasons_zip)
-        reasons_zip.unlink(missing_ok=True)
+        if not retain_downloads:
+            reasons_zip.unlink(missing_ok=True)
 
         records_by_cnpj: dict[str, dict[str, Any]] = {}
         files_scanned: list[str] = []
@@ -503,7 +536,8 @@ def refresh_filtered_lifecycle(
                 if len(records_by_cnpj) == len(target_names):
                     break
             finally:
-                local.unlink(missing_ok=True)
+                if not retain_downloads:
+                    local.unlink(missing_ok=True)
 
         unresolved = sorted(set(target_names) - set(records_by_cnpj))
         return {
