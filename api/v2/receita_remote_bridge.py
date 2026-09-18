@@ -224,38 +224,50 @@ def _remote_call(mode: str, payload: dict[str, Any] | None = None) -> dict[str, 
             if payload is not None:
                 remote_args.extend(["--input", remote_input])
 
-            remote_command = " ".join(shlex.quote(part) for part in remote_args)
             remote_exit = f"{run_dir}/exit_code"
             remote_stdout = f"{run_dir}/stdout.log"
             remote_stderr = f"{run_dir}/stderr.log"
-            detached = (
-                "nohup sh -c "
-                + shlex.quote(
-                    f"{remote_command}; code=$?; "
-                    f"printf '%s\\n' \"$code\" > {shlex.quote(remote_exit)}"
-                )
-                + f" > {shlex.quote(remote_stdout)}"
-                + f" 2> {shlex.quote(remote_stderr)}"
-                + " < /dev/null &"
+            remote_args.extend(
+                [
+                    "--daemonize",
+                    "--exit-file",
+                    remote_exit,
+                    "--stdout-log",
+                    remote_stdout,
+                    "--stderr-log",
+                    remote_stderr,
+                ]
             )
-            _run([*ssh, detached], timeout=120)
+            remote_command = " ".join(shlex.quote(part) for part in remote_args)
+            _run([*ssh, remote_command], timeout=120)
 
             deadline_seconds = 18_000
             poll_interval_seconds = 20
             waited = 0
             exit_code: int | None = None
+            consecutive_probe_failures = 0
             while waited <= deadline_seconds:
-                probe = _run(
-                    [
-                        *ssh,
-                        (
-                            f"if test -f {shlex.quote(remote_exit)}; then "
-                            f"cat {shlex.quote(remote_exit)}; "
-                            "else printf 'RUNNING\\n'; fi"
-                        ),
-                    ],
-                    timeout=120,
-                )
+                try:
+                    probe = _run(
+                        [
+                            *ssh,
+                            (
+                                f"if test -f {shlex.quote(remote_exit)}; then "
+                                f"cat {shlex.quote(remote_exit)}; "
+                                "else printf 'RUNNING\\n'; fi"
+                            ),
+                        ],
+                        timeout=60,
+                    )
+                    consecutive_probe_failures = 0
+                except ReceitaRemoteBridgeError:
+                    consecutive_probe_failures += 1
+                    if consecutive_probe_failures >= 5:
+                        raise
+                    time.sleep(poll_interval_seconds)
+                    waited += poll_interval_seconds
+                    continue
+
                 status = probe.stdout.strip()
                 if status == "RUNNING" or not status:
                     time.sleep(poll_interval_seconds)
