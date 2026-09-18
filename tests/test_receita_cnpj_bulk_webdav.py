@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import requests
 
-from api.sources.receita_cnpj_bulk import _configure_official_session, _propfind
+from api.sources.receita_cnpj_bulk import (
+    _configure_official_session,
+    _discover_public_share,
+    _propfind,
+)
 
 
 class _Response:
@@ -73,3 +77,32 @@ def test_receita_public_webdav_propfind_clears_auth_and_cookies_before_request()
 
     assert session.auth is None
     assert not session.cookies
+
+
+class _RedirectResponse:
+    url = "https://arquivos.receitafederal.gov.br/index.php/s/currentShareToken"
+
+    @staticmethod
+    def raise_for_status() -> None:
+        return None
+
+
+class _RedirectSession:
+    def __init__(self) -> None:
+        self.auth = ("legacy-token", "")
+        self.cookies = requests.cookies.RequestsCookieJar()
+        self.cookies.set("legacy", "cookie")
+
+    def get(self, url, **kwargs):
+        assert url == "https://arquivos.receitafederal.gov.br/"
+        assert kwargs["allow_redirects"] is True
+        return _RedirectResponse()
+
+
+def test_receita_public_share_is_discovered_from_current_root_redirect() -> None:
+    share_url, dav_root = _discover_public_share(_RedirectSession())
+
+    assert share_url.endswith("/index.php/s/currentShareToken")
+    assert dav_root.endswith(
+        "/public.php/dav/files/currentShareToken/Dados/Cadastros/CNPJ/"
+    )
