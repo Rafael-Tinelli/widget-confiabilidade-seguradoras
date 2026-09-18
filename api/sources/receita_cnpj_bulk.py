@@ -357,6 +357,13 @@ def _first_csv_member(archive: zipfile.ZipFile) -> str:
     return csv_like[0] if csv_like else members[0]
 
 
+def _sanitized_csv_reader(raw: Any) -> csv.reader:
+    """Read Receita CSV rows while tolerating isolated NUL padding bytes."""
+    text = io.TextIOWrapper(raw, encoding="latin1", newline="")
+    sanitized = (line.replace("\x00", "") for line in text)
+    return csv.reader(sanitized, delimiter=";", quotechar='"')
+
+
 def load_reason_map(zip_path: Path) -> dict[str, str]:
     """Load Receita's official motive-code dictionary from Motivos.zip."""
     if not zipfile.is_zipfile(zip_path):
@@ -364,8 +371,7 @@ def load_reason_map(zip_path: Path) -> dict[str, str]:
     with zipfile.ZipFile(zip_path) as archive:
         member = _first_csv_member(archive)
         with archive.open(member) as raw:
-            text = io.TextIOWrapper(raw, encoding="latin1", newline="")
-            reader = csv.reader(text, delimiter=";", quotechar='"')
+            reader = _sanitized_csv_reader(raw)
             out: dict[str, str] = {}
             for row in reader:
                 if len(row) < 2:
@@ -405,8 +411,7 @@ def extract_target_lifecycle_from_zip(
     with zipfile.ZipFile(zip_path) as archive:
         member = _first_csv_member(archive)
         with archive.open(member) as raw:
-            text = io.TextIOWrapper(raw, encoding="latin1", newline="")
-            reader = csv.reader(text, delimiter=";", quotechar='"')
+            reader = _sanitized_csv_reader(raw)
             for row in reader:
                 if len(row) < 8:
                     continue
