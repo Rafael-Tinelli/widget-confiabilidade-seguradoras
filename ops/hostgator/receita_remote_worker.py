@@ -13,6 +13,10 @@ import csv
 import fcntl
 import io
 import json
+import os
+import resource
+import sys
+import traceback
 import re
 import shutil
 import time
@@ -725,14 +729,33 @@ def write_output(path, payload):
     temp.replace(target)
 
 
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--mode", choices=("discover", "lifecycle", "identity"), required=True)
-    parser.add_argument("--input")
-    parser.add_argument("--output", required=True)
-    parser.add_argument("--cache-dir", required=True)
-    args = parser.parse_args()
+def daemonize(stdout_log, stderr_log):
+    """Detach completely from the SSH channel before long-running work."""
+    first = os.fork()
+    if first > 0:
+        os._exit(0)
 
+    os.setsid()
+    second = os.fork()
+    if second > 0:
+        os._exit(0)
+
+    os.umask(0o077)
+
+    stdin_fd = os.open(os.devnull, os.O_RDONLY)
+    stdout_fd = os.open(str(stdout_log), os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+    stderr_fd = os.open(str(stderr_log), os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+    os.dup2(stdin_fd, 0)
+    os.dup2(stdout_fd, 1)
+    os.dup2(stderr_fd, 2)
+
+    soft_limit, _ = resource.getrlimit(resource.RLIMIT_NOFILE)
+    if soft_limit == resource.RLIM_INFINITY or soft_limit > 65536:
+        soft_limit = 65536
+    os.closerange(3, int(soft_limit))
+
+
+def execute(args):
     cache_root = Path(args.cache_dir)
     cache_root.mkdir(parents=True, exist_ok=True)
     lock_path = cache_root / ".worker.lock"
@@ -766,5 +789,46 @@ def main():
         session.close()
 
 
+def write_exit_marker(path, code):
+    if not path:
+        return
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temp = target.with_suffix(target.suffix + ".tmp")
+    temp.write_text(str(code) + "\n", encoding="utf-8")
+    temp.replace(target)
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--mode", choices=("discover", "lifecycle", "identity"), required=True)
+    parser.add_argument("--input")
+    parser.add_argument("--output", required=True)
+    parser.add_argument("--cache-dir", required=True)
+    parser.add_argument("--daemonize", action="store_true")
+    parser.add_argument("--exit-file")
+    parser.add_argument("--stdout-log")
+    parser.add_argument("--stderr-log")
+    args = parser.parse_args()
+
+    if args.daemonize:
+        if not args.exit_file or not args.stdout_log or not args.stderr_log:
+            parser.error(
+                "--daemonize requires --exit-file, --stdout-log and --stderr-log"
+            )
+        daemonize(args.stdout_log, args.stderr_log)
+
+    exit_code = 0
+    try:
+        execute(args)
+    except BaseException:
+        traceback.print_exc()
+        exit_code = 1
+    finally:
+        write_exit_marker(args.exit_file, exit_code)
+
+    return exit_code
+
+
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
