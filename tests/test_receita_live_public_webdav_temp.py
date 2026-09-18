@@ -1,69 +1,80 @@
 from __future__ import annotations
 
 import json
-import re
-
-import requests
+import subprocess
 
 
-def _probe(session: requests.Session, method: str, url: str, **kwargs) -> dict:
-    try:
-        response = session.request(method, url, timeout=(10, 30), **kwargs)
-        return {
-            "status": response.status_code,
-            "url": response.url,
-            "location": response.headers.get("location"),
-            "content_type": response.headers.get("content-type"),
-            "bytes": len(response.content),
-        }
-    except requests.RequestException as exc:
-        return {"error": f"{type(exc).__name__}: {exc}"}
+HOST = "https://arquivos.receitafederal.gov.br"
+TOKEN = "gn672Ad4CF8N6TK"
+CNPJ_PATH = "Dados/Cadastros/CNPJ"
 
 
-def test_receita_live_public_webdav_probe() -> None:
-    bootstrap = requests.Session()
-    root = bootstrap.get(
-        "https://arquivos.receitafederal.gov.br/",
-        timeout=(10, 30),
-        allow_redirects=True,
+def _curl(args: list[str]) -> dict:
+    command = [
+        "curl",
+        "--silent",
+        "--show-error",
+        "--max-time",
+        "30",
+        "--output",
+        "/tmp/receita-probe-body",
+        "--write-out",
+        "%{http_code}|%{url_effective}|%{size_download}",
+        *args,
+    ]
+    result = subprocess.run(
+        command,
+        check=False,
+        capture_output=True,
+        text=True,
     )
-    token_match = re.search(r"/index\.php/s/([^/?#]+)", root.url)
-    token = token_match.group(1) if token_match else ""
-
-    diagnostics = {
-        "root_status": root.status_code,
-        "root_final_url": root.url,
-        "token": token,
+    return {
+        "returncode": result.returncode,
+        "stdout": result.stdout,
+        "stderr": result.stderr,
     }
 
-    if token:
-        legacy = requests.Session()
-        legacy.auth = (token, "")
-        diagnostics["legacy_webdav"] = _probe(
-            legacy,
-            "PROPFIND",
-            "https://arquivos.receitafederal.gov.br/public.php/webdav/"
-            "Dados/Cadastros/CNPJ/",
-            headers={"Depth": "1"},
-        )
 
-        modern_public = requests.Session()
-        diagnostics["modern_public_no_auth"] = _probe(
-            modern_public,
-            "PROPFIND",
-            "https://arquivos.receitafederal.gov.br/public.php/dav/files/"
-            f"{token}/Dados/Cadastros/CNPJ/",
-            headers={"Depth": "1", "X-Requested-With": "XMLHttpRequest"},
-        )
-
-        modern_auth = requests.Session()
-        modern_auth.auth = (token, "")
-        diagnostics["modern_public_token_auth"] = _probe(
-            modern_auth,
-            "PROPFIND",
-            "https://arquivos.receitafederal.gov.br/public.php/dav/files/"
-            f"{token}/Dados/Cadastros/CNPJ/",
-            headers={"Depth": "1", "X-Requested-With": "XMLHttpRequest"},
-        )
-
+def test_receita_live_transport_probe() -> None:
+    diagnostics = {
+        "root_get": _curl(["--location", f"{HOST}/"]),
+        "share_get": _curl(
+            ["--location", f"{HOST}/index.php/s/{TOKEN}"]
+        ),
+        "legacy_webdav": _curl(
+            [
+                "--request",
+                "PROPFIND",
+                "--header",
+                "Depth: 1",
+                "--user",
+                f"{TOKEN}:",
+                f"{HOST}/public.php/webdav/{CNPJ_PATH}/",
+            ]
+        ),
+        "modern_public_no_auth": _curl(
+            [
+                "--request",
+                "PROPFIND",
+                "--header",
+                "Depth: 1",
+                "--header",
+                "X-Requested-With: XMLHttpRequest",
+                f"{HOST}/public.php/dav/files/{TOKEN}/{CNPJ_PATH}/",
+            ]
+        ),
+        "modern_public_token_auth": _curl(
+            [
+                "--request",
+                "PROPFIND",
+                "--header",
+                "Depth: 1",
+                "--header",
+                "X-Requested-With: XMLHttpRequest",
+                "--user",
+                f"{TOKEN}:",
+                f"{HOST}/public.php/dav/files/{TOKEN}/{CNPJ_PATH}/",
+            ]
+        ),
+    }
     raise AssertionError(json.dumps(diagnostics, ensure_ascii=False, indent=2))
