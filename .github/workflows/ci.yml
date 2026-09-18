@@ -136,6 +136,7 @@ jobs:
           fi
 
           python3 --version
+          python3 -c 'import requests; print("HOSTGATOR_REQUESTS_VERSION=" + requests.__version__)' || true
           df -Pk "$HOME" | tail -n 1 | awk '{print "HOSTGATOR_HOME_KB_AVAILABLE=" $4}'
 
           latest_period="$(python3 - /tmp/receita-modern.xml <<'PY'
@@ -173,7 +174,10 @@ jobs:
           root = ET.parse(sys.argv[1]).getroot()
           ns = {"d": "DAV:"}
           sizes = []
+          companies = []
           reasons = []
+          cnaes = []
+          natures = []
           for response in root.findall("d:response", ns):
               href = unquote(response.findtext("d:href", default="", namespaces=ns))
               name = href.rstrip("/").rsplit("/", 1)[-1]
@@ -181,12 +185,23 @@ jobs:
               size = int(size_text or 0)
               if re.fullmatch(r"Estabelecimentos\d+\.zip", name, re.I):
                   sizes.append((name, size))
+              elif re.fullmatch(r"Empresas\d+\.zip", name, re.I):
+                  companies.append((name, size))
               elif name.casefold() == "motivos.zip":
                   reasons.append((name, size))
+              elif name.casefold() == "cnaes.zip":
+                  cnaes.append((name, size))
+              elif name.casefold() == "naturezas.zip":
+                  natures.append((name, size))
           print(f"ESTAB_FILE_COUNT={len(sizes)}")
           print(f"ESTAB_TOTAL_BYTES={sum(size for _, size in sizes)}")
           print(f"ESTAB_MAX_BYTES={max((size for _, size in sizes), default=0)}")
+          print(f"COMPANY_FILE_COUNT={len(companies)}")
+          print(f"COMPANY_TOTAL_BYTES={sum(size for _, size in companies)}")
+          print(f"COMPANY_MAX_BYTES={max((size for _, size in companies), default=0)}")
           print(f"MOTIVOS_BYTES={sum(size for _, size in reasons)}")
+          print(f"CNAES_BYTES={sum(size for _, size in cnaes)}")
+          print(f"NATUREZAS_BYTES={sum(size for _, size in natures)}")
           for name, size in sorted(sizes):
               print(f"ESTAB_FILE={name}:{size}")
           PY
