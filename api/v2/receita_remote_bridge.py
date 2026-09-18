@@ -6,6 +6,7 @@ import re
 import shlex
 import subprocess
 import tempfile
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -257,8 +258,6 @@ def _remote_call(mode: str, payload: dict[str, Any] | None = None) -> dict[str, 
                 )
                 status = probe.stdout.strip()
                 if status == "RUNNING" or not status:
-                    import time
-
                     time.sleep(poll_interval_seconds)
                     waited += poll_interval_seconds
                     continue
