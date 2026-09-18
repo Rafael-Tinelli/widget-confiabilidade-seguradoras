@@ -312,7 +312,6 @@ def build_filtered_identity_snapshot(
     release: ReceitaOpenDataRelease | None = None,
     work_dir: Path | None = None,
     session: requests.Session | None = None,
-    retain_downloads: bool = False,
 ) -> dict[str, Any]:
     """Build a bounded Receita identity snapshot for v2 entities and provider labels.
 
@@ -352,9 +351,8 @@ def build_filtered_identity_snapshot(
         nature_zip = _download_zip(sess, urljoin(resolved_release.release_url, nature_name), root / nature_name)
         cnae_map = _load_code_map(cnae_zip)
         nature_map = _load_code_map(nature_zip)
-        if not retain_downloads:
-            cnae_zip.unlink(missing_ok=True)
-            nature_zip.unlink(missing_ok=True)
+        cnae_zip.unlink(missing_ok=True)
+        nature_zip.unlink(missing_ok=True)
 
         companies_by_base: dict[str, dict[str, Any]] = {}
         legal_matches_by_base: dict[str, list[tuple[str, str]]] = defaultdict(list)
@@ -388,8 +386,7 @@ def build_filtered_identity_snapshot(
                                 legal_matches_by_base[base].append((provider_key, method))
                 company_files_scanned.append(name)
             finally:
-                if not retain_downloads:
-                    local.unlink(missing_ok=True)
+                local.unlink(missing_ok=True)
 
         canonical_records: dict[str, dict[str, Any]] = {}
         provider_candidates: dict[str, list[dict[str, Any]]] = defaultdict(list)
@@ -436,8 +433,7 @@ def build_filtered_identity_snapshot(
                                     provider_candidates[provider_key].append(candidate)
                 establishment_files_scanned.append(name)
             finally:
-                if not retain_downloads:
-                    local.unlink(missing_ok=True)
+                local.unlink(missing_ok=True)
 
         provider_matches = _finalize_provider_matches(queries, provider_candidates)
         unique = sum(row["candidate_state"] == "unique_candidate" for row in provider_matches)
