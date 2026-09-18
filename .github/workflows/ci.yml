@@ -73,6 +73,18 @@ jobs:
           find "$HOME/.sanida-v2-receita-bridge/runs" -maxdepth 2 -type f \
             \( -name exit_code -o -name stderr.log -o -name output.json \) \
             -printf '%TY-%Tm-%TdT%TH:%TM:%TS %s %p\n' 2>/dev/null | sort | tail -n 80 || true
+          echo '=== STDERR TAILS ==='
+          for file in "$HOME"/.sanida-v2-receita-bridge/runs/*/stderr.log; do
+            [[ -f "$file" ]] || continue
+            echo "--- $file ---"
+            tail -n 80 "$file" || true
+          done
+          echo '=== EXIT CODES ==='
+          for file in "$HOME"/.sanida-v2-receita-bridge/runs/*/exit_code; do
+            [[ -f "$file" ]] || continue
+            printf '%s=' "$file"
+            cat "$file" || true
+          done
           echo '=== CACHE ==='
           du -sh "$HOME/.sanida-v2-receita-bridge/cache" 2>/dev/null || true
           find "$HOME/.sanida-v2-receita-bridge/cache" -maxdepth 2 -type f \
