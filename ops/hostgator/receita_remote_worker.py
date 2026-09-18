@@ -662,11 +662,6 @@ def identity_extract(session, release, payload, cache_dir):
                     )
         establishment_files_scanned.append(name)
 
-    metadata_names = (
-        ["Cnaes.zip", "Naturezas.zip"]
-        + companies
-        + release["establishment_files"]
-    )
     return {
         "artifact": "v2_receita_remote_identity_extract",
         "generated_at": utc_now(),
