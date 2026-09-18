@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Ephemeral HostGator worker for official Receita CNPJ open-data acquisition.
 
 This file is intentionally Python 3.9 compatible because the HostGator account
@@ -13,7 +12,6 @@ import argparse
 import csv
 import io
 import json
-import os
 import re
 import shutil
 import time
@@ -22,7 +20,7 @@ import xml.etree.ElementTree as ET
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
-from urllib.parse import unquote, urljoin
+from urllib.parse import urljoin
 
 import requests
 
@@ -31,8 +29,8 @@ ROOT_URL = OFFICIAL_HOST + "/"
 DATASET_PATH = "Dados/Cadastros/CNPJ"
 PUBLIC_SHARE_RE = re.compile(r"/index\.php/s/([^/?#]+)")
 PERIOD_RE = re.compile(r"20\d{2}-\d{2}$")
-ESTABLISHMENT_RE = re.compile(r"Estabelecimentos\d+\.zip$", re.I)
-COMPANY_RE = re.compile(r"Empresas\d+\.zip$", re.I)
+ESTABLISHMENT_RE = re.compile(r"Estabelecimentos\d+\.zip$", re.IGNORECASE)
+COMPANY_RE = re.compile(r"Empresas\d+\.zip$", re.IGNORECASE)
 TIMEOUT = (15, 180)
 
 STATUS_CODE_TO_LABEL = {
@@ -93,7 +91,7 @@ def normalize_name_key(name):
     value = unicodedata.normalize("NFKD", str(name))
     value = "".join(ch for ch in value if not unicodedata.combining(ch))
     value = value.lower()
-    value = re.sub(r"[^a-z0-9]+", " ", value, flags=re.I)
+    value = re.sub(r"[^a-z0-9]+", " ", value, flags=re.IGNORECASE)
     return re.sub(r"\s+", " ", value).strip()
 
 
@@ -169,7 +167,7 @@ def dav_resources(payload):
     try:
         root = ET.fromstring(payload)
     except ET.ParseError as exc:
-        raise WorkerError("invalid Receita WebDAV XML: %s" % exc)
+        raise WorkerError(f"invalid Receita WebDAV XML: {exc}")
     ns = {"d": "DAV:"}
     out = []
     for response in root.findall("d:response", ns):
@@ -230,18 +228,17 @@ def propfind(session, url, retries=5):
             )
             if response.status_code != 207:
                 raise WorkerError(
-                    "Receita WebDAV PROPFIND returned HTTP %s: %s"
-                    % (response.status_code, url)
+                    f"Receita WebDAV PROPFIND returned HTTP {response.status_code}: {url}"
                 )
             resources = dav_resources(response.content)
             if not resources:
-                raise WorkerError("Receita WebDAV returned no resources for %s" % url)
+                raise WorkerError(f"Receita WebDAV returned no resources for {url}")
             return resources
         except (requests.RequestException, WorkerError) as exc:
             last_error = exc
             if attempt + 1 < retries:
                 time.sleep(min(2 ** attempt, 8))
-    raise WorkerError("failed Receita WebDAV PROPFIND %s: %s" % (url, last_error))
+    raise WorkerError(f"failed Receita WebDAV PROPFIND {url}: {last_error}")
 
 
 def discover_release(session):
@@ -250,12 +247,11 @@ def discover_release(session):
         response = session.get(ROOT_URL, timeout=TIMEOUT, allow_redirects=True)
         response.raise_for_status()
     except requests.RequestException as exc:
-        raise WorkerError("failed to resolve Receita public share: %s" % exc)
+        raise WorkerError(f"failed to resolve Receita public share: {exc}")
     match = PUBLIC_SHARE_RE.search(str(response.url))
     if not match:
         raise WorkerError(
-            "Receita root did not redirect to a recognizable public share: %s"
-            % response.url
+            f"Receita root did not redirect to a recognizable public share: {response.url}"
         )
     token = match.group(1)
     share_url = OFFICIAL_HOST + "/index.php/s/" + token
@@ -354,11 +350,11 @@ def download_zip(session, url, destination, expected_size=None, retries=5):
                             handle.write(chunk)
             if expected_size is not None and temp.stat().st_size != int(expected_size):
                 raise WorkerError(
-                    "downloaded Receita ZIP size mismatch for %s: %s != %s"
-                    % (url, temp.stat().st_size, expected_size)
+                    f"downloaded Receita ZIP size mismatch for {url}: "
+                    f"{temp.stat().st_size} != {expected_size}"
                 )
             if not zipfile.is_zipfile(str(temp)):
-                raise WorkerError("downloaded Receita file is not ZIP: %s" % url)
+                raise WorkerError(f"downloaded Receita file is not ZIP: {url}")
             temp.replace(destination)
             return destination
         except (requests.RequestException, OSError, WorkerError) as exc:
@@ -366,7 +362,7 @@ def download_zip(session, url, destination, expected_size=None, retries=5):
             temp.unlink(missing_ok=True)
             if attempt + 1 < retries:
                 time.sleep(min(2 ** attempt, 8))
-    raise WorkerError("failed to download Receita ZIP %s: %s" % (url, last_error))
+    raise WorkerError(f"failed to download Receita ZIP {url}: {last_error}")
 
 
 def load_reason_map(path):
@@ -401,7 +397,7 @@ def load_code_map(path):
                 if code and label:
                     out[code] = label
     if not out:
-        raise WorkerError("Receita dictionary ZIP produced an empty map: %s" % path)
+        raise WorkerError(f"Receita dictionary ZIP produced an empty map: {path}")
     return out
 
 
@@ -440,8 +436,8 @@ def require_expected_period(release, expected):
     expected = str(expected or "").strip()
     if expected and release["period"] != expected:
         raise WorkerError(
-            "Receita release changed during Gate 4 generation: expected=%s current=%s"
-            % (expected, release["period"])
+            f"Receita release changed during Gate 4 generation: "
+            f"expected={expected} current={release['period']}"
         )
 
 
@@ -491,8 +487,7 @@ def lifecycle_extract(session, release, payload, cache_dir):
                     status_label = STATUS_CODE_TO_LABEL.get(status_code)
                     if not status_label:
                         raise WorkerError(
-                            "unsupported Receita status code %s for %s"
-                            % (status_code, cnpj)
+                            f"unsupported Receita status code {status_code} for {cnpj}"
                         )
                     reason_code = str(row[7]).strip().zfill(2)
                     found[cnpj] = {
@@ -569,7 +564,7 @@ def identity_extract(session, release, payload, cache_dir):
         raise WorkerError("Receita release contains no Empresas partitions")
     for required in ("Cnaes.zip", "Naturezas.zip"):
         if required not in files:
-            raise WorkerError("Receita release missing %s" % required)
+            raise WorkerError(f"Receita release missing {required}")
 
     cache_root = cache_period_root(cache_dir, release["period"])
     cnae_zip = download_zip(
