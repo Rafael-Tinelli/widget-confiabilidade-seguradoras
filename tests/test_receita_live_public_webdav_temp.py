@@ -16,7 +16,7 @@ def _probe(session: requests.Session, method: str, url: str, **kwargs) -> dict:
             "content_type": response.headers.get("content-type"),
             "bytes": len(response.content),
         }
-    except Exception as exc:  # temporary diagnostic
+    except requests.RequestException as exc:
         return {"error": f"{type(exc).__name__}: {exc}"}
 
 
