@@ -82,6 +82,62 @@ jobs:
           set -euo pipefail
           python -m pytest -q
 
+      - name: TEMP diagnose Receita reachability from HostGator
+        if: ${{ secrets.V2_HOSTGATOR_HOST != '' && secrets.V2_HOSTGATOR_USER != '' && secrets.V2_HOSTGATOR_SSH_KEY != '' && secrets.V2_HOSTGATOR_KNOWN_HOSTS != '' }}
+        env:
+          SSH_HOST: ${{ secrets.V2_HOSTGATOR_HOST }}
+          SSH_USER: ${{ secrets.V2_HOSTGATOR_USER }}
+          SSH_PRIVATE_KEY: ${{ secrets.V2_HOSTGATOR_SSH_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.V2_HOSTGATOR_KNOWN_HOSTS }}
+          SSH_PORT: ${{ vars.V2_HOSTGATOR_SSH_PORT }}
+        run: |
+          set -euo pipefail
+          SSH_PORT=${SSH_PORT:-22}
+          ssh_dir="$RUNNER_TEMP/receita-probe-ssh"
+          key_file="$ssh_dir/private_key"
+          known_hosts_file="$ssh_dir/known_hosts"
+          rm -rf "$ssh_dir"
+          umask 077
+          install -d -m 700 "$ssh_dir"
+          install -m 600 /dev/null "$key_file"
+          install -m 600 /dev/null "$known_hosts_file"
+          printf '%s\n' "$SSH_PRIVATE_KEY" | tr -d '\r' > "$key_file"
+          printf '%s\n' "$SSH_KNOWN_HOSTS" | tr -d '\r' > "$known_hosts_file"
+          remote="$SSH_USER@$SSH_HOST"
+          ssh_opts=(
+            -T
+            -i "$key_file"
+            -p "$SSH_PORT"
+            -o BatchMode=yes
+            -o IdentitiesOnly=yes
+            -o StrictHostKeyChecking=yes
+            -o UserKnownHostsFile="$known_hosts_file"
+            -o GlobalKnownHostsFile=/dev/null
+            -o UpdateHostKeys=no
+          )
+          ssh "${ssh_opts[@]}" "$remote" "bash -s" <<'BASH'
+          set -euo pipefail
+          host='https://arquivos.receitafederal.gov.br'
+          final_url="$(curl -sS -L --max-time 30 -o /dev/null -w '%{url_effective}' "$host/")"
+          root_code="$(curl -sS -L --max-time 30 -o /dev/null -w '%{http_code}' "$host/")"
+          token="$(printf '%s' "$final_url" | sed -n 's#.*\/index.php\/s\/\([^/?]*\).*#\1#p')"
+          printf 'ROOT_CODE=%s\nFINAL_URL=%s\nTOKEN_PRESENT=%s\n' "$root_code" "$final_url" "$([[ -n "$token" ]] && echo yes || echo no)"
+          [[ "$root_code" == "200" ]]
+          [[ -n "$token" ]]
+
+          legacy_code="$(curl -sS --max-time 30 -o /tmp/receita-legacy.xml -w '%{http_code}' \
+            -X PROPFIND -H 'Depth: 1' -u "$token:" \
+            "$host/public.php/webdav/Dados/Cadastros/CNPJ/")"
+          modern_code="$(curl -sS --max-time 30 -o /tmp/receita-modern.xml -w '%{http_code}' \
+            -X PROPFIND -H 'Depth: 1' -H 'X-Requested-With: XMLHttpRequest' \
+            "$host/public.php/dav/files/$token/Dados/Cadastros/CNPJ/")"
+          printf 'LEGACY_PROPFIND=%s\nMODERN_PROPFIND=%s\n' "$legacy_code" "$modern_code"
+          if [[ "$legacy_code" != "207" && "$modern_code" != "207" ]]; then
+            exit 1
+          fi
+          BASH
+          rm -rf "$ssh_dir"
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
