@@ -10,6 +10,7 @@ from typing import Any
 import requests
 
 from api import build_consumidor_gov as consumer_gov_build
+from api.sources import consumer_gov_direct
 from api.sources.receita_cnpj import RECEITA_CNPJ_OPEN_DATA_URL
 from api.v2.build_consumer_gov_identity_experiment import (
     OUTPUT_PATH as CONSUMER_IDENTITY_PATH,
@@ -41,9 +42,7 @@ DEFAULT_CACHE_DIR = Path("data/cache/v2/conduct")
 DEFAULT_LINEAGE = Path("data/derived/v2/conduct_source_lineage.json")
 CONSUMER_MANIFEST = "consumer_gov_core_manifest.json"
 CONSUMER_MANIFEST_VERSION = 2
-CONSUMER_SOURCE_URL = (
-    f"{consumer_gov_build.CG_API_BASE}/package_show?id={consumer_gov_build.CG_DATASET_ID}"
-)
+CONSUMER_SOURCE_URL = consumer_gov_direct.CONSUMER_GOV_PAGE
 
 
 class ConductSourceSnapshotError(RuntimeError):
@@ -261,7 +260,9 @@ def _consumer_observation(*, cache_dir: Path) -> SourceObservation:
     try:
         resources = consumer_gov_build._list_basecompleta_resources()
         if not resources:
-            raise ConductSourceSnapshotError("Consumer.gov returned no Base Completa resources")
+            raise ConductSourceSnapshotError(
+                "Consumer.gov returned no explicit Base Completa resources"
+            )
         result = consumer_gov_build.main()
         if result != 0:
             raise ConductSourceSnapshotError(f"Consumer.gov builder returned {result}")
@@ -290,7 +291,10 @@ def _consumer_observation(*, cache_dir: Path) -> SourceObservation:
             snapshot_path=cache_manifest,
             fetched_at=fetched_at,
             current_validation_succeeded=True,
-            state_reason="current CKAN publication window validated against materialized core",
+            state_reason=(
+                "current direct Consumer.gov publication window validated against "
+                "materialized core"
+            ),
         )
     except (
         ConductSourceSnapshotError,

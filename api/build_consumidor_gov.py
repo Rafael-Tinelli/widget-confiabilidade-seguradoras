@@ -15,6 +15,7 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
+from .sources import consumer_gov_direct
 from .utils.name_cleaner import normalize_name_key
 
 CG_DATASET_ID = os.getenv("CG_DATASET_ID", "reclamacoes-do-consumidor-gov-br")
@@ -48,6 +49,7 @@ class ResourceInfo:
     name: str
     url: str
     format: str | None = None
+    publication: consumer_gov_direct.Publication | None = None
 
 
 _MONTH_RE = re.compile(r"(20\d{2})[-_/]?(\d{2})")
@@ -239,8 +241,8 @@ def _extract_month(text: str) -> str | None:
     return f"{year:04d}-{month:02d}"
 
 
-def _list_basecompleta_resources() -> dict[str, ResourceInfo]:
-    """Lê o dataset no CKAN e monta um mapa month -> recurso Base Completa."""
+def _list_basecompleta_resources_ckan() -> dict[str, ResourceInfo]:
+    """Legacy CKAN discovery retained for diagnostics/manual forensics only."""
     package = _ckan_get("package_show", {"id": CG_DATASET_ID})
     resources = package.get("resources") or []
     out: dict[str, ResourceInfo] = {}
@@ -277,6 +279,38 @@ def _list_basecompleta_resources() -> dict[str, ResourceInfo]:
     return out
 
 
+def _is_explicit_basecompleta_publication(
+    publication: consumer_gov_direct.Publication,
+) -> bool:
+    blob = _norm(f"{publication.title} {publication.filename or ''}")
+    return "base completa" in blob or "basecompleta" in blob
+
+
+def _list_basecompleta_resources() -> dict[str, ResourceInfo]:
+    """Resolve a Base Completa diretamente na publicação oficial Consumer.gov."""
+    publications = consumer_gov_direct.discover_publications(set())
+    candidates: dict[str, list[consumer_gov_direct.Publication]] = {}
+    for publication in publications:
+        if not publication.month or not _is_explicit_basecompleta_publication(publication):
+            continue
+        candidates.setdefault(publication.month, []).append(publication)
+
+    out: dict[str, ResourceInfo] = {}
+    for month, monthly in candidates.items():
+        monthly.sort(key=lambda item: item.code, reverse=True)
+        selected = monthly[0]
+        filename = selected.filename or ""
+        suffix = Path(filename).suffix.lstrip(".").upper() or None
+        out[month] = ResourceInfo(
+            month=month,
+            name=selected.title or filename or f"Base Completa {month}",
+            url=selected.download_url,
+            format=suffix,
+            publication=selected,
+        )
+    return out
+
+
 def _download(url: str, out_path: Path) -> None:
     """Baixa de forma atômica; download parcial nunca substitui o cache anterior."""
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -302,6 +336,17 @@ def _download(url: str, out_path: Path) -> None:
         except OSError as cleanup_error:
             print(f"CG WARN: falha ao remover temporário {tmp_path}: {cleanup_error}")
         raise
+
+
+def _download_resource(resource: ResourceInfo, out_path: Path) -> None:
+    if resource.publication is not None:
+        consumer_gov_direct.download_publication(
+            resource.publication,
+            out_path,
+            resource.month,
+        )
+        return
+    _download(resource.url, out_path)
 
 
 def _iter_rows(csv_path: Path) -> Iterable[dict[str, str]]:
@@ -571,11 +616,11 @@ def main() -> int:
     except (requests.RequestException, RuntimeError, ValueError) as exc:
         preserved = _preserve_existing_aggregate(
             existing_aggregate,
-            f"CKAN indisponível: {exc}",
+            f"fonte oficial Consumer.gov indisponível: {exc}",
         )
         if preserved is not None:
             return preserved
-        print(f"CG FAIL: CKAN indisponível e nenhum agregado válido existe: {exc}")
+        print(f"CG FAIL: fonte oficial Consumer.gov indisponível e nenhum agregado válido existe: {exc}")
         return 1
 
     if not resources_by_month:
@@ -648,7 +693,7 @@ def main() -> int:
         if FORCE_DOWNLOAD or not raw_is_usable:
             print(f"CG: baixando {month}: {resource.name}")
             try:
-                _download(resource.url, raw_csv)
+                _download_resource(resource, raw_csv)
             except (OSError, RuntimeError, requests.RequestException) as exc:
                 if cached_monthly is not None:
                     print(f"CG WARN: download falhou; usando cache mensal de {month}: {exc}")
