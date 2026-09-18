@@ -141,7 +141,14 @@ def _propfind(
     retries: int = 5,
 ) -> list[dict[str, Any]]:
     last_error: Exception | None = None
-    headers = {"Depth": "1", "Content-Type": "application/xml"}
+    # Nextcloud public-share WebDAV requires this header for non-GET
+    # requests when outgoing server-to-server sharing is disabled. Receita's
+    # official CNPJ file share is exposed through /public.php/dav.
+    headers = {
+        "Depth": "1",
+        "Content-Type": "application/xml",
+        "X-Requested-With": "XMLHttpRequest",
+    }
 
     for attempt in range(retries):
         try:
