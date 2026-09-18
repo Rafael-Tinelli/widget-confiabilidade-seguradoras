@@ -16,10 +16,10 @@ from api.sources.receita_cnpj_bulk import (
     ReceitaOpenDataError,
     ReceitaOpenDataRelease,
     _configure_official_session,
-    _sanitized_csv_reader,
     _download_zip,
     _first_csv_member,
     _propfind,
+    _sanitized_csv_reader,
     discover_latest_release,
 )
 from api.utils.identifiers import normalize_cnpj_v2
