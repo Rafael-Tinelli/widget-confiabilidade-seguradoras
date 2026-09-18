@@ -148,7 +148,7 @@ jobs:
           periods = []
           for response in root.findall("d:response", ns):
               href = response.findtext("d:href", default="", namespaces=ns)
-              match = re.search(r"/(20\\d{2}-\\d{2})/?$", href)
+              match = re.search(r"/(20\d{2}-\d{2})/?$", href)
               if match:
                   periods.append(match.group(1))
           if not periods:
@@ -179,7 +179,7 @@ jobs:
               name = href.rstrip("/").rsplit("/", 1)[-1]
               size_text = response.findtext(".//d:getcontentlength", default="0", namespaces=ns)
               size = int(size_text or 0)
-              if re.fullmatch(r"Estabelecimentos\\d+\\.zip", name, re.I):
+              if re.fullmatch(r"Estabelecimentos\d+\.zip", name, re.I):
                   sizes.append((name, size))
               elif name.casefold() == "motivos.zip":
                   reasons.append((name, size))
