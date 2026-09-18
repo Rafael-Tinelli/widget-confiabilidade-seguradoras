@@ -5,6 +5,11 @@ name: V2 Gate 4 Full Generation Proof
 # no longer an event source.
 on:
   workflow_dispatch:
+  # Temporary branch-only trigger used to prove the Receita SSH bridge against
+  # the real official source before merging. It will be removed after the proof.
+  push:
+    branches:
+      - fix/receita-public-dav-auth
 
 permissions:
   contents: read
