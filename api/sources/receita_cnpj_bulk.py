@@ -80,7 +80,21 @@ def _today_utc() -> date:
 
 def _configure_official_session(session: requests.Session) -> None:
     session.headers.setdefault("User-Agent", "Sanida-CNPJ-Lifecycle/2.0")
-    session.auth = (OFFICIAL_CNPJ_SHARE_TOKEN, "")
+    # The current Nextcloud public-share DAV contract does not require Basic
+    # authentication when the share has no password. Sending the public token
+    # preemptively as a Basic-auth username can route the request through the
+    # authenticated/public-share compatibility path and has become unreliable
+    # on newer Nextcloud versions.
+    session.auth = None
+    session.cookies.clear()
+
+
+def _prepare_public_dav_request(session: requests.Session) -> None:
+    # Public-share DAV requests are intentionally stateless. Clearing cookies
+    # avoids recent Nextcloud strict-cookie regressions from contaminating
+    # subsequent PROPFIND/GET attempts in the same requests.Session.
+    session.auth = None
+    session.cookies.clear()
 
 
 def _dav_resources(xml_payload: bytes) -> list[dict[str, Any]]:
@@ -152,6 +166,7 @@ def _propfind(
 
     for attempt in range(retries):
         try:
+            _prepare_public_dav_request(session)
             response = session.request(
                 "PROPFIND",
                 url,
@@ -274,6 +289,7 @@ def _download_zip(
 
     for attempt in range(retries):
         try:
+            _prepare_public_dav_request(session)
             with session.get(
                 url,
                 timeout=DEFAULT_TIMEOUT,
