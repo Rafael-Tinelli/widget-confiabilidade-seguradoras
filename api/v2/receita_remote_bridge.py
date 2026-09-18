@@ -222,10 +222,74 @@ def _remote_call(mode: str, payload: dict[str, Any] | None = None) -> dict[str, 
             ]
             if payload is not None:
                 remote_args.extend(["--input", remote_input])
+
             remote_command = " ".join(shlex.quote(part) for part in remote_args)
-            result = _run([*ssh, remote_command])
-            if result.stdout.strip():
-                print(result.stdout.strip())
+            remote_exit = f"{run_dir}/exit_code"
+            remote_stdout = f"{run_dir}/stdout.log"
+            remote_stderr = f"{run_dir}/stderr.log"
+            detached = (
+                "nohup sh -c "
+                + shlex.quote(
+                    f"{remote_command}; code=$?; "
+                    f"printf '%s\\n' \"$code\" > {shlex.quote(remote_exit)}"
+                )
+                + f" > {shlex.quote(remote_stdout)}"
+                + f" 2> {shlex.quote(remote_stderr)}"
+                + " < /dev/null &"
+            )
+            _run([*ssh, detached], timeout=120)
+
+            deadline_seconds = 18_000
+            poll_interval_seconds = 20
+            waited = 0
+            exit_code: int | None = None
+            while waited <= deadline_seconds:
+                probe = _run(
+                    [
+                        *ssh,
+                        (
+                            f"if test -f {shlex.quote(remote_exit)}; then "
+                            f"cat {shlex.quote(remote_exit)}; "
+                            "else printf 'RUNNING\\n'; fi"
+                        ),
+                    ],
+                    timeout=120,
+                )
+                status = probe.stdout.strip()
+                if status == "RUNNING" or not status:
+                    import time
+
+                    time.sleep(poll_interval_seconds)
+                    waited += poll_interval_seconds
+                    continue
+                try:
+                    exit_code = int(status.splitlines()[-1])
+                except ValueError as exc:
+                    raise ReceitaRemoteBridgeError(
+                        f"invalid Receita remote worker status: {status!r}"
+                    ) from exc
+                break
+
+            if exit_code is None:
+                raise ReceitaRemoteBridgeError(
+                    "Receita remote worker exceeded the 18000s bridge deadline"
+                )
+            if exit_code != 0:
+                detail = _run(
+                    [
+                        *ssh,
+                        (
+                            f"tail -c 6000 {shlex.quote(remote_stderr)} "
+                            "2>/dev/null || true"
+                        ),
+                    ],
+                    timeout=120,
+                    check=False,
+                ).stdout.strip()
+                raise ReceitaRemoteBridgeError(
+                    "Receita remote worker failed"
+                    + (f": {detail}" if detail else f" with exit={exit_code}")
+                )
 
             output_path = root / "output.json"
             _run(
