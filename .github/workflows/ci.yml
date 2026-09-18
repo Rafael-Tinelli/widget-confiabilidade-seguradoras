@@ -135,7 +135,38 @@ jobs:
             exit 1
           fi
           BASH
-          rm -rf "$ssh_dir"
+
+          tunnel_port=18080
+          ssh "${ssh_opts[@]}" \
+            -o ExitOnForwardFailure=yes \
+            -o ServerAliveInterval=20 \
+            -o ServerAliveCountMax=3 \
+            -N -D "127.0.0.1:$tunnel_port" "$remote" &
+          tunnel_pid=$!
+          cleanup_tunnel() {
+            kill "$tunnel_pid" 2>/dev/null || true
+            wait "$tunnel_pid" 2>/dev/null || true
+            rm -rf "$ssh_dir"
+          }
+          trap cleanup_tunnel EXIT
+          sleep 2
+
+          tunnel_final_url="$(curl -sS -L --socks5-hostname "127.0.0.1:$tunnel_port" \
+            --max-time 30 -o /dev/null -w '%{url_effective}' \
+            https://arquivos.receitafederal.gov.br/)"
+          tunnel_root_code="$(curl -sS -L --socks5-hostname "127.0.0.1:$tunnel_port" \
+            --max-time 30 -o /dev/null -w '%{http_code}' \
+            https://arquivos.receitafederal.gov.br/)"
+          tunnel_token="$(printf '%s' "$tunnel_final_url" | sed -n 's#.*\/index.php\/s\/\([^/?]*\).*#\1#p')"
+          tunnel_propfind="$(curl -sS --socks5-hostname "127.0.0.1:$tunnel_port" \
+            --max-time 30 -o /tmp/receita-tunnel.xml -w '%{http_code}' \
+            -X PROPFIND -H 'Depth: 1' -H 'X-Requested-With: XMLHttpRequest' \
+            "https://arquivos.receitafederal.gov.br/public.php/dav/files/$tunnel_token/Dados/Cadastros/CNPJ/")"
+          printf 'TUNNEL_ROOT_CODE=%s\nTUNNEL_TOKEN_PRESENT=%s\nTUNNEL_PROPFIND=%s\n' \
+            "$tunnel_root_code" "$([[ -n "$tunnel_token" ]] && echo yes || echo no)" "$tunnel_propfind"
+          [[ "$tunnel_root_code" == "200" ]]
+          [[ -n "$tunnel_token" ]]
+          [[ "$tunnel_propfind" == "207" ]]
 
       - name: Setup Node
         uses: actions/setup-node@v4
