@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import subprocess
 
-
 HOST = "https://arquivos.receitafederal.gov.br"
 TOKEN = "gn672Ad4CF8N6TK"
 CNPJ_PATH = "Dados/Cadastros/CNPJ"
