@@ -313,8 +313,6 @@ def _download_zip(
     retries: int = 5,
 ) -> Path:
     destination.parent.mkdir(parents=True, exist_ok=True)
-    if destination.is_file() and zipfile.is_zipfile(destination):
-        return destination
     temp = destination.with_suffix(destination.suffix + ".part")
     last_error: Exception | None = None
 
@@ -462,7 +460,6 @@ def refresh_filtered_lifecycle(
     release: ReceitaOpenDataRelease | None = None,
     work_dir: Path | None = None,
     session: requests.Session | None = None,
-    retain_downloads: bool = False,
 ) -> dict[str, Any]:
     """Refresh lifecycle only for CNPJs in the v2 regulatory universe.
 
@@ -506,8 +503,7 @@ def refresh_filtered_lifecycle(
             root / resolved_release.reasons_file,
         )
         reason_map = load_reason_map(reasons_zip)
-        if not retain_downloads:
-            reasons_zip.unlink(missing_ok=True)
+        reasons_zip.unlink(missing_ok=True)
 
         records_by_cnpj: dict[str, dict[str, Any]] = {}
         files_scanned: list[str] = []
@@ -536,8 +532,7 @@ def refresh_filtered_lifecycle(
                 if len(records_by_cnpj) == len(target_names):
                     break
             finally:
-                if not retain_downloads:
-                    local.unlink(missing_ok=True)
+                local.unlink(missing_ok=True)
 
         unresolved = sorted(set(target_names) - set(records_by_cnpj))
         return {
