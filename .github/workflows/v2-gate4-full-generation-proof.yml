@@ -25,6 +25,10 @@ jobs:
       SUSEP_LICENSED_VERIFY_SSL: "1"
       SUSEP_SPECIAL_VERIFY_SSL: "1"
       SUSEP_SANDBOX_VERIFY_SSL: "1"
+      V2_RECEITA_REMOTE_ENABLED: ${{ secrets.V2_HOSTGATOR_HOST != '' && secrets.V2_HOSTGATOR_USER != '' && secrets.V2_HOSTGATOR_SSH_KEY != '' && secrets.V2_HOSTGATOR_KNOWN_HOSTS != '' && '1' || '0' }}
+      V2_RECEITA_SSH_HOST: ${{ secrets.V2_HOSTGATOR_HOST }}
+      V2_RECEITA_SSH_USER: ${{ secrets.V2_HOSTGATOR_USER }}
+      V2_RECEITA_SSH_PORT: ${{ vars.V2_HOSTGATOR_SSH_PORT }}
 
     steps:
       - name: Checkout exact source head
@@ -60,6 +64,55 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
           python -m pip install -r requirements-dev.txt
+
+      - name: Configure pinned SSH transport for Receita bridge
+        if: env.V2_RECEITA_REMOTE_ENABLED == '1'
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.V2_HOSTGATOR_SSH_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.V2_HOSTGATOR_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          : "${V2_RECEITA_SSH_HOST:?missing Receita bridge host}"
+          : "${V2_RECEITA_SSH_USER:?missing Receita bridge user}"
+          SSH_PORT=${V2_RECEITA_SSH_PORT:-22}
+          [[ "$V2_RECEITA_SSH_HOST" =~ ^[A-Za-z0-9.-]+$ ]]
+          [[ "$V2_RECEITA_SSH_USER" =~ ^[A-Za-z0-9._-]+$ ]]
+          [[ "$SSH_PORT" =~ ^[0-9]+$ ]]
+          (( SSH_PORT >= 1 && SSH_PORT <= 65535 ))
+
+          ssh_dir="$RUNNER_TEMP/v2-receita-ssh"
+          key_file="$ssh_dir/private_key"
+          known_hosts_file="$ssh_dir/known_hosts"
+          rm -rf "$ssh_dir"
+          umask 077
+          install -d -m 700 "$ssh_dir"
+          install -m 600 /dev/null "$key_file"
+          install -m 600 /dev/null "$known_hosts_file"
+          printf '%s\n' "$SSH_PRIVATE_KEY" | tr -d '\r' > "$key_file"
+          printf '%s\n' "$SSH_KNOWN_HOSTS" | tr -d '\r' > "$known_hosts_file"
+
+          ssh-keygen -y -P '' -f "$key_file" >/dev/null || {
+            echo "V2_HOSTGATOR_SSH_KEY is not a valid unencrypted private key" >&2
+            exit 1
+          }
+          ssh-keygen -l -f "$known_hosts_file" >/dev/null || {
+            echo "V2_HOSTGATOR_KNOWN_HOSTS has no valid host public key" >&2
+            exit 1
+          }
+          known_host_lookup="$V2_RECEITA_SSH_HOST"
+          if [[ "$SSH_PORT" != "22" ]]; then
+            known_host_lookup="[$V2_RECEITA_SSH_HOST]:$SSH_PORT"
+          fi
+          ssh-keygen -F "$known_host_lookup" -f "$known_hosts_file" >/dev/null || {
+            echo "V2_HOSTGATOR_KNOWN_HOSTS does not pin the Receita bridge host" >&2
+            exit 1
+          }
+
+          {
+            echo "V2_RECEITA_SSH_PORT=$SSH_PORT"
+            echo "V2_RECEITA_SSH_KEY_FILE=$key_file"
+            echo "V2_RECEITA_SSH_KNOWN_HOSTS_FILE=$known_hosts_file"
+          } >> "$GITHUB_ENV"
 
       - name: Freeze generation timestamp
         run: |
@@ -144,6 +197,11 @@ jobs:
           set -euo pipefail
           python -m api.v2.gate4_pipeline --run-all > /tmp/gate4-full.log
           tail -n 80 /tmp/gate4-full.log
+
+      - name: Remove ephemeral Receita SSH material
+        if: always() && env.V2_RECEITA_REMOTE_ENABLED == '1'
+        run: |
+          rm -rf "$RUNNER_TEMP/v2-receita-ssh"
 
       - name: Validate one-generation lineage and methodological boundaries
         run: |
