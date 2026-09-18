@@ -1,0 +1,757 @@
+#!/usr/bin/env python3
+"""Ephemeral HostGator worker for official Receita CNPJ open-data acquisition.
+
+This file is intentionally Python 3.9 compatible because the HostGator account
+currently exposes Python 3.9. The worker is uploaded by the exact Gate 4 source
+head, runs privately over pinned SSH, reads only the official Receita Federal
+Nextcloud share, and writes a small filtered JSON result for the GitHub runner.
+
+HostGator is transport/compute only. Receita Federal remains the data authority.
+"""
+
+import argparse
+import csv
+import io
+import json
+import os
+import re
+import shutil
+import time
+import unicodedata
+import xml.etree.ElementTree as ET
+import zipfile
+from datetime import datetime, timezone
+from pathlib import Path
+from urllib.parse import unquote, urljoin
+
+import requests
+
+OFFICIAL_HOST = "https://arquivos.receitafederal.gov.br"
+ROOT_URL = OFFICIAL_HOST + "/"
+DATASET_PATH = "Dados/Cadastros/CNPJ"
+PUBLIC_SHARE_RE = re.compile(r"/index\.php/s/([^/?#]+)")
+PERIOD_RE = re.compile(r"20\d{2}-\d{2}$")
+ESTABLISHMENT_RE = re.compile(r"Estabelecimentos\d+\.zip$", re.I)
+COMPANY_RE = re.compile(r"Empresas\d+\.zip$", re.I)
+TIMEOUT = (15, 180)
+
+STATUS_CODE_TO_LABEL = {
+    "01": "NULA",
+    "02": "ATIVA",
+    "03": "SUSPENSA",
+    "04": "INAPTA",
+    "05": "ATIVA NÃO REGULAR",
+    "08": "BAIXADA",
+}
+
+BUSINESS_CORE_STOPWORDS = {
+    "sa", "s", "a", "ltda", "cia", "companhia", "sociedade",
+    "de", "da", "do", "das", "dos", "e", "seguro", "seguros",
+    "seguradora", "seguradoras", "vida", "previdencia",
+    "previdenciaria", "complementar", "privada", "capitalizacao",
+    "corporativo", "corporativos", "corporativa", "corporativas",
+}
+LEGAL_FORM_SUFFIXES = {"sa", "s", "a", "ltda", "cia", "companhia", "sociedade"}
+
+DAV_BODY = """<?xml version="1.0"?>
+<d:propfind xmlns:d="DAV:">
+  <d:prop>
+    <d:displayname/>
+    <d:getcontentlength/>
+    <d:getlastmodified/>
+    <d:getetag/>
+    <d:resourcetype/>
+  </d:prop>
+</d:propfind>
+"""
+
+
+class WorkerError(RuntimeError):
+    pass
+
+
+def utc_now():
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def today_utc():
+    return datetime.now(timezone.utc).date().isoformat()
+
+
+def digits(value):
+    return re.sub(r"\D+", "", str(value or ""))
+
+
+def normalize_cnpj(value):
+    value = digits(value)
+    return value if len(value) == 14 else None
+
+
+def normalize_name_key(name):
+    if not name:
+        return ""
+    value = unicodedata.normalize("NFKD", str(name))
+    value = "".join(ch for ch in value if not unicodedata.combining(ch))
+    value = value.lower()
+    value = re.sub(r"[^a-z0-9]+", " ", value, flags=re.I)
+    return re.sub(r"\s+", " ", value).strip()
+
+
+def surface_name(name):
+    tokens = normalize_name_key(name).split()
+    while tokens and tokens[-1] in LEGAL_FORM_SUFFIXES:
+        tokens.pop()
+    return " ".join(tokens)
+
+
+def business_core(name):
+    tokens = [
+        token
+        for token in normalize_name_key(name).split()
+        if token not in BUSINESS_CORE_STOPWORDS and len(token) > 1
+    ]
+    if not tokens:
+        return ""
+    if len(tokens) == 1 and len(tokens[0]) < 7:
+        return ""
+    value = " ".join(tokens)
+    return value if len(value.replace(" ", "")) >= 7 else ""
+
+
+def build_query_indexes(provider_names):
+    surface = {}
+    core = {}
+    display = {}
+    for provider in provider_names:
+        name = str(provider or "").strip()
+        if not name:
+            continue
+        provider_key = normalize_name_key(name)
+        if not provider_key:
+            continue
+        display.setdefault(provider_key, name)
+        s_key = surface_name(name)
+        if s_key:
+            surface.setdefault(s_key, set()).add(provider_key)
+        c_key = business_core(name)
+        if c_key:
+            core.setdefault(c_key, set()).add(provider_key)
+    return {"surface": surface, "core": core, "display": display}
+
+
+def match_name_to_queries(name, indexes, prefix):
+    if not name:
+        return []
+    out = []
+    s_key = surface_name(name)
+    for provider_key in indexes["surface"].get(s_key, set()):
+        out.append([provider_key, prefix + "_surface_exact"])
+    c_key = business_core(name)
+    for provider_key in indexes["core"].get(c_key, set()):
+        out.append([provider_key, prefix + "_business_core"])
+    return out
+
+
+def configure_session():
+    session = requests.Session()
+    session.headers.setdefault("User-Agent", "Sanida-CNPJ-RemoteWorker/1.0")
+    session.auth = None
+    session.cookies.clear()
+    return session
+
+
+def prepare_session(session):
+    session.auth = None
+    session.cookies.clear()
+
+
+def dav_resources(payload):
+    try:
+        root = ET.fromstring(payload)
+    except ET.ParseError as exc:
+        raise WorkerError("invalid Receita WebDAV XML: %s" % exc)
+    ns = {"d": "DAV:"}
+    out = []
+    for response in root.findall("d:response", ns):
+        propstat = None
+        for item in response.findall("d:propstat", ns):
+            status = item.findtext("d:status", default="", namespaces=ns) or ""
+            if "200" in status:
+                propstat = item
+                break
+        if propstat is None:
+            continue
+        prop = propstat.find("d:prop", ns)
+        if prop is None:
+            continue
+        name = (prop.findtext("d:displayname", default="", namespaces=ns) or "").strip()
+        if not name:
+            continue
+        href = (response.findtext("d:href", default="", namespaces=ns) or "").strip()
+        size_text = (prop.findtext("d:getcontentlength", default="", namespaces=ns) or "").strip()
+        resource_type = prop.find("d:resourcetype", ns)
+        is_collection = bool(
+            resource_type is not None
+            and resource_type.find("d:collection", ns) is not None
+        )
+        out.append(
+            {
+                "name": name,
+                "href": href,
+                "size": int(size_text) if size_text.isdigit() else None,
+                "last_modified": (
+                    prop.findtext("d:getlastmodified", default="", namespaces=ns) or ""
+                ).strip() or None,
+                "etag": (
+                    prop.findtext("d:getetag", default="", namespaces=ns) or ""
+                ).strip() or None,
+                "is_collection": is_collection,
+            }
+        )
+    return out
+
+
+def propfind(session, url, retries=5):
+    last_error = None
+    headers = {
+        "Depth": "1",
+        "Content-Type": "application/xml",
+        "X-Requested-With": "XMLHttpRequest",
+    }
+    for attempt in range(retries):
+        try:
+            prepare_session(session)
+            response = session.request(
+                "PROPFIND",
+                url,
+                headers=headers,
+                data=DAV_BODY.encode("utf-8"),
+                timeout=TIMEOUT,
+            )
+            if response.status_code != 207:
+                raise WorkerError(
+                    "Receita WebDAV PROPFIND returned HTTP %s: %s"
+                    % (response.status_code, url)
+                )
+            resources = dav_resources(response.content)
+            if not resources:
+                raise WorkerError("Receita WebDAV returned no resources for %s" % url)
+            return resources
+        except (requests.RequestException, WorkerError) as exc:
+            last_error = exc
+            if attempt + 1 < retries:
+                time.sleep(min(2 ** attempt, 8))
+    raise WorkerError("failed Receita WebDAV PROPFIND %s: %s" % (url, last_error))
+
+
+def discover_release(session):
+    prepare_session(session)
+    try:
+        response = session.get(ROOT_URL, timeout=TIMEOUT, allow_redirects=True)
+        response.raise_for_status()
+    except requests.RequestException as exc:
+        raise WorkerError("failed to resolve Receita public share: %s" % exc)
+    match = PUBLIC_SHARE_RE.search(str(response.url))
+    if not match:
+        raise WorkerError(
+            "Receita root did not redirect to a recognizable public share: %s"
+            % response.url
+        )
+    token = match.group(1)
+    share_url = OFFICIAL_HOST + "/index.php/s/" + token
+    dav_root = (
+        OFFICIAL_HOST + "/public.php/dav/files/" + token + "/" + DATASET_PATH + "/"
+    )
+
+    root_resources = propfind(session, dav_root)
+    periods = sorted(
+        [
+            item["name"]
+            for item in root_resources
+            if item.get("is_collection") and PERIOD_RE.fullmatch(item["name"])
+        ],
+        reverse=True,
+    )
+    if not periods:
+        raise WorkerError("official Receita CNPJ share has no monthly releases")
+
+    for period in periods:
+        release_url = urljoin(dav_root, period + "/")
+        resources = propfind(session, release_url)
+        files = {
+            item["name"]: item
+            for item in resources
+            if not item.get("is_collection")
+        }
+        establishments = sorted(
+            [name for name in files if ESTABLISHMENT_RE.fullmatch(name)],
+            key=lambda name: int(re.search(r"(\d+)", name).group(1)),
+        )
+        if "Motivos.zip" not in files or not establishments:
+            continue
+        expected = list(range(len(establishments)))
+        actual = [int(re.search(r"(\d+)", name).group(1)) for name in establishments]
+        if actual != expected:
+            continue
+        return {
+            "base_url": share_url,
+            "dav_root": dav_root,
+            "release_url": release_url,
+            "period": period,
+            "establishment_files": establishments,
+            "resources": resources,
+        }
+    raise WorkerError("no complete Receita CNPJ monthly release found")
+
+
+def resource_map(release):
+    return {
+        item["name"]: item
+        for item in release["resources"]
+        if not item.get("is_collection")
+    }
+
+
+def first_csv_member(archive):
+    members = [name for name in archive.namelist() if not name.endswith("/")]
+    if not members:
+        raise WorkerError("Receita ZIP archive is empty")
+    csv_like = [
+        name for name in members if name.lower().endswith((".csv", ".estabele"))
+    ]
+    return csv_like[0] if csv_like else members[0]
+
+
+def valid_cached_zip(path, expected_size):
+    if not path.is_file():
+        return False
+    if expected_size is not None and path.stat().st_size != int(expected_size):
+        return False
+    return zipfile.is_zipfile(str(path))
+
+
+def download_zip(session, url, destination, expected_size=None, retries=5):
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if valid_cached_zip(destination, expected_size):
+        return destination
+    destination.unlink(missing_ok=True)
+    temp = destination.with_suffix(destination.suffix + ".part")
+    last_error = None
+    for attempt in range(retries):
+        try:
+            temp.unlink(missing_ok=True)
+            prepare_session(session)
+            with session.get(
+                url,
+                timeout=TIMEOUT,
+                stream=True,
+                allow_redirects=True,
+            ) as response:
+                response.raise_for_status()
+                with temp.open("wb") as handle:
+                    for chunk in response.iter_content(chunk_size=8 * 1024 * 1024):
+                        if chunk:
+                            handle.write(chunk)
+            if expected_size is not None and temp.stat().st_size != int(expected_size):
+                raise WorkerError(
+                    "downloaded Receita ZIP size mismatch for %s: %s != %s"
+                    % (url, temp.stat().st_size, expected_size)
+                )
+            if not zipfile.is_zipfile(str(temp)):
+                raise WorkerError("downloaded Receita file is not ZIP: %s" % url)
+            temp.replace(destination)
+            return destination
+        except (requests.RequestException, OSError, WorkerError) as exc:
+            last_error = exc
+            temp.unlink(missing_ok=True)
+            if attempt + 1 < retries:
+                time.sleep(min(2 ** attempt, 8))
+    raise WorkerError("failed to download Receita ZIP %s: %s" % (url, last_error))
+
+
+def load_reason_map(path):
+    out = {}
+    with zipfile.ZipFile(str(path)) as archive:
+        member = first_csv_member(archive)
+        with archive.open(member) as raw:
+            text = io.TextIOWrapper(raw, encoding="latin1", newline="")
+            for row in csv.reader(text, delimiter=";", quotechar='"'):
+                if len(row) < 2:
+                    continue
+                code = str(row[0]).strip().zfill(2)
+                description = str(row[1]).strip()
+                if code and description:
+                    out[code] = description
+    if not out:
+        raise WorkerError("Motivos.zip produced an empty map")
+    return out
+
+
+def load_code_map(path):
+    out = {}
+    with zipfile.ZipFile(str(path)) as archive:
+        member = first_csv_member(archive)
+        with archive.open(member) as raw:
+            text = io.TextIOWrapper(raw, encoding="latin1", newline="")
+            for row in csv.reader(text, delimiter=";", quotechar='"'):
+                if len(row) < 2:
+                    continue
+                code = digits(row[0])
+                label = str(row[1]).strip()
+                if code and label:
+                    out[code] = label
+    if not out:
+        raise WorkerError("Receita dictionary ZIP produced an empty map: %s" % path)
+    return out
+
+
+def release_metadata(release, names):
+    wanted = set(names)
+    return [
+        {
+            "name": item["name"],
+            "size": item.get("size"),
+            "last_modified": item.get("last_modified"),
+            "etag": item.get("etag"),
+        }
+        for item in release["resources"]
+        if item["name"] in wanted
+    ]
+
+
+def cache_period_root(cache_dir, period):
+    root = Path(cache_dir) / period
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def prune_other_periods(cache_dir, keep_period):
+    root = Path(cache_dir)
+    if not root.is_dir():
+        return
+    for child in root.iterdir():
+        if child.name == keep_period:
+            continue
+        if child.is_dir() and PERIOD_RE.fullmatch(child.name):
+            shutil.rmtree(str(child), ignore_errors=True)
+
+
+def require_expected_period(release, expected):
+    expected = str(expected or "").strip()
+    if expected and release["period"] != expected:
+        raise WorkerError(
+            "Receita release changed during Gate 4 generation: expected=%s current=%s"
+            % (expected, release["period"])
+        )
+
+
+def lifecycle_extract(session, release, payload, cache_dir):
+    require_expected_period(release, payload.get("expected_period"))
+    targets = {}
+    for item in payload.get("targets") or []:
+        cnpj = normalize_cnpj(item.get("cnpj"))
+        legal_name = str(item.get("legal_name") or "").strip()
+        if cnpj and legal_name:
+            targets[cnpj] = legal_name
+    if not targets:
+        raise WorkerError("remote lifecycle extraction received no target CNPJs")
+
+    files = resource_map(release)
+    cache_root = cache_period_root(cache_dir, release["period"])
+    reason_meta = files.get("Motivos.zip") or {}
+    reasons_zip = download_zip(
+        session,
+        urljoin(release["release_url"], "Motivos.zip"),
+        cache_root / "Motivos.zip",
+        reason_meta.get("size"),
+    )
+    reason_map = load_reason_map(reasons_zip)
+
+    found = {}
+    scanned = []
+    for name in release["establishment_files"]:
+        metadata = files.get(name) or {}
+        local = download_zip(
+            session,
+            urljoin(release["release_url"], name),
+            cache_root / name,
+            metadata.get("size"),
+        )
+        with zipfile.ZipFile(str(local)) as archive:
+            member = first_csv_member(archive)
+            with archive.open(member) as raw:
+                text = io.TextIOWrapper(raw, encoding="latin1", newline="")
+                for row in csv.reader(text, delimiter=";", quotechar='"'):
+                    if len(row) < 8:
+                        continue
+                    cnpj = normalize_cnpj("".join(str(part).strip() for part in row[:3]))
+                    if not cnpj or cnpj not in targets:
+                        continue
+                    status_code = str(row[5]).strip().zfill(2)
+                    status_label = STATUS_CODE_TO_LABEL.get(status_code)
+                    if not status_label:
+                        raise WorkerError(
+                            "unsupported Receita status code %s for %s"
+                            % (status_code, cnpj)
+                        )
+                    reason_code = str(row[7]).strip().zfill(2)
+                    found[cnpj] = {
+                        "cnpj": cnpj,
+                        "legal_name": targets[cnpj],
+                        "cadastral_status": status_label,
+                        "status_date": str(row[6]).strip() or None,
+                        "status_reason": reason_map.get(reason_code),
+                        "source_authority": "Receita Federal do Brasil",
+                        "source_document": "Dados Abertos do CNPJ / Estabelecimentos",
+                        "source_mode": "official_open_data_bulk",
+                        "observed_at": today_utc(),
+                        "source_period": release["period"],
+                        "source_url": urljoin(release["release_url"], name),
+                        "source_file": name,
+                        "raw_status_code": status_code,
+                        "raw_reason_code": reason_code,
+                    }
+        scanned.append(name)
+        if len(found) == len(targets):
+            break
+
+    unresolved = sorted(set(targets) - set(found))
+    names = ["Motivos.zip"] + scanned
+    return {
+        "artifact": "v2_receita_remote_lifecycle_extract",
+        "generated_at": utc_now(),
+        "source": {
+            "authority": "Receita Federal do Brasil",
+            "dataset": "Cadastro Nacional da Pessoa Jurídica (CNPJ) - Dados Abertos",
+            "public_share_url": release["base_url"],
+            "release_url": release["release_url"],
+            "reference_period": release["period"],
+            "ingestion_method": "official_nextcloud_webdav_bulk_filtered",
+            "retrieved_at": utc_now(),
+            "resource_metadata": release_metadata(release, names),
+        },
+        "meta": {
+            "target_count": len(targets),
+            "resolved_count": len(found),
+            "unresolved_count": len(unresolved),
+            "files_scanned": scanned,
+        },
+        "unresolved_cnpjs": unresolved,
+        "raw_records": [found[key] for key in sorted(found)],
+    }
+
+
+def identity_extract(session, release, payload, cache_dir):
+    require_expected_period(release, payload.get("expected_period"))
+    targets = {}
+    for item in payload.get("targets") or []:
+        cnpj = normalize_cnpj(item.get("cnpj"))
+        if cnpj:
+            targets[cnpj] = {
+                "entity_id": item.get("entity_id"),
+                "project_legal_name": item.get("legal_name"),
+            }
+    providers = [str(value or "").strip() for value in payload.get("providers") or []]
+    providers = [value for value in providers if value]
+    if not targets:
+        raise WorkerError("remote identity extraction received no target CNPJs")
+    if not providers:
+        raise WorkerError("remote identity extraction received no provider names")
+
+    indexes = build_query_indexes(providers)
+    target_bases = {cnpj[:8] for cnpj in targets}
+    files = resource_map(release)
+    companies = sorted(
+        [name for name in files if COMPANY_RE.fullmatch(name)],
+        key=lambda name: int(re.search(r"(\d+)", name).group(1)),
+    )
+    if not companies:
+        raise WorkerError("Receita release contains no Empresas partitions")
+    for required in ("Cnaes.zip", "Naturezas.zip"):
+        if required not in files:
+            raise WorkerError("Receita release missing %s" % required)
+
+    cache_root = cache_period_root(cache_dir, release["period"])
+    cnae_zip = download_zip(
+        session,
+        urljoin(release["release_url"], "Cnaes.zip"),
+        cache_root / "Cnaes.zip",
+        files["Cnaes.zip"].get("size"),
+    )
+    nature_zip = download_zip(
+        session,
+        urljoin(release["release_url"], "Naturezas.zip"),
+        cache_root / "Naturezas.zip",
+        files["Naturezas.zip"].get("size"),
+    )
+    cnae_map = load_code_map(cnae_zip)
+    nature_map = load_code_map(nature_zip)
+
+    companies_by_base = {}
+    legal_matches_by_base = {}
+    company_files_scanned = []
+    for name in companies:
+        local = download_zip(
+            session,
+            urljoin(release["release_url"], name),
+            cache_root / name,
+            files[name].get("size"),
+        )
+        with zipfile.ZipFile(str(local)) as archive:
+            member = first_csv_member(archive)
+            with archive.open(member) as raw:
+                text = io.TextIOWrapper(raw, encoding="latin1", newline="")
+                for row in csv.reader(text, delimiter=";", quotechar='"'):
+                    if len(row) < 3:
+                        continue
+                    base = digits(row[0])
+                    if len(base) != 8:
+                        continue
+                    legal_name = str(row[1] or "").strip()
+                    nature_code = digits(row[2])
+                    matches = match_name_to_queries(
+                        legal_name, indexes, "legal_name"
+                    )
+                    if base in target_bases or matches:
+                        companies_by_base[base] = {
+                            "cnpj_base": base,
+                            "legal_name_receita": legal_name or None,
+                            "legal_nature_code": nature_code or None,
+                            "legal_nature": nature_map.get(nature_code)
+                            if nature_code
+                            else None,
+                        }
+                    if matches:
+                        legal_matches_by_base.setdefault(base, []).extend(matches)
+        company_files_scanned.append(name)
+
+    selected = []
+    establishment_files_scanned = []
+    for name in release["establishment_files"]:
+        local = download_zip(
+            session,
+            urljoin(release["release_url"], name),
+            cache_root / name,
+            files[name].get("size"),
+        )
+        with zipfile.ZipFile(str(local)) as archive:
+            member = first_csv_member(archive)
+            with archive.open(member) as raw:
+                text = io.TextIOWrapper(raw, encoding="latin1", newline="")
+                for row in csv.reader(text, delimiter=";", quotechar='"'):
+                    if len(row) < 13:
+                        continue
+                    cnpj = normalize_cnpj("".join(str(part).strip() for part in row[:3]))
+                    if not cnpj:
+                        continue
+                    base = cnpj[:8]
+                    is_head_office = str(row[3]).strip() == "1"
+                    need_target = cnpj in targets
+                    legal_matches = legal_matches_by_base.get(base) or []
+                    trade_matches = []
+                    if is_head_office:
+                        trade_matches = match_name_to_queries(
+                            str(row[4] or "").strip(),
+                            indexes,
+                            "trade_name",
+                        )
+                    matches = legal_matches + trade_matches
+                    if not need_target and not (is_head_office and matches):
+                        continue
+                    selected.append(
+                        {
+                            "row": row,
+                            "provider_matches": matches if is_head_office else [],
+                        }
+                    )
+        establishment_files_scanned.append(name)
+
+    metadata_names = (
+        ["Cnaes.zip", "Naturezas.zip"]
+        + companies
+        + release["establishment_files"]
+    )
+    return {
+        "artifact": "v2_receita_remote_identity_extract",
+        "generated_at": utc_now(),
+        "source": {
+            "authority": "Receita Federal do Brasil",
+            "dataset": "Cadastro Nacional da Pessoa Jurídica (CNPJ) - Dados Abertos",
+            "public_share_url": release["base_url"],
+            "release_url": release["release_url"],
+            "reference_period": release["period"],
+            "ingestion_method": "official_nextcloud_webdav_bulk_filtered_identity",
+            "retrieved_at": utc_now(),
+            "resource_metadata": release_metadata(release, metadata_names),
+        },
+        "targets": targets,
+        "providers": providers,
+        "cnae_map": cnae_map,
+        "nature_map": nature_map,
+        "companies_by_base": companies_by_base,
+        "selected_establishments": selected,
+        "company_files_scanned": company_files_scanned,
+        "establishment_files_scanned": establishment_files_scanned,
+    }
+
+
+def discover_payload(release):
+    names = ["Motivos.zip"] + release["establishment_files"]
+    return {
+        "artifact": "v2_receita_remote_release",
+        "base_url": release["base_url"],
+        "release_url": release["release_url"],
+        "period": release["period"],
+        "establishment_files": release["establishment_files"],
+        "reasons_file": "Motivos.zip",
+        "resource_metadata": release_metadata(release, names),
+    }
+
+
+def load_input(path):
+    if not path:
+        return {}
+    payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise WorkerError("worker input must be a JSON object")
+    return payload
+
+
+def write_output(path, payload):
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temp = target.with_suffix(target.suffix + ".tmp")
+    temp.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    temp.replace(target)
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--mode", choices=("discover", "lifecycle", "identity"), required=True)
+    parser.add_argument("--input")
+    parser.add_argument("--output", required=True)
+    parser.add_argument("--cache-dir", required=True)
+    args = parser.parse_args()
+
+    session = configure_session()
+    try:
+        release = discover_release(session)
+        if args.mode == "discover":
+            result = discover_payload(release)
+        else:
+            payload = load_input(args.input)
+            if args.mode == "lifecycle":
+                result = lifecycle_extract(session, release, payload, args.cache_dir)
+            else:
+                result = identity_extract(session, release, payload, args.cache_dir)
+        write_output(args.output, result)
+        prune_other_periods(args.cache_dir, release["period"])
+    finally:
+        session.close()
+
+
+if __name__ == "__main__":
+    main()
