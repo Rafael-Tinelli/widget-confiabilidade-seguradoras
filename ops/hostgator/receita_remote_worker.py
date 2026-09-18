@@ -821,7 +821,7 @@ def main():
     exit_code = 0
     try:
         execute(args)
-    except Exception:
+    except Exception:  # noqa: BLE001 - daemon must always persist an exit marker
         traceback.print_exc()
         exit_code = 1
     finally:
