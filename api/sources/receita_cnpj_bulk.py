@@ -22,7 +22,7 @@ from api.utils.identifiers import normalize_cnpj_v2
 OFFICIAL_CNPJ_HOST = "https://arquivos.receitafederal.gov.br"
 OFFICIAL_CNPJ_ROOT_URL = f"{OFFICIAL_CNPJ_HOST}/"
 OFFICIAL_CNPJ_DATASET_PATH = "Dados/Cadastros/CNPJ"
-PUBLIC_SHARE_RE = re.compile(r"/index\\.php/s/([^/?#]+)")
+PUBLIC_SHARE_RE = re.compile(r"/index\.php/s/([^/?#]+)")
 
 STATUS_CODE_TO_LABEL = {
     "01": "NULA",
