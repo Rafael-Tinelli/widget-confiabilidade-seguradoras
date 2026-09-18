@@ -485,7 +485,7 @@ def lifecycle_extract(session, release, payload, cache_dir):
             member = first_csv_member(archive)
             with archive.open(member) as raw:
                 reader = sanitized_csv_reader(raw)
-            for row in reader:
+                for row in reader:
                     if len(row) < 8:
                         continue
                     cnpj = normalize_cnpj("".join(str(part).strip() for part in row[:3]))
@@ -604,7 +604,7 @@ def identity_extract(session, release, payload, cache_dir):
             member = first_csv_member(archive)
             with archive.open(member) as raw:
                 reader = sanitized_csv_reader(raw)
-            for row in reader:
+                for row in reader:
                     if len(row) < 3:
                         continue
                     base = digits(row[0])
@@ -641,7 +641,7 @@ def identity_extract(session, release, payload, cache_dir):
             member = first_csv_member(archive)
             with archive.open(member) as raw:
                 reader = sanitized_csv_reader(raw)
-            for row in reader:
+                for row in reader:
                     if len(row) < 13:
                         continue
                     cnpj = normalize_cnpj("".join(str(part).strip() for part in row[:3]))
