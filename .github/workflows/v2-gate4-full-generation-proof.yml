@@ -218,21 +218,34 @@ jobs:
           PY
           period="$(python -c 'import json; print(json.load(open("/tmp/receita-cache-manifest.json"))["reference_period"])')"
           files="$(tr '\n' ' ' < /tmp/receita-file-list.txt)"
-          ssh \
-            -T \
-            -i "$V2_RECEITA_SSH_KEY_FILE" \
-            -p "$V2_RECEITA_SSH_PORT" \
-            -o BatchMode=yes \
-            -o IdentitiesOnly=yes \
-            -o StrictHostKeyChecking=yes \
-            -o UserKnownHostsFile="$V2_RECEITA_SSH_KNOWN_HOSTS_FILE" \
-            -o GlobalKnownHostsFile=/dev/null \
-            -o UpdateHostKeys=no \
-            -o ServerAliveInterval=30 \
-            -o ServerAliveCountMax=20 \
-            "$V2_RECEITA_SSH_USER@$V2_RECEITA_SSH_HOST" \
-            "cd '.sanida-v2-receita-bridge/cache/$period' && tar -cf - -- $files" \
-            | tar -xf - -C "$V2_RECEITA_LOCAL_MIRROR_DIR"
+          transport_ok=0
+          for attempt in 1 2 3 4 5; do
+            rm -rf "$V2_RECEITA_LOCAL_MIRROR_DIR"
+            mkdir -p "$V2_RECEITA_LOCAL_MIRROR_DIR"
+            if ssh \
+              -T \
+              -i "$V2_RECEITA_SSH_KEY_FILE" \
+              -p "$V2_RECEITA_SSH_PORT" \
+              -o BatchMode=yes \
+              -o IdentitiesOnly=yes \
+              -o StrictHostKeyChecking=yes \
+              -o UserKnownHostsFile="$V2_RECEITA_SSH_KNOWN_HOSTS_FILE" \
+              -o GlobalKnownHostsFile=/dev/null \
+              -o UpdateHostKeys=no \
+              -o ServerAliveInterval=30 \
+              -o ServerAliveCountMax=20 \
+              "$V2_RECEITA_SSH_USER@$V2_RECEITA_SSH_HOST" \
+              "cd '.sanida-v2-receita-bridge/cache/$period' && tar -cf - -- $files" \
+              | tar -xf - -C "$V2_RECEITA_LOCAL_MIRROR_DIR"; then
+              transport_ok=1
+              break
+            fi
+            sleep $((attempt * 15))
+          done
+          if [[ "$transport_ok" != "1" ]]; then
+            echo "Receita mirror transfer failed after retries" >&2
+            exit 1
+          fi
 
       - name: Verify local Receita mirror byte-for-byte
         if: env.V2_RECEITA_REMOTE_ENABLED == '1'
