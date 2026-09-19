@@ -354,10 +354,108 @@ def valid_cached_zip(path, expected_size):
     return zipfile.is_zipfile(str(path))
 
 
+def sha256_file(path):
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as handle:
+        for chunk in iter(lambda: handle.read(8 * 1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def cache_manifest_path(cache_root):
+    return Path(cache_root) / "manifest.json"
+
+
+def load_cache_manifest(cache_root):
+    path = cache_manifest_path(cache_root)
+    if not path.is_file():
+        return {
+            "version": CACHE_MANIFEST_VERSION,
+            "files": {},
+        }
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        raise WorkerError(f"invalid Receita cache manifest {path}: {exc}")
+    if payload.get("version") != CACHE_MANIFEST_VERSION:
+        raise WorkerError(
+            f"unsupported Receita cache manifest version: {payload.get('version')}"
+        )
+    files = payload.get("files")
+    if not isinstance(files, dict):
+        raise WorkerError("Receita cache manifest files must be an object")
+    return payload
+
+
+def write_cache_manifest(cache_root, payload):
+    root = Path(cache_root)
+    root.mkdir(parents=True, exist_ok=True)
+    target = cache_manifest_path(root)
+    temp = target.with_suffix(".json.tmp")
+    temp.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    temp.replace(target)
+
+
+def remote_file_fingerprint(period, name, metadata):
+    etag = str(metadata.get("etag") or "").strip()
+    size = metadata.get("size")
+    if not etag:
+        raise WorkerError(f"Receita resource {name} is missing ETag")
+    if size is None:
+        raise WorkerError(f"Receita resource {name} is missing content length")
+    return {
+        "period": str(period),
+        "filename": str(name),
+        "etag": etag,
+        "size": int(size),
+    }
+
+
+def release_fingerprint(release):
+    files = resource_map(release)
+    names = (
+        ["Motivos.zip", "Cnaes.zip", "Naturezas.zip"]
+        + list(release.get("company_files") or [])
+        + list(release.get("establishment_files") or [])
+    )
+    rows = [
+        remote_file_fingerprint(release["period"], name, files[name])
+        for name in names
+    ]
+    encoded = json.dumps(
+        sorted(rows, key=lambda row: row["filename"]),
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def validate_manifest_cache_entry(path, entry, remote_fingerprint):
+    if not isinstance(entry, dict):
+        return False, "missing_manifest_entry"
+    if entry.get("remote_fingerprint") != remote_fingerprint:
+        return False, "remote_fingerprint_changed"
+    if not valid_cached_zip(path, remote_fingerprint["size"]):
+        if not path.is_file():
+            return False, "missing_file"
+        if path.stat().st_size != int(remote_fingerprint["size"]):
+            return False, "size_mismatch"
+        return False, "invalid_zip"
+    expected_sha256 = str(entry.get("sha256") or "")
+    if len(expected_sha256) != 64:
+        return False, "missing_sha256"
+    actual_sha256 = sha256_file(path)
+    if actual_sha256 != expected_sha256:
+        return False, "sha256_mismatch"
+    return True, "remote_fingerprint_unchanged_and_local_integrity_valid"
+
+
 def download_zip(session, url, destination, expected_size=None, retries=5):
     destination.parent.mkdir(parents=True, exist_ok=True)
-    if valid_cached_zip(destination, expected_size):
-        return destination
     destination.unlink(missing_ok=True)
     temp = destination.with_suffix(destination.suffix + ".part")
     last_error = None
@@ -391,6 +489,62 @@ def download_zip(session, url, destination, expected_size=None, retries=5):
             if attempt + 1 < retries:
                 time.sleep(min(2 ** attempt, 8))
     raise WorkerError(f"failed to download Receita ZIP {url}: {last_error}")
+
+
+def acquire_cached_zip(session, release, name, cache_root):
+    files = resource_map(release)
+    metadata = files.get(name)
+    if metadata is None:
+        raise WorkerError(f"Receita release metadata missing {name}")
+
+    root = Path(cache_root)
+    root.mkdir(parents=True, exist_ok=True)
+    destination = root / name
+    remote_fingerprint = remote_file_fingerprint(
+        release["period"],
+        name,
+        metadata,
+    )
+    manifest = load_cache_manifest(root)
+    entry = (manifest.get("files") or {}).get(name)
+    reusable, reason = validate_manifest_cache_entry(
+        destination,
+        entry,
+        remote_fingerprint,
+    )
+    if reusable:
+        print(
+            "RECEITA_CACHE "
+            f"status=reused_unchanged file={name} "
+            f"size={destination.stat().st_size} etag={remote_fingerprint['etag']}",
+            flush=True,
+        )
+        return destination, "reused_unchanged"
+
+    local = download_zip(
+        session,
+        urljoin(release["release_url"], name),
+        destination,
+        remote_fingerprint["size"],
+    )
+    sha256 = sha256_file(local)
+    manifest.setdefault("files", {})[name] = {
+        "remote_fingerprint": remote_fingerprint,
+        "sha256": sha256,
+        "last_modified": metadata.get("last_modified"),
+        "downloaded_at": utc_now(),
+    }
+    manifest["version"] = CACHE_MANIFEST_VERSION
+    manifest["reference_period"] = release["period"]
+    manifest["release_fingerprint"] = release_fingerprint(release)
+    write_cache_manifest(root, manifest)
+    print(
+        "RECEITA_CACHE "
+        f"status=downloaded file={name} reason={reason} "
+        f"size={local.stat().st_size} etag={remote_fingerprint['etag']}",
+        flush=True,
+    )
+    return local, "downloaded"
 
 
 def load_reason_map(path):
