@@ -208,19 +208,32 @@ jobs:
           probe_dir="$RUNNER_TEMP/v2-receita-mirror-probe"
           rm -rf "$probe_dir"
           mkdir -p "$probe_dir"
-          ssh \
-            -T \
-            -i "$V2_RECEITA_SSH_KEY_FILE" \
-            -p "$V2_RECEITA_SSH_PORT" \
-            -o BatchMode=yes \
-            -o IdentitiesOnly=yes \
-            -o StrictHostKeyChecking=yes \
-            -o UserKnownHostsFile="$V2_RECEITA_SSH_KNOWN_HOSTS_FILE" \
-            -o GlobalKnownHostsFile=/dev/null \
-            -o UpdateHostKeys=no \
-            "$V2_RECEITA_SSH_USER@$V2_RECEITA_SSH_HOST" \
-            "cd '.sanida-v2-receita-bridge/cache/2026-09' && tar -cf - -- manifest.json Motivos.zip" \
-            | tar -xf - -C "$probe_dir"
+          transport_ok=0
+          for attempt in 1 2 3 4 5; do
+            rm -rf "$probe_dir"
+            mkdir -p "$probe_dir"
+            if ssh \
+              -T \
+              -i "$V2_RECEITA_SSH_KEY_FILE" \
+              -p "$V2_RECEITA_SSH_PORT" \
+              -o BatchMode=yes \
+              -o IdentitiesOnly=yes \
+              -o StrictHostKeyChecking=yes \
+              -o UserKnownHostsFile="$V2_RECEITA_SSH_KNOWN_HOSTS_FILE" \
+              -o GlobalKnownHostsFile=/dev/null \
+              -o UpdateHostKeys=no \
+              "$V2_RECEITA_SSH_USER@$V2_RECEITA_SSH_HOST" \
+              "cd '.sanida-v2-receita-bridge/cache/2026-09' && tar -cf - -- manifest.json Motivos.zip" \
+              | tar -xf - -C "$probe_dir"; then
+              transport_ok=1
+              break
+            fi
+            sleep $((attempt * 10))
+          done
+          if [[ "$transport_ok" != "1" ]]; then
+            echo "single-session Receita mirror transport failed after retries" >&2
+            exit 1
+          fi
           PROBE_DIR="$probe_dir" python - <<'PY'
           import hashlib
           import json
