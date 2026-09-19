@@ -1,0 +1,236 @@
+name: Audit Receita Identity Cache-Only
+
+on:
+  push:
+    branches:
+      - audit/receita-identity-20260918
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  identity-cache-only:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install minimal Python dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install requests
+
+      - name: Configure pinned SSH
+        env:
+          SSH_HOST: ${{ secrets.V2_HOSTGATOR_HOST }}
+          SSH_USER: ${{ secrets.V2_HOSTGATOR_USER }}
+          SSH_PRIVATE_KEY: ${{ secrets.V2_HOSTGATOR_SSH_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.V2_HOSTGATOR_KNOWN_HOSTS }}
+          SSH_PORT: ${{ vars.V2_HOSTGATOR_SSH_PORT }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${SSH_HOST:?missing SSH host}"
+          : "${SSH_USER:?missing SSH user}"
+          SSH_PORT=${SSH_PORT:-22}
+          d="$RUNNER_TEMP/receita-identity-ssh"
+          rm -rf "$d"
+          umask 077
+          install -d -m 700 "$d"
+          printf '%s\n' "$SSH_PRIVATE_KEY" | tr -d '\r' > "$d/key"
+          printf '%s\n' "$SSH_KNOWN_HOSTS" | tr -d '\r' > "$d/known_hosts"
+          chmod 600 "$d/key" "$d/known_hosts"
+          {
+            echo "SSH_HOST=$SSH_HOST"
+            echo "SSH_USER=$SSH_USER"
+            echo "SSH_PORT=$SSH_PORT"
+            echo "SSH_KEY=$d/key"
+            echo "SSH_KNOWN=$d/known_hosts"
+            echo "REMOTE_DIR=.sanida-v2-receita-identity-probe-${GITHUB_RUN_ID}"
+          } >> "$GITHUB_ENV"
+
+      - name: Prepare and upload identity diagnostics
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh_opts=(
+            -T
+            -i "$SSH_KEY"
+            -p "$SSH_PORT"
+            -o BatchMode=yes
+            -o IdentitiesOnly=yes
+            -o StrictHostKeyChecking=yes
+            -o UserKnownHostsFile="$SSH_KNOWN"
+            -o GlobalKnownHostsFile=/dev/null
+            -o UpdateHostKeys=no
+          )
+          scp_opts=(
+            -q
+            -i "$SSH_KEY"
+            -P "$SSH_PORT"
+            -o BatchMode=yes
+            -o IdentitiesOnly=yes
+            -o StrictHostKeyChecking=yes
+            -o UserKnownHostsFile="$SSH_KNOWN"
+            -o GlobalKnownHostsFile=/dev/null
+            -o UpdateHostKeys=no
+          )
+          ssh "${ssh_opts[@]}" "$SSH_USER@$SSH_HOST" \
+            "umask 077; rm -rf -- '$REMOTE_DIR'; mkdir -p -- '$REMOTE_DIR'"
+          scp "${scp_opts[@]}" ops/hostgator/receita_remote_worker.py \
+            "$SSH_USER@$SSH_HOST:$REMOTE_DIR/receita_remote_worker.py"
+          scp "${scp_opts[@]}" ops/diagnostics/build_receita_identity_fixture.py \
+            "$SSH_USER@$SSH_HOST:$REMOTE_DIR/build_receita_identity_fixture.py"
+          scp "${scp_opts[@]}" ops/diagnostics/run_receita_identity_fixture_worker.py \
+            "$SSH_USER@$SSH_HOST:$REMOTE_DIR/run_receita_identity_fixture_worker.py"
+          scp "${scp_opts[@]}" ops/diagnostics/verify_receita_identity_source_cache.py \
+            "$SSH_USER@$SSH_HOST:$REMOTE_DIR/verify_receita_identity_source_cache.py"
+
+      - name: Derive bounded fixture from existing 2026-09 cache
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh_opts=(
+            -T
+            -i "$SSH_KEY"
+            -p "$SSH_PORT"
+            -o BatchMode=yes
+            -o IdentitiesOnly=yes
+            -o StrictHostKeyChecking=yes
+            -o UserKnownHostsFile="$SSH_KNOWN"
+            -o GlobalKnownHostsFile=/dev/null
+            -o UpdateHostKeys=no
+            -o ServerAliveInterval=30
+            -o ServerAliveCountMax=10
+          )
+          ssh "${ssh_opts[@]}" "$SSH_USER@$SSH_HOST" \
+            "cd '$REMOTE_DIR' && python3 build_receita_identity_fixture.py ~/.sanida-v2-receita-bridge/cache fixture"
+
+      - name: Execute worker identity against fixture cache only
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh_opts=(
+            -T
+            -i "$SSH_KEY"
+            -p "$SSH_PORT"
+            -o BatchMode=yes
+            -o IdentitiesOnly=yes
+            -o StrictHostKeyChecking=yes
+            -o UserKnownHostsFile="$SSH_KNOWN"
+            -o GlobalKnownHostsFile=/dev/null
+            -o UpdateHostKeys=no
+            -o ServerAliveInterval=30
+            -o ServerAliveCountMax=10
+          )
+          ssh "${ssh_opts[@]}" "$SSH_USER@$SSH_HOST" \
+            "cd '$REMOTE_DIR'; \
+             python3 run_receita_identity_fixture_worker.py fixture fixture/fixture_meta.json fixture/raw_worker_identity.json > worker_stdout.log 2> worker_stderr.log; \
+             rc=\$?; \
+             cat worker_stdout.log; \
+             test ! -s worker_stderr.log || cat worker_stderr.log >&2; \
+             test \$rc -eq 0; \
+             ! grep -q 'CACHE_ONLY_MISS' worker_stdout.log worker_stderr.log; \
+             grep -q 'IDENTITY_CACHE_REUSE file=Cnaes.zip' worker_stdout.log; \
+             grep -q 'IDENTITY_CACHE_REUSE file=Naturezas.zip' worker_stdout.log; \
+             grep -q 'IDENTITY_CACHE_REUSE file=Empresas0.zip' worker_stdout.log; \
+             grep -q 'IDENTITY_CACHE_REUSE file=Estabelecimentos0.zip' worker_stdout.log; \
+             grep -q 'IDENTITY_WORKER_EXTRACT_COMPLETE' worker_stdout.log"
+
+      - name: Verify original source cache was not rewritten
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh_opts=(
+            -T
+            -i "$SSH_KEY"
+            -p "$SSH_PORT"
+            -o BatchMode=yes
+            -o IdentitiesOnly=yes
+            -o StrictHostKeyChecking=yes
+            -o UserKnownHostsFile="$SSH_KNOWN"
+            -o GlobalKnownHostsFile=/dev/null
+            -o UpdateHostKeys=no
+          )
+          ssh "${ssh_opts[@]}" "$SSH_USER@$SSH_HOST" \
+            "cd '$REMOTE_DIR' && python3 verify_receita_identity_source_cache.py fixture ~/.sanida-v2-receita-bridge/cache"
+
+      - name: Package bounded fixture and raw worker output
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh_opts=(
+            -T
+            -i "$SSH_KEY"
+            -p "$SSH_PORT"
+            -o BatchMode=yes
+            -o IdentitiesOnly=yes
+            -o StrictHostKeyChecking=yes
+            -o UserKnownHostsFile="$SSH_KNOWN"
+            -o GlobalKnownHostsFile=/dev/null
+            -o UpdateHostKeys=no
+          )
+          ssh "${ssh_opts[@]}" "$SSH_USER@$SSH_HOST" \
+            "cd '$REMOTE_DIR' && tar -czf fixture.tar.gz fixture"
+
+      - name: Download fixture
+        shell: bash
+        run: |
+          set -euo pipefail
+          scp \
+            -q \
+            -i "$SSH_KEY" \
+            -P "$SSH_PORT" \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$SSH_KNOWN" \
+            -o GlobalKnownHostsFile=/dev/null \
+            -o UpdateHostKeys=no \
+            "$SSH_USER@$SSH_HOST:$REMOTE_DIR/fixture.tar.gz" \
+            /tmp/receita-identity-fixture.tar.gz
+          rm -rf /tmp/receita-identity-fixture
+          mkdir -p /tmp/receita-identity-fixture
+          tar -xzf /tmp/receita-identity-fixture.tar.gz -C /tmp/receita-identity-fixture
+
+      - name: Compare remote worker semantics with canonical expected snapshot
+        shell: bash
+        run: |
+          set -euo pipefail
+          python ops/diagnostics/compare_receita_identity_fixture.py \
+            /tmp/receita-identity-fixture/fixture \
+            /tmp/receita-identity-fixture/fixture/raw_worker_identity.json
+
+      - name: Run identity/bridge regression tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install pytest
+          python -m pytest -q \
+            tests/test_v2_receita_cnpj_identity.py \
+            tests/test_v2_receita_remote_bridge.py
+
+      - name: Cleanup remote diagnostic material
+        if: always()
+        shell: bash
+        run: |
+          ssh \
+            -T \
+            -i "$SSH_KEY" \
+            -p "$SSH_PORT" \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$SSH_KNOWN" \
+            -o GlobalKnownHostsFile=/dev/null \
+            -o UpdateHostKeys=no \
+            "$SSH_USER@$SSH_HOST" \
+            "rm -rf -- '${REMOTE_DIR:-.nonexistent}'" || true
+          rm -rf "$RUNNER_TEMP/receita-identity-ssh"
