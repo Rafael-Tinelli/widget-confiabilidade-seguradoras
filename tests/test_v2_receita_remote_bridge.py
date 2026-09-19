@@ -3,6 +3,7 @@ from __future__ import annotations
 import ast
 import importlib.util
 import io
+import subprocess
 import zipfile
 from pathlib import Path
 
@@ -320,3 +321,116 @@ def test_remote_worker_cache_reuses_fingerprint_and_rejects_same_size_tamper(
         "Mon, 14 Sep 2026 15:06:40 GMT",
     )
     assert session.calls == 3
+
+
+def test_ssh_base_uses_keepalive_and_connection_multiplexing(tmp_path) -> None:
+    config = bridge.ReceitaRemoteConfig(
+        host="example.test",
+        user="tester",
+        port=2222,
+        key_file=tmp_path / "key",
+        known_hosts_file=tmp_path / "known_hosts",
+        remote_root=".bridge",
+    )
+    control = tmp_path / "control.sock"
+    command = bridge._ssh_base(config, control_path=control)
+    rendered = " ".join(command)
+
+    assert "ConnectTimeout=20" in rendered
+    assert "ConnectionAttempts=3" in rendered
+    assert "TCPKeepAlive=yes" in rendered
+    assert "ServerAliveInterval=20" in rendered
+    assert "ServerAliveCountMax=9" in rendered
+    assert "ControlMaster=auto" in rendered
+    assert "ControlPersist=600" in rendered
+    assert f"ControlPath={control}" in rendered
+
+
+def test_transport_retries_only_transient_ssh_failures(monkeypatch) -> None:
+    calls = []
+    sleeps = []
+
+    def fake_run(command, **kwargs):
+        calls.append((command, kwargs))
+        if len(calls) < 3:
+            raise bridge.ReceitaRemoteBridgeError(
+                "Receita remote command failed: "
+                "kex_exchange_identification: read: Connection reset by peer"
+            )
+        return subprocess.CompletedProcess(command, 0, "ok\n", "")
+
+    monkeypatch.setattr(bridge, "_run", fake_run)
+    monkeypatch.setattr(bridge.time, "sleep", lambda value: sleeps.append(value))
+
+    result = bridge._run_transport(
+        ["ssh", "example"],
+        timeout=30,
+        attempts=4,
+    )
+
+    assert result.stdout == "ok\n"
+    assert len(calls) == 3
+    assert sleeps == [2, 4]
+
+
+def test_transport_does_not_retry_semantic_remote_failure(monkeypatch) -> None:
+    calls = []
+
+    def fake_run(command, **kwargs):
+        calls.append((command, kwargs))
+        raise bridge.ReceitaRemoteBridgeError(
+            "Receita remote command failed: worker validation failed"
+        )
+
+    monkeypatch.setattr(bridge, "_run", fake_run)
+    monkeypatch.setattr(
+        bridge.time,
+        "sleep",
+        lambda value: (_ for _ in ()).throw(
+            AssertionError(f"unexpected sleep: {value}")
+        ),
+    )
+
+    try:
+        bridge._run_transport(
+            ["ssh", "example"],
+            timeout=30,
+            attempts=6,
+        )
+    except bridge.ReceitaRemoteBridgeError as exc:
+        assert "worker validation failed" in str(exc)
+    else:
+        raise AssertionError("semantic remote failure should propagate")
+
+    assert len(calls) == 1
+
+
+def test_start_recovery_accepts_persisted_start_marker(monkeypatch) -> None:
+    start_calls = []
+
+    def fake_run(command, **kwargs):
+        start_calls.append((command, kwargs))
+        raise bridge.ReceitaRemoteBridgeError(
+            "Receita remote command failed: scp: Connection closed"
+        )
+
+    marker = subprocess.CompletedProcess(["ssh"], 0, "1\n", "")
+    probe_calls = []
+
+    def fake_transport(command, **kwargs):
+        probe_calls.append((command, kwargs))
+        return marker
+
+    monkeypatch.setattr(bridge, "_run", fake_run)
+    monkeypatch.setattr(bridge, "_run_transport", fake_transport)
+    monkeypatch.setattr(bridge.time, "sleep", lambda value: None)
+
+    bridge._start_remote_worker(
+        ["ssh", "example"],
+        remote_command="python3 worker.py",
+        remote_start=".bridge/runs/op/started",
+        remote_exit=".bridge/runs/op/exit_code",
+    )
+
+    assert len(start_calls) == 1
+    assert len(probe_calls) == 1
