@@ -1,0 +1,116 @@
+name: Audit Receita Full-Cache Identity Probe
+
+on:
+  push:
+    branches:
+      - fix/receita-cache-pre-full-generation
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  identity-full-cache:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure pinned SSH
+        env:
+          SSH_HOST: ${{ secrets.V2_HOSTGATOR_HOST }}
+          SSH_USER: ${{ secrets.V2_HOSTGATOR_USER }}
+          SSH_PRIVATE_KEY: ${{ secrets.V2_HOSTGATOR_SSH_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.V2_HOSTGATOR_KNOWN_HOSTS }}
+          SSH_PORT: ${{ vars.V2_HOSTGATOR_SSH_PORT }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${SSH_HOST:?missing host}"
+          : "${SSH_USER:?missing user}"
+          SSH_PORT=${SSH_PORT:-22}
+          d="$RUNNER_TEMP/receita-identity-full-cache-ssh"
+          rm -rf "$d"
+          umask 077
+          install -d -m 700 "$d"
+          printf '%s\n' "$SSH_PRIVATE_KEY" | tr -d '\r' > "$d/key"
+          printf '%s\n' "$SSH_KNOWN_HOSTS" | tr -d '\r' > "$d/known_hosts"
+          chmod 600 "$d/key" "$d/known_hosts"
+          {
+            echo "SSH_HOST=$SSH_HOST"
+            echo "SSH_USER=$SSH_USER"
+            echo "SSH_PORT=$SSH_PORT"
+            echo "SSH_KEY=$d/key"
+            echo "SSH_KNOWN=$d/known_hosts"
+            echo "REMOTE_DIR=.sanida-v2-receita-identity-full-probe-${GITHUB_RUN_ID}"
+          } >> "$GITHUB_ENV"
+
+      - name: Upload isolated worker probe
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh_opts=(
+            -T
+            -i "$SSH_KEY"
+            -p "$SSH_PORT"
+            -o BatchMode=yes
+            -o IdentitiesOnly=yes
+            -o StrictHostKeyChecking=yes
+            -o UserKnownHostsFile="$SSH_KNOWN"
+            -o GlobalKnownHostsFile=/dev/null
+            -o UpdateHostKeys=no
+          )
+          scp_opts=(
+            -q
+            -i "$SSH_KEY"
+            -P "$SSH_PORT"
+            -o BatchMode=yes
+            -o IdentitiesOnly=yes
+            -o StrictHostKeyChecking=yes
+            -o UserKnownHostsFile="$SSH_KNOWN"
+            -o GlobalKnownHostsFile=/dev/null
+            -o UpdateHostKeys=no
+          )
+          ssh "${ssh_opts[@]}" "$SSH_USER@$SSH_HOST" \
+            "umask 077; rm -rf -- '$REMOTE_DIR'; mkdir -p -- '$REMOTE_DIR'"
+          scp "${scp_opts[@]}" ops/hostgator/receita_remote_worker.py \
+            "$SSH_USER@$SSH_HOST:$REMOTE_DIR/receita_remote_worker.py"
+          scp "${scp_opts[@]}" ops/diagnostics/probe_receita_identity_full_cache.py \
+            "$SSH_USER@$SSH_HOST:$REMOTE_DIR/probe_receita_identity_full_cache.py"
+
+      - name: Run national identity scan from cache only
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh \
+            -T \
+            -i "$SSH_KEY" \
+            -p "$SSH_PORT" \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$SSH_KNOWN" \
+            -o GlobalKnownHostsFile=/dev/null \
+            -o UpdateHostKeys=no \
+            -o ServerAliveInterval=30 \
+            -o ServerAliveCountMax=10 \
+            "$SSH_USER@$SSH_HOST" \
+            "cd '$REMOTE_DIR' && python3 probe_receita_identity_full_cache.py receita_remote_worker.py"
+
+      - name: Cleanup
+        if: always()
+        shell: bash
+        run: |
+          ssh \
+            -T \
+            -i "$SSH_KEY" \
+            -p "$SSH_PORT" \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$SSH_KNOWN" \
+            -o GlobalKnownHostsFile=/dev/null \
+            -o UpdateHostKeys=no \
+            "$SSH_USER@$SSH_HOST" \
+            "rm -rf -- '${REMOTE_DIR:-.nonexistent}'" || true
+          rm -rf "$RUNNER_TEMP/receita-identity-full-cache-ssh"
