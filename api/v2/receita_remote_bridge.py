@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from api.sources.receita_cnpj import normalize_receita_lifecycle_record
-from api.sources.receita_cnpj_bulk import ReceitaOpenDataRelease
+from api.sources.receita_cnpj_bulk import ReceitaOpenDataRelease, release_fingerprint
 from api.utils.identifiers import normalize_cnpj_v2
 
 WORKER_PATH = Path("ops/hostgator/receita_remote_worker.py")
@@ -345,7 +345,7 @@ def discover_release_remote() -> ReceitaOpenDataRelease:
         raise ReceitaRemoteBridgeError(
             "Receita remote release has no establishment partitions"
         )
-    return ReceitaOpenDataRelease(
+    release = ReceitaOpenDataRelease(
         base_url=base_url,
         release_url=release_url,
         period=period,
@@ -353,6 +353,13 @@ def discover_release_remote() -> ReceitaOpenDataRelease:
         reasons_file=str(payload.get("reasons_file") or "Motivos.zip"),
         resource_metadata=tuple(payload.get("resource_metadata") or []),
     )
+    expected_fingerprint = str(payload.get("release_fingerprint") or "").strip()
+    actual_fingerprint = release_fingerprint(release)
+    if expected_fingerprint and expected_fingerprint != actual_fingerprint:
+        raise ReceitaRemoteBridgeError(
+            "Receita remote release fingerprint mismatch"
+        )
+    return release
 
 
 def refresh_lifecycle_remote(
