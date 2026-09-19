@@ -29,7 +29,6 @@ jobs:
       V2_RECEITA_SSH_HOST: ${{ secrets.V2_HOSTGATOR_HOST }}
       V2_RECEITA_SSH_USER: ${{ secrets.V2_HOSTGATOR_USER }}
       V2_RECEITA_SSH_PORT: ${{ vars.V2_HOSTGATOR_SSH_PORT }}
-      V2_RECEITA_LOCAL_MIRROR_DIR: ${{ runner.temp }}/v2-receita-mirror
 
     steps:
       - name: Checkout exact source head
@@ -113,6 +112,7 @@ jobs:
             echo "V2_RECEITA_SSH_PORT=$SSH_PORT"
             echo "V2_RECEITA_SSH_KEY_FILE=$key_file"
             echo "V2_RECEITA_SSH_KNOWN_HOSTS_FILE=$known_hosts_file"
+            echo "V2_RECEITA_LOCAL_MIRROR_DIR=$RUNNER_TEMP/v2-receita-mirror"
           } >> "$GITHUB_ENV"
 
       - name: Build current Receita manifest contract
