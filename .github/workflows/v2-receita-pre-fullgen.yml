@@ -87,16 +87,30 @@ jobs:
           set -euo pipefail
           python - <<'PY'
           import json
+          from pathlib import Path
+
           from api.v2.receita_remote_bridge import discover_release_remote
 
           release = discover_release_remote()
           if release.period != "2026-09":
               raise SystemExit(f"unexpected Receita reference period: {release.period}")
           metadata = {row["name"]: row for row in release.resource_metadata}
-          required = ["Motivos.zip"] + list(release.establishment_files)
+          required = (
+              ["Motivos.zip", "Cnaes.zip", "Naturezas.zip"]
+              + [f"Empresas{i}.zip" for i in range(10)]
+              + [f"Estabelecimentos{i}.zip" for i in range(10)]
+          )
           missing = [name for name in required if name not in metadata]
           if missing:
               raise SystemExit(f"release metadata missing required files: {missing}")
+          payload = {
+              "period": release.period,
+              "resources": [metadata[name] for name in required],
+          }
+          Path("/tmp/receita-release-metadata.json").write_text(
+              json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+              encoding="utf-8",
+          )
           print(json.dumps({
               "reference_period": release.period,
               "establishment_partitions": len(release.establishment_files),
@@ -153,6 +167,40 @@ jobs:
               "free_bytes": usage.free,
           }, sort_keys=True))
           PY
+
+      - name: Seal persistent cache against current official manifest
+        run: |
+          set -euo pipefail
+          ssh_opts=(
+            -T
+            -i "$V2_RECEITA_SSH_KEY_FILE"
+            -p "$V2_RECEITA_SSH_PORT"
+            -o BatchMode=yes
+            -o IdentitiesOnly=yes
+            -o StrictHostKeyChecking=yes
+            -o UserKnownHostsFile="$V2_RECEITA_SSH_KNOWN_HOSTS_FILE"
+            -o GlobalKnownHostsFile=/dev/null
+            -o UpdateHostKeys=no
+            -o ServerAliveInterval=30
+            -o ServerAliveCountMax=20
+          )
+          scp_opts=(
+            -q
+            -i "$V2_RECEITA_SSH_KEY_FILE"
+            -P "$V2_RECEITA_SSH_PORT"
+            -o BatchMode=yes
+            -o IdentitiesOnly=yes
+            -o StrictHostKeyChecking=yes
+            -o UserKnownHostsFile="$V2_RECEITA_SSH_KNOWN_HOSTS_FILE"
+            -o GlobalKnownHostsFile=/dev/null
+            -o UpdateHostKeys=no
+          )
+          remote_dir=".sanida-v2-receita-preflight-${GITHUB_RUN_ID}"
+          ssh "${ssh_opts[@]}" "$V2_RECEITA_SSH_USER@$V2_RECEITA_SSH_HOST"             "umask 077; rm -rf -- '$remote_dir'; mkdir -p -- '$remote_dir'"
+          scp "${scp_opts[@]}" ops/hostgator/receita_cache_manifest.py             "$V2_RECEITA_SSH_USER@$V2_RECEITA_SSH_HOST:$remote_dir/receita_cache_manifest.py"
+          scp "${scp_opts[@]}" /tmp/receita-release-metadata.json             "$V2_RECEITA_SSH_USER@$V2_RECEITA_SSH_HOST:$remote_dir/release.json"
+          ssh "${ssh_opts[@]}" "$V2_RECEITA_SSH_USER@$V2_RECEITA_SSH_HOST"             "python3 '$remote_dir/receita_cache_manifest.py'               --metadata '$remote_dir/release.json'               --cache-root ~/.sanida-v2-receita-bridge/cache"
+          ssh "${ssh_opts[@]}" "$V2_RECEITA_SSH_USER@$V2_RECEITA_SSH_HOST"             "rm -rf -- '$remote_dir'"
 
       - name: Enforce known HostGator compute boundary
         run: |
