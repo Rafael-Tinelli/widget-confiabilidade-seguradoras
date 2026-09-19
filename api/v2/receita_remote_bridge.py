@@ -111,8 +111,18 @@ def _config_from_env() -> ReceitaRemoteConfig:
     )
 
 
-def _ssh_base(config: ReceitaRemoteConfig) -> list[str]:
-    return [
+def _control_path(config: ReceitaRemoteConfig) -> Path:
+    identity = f"{config.user}@{config.host}:{config.port}".encode("utf-8")
+    digest = hashlib.sha256(identity).hexdigest()[:12]
+    return Path(tempfile.gettempdir()) / f"v2r-{os.getpid()}-{digest}.sock"
+
+
+def _ssh_base(
+    config: ReceitaRemoteConfig,
+    *,
+    control_path: Path | None = None,
+) -> list[str]:
+    command = [
         "ssh",
         "-T",
         "-i",
@@ -132,34 +142,29 @@ def _ssh_base(config: ReceitaRemoteConfig) -> list[str]:
         "-o",
         "UpdateHostKeys=no",
         "-o",
-        "ServerAliveInterval=30",
+        "ConnectTimeout=20",
         "-o",
-        "ServerAliveCountMax=6",
-        f"{config.user}@{config.host}",
+        "ConnectionAttempts=3",
+        "-o",
+        "TCPKeepAlive=yes",
+        "-o",
+        "ServerAliveInterval=20",
+        "-o",
+        "ServerAliveCountMax=9",
     ]
-
-
-def _scp_base(config: ReceitaRemoteConfig) -> list[str]:
-    return [
-        "scp",
-        "-q",
-        "-i",
-        str(config.key_file),
-        "-P",
-        str(config.port),
-        "-o",
-        "BatchMode=yes",
-        "-o",
-        "IdentitiesOnly=yes",
-        "-o",
-        "StrictHostKeyChecking=yes",
-        "-o",
-        f"UserKnownHostsFile={config.known_hosts_file}",
-        "-o",
-        "GlobalKnownHostsFile=/dev/null",
-        "-o",
-        "UpdateHostKeys=no",
-    ]
+    if control_path is not None:
+        command.extend(
+            [
+                "-o",
+                "ControlMaster=auto",
+                "-o",
+                f"ControlPersist={_CONTROL_PERSIST_SECONDS}",
+                "-o",
+                f"ControlPath={control_path}",
+            ]
+        )
+    command.append(f"{config.user}@{config.host}")
+    return command
 
 
 def _run(
@@ -167,6 +172,7 @@ def _run(
     *,
     timeout: int = 18_000,
     check: bool = True,
+    input_text: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
     try:
         return subprocess.run(
@@ -174,6 +180,7 @@ def _run(
             check=check,
             capture_output=True,
             text=True,
+            input=input_text,
             timeout=timeout,
         )
     except subprocess.TimeoutExpired as exc:
@@ -187,6 +194,59 @@ def _run(
         raise ReceitaRemoteBridgeError(
             f"Receita remote command failed: {detail}"
         ) from exc
+
+
+def _is_transient_transport_error(exc: BaseException) -> bool:
+    detail = str(exc).casefold()
+    return any(pattern in detail for pattern in _TRANSIENT_TRANSPORT_PATTERNS)
+
+
+def _backoff_seconds(attempt: int) -> int:
+    return min(
+        _TRANSPORT_RETRY_BASE_SECONDS * (2 ** max(0, attempt - 1)),
+        _TRANSPORT_RETRY_MAX_SECONDS,
+    )
+
+
+def _run_transport(
+    command: list[str],
+    *,
+    timeout: int,
+    check: bool = True,
+    input_text: str | None = None,
+    attempts: int = _TRANSPORT_RETRY_ATTEMPTS,
+) -> subprocess.CompletedProcess[str]:
+    last_error: ReceitaRemoteBridgeError | None = None
+    for attempt in range(1, attempts + 1):
+        try:
+            return _run(
+                command,
+                timeout=timeout,
+                check=check,
+                input_text=input_text,
+            )
+        except ReceitaRemoteBridgeError as exc:
+            last_error = exc
+            if not _is_transient_transport_error(exc) or attempt >= attempts:
+                raise
+            delay = _backoff_seconds(attempt)
+            print(
+                "RECEITA_SSH_RETRY "
+                + json.dumps(
+                    {
+                        "attempt": attempt,
+                        "next_attempt": attempt + 1,
+                        "delay_seconds": delay,
+                        "error": str(exc)[-600:],
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                ),
+                flush=True,
+            )
+            time.sleep(delay)
+    assert last_error is not None
+    raise last_error
 
 
 def _operation_id(mode: str) -> str:
