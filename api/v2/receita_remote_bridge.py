@@ -112,7 +112,7 @@ def _config_from_env() -> ReceitaRemoteConfig:
 
 
 def _control_path(config: ReceitaRemoteConfig) -> Path:
-    identity = f"{config.user}@{config.host}:{config.port}".encode("utf-8")
+    identity = f"{config.user}@{config.host}:{config.port}".encode()
     digest = hashlib.sha256(identity).hexdigest()[:12]
     return Path(tempfile.gettempdir()) / f"v2r-{os.getpid()}-{digest}.sock"
 
