@@ -529,10 +529,9 @@ def build_identity_remote(
 
         if cnpj in canonical_targets:
             target = canonical_targets[cnpj]
-            target_record = dict(record)
-            target_record["entity_id"] = target.get("entity_id")
-            target_record["project_legal_name"] = target.get("project_legal_name")
-            canonical_records[cnpj] = target_record
+            record["entity_id"] = target.get("entity_id")
+            record["project_legal_name"] = target.get("project_legal_name")
+            canonical_records[cnpj] = dict(record)
 
         if not record.get("is_head_office"):
             continue
