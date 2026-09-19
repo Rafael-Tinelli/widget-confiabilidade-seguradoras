@@ -101,6 +101,50 @@ jobs:
             echo "V2_RECEITA_SSH_KNOWN_HOSTS_FILE=$known_hosts_file"
           } >> "$GITHUB_ENV"
 
+      - name: Stress multiplexed SSH transport
+        if: env.V2_RECEITA_REMOTE_ENABLED == '1'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+
+          from api.v2.receita_remote_bridge import (
+              _config_from_env,
+              _control_path,
+              _run_transport,
+              _ssh_base,
+          )
+
+          config = _config_from_env()
+          control_path = _control_path(config)
+          ssh = _ssh_base(config, control_path=control_path)
+
+          for index in range(12):
+              result = _run_transport(
+                  [*ssh, "printf 'SSH_CHANNEL_OK\\n'"],
+                  timeout=60,
+                  attempts=6,
+              )
+              if result.stdout.strip() != "SSH_CHANNEL_OK":
+                  raise SystemExit(
+                      f"unexpected SSH channel response at iteration {index + 1}: "
+                      f"{result.stdout!r}"
+                  )
+
+          print(
+              "RECEITA_SSH_CHANNEL_STRESS "
+              + json.dumps(
+                  {
+                      "channels": 12,
+                      "multiplexed": True,
+                      "status": "pass",
+                  },
+                  sort_keys=True,
+              )
+          )
+          PY
+
       - name: Verify current official Receita release through final bridge
         if: env.V2_RECEITA_REMOTE_ENABLED == '1'
         shell: bash
@@ -111,8 +155,15 @@ jobs:
           from api.sources.receita_cnpj_bulk import release_fingerprint
           from api.v2.receita_remote_bridge import discover_release_remote
 
-          release = discover_release_remote()
-          fingerprint = release_fingerprint(release)
+          releases = [discover_release_remote(), discover_release_remote()]
+          fingerprints = [release_fingerprint(release) for release in releases]
+          if len(set(fingerprints)) != 1:
+              raise SystemExit(
+                  f"Receita release fingerprint changed inside preflight: {fingerprints}"
+              )
+
+          release = releases[-1]
+          fingerprint = fingerprints[-1]
           metadata = list(release.resource_metadata)
           if release.period != "2026-09":
               raise SystemExit(f"unexpected current Receita period: {release.period}")
@@ -130,6 +181,7 @@ jobs:
               "establishment_files": len(release.establishment_files),
               "metadata_rows": len(metadata),
               "share": release.base_url,
+              "consecutive_discoveries": 2,
           }, sort_keys=True))
           PY
 
