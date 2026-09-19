@@ -107,6 +107,10 @@ def _ssh_base(config: ReceitaRemoteConfig) -> list[str]:
         "-o",
         "UpdateHostKeys=no",
         "-o",
+        "ConnectTimeout=20",
+        "-o",
+        "ConnectionAttempts=3",
+        "-o",
         "ServerAliveInterval=30",
         "-o",
         "ServerAliveCountMax=6",
@@ -134,6 +138,10 @@ def _scp_base(config: ReceitaRemoteConfig) -> list[str]:
         "GlobalKnownHostsFile=/dev/null",
         "-o",
         "UpdateHostKeys=no",
+        "-o",
+        "ConnectTimeout=20",
+        "-o",
+        "ConnectionAttempts=3",
     ]
 
 
@@ -142,26 +150,48 @@ def _run(
     *,
     timeout: int = 18_000,
     check: bool = True,
+    retries: int = 3,
 ) -> subprocess.CompletedProcess[str]:
-    try:
-        return subprocess.run(
-            command,
-            check=check,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
-    except subprocess.TimeoutExpired as exc:
-        raise ReceitaRemoteBridgeError(
-            f"Receita remote command timed out after {timeout}s"
-        ) from exc
-    except subprocess.CalledProcessError as exc:
-        stderr = (exc.stderr or "").strip()[-4000:]
-        stdout = (exc.stdout or "").strip()[-2000:]
-        detail = stderr or stdout or f"exit={exc.returncode}"
-        raise ReceitaRemoteBridgeError(
-            f"Receita remote command failed: {detail}"
-        ) from exc
+    """Run one SSH/SCP command with bounded retries for transport exit 255 only."""
+    if retries < 1:
+        raise ValueError("retries must be >= 1")
+
+    last_error: Exception | None = None
+    for attempt in range(retries):
+        try:
+            return subprocess.run(
+                command,
+                check=check,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+        except subprocess.TimeoutExpired as exc:
+            last_error = exc
+            if attempt + 1 < retries:
+                time.sleep(min(2 ** attempt, 5))
+                continue
+            raise ReceitaRemoteBridgeError(
+                f"Receita remote command timed out after {timeout}s"
+            ) from exc
+        except subprocess.CalledProcessError as exc:
+            last_error = exc
+            # OpenSSH uses exit 255 for connection/auth/transport failures.
+            # Retrying deterministic remote-command failures could repeat side
+            # effects, so only exit 255 is eligible here.
+            if exc.returncode == 255 and attempt + 1 < retries:
+                time.sleep(min(2 ** attempt, 5))
+                continue
+            stderr = (exc.stderr or "").strip()[-4000:]
+            stdout = (exc.stdout or "").strip()[-2000:]
+            detail = stderr or stdout or f"exit={exc.returncode}"
+            raise ReceitaRemoteBridgeError(
+                f"Receita remote command failed: {detail}"
+            ) from exc
+
+    raise ReceitaRemoteBridgeError(
+        f"Receita remote command failed after {retries} attempts: {last_error}"
+    )
 
 
 def _operation_id(mode: str) -> str:
@@ -239,7 +269,9 @@ def _remote_call(mode: str, payload: dict[str, Any] | None = None) -> dict[str, 
                 ]
             )
             remote_command = " ".join(shlex.quote(part) for part in remote_args)
-            _run([*ssh, remote_command], timeout=120)
+            # Never retry daemon launch automatically: a transport reset can
+            # occur after the remote process has already detached.
+            _run([*ssh, remote_command], timeout=120, retries=1)
 
             deadline_seconds = 18_000
             poll_interval_seconds = 20
@@ -306,6 +338,7 @@ def _remote_call(mode: str, payload: dict[str, Any] | None = None) -> dict[str, 
             _run(
                 [*scp, f"{remote}:{remote_output}", str(output_path)],
                 timeout=300,
+                retries=5,
             )
             try:
                 response = json.loads(output_path.read_text(encoding="utf-8"))
