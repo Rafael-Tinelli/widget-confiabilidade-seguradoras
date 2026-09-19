@@ -210,3 +210,8 @@ def test_remote_identity_extract_is_revalidated_and_finalized_locally(monkeypatc
     match = payload["provider_matches"][0]
     assert match["candidate_state"] == "unique_candidate"
     assert match["candidates"][0]["cnpj"] == "12345678000195"
+    assert match["candidates"][0]["entity_id"] == "test-entity"
+    assert (
+        match["candidates"][0]["project_legal_name"]
+        == "EMPRESA TESTE SEGURADORA S.A."
+    )
