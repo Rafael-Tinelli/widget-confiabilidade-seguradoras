@@ -223,6 +223,56 @@ jobs:
           }, sort_keys=True))
           PY
 
+      - name: Verify lifecycle smoke through final bridge
+        if: env.V2_RECEITA_REMOTE_ENABLED == '1'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+
+          from api.v2.receita_remote_bridge import (
+              discover_release_remote,
+              refresh_lifecycle_remote,
+          )
+
+          release = discover_release_remote()
+          result = refresh_lifecycle_remote(
+              [
+                  {
+                      "cnpj": "55993861000100",
+                      "legal_name": "CACHE ONLY LIFECYCLE PREFLIGHT TARGET",
+                  }
+              ],
+              release=release,
+          )
+          if result["status"] != "ok":
+              raise SystemExit(f"lifecycle smoke not ok: {result}")
+          if result["unresolved_cnpjs"]:
+              raise SystemExit(
+                  f"lifecycle smoke unresolved: {result['unresolved_cnpjs']}"
+              )
+          records = result["records"]
+          if len(records) != 1 or records[0]["cnpj"] != "55993861000100":
+              raise SystemExit(f"unexpected lifecycle smoke records: {records}")
+
+          print(
+              "RECEITA_LIFECYCLE_SMOKE "
+              + json.dumps(
+                  {
+                      "period": release.period,
+                      "status": result["status"],
+                      "cnpj": records[0]["cnpj"],
+                      "cadastral_status": records[0]["cadastral_status"],
+                      "files_scanned": result["meta"]["files_scanned"],
+                      "resolved_count": result["meta"]["resolved_count"],
+                  },
+                  ensure_ascii=False,
+                  sort_keys=True,
+              )
+          )
+          PY
+
       - name: Ensure Full Generation was not invoked
         shell: bash
         run: |
