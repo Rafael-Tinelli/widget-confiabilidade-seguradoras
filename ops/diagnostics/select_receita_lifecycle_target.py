@@ -26,12 +26,7 @@ before = {
     for path in (motivos, estab)
 }
 
-seed = json.loads((remote_dir / "verified_seed.json").read_text(encoding="utf-8"))
-seed_by_cnpj = {row["cnpj"]: row for row in seed["records"]}
-wanted = set(seed_by_cnpj)
-
 selected = None
-fallback = None
 with zipfile.ZipFile(str(estab)) as archive:
     members = [name for name in archive.namelist() if not name.endswith("/")]
     if not members:
@@ -47,34 +42,22 @@ with zipfile.ZipFile(str(estab)) as archive:
             if len(row) < 8:
                 continue
             cnpj = "".join(str(part).strip() for part in row[:3])
-            if len(cnpj) != 14 or not cnpj.isdigit():
-                continue
-            if fallback is None:
-                fallback = row
-            if cnpj in wanted:
+            if len(cnpj) == 14 and cnpj.isdigit():
                 selected = row
                 break
 
 if selected is None:
-    selected = fallback
-if selected is None:
     raise SystemExit("NO_VALID_ROW_FOUND_IN_ESTABELECIMENTOS0")
 
 cnpj = "".join(str(part).strip() for part in selected[:3])
-seed_row = seed_by_cnpj.get(cnpj)
-if seed_row:
-    legal_name = seed_row["legal_name"]
-    target_mode = "verified_seed"
-else:
-    legal_name = "CACHE ONLY LIFECYCLE PROBE TARGET"
-    target_mode = "deterministic_cached_row"
+legal_name = "CACHE ONLY LIFECYCLE PROBE TARGET"
 
 payload = {
     "expected_period": "2026-09",
     "targets": [{"cnpj": cnpj, "legal_name": legal_name}],
 }
 expected = {
-    "target_mode": target_mode,
+    "target_mode": "deterministic_cached_row",
     "cnpj": cnpj,
     "legal_name": legal_name,
     "status_code": str(selected[5]).strip().zfill(2),
@@ -83,9 +66,6 @@ expected = {
     "source_file": "Estabelecimentos0.zip",
     "cache_before": before,
 }
-if seed_row:
-    expected["seed_status"] = seed_row["cadastral_status"]
-    expected["seed_status_date"] = seed_row["status_date"]
 
 (remote_dir / "input.json").write_text(
     json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
@@ -95,4 +75,5 @@ if seed_row:
     json.dumps(expected, ensure_ascii=False, indent=2) + "\n",
     encoding="utf-8",
 )
+
 print("LIFECYCLE_TARGET_SELECTED " + json.dumps(expected, ensure_ascii=False, sort_keys=True))
