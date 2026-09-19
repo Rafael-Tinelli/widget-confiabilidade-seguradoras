@@ -4,6 +4,8 @@ import csv
 import hashlib
 import io
 import json
+import os
+import shutil
 import re
 import tempfile
 import time
@@ -14,7 +16,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse
 
 import requests
 
@@ -382,6 +384,25 @@ def _download_zip(
     retries: int = 5,
 ) -> Path:
     destination.parent.mkdir(parents=True, exist_ok=True)
+
+    mirror_dir = os.getenv("V2_RECEITA_LOCAL_MIRROR_DIR", "").strip()
+    if mirror_dir:
+        name = Path(urlparse(url).path).name
+        source = Path(mirror_dir) / name
+        if not source.is_file():
+            raise ReceitaOpenDataError(
+                f"Receita local mirror is missing required ZIP: {name}"
+            )
+        if not zipfile.is_zipfile(source):
+            raise ReceitaOpenDataError(
+                f"Receita local mirror contains invalid ZIP: {name}"
+            )
+        shutil.copy2(source, destination)
+        if not zipfile.is_zipfile(destination):
+            raise ReceitaOpenDataError(
+                f"Receita local mirror copy is invalid ZIP: {name}"
+            )
+        return destination
     temp = destination.with_suffix(destination.suffix + ".part")
     last_error: Exception | None = None
 
