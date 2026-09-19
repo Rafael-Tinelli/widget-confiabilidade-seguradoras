@@ -1,0 +1,295 @@
+name: Audit Receita Lifecycle Cache-Only
+
+on:
+  push:
+    branches:
+      - audit/receita-lifecycle-20260918
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lifecycle-cache-only:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure pinned SSH
+        env:
+          SSH_HOST: ${{ secrets.V2_HOSTGATOR_HOST }}
+          SSH_USER: ${{ secrets.V2_HOSTGATOR_USER }}
+          SSH_PRIVATE_KEY: ${{ secrets.V2_HOSTGATOR_SSH_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.V2_HOSTGATOR_KNOWN_HOSTS }}
+          SSH_PORT: ${{ vars.V2_HOSTGATOR_SSH_PORT }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${SSH_HOST:?missing SSH host}"
+          : "${SSH_USER:?missing SSH user}"
+          SSH_PORT=${SSH_PORT:-22}
+          d="$RUNNER_TEMP/receita-lifecycle-ssh"
+          rm -rf "$d"
+          umask 077
+          install -d -m 700 "$d"
+          printf '%s\n' "$SSH_PRIVATE_KEY" | tr -d '\r' > "$d/key"
+          printf '%s\n' "$SSH_KNOWN_HOSTS" | tr -d '\r' > "$d/known_hosts"
+          chmod 600 "$d/key" "$d/known_hosts"
+          {
+            echo "SSH_HOST=$SSH_HOST"
+            echo "SSH_USER=$SSH_USER"
+            echo "SSH_PORT=$SSH_PORT"
+            echo "SSH_KEY=$d/key"
+            echo "SSH_KNOWN=$d/known_hosts"
+          } >> "$GITHUB_ENV"
+
+      - name: Build isolated lifecycle payload
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          seed = json.loads(
+              Path("data/reference/v2/receita_lifecycle_verified.json").read_text(
+                  encoding="utf-8"
+              )
+          )
+          targets = [
+              {"cnpj": row["cnpj"], "legal_name": row["legal_name"]}
+              for row in seed["records"]
+          ]
+          payload = {
+              "expected_period": "2026-09",
+              "targets": targets,
+          }
+          Path("/tmp/receita-lifecycle-input.json").write_text(
+              json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+              encoding="utf-8",
+          )
+          print(f"TARGET_COUNT={len(targets)}")
+          PY
+
+      - name: Preflight existing 2026-09 cache
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh_opts=(
+            -T
+            -i "$SSH_KEY"
+            -p "$SSH_PORT"
+            -o BatchMode=yes
+            -o IdentitiesOnly=yes
+            -o StrictHostKeyChecking=yes
+            -o UserKnownHostsFile="$SSH_KNOWN"
+            -o GlobalKnownHostsFile=/dev/null
+            -o UpdateHostKeys=no
+          )
+          ssh "${ssh_opts[@]}" "$SSH_USER@$SSH_HOST" "python3 - <<'PY'
+          import json
+          import os
+          import re
+          import zipfile
+          from pathlib import Path
+
+          root = Path.home() / '.sanida-v2-receita-bridge' / 'cache' / '2026-09'
+          names = ['Motivos.zip'] + [f'Estabelecimentos{i}.zip' for i in range(10)]
+          rows = []
+          for name in names:
+              p = root / name
+              rows.append({
+                  'name': name,
+                  'exists': p.is_file(),
+                  'size': p.stat().st_size if p.is_file() else None,
+                  'zip_valid': zipfile.is_zipfile(str(p)) if p.is_file() else False,
+                  'mtime_ns': p.stat().st_mtime_ns if p.is_file() else None,
+              })
+          print('LIFECYCLE_CACHE_PREFLIGHT ' + json.dumps(rows, sort_keys=True))
+          missing = [r['name'] for r in rows if not r['exists'] or not r['zip_valid']]
+          if missing:
+              raise SystemExit('CACHE_PREFLIGHT_MISSING_OR_INVALID=' + ','.join(missing))
+          PY"
+
+      - name: Upload worker and cache-only wrapper
+        shell: bash
+        run: |
+          set -euo pipefail
+          remote_dir=".sanida-v2-receita-lifecycle-probe-${GITHUB_RUN_ID}"
+          ssh_opts=(
+            -T
+            -i "$SSH_KEY"
+            -p "$SSH_PORT"
+            -o BatchMode=yes
+            -o IdentitiesOnly=yes
+            -o StrictHostKeyChecking=yes
+            -o UserKnownHostsFile="$SSH_KNOWN"
+            -o GlobalKnownHostsFile=/dev/null
+            -o UpdateHostKeys=no
+          )
+          scp_opts=(
+            -q
+            -i "$SSH_KEY"
+            -P "$SSH_PORT"
+            -o BatchMode=yes
+            -o IdentitiesOnly=yes
+            -o StrictHostKeyChecking=yes
+            -o UserKnownHostsFile="$SSH_KNOWN"
+            -o GlobalKnownHostsFile=/dev/null
+            -o UpdateHostKeys=no
+          )
+          ssh "${ssh_opts[@]}" "$SSH_USER@$SSH_HOST" "umask 077; mkdir -p '$remote_dir'"
+          scp "${scp_opts[@]}" \
+            ops/hostgator/receita_remote_worker.py \
+            "$SSH_USER@$SSH_HOST:$remote_dir/receita_remote_worker.py"
+          scp "${scp_opts[@]}" \
+            ops/diagnostics/receita_lifecycle_cache_only.py \
+            "$SSH_USER@$SSH_HOST:$remote_dir/receita_lifecycle_cache_only.py"
+          scp "${scp_opts[@]}" \
+            /tmp/receita-lifecycle-input.json \
+            "$SSH_USER@$SSH_HOST:$remote_dir/input.json"
+          echo "REMOTE_DIR=$remote_dir" >> "$GITHUB_ENV"
+
+      - name: Execute lifecycle from existing cache only
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh_opts=(
+            -T
+            -i "$SSH_KEY"
+            -p "$SSH_PORT"
+            -o BatchMode=yes
+            -o IdentitiesOnly=yes
+            -o StrictHostKeyChecking=yes
+            -o UserKnownHostsFile="$SSH_KNOWN"
+            -o GlobalKnownHostsFile=/dev/null
+            -o UpdateHostKeys=no
+            -o ServerAliveInterval=30
+            -o ServerAliveCountMax=10
+          )
+          ssh "${ssh_opts[@]}" "$SSH_USER@$SSH_HOST" "
+            set -e
+            cd '$REMOTE_DIR'
+            python3 receita_lifecycle_cache_only.py \
+              --mode lifecycle \
+              --input input.json \
+              --output output.json \
+              --cache-dir ../.sanida-v2-receita-bridge/cache \
+              > stdout.log 2> stderr.log
+            cat stdout.log
+            test ! -s stderr.log || cat stderr.log >&2
+          "
+
+      - name: Download and validate lifecycle output
+        shell: bash
+        run: |
+          set -euo pipefail
+          scp_opts=(
+            -q
+            -i "$SSH_KEY"
+            -P "$SSH_PORT"
+            -o BatchMode=yes
+            -o IdentitiesOnly=yes
+            -o StrictHostKeyChecking=yes
+            -o UserKnownHostsFile="$SSH_KNOWN"
+            -o GlobalKnownHostsFile=/dev/null
+            -o UpdateHostKeys=no
+          )
+          scp "${scp_opts[@]}" \
+            "$SSH_USER@$SSH_HOST:$REMOTE_DIR/output.json" \
+            /tmp/receita-lifecycle-output.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          seed = json.loads(
+              Path("data/reference/v2/receita_lifecycle_verified.json").read_text(
+                  encoding="utf-8"
+              )
+          )
+          expected = {row["cnpj"]: row for row in seed["records"]}
+          out = json.loads(
+              Path("/tmp/receita-lifecycle-output.json").read_text(encoding="utf-8")
+          )
+
+          assert out["artifact"] == "v2_receita_remote_lifecycle_extract", out["artifact"]
+          assert out["source"]["reference_period"] == "2026-09", out["source"]
+          meta = out["meta"]
+          assert meta["target_count"] == len(expected), meta
+          assert meta["resolved_count"] == len(expected), meta
+          assert meta["unresolved_count"] == 0, meta
+          assert out["unresolved_cnpjs"] == [], out["unresolved_cnpjs"]
+
+          records = {row["cnpj"]: row for row in out["raw_records"]}
+          assert set(records) == set(expected), (set(expected) - set(records))
+          mismatches = []
+          for cnpj, exp in expected.items():
+              got = records[cnpj]
+              if got["cadastral_status"] != exp["cadastral_status"]:
+                  mismatches.append((cnpj, "status", exp["cadastral_status"], got["cadastral_status"]))
+              if got["status_date"] != exp["status_date"]:
+                  mismatches.append((cnpj, "status_date", exp["status_date"], got["status_date"]))
+          if mismatches:
+              raise SystemExit("LIFECYCLE_MISMATCHES=" + repr(mismatches))
+
+          print("LIFECYCLE_VALIDATION_PASS " + json.dumps({
+              "period": out["source"]["reference_period"],
+              "target_count": meta["target_count"],
+              "resolved_count": meta["resolved_count"],
+              "unresolved_count": meta["unresolved_count"],
+              "files_scanned": meta["files_scanned"],
+              "cnpjs": sorted(records),
+          }, sort_keys=True))
+          PY
+
+      - name: Verify cache files were not rewritten
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh_opts=(
+            -T
+            -i "$SSH_KEY"
+            -p "$SSH_PORT"
+            -o BatchMode=yes
+            -o IdentitiesOnly=yes
+            -o StrictHostKeyChecking=yes
+            -o UserKnownHostsFile="$SSH_KNOWN"
+            -o GlobalKnownHostsFile=/dev/null
+            -o UpdateHostKeys=no
+          )
+          ssh "${ssh_opts[@]}" "$SSH_USER@$SSH_HOST" "python3 - <<'PY'
+          import json
+          import zipfile
+          from pathlib import Path
+          root = Path.home() / '.sanida-v2-receita-bridge' / 'cache' / '2026-09'
+          rows = []
+          for name in ['Motivos.zip'] + [f'Estabelecimentos{i}.zip' for i in range(10)]:
+              p = root / name
+              rows.append({
+                  'name': name,
+                  'exists': p.is_file(),
+                  'size': p.stat().st_size if p.is_file() else None,
+                  'zip_valid': zipfile.is_zipfile(str(p)) if p.is_file() else False,
+                  'mtime_ns': p.stat().st_mtime_ns if p.is_file() else None,
+              })
+          print('LIFECYCLE_CACHE_POST ' + json.dumps(rows, sort_keys=True))
+          PY"
+
+      - name: Cleanup remote diagnostic material
+        if: always()
+        shell: bash
+        run: |
+          ssh \
+            -T \
+            -i "$SSH_KEY" \
+            -p "$SSH_PORT" \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$SSH_KNOWN" \
+            -o GlobalKnownHostsFile=/dev/null \
+            -o UpdateHostKeys=no \
+            "$SSH_USER@$SSH_HOST" \
+            "rm -rf -- '${REMOTE_DIR:-.nonexistent}'" || true
+          rm -rf "$RUNNER_TEMP/receita-lifecycle-ssh"
