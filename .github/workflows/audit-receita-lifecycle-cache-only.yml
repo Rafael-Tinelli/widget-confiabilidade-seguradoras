@@ -12,7 +12,7 @@ permissions:
 jobs:
   lifecycle-cache-only:
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
@@ -71,11 +71,16 @@ jobs:
             -o GlobalKnownHostsFile=/dev/null
             -o UpdateHostKeys=no
           )
-          ssh "${ssh_opts[@]}" "$SSH_USER@$SSH_HOST"             "umask 077; rm -rf -- '$REMOTE_DIR'; mkdir -p -- '$REMOTE_DIR'"
-          scp "${scp_opts[@]}" ops/hostgator/receita_remote_worker.py             "$SSH_USER@$SSH_HOST:$REMOTE_DIR/receita_remote_worker.py"
-          scp "${scp_opts[@]}" ops/diagnostics/receita_lifecycle_cache_only.py             "$SSH_USER@$SSH_HOST:$REMOTE_DIR/receita_lifecycle_cache_only.py"
-          scp "${scp_opts[@]}" ops/diagnostics/select_receita_lifecycle_target.py             "$SSH_USER@$SSH_HOST:$REMOTE_DIR/select_receita_lifecycle_target.py"
-          scp "${scp_opts[@]}" ops/diagnostics/verify_receita_lifecycle_cache.py             "$SSH_USER@$SSH_HOST:$REMOTE_DIR/verify_receita_lifecycle_cache.py"
+          ssh "${ssh_opts[@]}" "$SSH_USER@$SSH_HOST" \
+            "umask 077; rm -rf -- '$REMOTE_DIR'; mkdir -p -- '$REMOTE_DIR'"
+          scp "${scp_opts[@]}" ops/hostgator/receita_remote_worker.py \
+            "$SSH_USER@$SSH_HOST:$REMOTE_DIR/receita_remote_worker.py"
+          scp "${scp_opts[@]}" ops/diagnostics/select_receita_lifecycle_target.py \
+            "$SSH_USER@$SSH_HOST:$REMOTE_DIR/select_receita_lifecycle_target.py"
+          scp "${scp_opts[@]}" ops/diagnostics/run_receita_lifecycle_cached.py \
+            "$SSH_USER@$SSH_HOST:$REMOTE_DIR/run_receita_lifecycle_cached.py"
+          scp "${scp_opts[@]}" ops/diagnostics/verify_receita_lifecycle_cache.py \
+            "$SSH_USER@$SSH_HOST:$REMOTE_DIR/verify_receita_lifecycle_cache.py"
 
       - name: Select deterministic target from cached Estabelecimentos0
         shell: bash
@@ -94,9 +99,10 @@ jobs:
             -o ServerAliveInterval=30
             -o ServerAliveCountMax=10
           )
-          ssh "${ssh_opts[@]}" "$SSH_USER@$SSH_HOST"             "cd '$REMOTE_DIR' && python3 select_receita_lifecycle_target.py . ~/.sanida-v2-receita-bridge/cache"
+          ssh "${ssh_opts[@]}" "$SSH_USER@$SSH_HOST" \
+            "cd '$REMOTE_DIR' && python3 select_receita_lifecycle_target.py . ~/.sanida-v2-receita-bridge/cache"
 
-      - name: Execute lifecycle from existing cache only
+      - name: Execute isolated lifecycle from existing cache only
         shell: bash
         run: |
           set -euo pipefail
@@ -113,7 +119,17 @@ jobs:
             -o ServerAliveInterval=30
             -o ServerAliveCountMax=10
           )
-          ssh "${ssh_opts[@]}" "$SSH_USER@$SSH_HOST"             "cd '$REMOTE_DIR' &&              python3 receita_lifecycle_cache_only.py                --mode lifecycle                --input input.json                --output output.json                --cache-dir ~/.sanida-v2-receita-bridge/cache                > stdout.log 2> stderr.log &&              cat stdout.log &&              ! grep -q 'CACHE_ONLY_MISS' stdout.log stderr.log &&              grep -q 'LIFECYCLE_CACHE_REUSE file=Motivos.zip' stdout.log &&              grep -q 'LIFECYCLE_CACHE_REUSE file=Estabelecimentos0.zip' stdout.log &&              test ! -s stderr.log"
+          ssh "${ssh_opts[@]}" "$SSH_USER@$SSH_HOST" \
+            "cd '$REMOTE_DIR'; \
+             python3 run_receita_lifecycle_cached.py input.json output.json ~/.sanida-v2-receita-bridge/cache > stdout.log 2> stderr.log; \
+             rc=\$?; \
+             cat stdout.log; \
+             test ! -s stderr.log || cat stderr.log >&2; \
+             test \$rc -eq 0; \
+             ! grep -q 'CACHE_ONLY_MISS' stdout.log stderr.log; \
+             grep -q 'LIFECYCLE_CACHE_REUSE file=Motivos.zip' stdout.log; \
+             grep -q 'LIFECYCLE_CACHE_REUSE file=Estabelecimentos0.zip' stdout.log; \
+             grep -q 'LIFECYCLE_CACHED_EXTRACT_COMPLETE' stdout.log"
 
       - name: Download and validate lifecycle output
         shell: bash
@@ -148,7 +164,9 @@ jobs:
           assert out['unresolved_cnpjs'] == []
           assert meta['files_scanned'] == ['Estabelecimentos0.zip']
 
-          row = out['raw_records'][0]
+          rows = out['raw_records']
+          assert len(rows) == 1
+          row = rows[0]
           assert row['cnpj'] == exp['cnpj']
           assert row['source_file'] == exp['source_file']
           assert row['raw_status_code'] == exp['status_code']
@@ -184,11 +202,23 @@ jobs:
             -o GlobalKnownHostsFile=/dev/null
             -o UpdateHostKeys=no
           )
-          ssh "${ssh_opts[@]}" "$SSH_USER@$SSH_HOST"             "cd '$REMOTE_DIR' && python3 verify_receita_lifecycle_cache.py . ~/.sanida-v2-receita-bridge/cache"
+          ssh "${ssh_opts[@]}" "$SSH_USER@$SSH_HOST" \
+            "cd '$REMOTE_DIR' && python3 verify_receita_lifecycle_cache.py . ~/.sanida-v2-receita-bridge/cache"
 
       - name: Cleanup remote diagnostic material
         if: always()
         shell: bash
         run: |
-          ssh             -T             -i "$SSH_KEY"             -p "$SSH_PORT"             -o BatchMode=yes             -o IdentitiesOnly=yes             -o StrictHostKeyChecking=yes             -o UserKnownHostsFile="$SSH_KNOWN"             -o GlobalKnownHostsFile=/dev/null             -o UpdateHostKeys=no             "$SSH_USER@$SSH_HOST"             "rm -rf -- '${REMOTE_DIR:-.nonexistent}'" || true
+          ssh \
+            -T \
+            -i "$SSH_KEY" \
+            -p "$SSH_PORT" \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$SSH_KNOWN" \
+            -o GlobalKnownHostsFile=/dev/null \
+            -o UpdateHostKeys=no \
+            "$SSH_USER@$SSH_HOST" \
+            "rm -rf -- '${REMOTE_DIR:-.nonexistent}'" || true
           rm -rf "$RUNNER_TEMP/receita-lifecycle-ssh"
