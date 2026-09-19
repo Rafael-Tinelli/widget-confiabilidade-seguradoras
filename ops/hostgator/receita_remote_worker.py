@@ -18,6 +18,7 @@ import os
 import re
 import resource
 import shutil
+import subprocess
 import sys
 import time
 import traceback
@@ -928,6 +929,61 @@ def write_start_marker(path):
     temp.replace(target)
 
 
+def spawn_detached(args):
+    if (
+        not args.exit_file
+        or not args.start_file
+        or not args.stdout_log
+        or not args.stderr_log
+    ):
+        raise WorkerError(
+            "--spawn-detached requires --exit-file, --start-file, "
+            "--stdout-log and --stderr-log"
+        )
+
+    command = [
+        sys.executable,
+        str(Path(__file__).resolve()),
+        "--mode",
+        args.mode,
+        "--output",
+        args.output,
+        "--cache-dir",
+        args.cache_dir,
+        "--exit-file",
+        args.exit_file,
+        "--start-file",
+        args.start_file,
+    ]
+    if args.input:
+        command.extend(["--input", args.input])
+
+    stdout_path = Path(args.stdout_log)
+    stderr_path = Path(args.stderr_log)
+    stdout_path.parent.mkdir(parents=True, exist_ok=True)
+    stderr_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with stdout_path.open("ab", buffering=0) as stdout_handle, stderr_path.open(
+        "ab", buffering=0
+    ) as stderr_handle:
+        process = subprocess.Popen(
+            command,
+            stdin=subprocess.DEVNULL,
+            stdout=stdout_handle,
+            stderr=stderr_handle,
+            start_new_session=True,
+            close_fds=True,
+        )
+
+    target = Path(args.start_file)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temp = target.with_suffix(target.suffix + ".tmp")
+    temp.write_text(str(process.pid) + "\n", encoding="utf-8")
+    temp.replace(target)
+    print(f"STARTED:{process.pid}", flush=True)
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--mode", choices=("discover", "lifecycle", "identity"), required=True)
@@ -935,11 +991,15 @@ def main():
     parser.add_argument("--output", required=True)
     parser.add_argument("--cache-dir", required=True)
     parser.add_argument("--daemonize", action="store_true")
+    parser.add_argument("--spawn-detached", action="store_true")
     parser.add_argument("--exit-file")
     parser.add_argument("--start-file")
     parser.add_argument("--stdout-log")
     parser.add_argument("--stderr-log")
     args = parser.parse_args()
+
+    if args.spawn_detached:
+        return spawn_detached(args)
 
     if args.daemonize:
         if not args.exit_file or not args.stdout_log or not args.stderr_log:
@@ -949,8 +1009,7 @@ def main():
         write_start_marker(args.start_file)
         daemonize(args.stdout_log, args.stderr_log)
 
-    # In normal bridge mode the remote shell owns detachment via setsid -f.
-    # Persist the real Python worker PID after that detachment.
+    # The detached child persists its own real PID before processing.
     write_start_marker(args.start_file)
 
     exit_code = 0
