@@ -569,6 +569,7 @@ def _remote_call(mode: str, payload: dict[str, Any] | None = None) -> dict[str, 
             event="start",
         )
         deadline = time.monotonic() + _REMOTE_DEADLINE_SECONDS
+        startup_deadline = time.monotonic() + 30
         exit_code: int | None = None
         consecutive_probe_failures = 0
         dead_observations = 0
@@ -605,7 +606,29 @@ def _remote_call(mode: str, payload: dict[str, Any] | None = None) -> dict[str, 
                 continue
 
             status = probe.stdout.strip()
-            if status in {"RUNNING", "STARTING"} or not status:
+            if status == "STARTING" or not status:
+                dead_observations = 0
+                if time.monotonic() > startup_deadline:
+                    detail = _run_transport(
+                        [
+                            *ssh,
+                            (
+                                f"tail -c 3000 {shlex.quote(remote_stderr)} "
+                                "2>/dev/null || true"
+                            ),
+                        ],
+                        timeout=30,
+                        check=False,
+                        attempts=3,
+                    ).stdout.strip()
+                    raise ReceitaRemoteBridgeError(
+                        "Receita remote worker did not establish a start marker "
+                        "within 30s"
+                        + (f": {detail}" if detail else "")
+                    )
+                time.sleep(2)
+                continue
+            if status == "RUNNING":
                 dead_observations = 0
                 time.sleep(_POLL_INTERVAL_SECONDS)
                 continue
