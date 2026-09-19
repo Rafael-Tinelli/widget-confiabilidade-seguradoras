@@ -8,7 +8,7 @@ on:
   # Temporary branch-only trigger for the final Receita fresh/fresh proof.
   push:
     branches:
-      - fix/receita-public-dav-auth
+      - fix/receita-cache-bridge-final
 
 permissions:
   contents: read
