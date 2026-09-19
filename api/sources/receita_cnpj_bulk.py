@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import io
+import json
 import re
 import tempfile
 import time
@@ -35,6 +37,10 @@ STATUS_CODE_TO_LABEL = {
 
 ESTABLISHMENT_FILE_RE = re.compile(
     r"Estabelecimentos\d+\.zip$",
+    re.IGNORECASE,
+)
+COMPANY_FILE_RE = re.compile(
+    r"Empresas\d+\.zip$",
     re.IGNORECASE,
 )
 PERIOD_RE = re.compile(r"20\d{2}-\d{2}$")
@@ -267,7 +273,16 @@ def discover_latest_release(
                 ),
                 key=_establishment_sort_key,
             )
-            if "Motivos.zip" not in files or not establishments:
+            companies = sorted(
+                (
+                    name
+                    for name in files
+                    if COMPANY_FILE_RE.fullmatch(name)
+                ),
+                key=_establishment_sort_key,
+            )
+            required = {"Motivos.zip", "Cnaes.zip", "Naturezas.zip"}
+            if not required.issubset(files) or not establishments or not companies:
                 continue
 
             expected_indexes = list(range(len(establishments)))
@@ -277,8 +292,20 @@ def discover_latest_release(
             ]
             if actual_indexes != expected_indexes:
                 continue
+            company_indexes = [
+                int(re.search(r"(\d+)", name).group(1))
+                for name in companies
+            ]
+            if company_indexes != list(range(len(companies))):
+                continue
 
-            metadata_names = {"Motivos.zip", *establishments}
+            metadata_names = {
+                "Motivos.zip",
+                "Cnaes.zip",
+                "Naturezas.zip",
+                *companies,
+                *establishments,
+            }
             metadata = tuple(
                 {
                     "name": item["name"],
@@ -303,6 +330,35 @@ def discover_latest_release(
     raise ReceitaOpenDataError(
         "No complete monthly Receita CNPJ release with Motivos and Estabelecimentos found"
     )
+
+
+def release_fingerprint(release: ReceitaOpenDataRelease) -> str:
+    """Fingerprint the complete monthly Receita byte set consumed by v2."""
+    rows: list[dict[str, Any]] = []
+    for item in release.resource_metadata:
+        name = str(item.get("name") or "").strip()
+        etag = str(item.get("etag") or "").strip()
+        size = item.get("size")
+        if not name or not etag or size is None:
+            raise ReceitaOpenDataError(
+                "Receita release metadata is incomplete for fingerprinting"
+            )
+        rows.append(
+            {
+                "name": name,
+                "etag": etag,
+                "size": int(size),
+            }
+        )
+    if not rows:
+        raise ReceitaOpenDataError("Receita release metadata is empty")
+    encoded = json.dumps(
+        sorted(rows, key=lambda row: row["name"]),
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def _download_zip(
