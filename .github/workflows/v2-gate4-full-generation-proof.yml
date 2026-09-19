@@ -181,10 +181,9 @@ jobs:
           ssh "${ssh_opts[@]}" "$V2_RECEITA_SSH_USER@$V2_RECEITA_SSH_HOST"             "umask 077; rm -rf -- '$remote_dir'; mkdir -p -- '$remote_dir'"
           scp "${scp_opts[@]}" ops/hostgator/receita_cache_manifest.py             "$V2_RECEITA_SSH_USER@$V2_RECEITA_SSH_HOST:$remote_dir/receita_cache_manifest.py"
           scp "${scp_opts[@]}" /tmp/receita-release-metadata.json             "$V2_RECEITA_SSH_USER@$V2_RECEITA_SSH_HOST:$remote_dir/release.json"
-          ssh "${ssh_opts[@]}" "$V2_RECEITA_SSH_USER@$V2_RECEITA_SSH_HOST"             "python3 '$remote_dir/receita_cache_manifest.py'                --metadata '$remote_dir/release.json'                --cache-root ~/.sanida-v2-receita-bridge/cache"
+          ssh "${ssh_opts[@]}" "$V2_RECEITA_SSH_USER@$V2_RECEITA_SSH_HOST"             "python3 '$remote_dir/receita_cache_manifest.py'                --metadata '$remote_dir/release.json'                --cache-root ~/.sanida-v2-receita-bridge/cache; rc=\$?; rm -rf -- '$remote_dir'; exit \$rc"
           period="$(python -c 'import json; print(json.load(open("/tmp/receita-release-metadata.json"))["period"])')"
           scp "${scp_opts[@]}"             "$V2_RECEITA_SSH_USER@$V2_RECEITA_SSH_HOST:.sanida-v2-receita-bridge/cache/$period/manifest.json"             /tmp/receita-cache-manifest.json
-          ssh "${ssh_opts[@]}" "$V2_RECEITA_SSH_USER@$V2_RECEITA_SSH_HOST"             "rm -rf -- '$remote_dir'"
 
       - name: Materialize validated Receita mirror on GitHub runner
         if: env.V2_RECEITA_REMOTE_ENABLED == '1'
@@ -218,9 +217,22 @@ jobs:
           print(f"Receita mirror compressed bytes={required}; runner free bytes={free}")
           PY
           period="$(python -c 'import json; print(json.load(open("/tmp/receita-cache-manifest.json"))["reference_period"])')"
-          while IFS= read -r name; do
-            scp               -q               -i "$V2_RECEITA_SSH_KEY_FILE"               -P "$V2_RECEITA_SSH_PORT"               -o BatchMode=yes               -o IdentitiesOnly=yes               -o StrictHostKeyChecking=yes               -o UserKnownHostsFile="$V2_RECEITA_SSH_KNOWN_HOSTS_FILE"               -o GlobalKnownHostsFile=/dev/null               -o UpdateHostKeys=no               "$V2_RECEITA_SSH_USER@$V2_RECEITA_SSH_HOST:.sanida-v2-receita-bridge/cache/$period/$name"               "$V2_RECEITA_LOCAL_MIRROR_DIR/$name"
-          done < /tmp/receita-file-list.txt
+          files="$(tr '\n' ' ' < /tmp/receita-file-list.txt)"
+          ssh \
+            -T \
+            -i "$V2_RECEITA_SSH_KEY_FILE" \
+            -p "$V2_RECEITA_SSH_PORT" \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$V2_RECEITA_SSH_KNOWN_HOSTS_FILE" \
+            -o GlobalKnownHostsFile=/dev/null \
+            -o UpdateHostKeys=no \
+            -o ServerAliveInterval=30 \
+            -o ServerAliveCountMax=20 \
+            "$V2_RECEITA_SSH_USER@$V2_RECEITA_SSH_HOST" \
+            "cd '.sanida-v2-receita-bridge/cache/$period' && tar -cf - -- $files" \
+            | tar -xf - -C "$V2_RECEITA_LOCAL_MIRROR_DIR"
 
       - name: Verify local Receita mirror byte-for-byte
         if: env.V2_RECEITA_REMOTE_ENABLED == '1'
