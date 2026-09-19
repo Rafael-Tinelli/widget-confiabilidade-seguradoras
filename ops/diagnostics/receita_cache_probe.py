@@ -162,7 +162,7 @@ def download(remote, file_path: Path):
     return sha256_file(file_path)
 
 
-def ensure(cache_dir: Path, expect_status: str | None, expect_reason: str | None):
+def ensure(cache_dir, expect_status, expect_reason):
     cache_dir.mkdir(parents=True, exist_ok=True)
     file_path = cache_dir / TARGET_FILE
     manifest_path = cache_dir / "manifest.json"
