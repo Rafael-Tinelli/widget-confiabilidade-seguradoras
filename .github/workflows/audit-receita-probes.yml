@@ -1,0 +1,219 @@
+name: Audit Receita Probes A-C
+
+on:
+  push:
+    branches:
+      - audit/receita-probes-20260918
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probes:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Probe B - GitHub runner direct small-file transport
+        shell: bash
+        run: |
+          set -u
+          host='https://arquivos.receitafederal.gov.br'
+          token='gn672Ad4CF8N6TK'
+          period='2026-09'
+          modern="$host/public.php/dav/files/$token/Dados/Cadastros/CNPJ/$period/Motivos.zip"
+          legacy="$host/public.php/webdav/Dados/Cadastros/CNPJ/$period/Motivos.zip"
+          download="$host/index.php/s/$token/download?path=%2FDados%2FCadastros%2FCNPJ%2F$period&files=Motivos.zip"
+
+          probe() {
+            label="$1"; shift
+            out="/tmp/receita-${label}.body"
+            err="/tmp/receita-${label}.err"
+            rm -f "$out" "$err"
+            set +e
+            meta="$(curl --silent --show-error --max-time 20               --output "$out"               --write-out 'HTTP=%{http_code} EFFECTIVE=%{url_effective} BYTES=%{size_download} TYPE=%{content_type}'               "$@" 2>"$err")"
+            rc=$?
+            set -e
+            bytes=0
+            [[ -f "$out" ]] && bytes="$(wc -c < "$out" | tr -d ' ')"
+            printf 'PROBE_B %s RC=%s %s BODY_BYTES=%s STDERR=%q\n'               "$label" "$rc" "$meta" "$bytes" "$(tail -c 500 "$err" 2>/dev/null || true)"
+          }
+
+          set -e
+          probe modern_head --head "$modern"
+          probe modern_range --range 0-0 "$modern"
+          probe modern_get "$modern"
+          probe legacy_head --user "$token:" --head "$legacy"
+          probe legacy_range --user "$token:" --range 0-0 "$legacy"
+          probe legacy_get --user "$token:" "$legacy"
+          probe share_download_head --location --head "$download"
+          probe share_download_range --location --range 0-0 "$download"
+          probe share_download_get --location "$download"
+
+      - name: Configure pinned SSH for HostGator probes
+        id: ssh
+        env:
+          SSH_HOST: ${{ secrets.V2_HOSTGATOR_HOST }}
+          SSH_USER: ${{ secrets.V2_HOSTGATOR_USER }}
+          SSH_PRIVATE_KEY: ${{ secrets.V2_HOSTGATOR_SSH_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.V2_HOSTGATOR_KNOWN_HOSTS }}
+          SSH_PORT: ${{ vars.V2_HOSTGATOR_SSH_PORT }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${SSH_HOST:?missing SSH host}"
+          : "${SSH_USER:?missing SSH user}"
+          SSH_PORT=${SSH_PORT:-22}
+          d="$RUNNER_TEMP/receita-probe-ssh"
+          rm -rf "$d"
+          umask 077
+          install -d -m 700 "$d"
+          printf '%s\n' "$SSH_PRIVATE_KEY" | tr -d '\r' > "$d/key"
+          printf '%s\n' "$SSH_KNOWN_HOSTS" | tr -d '\r' > "$d/known_hosts"
+          chmod 600 "$d/key" "$d/known_hosts"
+          {
+            echo "SSH_HOST=$SSH_HOST"
+            echo "SSH_USER=$SSH_USER"
+            echo "SSH_PORT=$SSH_PORT"
+            echo "SSH_KEY=$d/key"
+            echo "SSH_KNOWN=$d/known_hosts"
+          } >> "$GITHUB_ENV"
+
+      - name: Probes A and C - HostGator shares and metadata stability
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh_opts=(
+            -T
+            -i "$SSH_KEY"
+            -p "$SSH_PORT"
+            -o BatchMode=yes
+            -o IdentitiesOnly=yes
+            -o StrictHostKeyChecking=yes
+            -o UserKnownHostsFile="$SSH_KNOWN"
+            -o GlobalKnownHostsFile=/dev/null
+            -o UpdateHostKeys=no
+          )
+          ssh "${ssh_opts[@]}" "$SSH_USER@$SSH_HOST" "python3 - <<'PY'
+          import base64
+          import re
+          import subprocess
+          import time
+          import xml.etree.ElementTree as ET
+          from urllib.parse import unquote
+
+          HOST = 'https://arquivos.receitafederal.gov.br'
+          TOKENS = ['YggdBLfdninEJX9', 'MPPfFit7g7zdA8C', 'gn672Ad4CF8N6TK']
+          CNPJ_PATH = 'Dados/Cadastros/CNPJ'
+          NS = {'d': 'DAV:'}
+
+          def curl(args, body=True):
+              cmd = ['curl','-sS','--max-time','25']
+              if body:
+                  cmd += ['--output','-']
+              else:
+                  cmd += ['--output','/dev/null']
+              cmd += ['--write-out','\\n__META__HTTP=%{http_code} EFFECTIVE=%{url_effective} BYTES=%{size_download}']
+              cmd += args
+              p = subprocess.run(cmd, text=False, capture_output=True)
+              raw = p.stdout or b''
+              marker = b'\\n__META__'
+              if marker in raw:
+                  payload, meta = raw.rsplit(marker, 1)
+                  meta = meta.decode('utf-8','replace').strip()
+              else:
+                  payload, meta = raw, ''
+              return p.returncode, payload, meta, (p.stderr or b'').decode('utf-8','replace').strip()
+
+          def parse_resources(xml_bytes):
+              try:
+                  root = ET.fromstring(xml_bytes)
+              except Exception as exc:
+                  return [], f'XML_ERROR={type(exc).__name__}:{exc}'
+              out=[]
+              for response in root.findall('d:response', NS):
+                  href = unquote(response.findtext('d:href', default='', namespaces=NS))
+                  prop = None
+                  for ps in response.findall('d:propstat', NS):
+                      status = ps.findtext('d:status', default='', namespaces=NS) or ''
+                      if '200' in status:
+                          prop = ps.find('d:prop', NS)
+                          break
+                  if prop is None:
+                      continue
+                  name = (prop.findtext('d:displayname', default='', namespaces=NS) or '').strip()
+                  size = (prop.findtext('d:getcontentlength', default='', namespaces=NS) or '').strip()
+                  etag = (prop.findtext('d:getetag', default='', namespaces=NS) or '').strip()
+                  lm = (prop.findtext('d:getlastmodified', default='', namespaces=NS) or '').strip()
+                  rt = prop.find('d:resourcetype', NS)
+                  coll = rt is not None and rt.find('d:collection', NS) is not None
+                  out.append({'name': name or href.rstrip('/').rsplit('/',1)[-1],
+                              'href': href, 'size': size, 'etag': etag,
+                              'last_modified': lm, 'collection': coll})
+              return out, None
+
+          print('=== PROBE_A SHARES ===')
+          token_resources = {}
+          for token in TOKENS:
+              share = f'{HOST}/index.php/s/{token}'
+              rc, _, meta, err = curl(['-L', share], body=False)
+              print(f'PROBE_A token={token} share_get_rc={rc} {meta} stderr={err[:200]!r}')
+
+              modern = f'{HOST}/public.php/dav/files/{token}/{CNPJ_PATH}/'
+              rc, body, meta, err = curl([
+                  '-X','PROPFIND','-H','Depth: 1',
+                  '-H','X-Requested-With: XMLHttpRequest', modern
+              ])
+              resources, perr = parse_resources(body) if rc == 0 else ([], None)
+              periods = sorted({r['name'] for r in resources if r['collection'] and re.fullmatch(r'20\\d{2}-\\d{2}', r['name'])})
+              print(f'PROBE_A token={token} modern_rc={rc} {meta} periods={periods[-5:]} parse={perr} stderr={err[:200]!r}')
+
+              legacy = f'{HOST}/public.php/webdav/{CNPJ_PATH}/'
+              rc2, body2, meta2, err2 = curl([
+                  '-X','PROPFIND','-H','Depth: 1','-u',f'{token}:', legacy
+              ])
+              resources2, perr2 = parse_resources(body2) if rc2 == 0 else ([], None)
+              periods2 = sorted({r['name'] for r in resources2 if r['collection'] and re.fullmatch(r'20\\d{2}-\\d{2}', r['name'])})
+              print(f'PROBE_A token={token} legacy_rc={rc2} {meta2} periods={periods2[-5:]} parse={perr2} stderr={err2[:200]!r}')
+              token_resources[token] = (resources, periods)
+
+          print('=== PROBE_C ETAG STABILITY ===')
+          token = 'gn672Ad4CF8N6TK'
+          root_resources, periods = token_resources.get(token, ([], []))
+          if not periods:
+              raise SystemExit('PROBE_C cannot continue: gn share has no CNPJ periods')
+          period = periods[-1]
+          url = f'{HOST}/public.php/dav/files/{token}/{CNPJ_PATH}/{period}/'
+          snapshots=[]
+          wanted_re = re.compile(r'(Motivos\\.zip|Cnaes\\.zip|Naturezas\\.zip|Estabelecimentos0\\.zip)$', re.I)
+          for n in range(1,4):
+              rc, body, meta, err = curl([
+                  '-X','PROPFIND','-H','Depth: 1',
+                  '-H','X-Requested-With: XMLHttpRequest', url
+              ])
+              resources, perr = parse_resources(body)
+              selected = {
+                  r['name']: (r['size'], r['etag'], r['last_modified'])
+                  for r in resources if wanted_re.fullmatch(r['name'])
+              }
+              snapshots.append(selected)
+              print(f'PROBE_C pass={n} rc={rc} {meta} period={period} parse={perr} stderr={err[:200]!r}')
+              for name in sorted(selected):
+                  size, etag, lm = selected[name]
+                  print(f'PROBE_C pass={n} file={name} size={size} etag={etag!r} last_modified={lm!r}')
+              time.sleep(2)
+
+          names = sorted(set().union(*(s.keys() for s in snapshots)))
+          all_stable = True
+          for name in names:
+              vals=[s.get(name) for s in snapshots]
+              stable = vals[0] is not None and vals[0] == vals[1] == vals[2]
+              all_stable = all_stable and stable
+              print(f'PROBE_C_STABILITY file={name} stable={str(stable).lower()} values={vals}')
+          print(f'PROBE_C_STABILITY all_selected_stable={str(all_stable).lower()}')
+          PY"
+
+      - name: Cleanup SSH material
+        if: always()
+        shell: bash
+        run: rm -rf "$RUNNER_TEMP/receita-probe-ssh"
