@@ -636,24 +636,22 @@ def lifecycle_extract(session, release, payload, cache_dir):
 
     files = resource_map(release)
     cache_root = cache_period_root(cache_dir, release["period"])
-    reason_meta = files.get("Motivos.zip") or {}
-    reasons_zip = download_zip(
+    reasons_zip, _ = acquire_cached_zip(
         session,
-        urljoin(release["release_url"], "Motivos.zip"),
-        cache_root / "Motivos.zip",
-        reason_meta.get("size"),
+        release,
+        "Motivos.zip",
+        cache_root,
     )
     reason_map = load_reason_map(reasons_zip)
 
     found = {}
     scanned = []
     for name in release["establishment_files"]:
-        metadata = files.get(name) or {}
-        local = download_zip(
+        local, _ = acquire_cached_zip(
             session,
-            urljoin(release["release_url"], name),
-            cache_root / name,
-            metadata.get("size"),
+            release,
+            name,
+            cache_root,
         )
         with zipfile.ZipFile(str(local)) as archive:
             member = first_csv_member(archive)
@@ -751,17 +749,17 @@ def identity_extract(session, release, payload, cache_dir):
             raise WorkerError(f"Receita release missing {required}")
 
     cache_root = cache_period_root(cache_dir, release["period"])
-    cnae_zip = download_zip(
+    cnae_zip, _ = acquire_cached_zip(
         session,
-        urljoin(release["release_url"], "Cnaes.zip"),
-        cache_root / "Cnaes.zip",
-        files["Cnaes.zip"].get("size"),
+        release,
+        "Cnaes.zip",
+        cache_root,
     )
-    nature_zip = download_zip(
+    nature_zip, _ = acquire_cached_zip(
         session,
-        urljoin(release["release_url"], "Naturezas.zip"),
-        cache_root / "Naturezas.zip",
-        files["Naturezas.zip"].get("size"),
+        release,
+        "Naturezas.zip",
+        cache_root,
     )
     cnae_map = load_code_map(cnae_zip)
     nature_map = load_code_map(nature_zip)
@@ -770,11 +768,11 @@ def identity_extract(session, release, payload, cache_dir):
     legal_matches_by_base = {}
     company_files_scanned = []
     for name in companies:
-        local = download_zip(
+        local, _ = acquire_cached_zip(
             session,
-            urljoin(release["release_url"], name),
-            cache_root / name,
-            files[name].get("size"),
+            release,
+            name,
+            cache_root,
         )
         with zipfile.ZipFile(str(local)) as archive:
             member = first_csv_member(archive)
