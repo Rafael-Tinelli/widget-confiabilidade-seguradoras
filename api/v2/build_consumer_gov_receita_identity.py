@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from api.sources.receita_cnpj_bulk import discover_latest_release
+from api.sources.receita_cnpj_bulk import discover_latest_release, release_fingerprint
 from api.sources.receita_cnpj_identity import build_filtered_identity_snapshot
 from api.utils.identifiers import normalize_cnpj_v2
 from api.utils.name_cleaner import normalize_name_key
@@ -19,8 +19,8 @@ from api.v2.receita_remote_bridge import (
 )
 
 CONSUMER_IDENTITY_PATH = Path("data/derived/v2/consumer_gov_identity_experiment.json")
-CACHE_KEY_VERSION = "v2-consumer-receita-identity-2"
-LEGACY_CACHE_KEY_VERSIONS = frozenset({"v2-consumer-receita-identity-1"})
+CACHE_KEY_VERSION = "v2-consumer-receita-identity-3"
+LEGACY_CACHE_KEY_VERSIONS = frozenset({"v2-consumer-receita-identity-1", "v2-consumer-receita-identity-2"})
 TARGET_UNIVERSE_HASH_METHOD = "sorted_normalized_cnpjs_v1"
 
 
@@ -68,12 +68,14 @@ def unresolved_provider_hash(providers: list[str]) -> str:
 def _cache_key(
     *,
     reference_period: str,
+    release_fingerprint_value: str,
     universe_hash: str,
     provider_hash: str,
 ) -> dict[str, str]:
     return {
         "version": CACHE_KEY_VERSION,
         "reference_period": reference_period,
+        "release_fingerprint": release_fingerprint_value,
         "target_universe_hash": universe_hash,
         "target_universe_hash_method": TARGET_UNIVERSE_HASH_METHOD,
         "unresolved_provider_hash": provider_hash,
@@ -93,6 +95,7 @@ def _existing_cache_key(path: Path) -> dict[str, str] | None:
     return {
         "version": str(value.get("version") or ""),
         "reference_period": str(value.get("reference_period") or ""),
+        "release_fingerprint": str(value.get("release_fingerprint") or ""),
         "target_universe_hash": str(value.get("target_universe_hash") or ""),
         "target_universe_hash_method": str(
             value.get("target_universe_hash_method") or ""
@@ -138,8 +141,10 @@ def build_snapshot(
         if remote_bridge_enabled()
         else discover_latest_release()
     )
+    release_fp = release_fingerprint(release)
     expected_key = _cache_key(
         reference_period=release.period,
+        release_fingerprint_value=release_fp,
         universe_hash=universe_hash,
         provider_hash=provider_hash,
     )
