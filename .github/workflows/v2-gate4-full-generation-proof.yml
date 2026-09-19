@@ -25,6 +25,11 @@ jobs:
       SUSEP_LICENSED_VERIFY_SSL: "1"
       SUSEP_SPECIAL_VERIFY_SSL: "1"
       SUSEP_SANDBOX_VERIFY_SSL: "1"
+      V2_RECEITA_REMOTE_ENABLED: ${{ secrets.V2_HOSTGATOR_HOST != '' && secrets.V2_HOSTGATOR_USER != '' && secrets.V2_HOSTGATOR_SSH_KEY != '' && secrets.V2_HOSTGATOR_KNOWN_HOSTS != '' && '1' || '0' }}
+      V2_RECEITA_SSH_HOST: ${{ secrets.V2_HOSTGATOR_HOST }}
+      V2_RECEITA_SSH_USER: ${{ secrets.V2_HOSTGATOR_USER }}
+      V2_RECEITA_SSH_PORT: ${{ vars.V2_HOSTGATOR_SSH_PORT }}
+      V2_RECEITA_LOCAL_MIRROR_DIR: ${{ runner.temp }}/v2-receita-mirror
 
     steps:
       - name: Checkout exact source head
@@ -60,6 +65,193 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
           python -m pip install -r requirements-dev.txt
+
+      - name: Configure pinned SSH transport for Receita bridge
+        if: env.V2_RECEITA_REMOTE_ENABLED == '1'
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.V2_HOSTGATOR_SSH_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.V2_HOSTGATOR_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          : "${V2_RECEITA_SSH_HOST:?missing Receita bridge host}"
+          : "${V2_RECEITA_SSH_USER:?missing Receita bridge user}"
+          SSH_PORT=${V2_RECEITA_SSH_PORT:-22}
+          [[ "$V2_RECEITA_SSH_HOST" =~ ^[A-Za-z0-9.-]+$ ]]
+          [[ "$V2_RECEITA_SSH_USER" =~ ^[A-Za-z0-9._-]+$ ]]
+          [[ "$SSH_PORT" =~ ^[0-9]+$ ]]
+          (( SSH_PORT >= 1 && SSH_PORT <= 65535 ))
+
+          ssh_dir="$RUNNER_TEMP/v2-receita-ssh"
+          key_file="$ssh_dir/private_key"
+          known_hosts_file="$ssh_dir/known_hosts"
+          rm -rf "$ssh_dir"
+          umask 077
+          install -d -m 700 "$ssh_dir"
+          install -m 600 /dev/null "$key_file"
+          install -m 600 /dev/null "$known_hosts_file"
+          printf '%s\n' "$SSH_PRIVATE_KEY" | tr -d '\r' > "$key_file"
+          printf '%s\n' "$SSH_KNOWN_HOSTS" | tr -d '\r' > "$known_hosts_file"
+
+          ssh-keygen -y -P '' -f "$key_file" >/dev/null || {
+            echo "V2_HOSTGATOR_SSH_KEY is not a valid unencrypted private key" >&2
+            exit 1
+          }
+          ssh-keygen -l -f "$known_hosts_file" >/dev/null || {
+            echo "V2_HOSTGATOR_KNOWN_HOSTS has no valid host public key" >&2
+            exit 1
+          }
+          known_host_lookup="$V2_RECEITA_SSH_HOST"
+          if [[ "$SSH_PORT" != "22" ]]; then
+            known_host_lookup="[$V2_RECEITA_SSH_HOST]:$SSH_PORT"
+          fi
+          ssh-keygen -F "$known_host_lookup" -f "$known_hosts_file" >/dev/null || {
+            echo "V2_HOSTGATOR_KNOWN_HOSTS does not pin the Receita bridge host" >&2
+            exit 1
+          }
+
+          {
+            echo "V2_RECEITA_SSH_PORT=$SSH_PORT"
+            echo "V2_RECEITA_SSH_KEY_FILE=$key_file"
+            echo "V2_RECEITA_SSH_KNOWN_HOSTS_FILE=$known_hosts_file"
+          } >> "$GITHUB_ENV"
+
+      - name: Build current Receita manifest contract
+        if: env.V2_RECEITA_REMOTE_ENABLED == '1'
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          from api.v2.receita_remote_bridge import discover_release_remote
+
+          release = discover_release_remote()
+          metadata = {row["name"]: row for row in release.resource_metadata}
+          required = (
+              ["Motivos.zip", "Cnaes.zip", "Naturezas.zip"]
+              + [f"Empresas{i}.zip" for i in range(10)]
+              + [f"Estabelecimentos{i}.zip" for i in range(10)]
+          )
+          missing = [name for name in required if name not in metadata]
+          if missing:
+              raise SystemExit(f"Receita release manifest incomplete: {missing}")
+          payload = {
+              "period": release.period,
+              "resources": [metadata[name] for name in required],
+          }
+          Path("/tmp/receita-release-metadata.json").write_text(
+              json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+              encoding="utf-8",
+          )
+          print(json.dumps({
+              "reference_period": release.period,
+              "resource_count": len(required),
+          }, sort_keys=True))
+          PY
+
+      - name: Seal HostGator Receita cache against current manifest
+        if: env.V2_RECEITA_REMOTE_ENABLED == '1'
+        run: |
+          set -euo pipefail
+          ssh_opts=(
+            -T
+            -i "$V2_RECEITA_SSH_KEY_FILE"
+            -p "$V2_RECEITA_SSH_PORT"
+            -o BatchMode=yes
+            -o IdentitiesOnly=yes
+            -o StrictHostKeyChecking=yes
+            -o UserKnownHostsFile="$V2_RECEITA_SSH_KNOWN_HOSTS_FILE"
+            -o GlobalKnownHostsFile=/dev/null
+            -o UpdateHostKeys=no
+            -o ServerAliveInterval=30
+            -o ServerAliveCountMax=20
+          )
+          scp_opts=(
+            -q
+            -i "$V2_RECEITA_SSH_KEY_FILE"
+            -P "$V2_RECEITA_SSH_PORT"
+            -o BatchMode=yes
+            -o IdentitiesOnly=yes
+            -o StrictHostKeyChecking=yes
+            -o UserKnownHostsFile="$V2_RECEITA_SSH_KNOWN_HOSTS_FILE"
+            -o GlobalKnownHostsFile=/dev/null
+            -o UpdateHostKeys=no
+          )
+          remote_dir=".sanida-v2-receita-fullgen-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          ssh "${ssh_opts[@]}" "$V2_RECEITA_SSH_USER@$V2_RECEITA_SSH_HOST"             "umask 077; rm -rf -- '$remote_dir'; mkdir -p -- '$remote_dir'"
+          scp "${scp_opts[@]}" ops/hostgator/receita_cache_manifest.py             "$V2_RECEITA_SSH_USER@$V2_RECEITA_SSH_HOST:$remote_dir/receita_cache_manifest.py"
+          scp "${scp_opts[@]}" /tmp/receita-release-metadata.json             "$V2_RECEITA_SSH_USER@$V2_RECEITA_SSH_HOST:$remote_dir/release.json"
+          ssh "${ssh_opts[@]}" "$V2_RECEITA_SSH_USER@$V2_RECEITA_SSH_HOST"             "python3 '$remote_dir/receita_cache_manifest.py'                --metadata '$remote_dir/release.json'                --cache-root ~/.sanida-v2-receita-bridge/cache"
+          period="$(python -c 'import json; print(json.load(open("/tmp/receita-release-metadata.json"))["period"])')"
+          scp "${scp_opts[@]}"             "$V2_RECEITA_SSH_USER@$V2_RECEITA_SSH_HOST:.sanida-v2-receita-bridge/cache/$period/manifest.json"             /tmp/receita-cache-manifest.json
+          ssh "${ssh_opts[@]}" "$V2_RECEITA_SSH_USER@$V2_RECEITA_SSH_HOST"             "rm -rf -- '$remote_dir'"
+
+      - name: Materialize validated Receita mirror on GitHub runner
+        if: env.V2_RECEITA_REMOTE_ENABLED == '1'
+        run: |
+          set -euo pipefail
+          rm -rf "$V2_RECEITA_LOCAL_MIRROR_DIR"
+          mkdir -p "$V2_RECEITA_LOCAL_MIRROR_DIR"
+          python - <<'PY'
+          import json
+          import shutil
+          from pathlib import Path
+
+          manifest = json.loads(
+              Path("/tmp/receita-cache-manifest.json").read_text(encoding="utf-8")
+          )
+          required = sum(
+              int(row["local"]["size"])
+              for row in manifest["files"].values()
+          )
+          free = shutil.disk_usage(str(Path.cwd())).free
+          # Keep headroom for one canonical temporary partition plus build outputs.
+          if free < required + 4_000_000_000:
+              raise SystemExit(
+                  f"insufficient runner disk for Receita mirror: "
+                  f"required_with_headroom={required + 4_000_000_000} free={free}"
+              )
+          Path("/tmp/receita-file-list.txt").write_text(
+              "\n".join(sorted(manifest["files"])) + "\n",
+              encoding="utf-8",
+          )
+          print(f"Receita mirror compressed bytes={required}; runner free bytes={free}")
+          PY
+          period="$(python -c 'import json; print(json.load(open("/tmp/receita-cache-manifest.json"))["reference_period"])')"
+          while IFS= read -r name; do
+            scp               -q               -i "$V2_RECEITA_SSH_KEY_FILE"               -P "$V2_RECEITA_SSH_PORT"               -o BatchMode=yes               -o IdentitiesOnly=yes               -o StrictHostKeyChecking=yes               -o UserKnownHostsFile="$V2_RECEITA_SSH_KNOWN_HOSTS_FILE"               -o GlobalKnownHostsFile=/dev/null               -o UpdateHostKeys=no               "$V2_RECEITA_SSH_USER@$V2_RECEITA_SSH_HOST:.sanida-v2-receita-bridge/cache/$period/$name"               "$V2_RECEITA_LOCAL_MIRROR_DIR/$name"
+          done < /tmp/receita-file-list.txt
+
+      - name: Verify local Receita mirror byte-for-byte
+        if: env.V2_RECEITA_REMOTE_ENABLED == '1'
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib
+          import json
+          import zipfile
+          from pathlib import Path
+
+          root = Path(__import__("os").environ["V2_RECEITA_LOCAL_MIRROR_DIR"])
+          manifest = json.loads(
+              Path("/tmp/receita-cache-manifest.json").read_text(encoding="utf-8")
+          )
+          for name, expected in sorted(manifest["files"].items()):
+              path = root / name
+              if not path.is_file():
+                  raise SystemExit(f"Receita mirror missing {name}")
+              if path.stat().st_size != int(expected["local"]["size"]):
+                  raise SystemExit(f"Receita mirror size mismatch: {name}")
+              if not zipfile.is_zipfile(path):
+                  raise SystemExit(f"Receita mirror invalid ZIP: {name}")
+              digest = hashlib.sha256()
+              with path.open("rb") as handle:
+                  for chunk in iter(lambda: handle.read(8 * 1024 * 1024), b""):
+                      digest.update(chunk)
+              if digest.hexdigest() != expected["local"]["sha256"]:
+                  raise SystemExit(f"Receita mirror SHA-256 mismatch: {name}")
+          print(f"Receita local mirror verified: {len(manifest['files'])} files")
+          PY
 
       - name: Freeze generation timestamp
         run: |
@@ -144,6 +336,15 @@ jobs:
           set -euo pipefail
           python -m api.v2.gate4_pipeline --run-all > /tmp/gate4-full.log
           tail -n 80 /tmp/gate4-full.log
+
+      - name: Remove ephemeral Receita transport material
+        if: always() && env.V2_RECEITA_REMOTE_ENABLED == '1'
+        run: |
+          rm -rf "$RUNNER_TEMP/v2-receita-ssh"
+          rm -rf "$V2_RECEITA_LOCAL_MIRROR_DIR"
+          rm -f /tmp/receita-release-metadata.json
+          rm -f /tmp/receita-cache-manifest.json
+          rm -f /tmp/receita-file-list.txt
 
       - name: Validate one-generation lineage and methodological boundaries
         run: |
