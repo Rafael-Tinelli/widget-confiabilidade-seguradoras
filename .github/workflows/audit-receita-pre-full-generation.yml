@@ -14,7 +14,6 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     env:
-      V2_RECEITA_REMOTE_ENABLED: "1"
       V2_RECEITA_SSH_HOST: ${{ secrets.V2_HOSTGATOR_HOST }}
       V2_RECEITA_SSH_USER: ${{ secrets.V2_HOSTGATOR_USER }}
       V2_RECEITA_SSH_PORT: ${{ vars.V2_HOSTGATOR_SSH_PORT }}
@@ -99,6 +98,8 @@ jobs:
           } >> "$GITHUB_ENV"
 
       - name: Discover official Receita release and fingerprints
+        env:
+          V2_RECEITA_REMOTE_ENABLED: "1"
         shell: bash
         run: |
           set -euo pipefail
