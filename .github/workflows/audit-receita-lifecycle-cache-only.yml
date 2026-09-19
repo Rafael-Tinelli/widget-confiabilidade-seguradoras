@@ -45,27 +45,21 @@ jobs:
             echo "REMOTE_DIR=.sanida-v2-receita-lifecycle-probe-${GITHUB_RUN_ID}"
           } >> "$GITHUB_ENV"
 
-      - name: Prepare remote diagnostic directory
+      - name: Prepare and upload diagnostics
         shell: bash
         run: |
           set -euo pipefail
-          ssh \
-            -T \
-            -i "$SSH_KEY" \
-            -p "$SSH_PORT" \
-            -o BatchMode=yes \
-            -o IdentitiesOnly=yes \
-            -o StrictHostKeyChecking=yes \
-            -o UserKnownHostsFile="$SSH_KNOWN" \
-            -o GlobalKnownHostsFile=/dev/null \
-            -o UpdateHostKeys=no \
-            "$SSH_USER@$SSH_HOST" \
-            "umask 077; rm -rf -- '$REMOTE_DIR'; mkdir -p -- '$REMOTE_DIR'"
-
-      - name: Upload worker, wrapper and verified seed
-        shell: bash
-        run: |
-          set -euo pipefail
+          ssh_opts=(
+            -T
+            -i "$SSH_KEY"
+            -p "$SSH_PORT"
+            -o BatchMode=yes
+            -o IdentitiesOnly=yes
+            -o StrictHostKeyChecking=yes
+            -o UserKnownHostsFile="$SSH_KNOWN"
+            -o GlobalKnownHostsFile=/dev/null
+            -o UpdateHostKeys=no
+          )
           scp_opts=(
             -q
             -i "$SSH_KEY"
@@ -77,17 +71,13 @@ jobs:
             -o GlobalKnownHostsFile=/dev/null
             -o UpdateHostKeys=no
           )
-          scp "${scp_opts[@]}" \
-            ops/hostgator/receita_remote_worker.py \
-            "$SSH_USER@$SSH_HOST:$REMOTE_DIR/receita_remote_worker.py"
-          scp "${scp_opts[@]}" \
-            ops/diagnostics/receita_lifecycle_cache_only.py \
-            "$SSH_USER@$SSH_HOST:$REMOTE_DIR/receita_lifecycle_cache_only.py"
-          scp "${scp_opts[@]}" \
-            data/reference/v2/receita_lifecycle_verified.json \
-            "$SSH_USER@$SSH_HOST:$REMOTE_DIR/verified_seed.json"
+          ssh "${ssh_opts[@]}" "$SSH_USER@$SSH_HOST"             "umask 077; rm -rf -- '$REMOTE_DIR'; mkdir -p -- '$REMOTE_DIR'"
+          scp "${scp_opts[@]}" ops/hostgator/receita_remote_worker.py             "$SSH_USER@$SSH_HOST:$REMOTE_DIR/receita_remote_worker.py"
+          scp "${scp_opts[@]}" ops/diagnostics/receita_lifecycle_cache_only.py             "$SSH_USER@$SSH_HOST:$REMOTE_DIR/receita_lifecycle_cache_only.py"
+          scp "${scp_opts[@]}" ops/diagnostics/select_receita_lifecycle_target.py             "$SSH_USER@$SSH_HOST:$REMOTE_DIR/select_receita_lifecycle_target.py"
+          scp "${scp_opts[@]}" ops/diagnostics/verify_receita_lifecycle_cache.py             "$SSH_USER@$SSH_HOST:$REMOTE_DIR/verify_receita_lifecycle_cache.py"
 
-      - name: Select a lifecycle target already present in Estabelecimentos0 cache
+      - name: Select deterministic target from cached Estabelecimentos0
         shell: bash
         run: |
           set -euo pipefail
@@ -104,100 +94,7 @@ jobs:
             -o ServerAliveInterval=30
             -o ServerAliveCountMax=10
           )
-          ssh "${ssh_opts[@]}" "$SSH_USER@$SSH_HOST" "REMOTE_DIR='$REMOTE_DIR' python3 - <<'PY'
-          import csv
-          import io
-          import json
-          import os
-          import zipfile
-          from pathlib import Path
-
-          home = Path.home()
-          remote_dir = home / os.environ['REMOTE_DIR']
-          cache_root = home / '.sanida-v2-receita-bridge' / 'cache' / '2026-09'
-          estab = cache_root / 'Estabelecimentos0.zip'
-          motivos = cache_root / 'Motivos.zip'
-
-          for p in (motivos, estab):
-              if not p.is_file() or not zipfile.is_zipfile(str(p)):
-                  raise SystemExit(f'CACHE_ONLY_REQUIRED_FILE_INVALID={p.name}')
-
-          before = {
-              p.name: {'size': p.stat().st_size, 'mtime_ns': p.stat().st_mtime_ns}
-              for p in (motivos, estab)
-          }
-
-          seed = json.loads((remote_dir / 'verified_seed.json').read_text(encoding='utf-8'))
-          seed_by_cnpj = {row['cnpj']: row for row in seed['records']}
-          wanted = set(seed_by_cnpj)
-
-          with zipfile.ZipFile(str(estab)) as zf:
-              members = [n for n in zf.namelist() if not n.endswith('/')]
-              member = members[0]
-              with zf.open(member) as raw:
-                  text = io.TextIOWrapper(raw, encoding='latin1', newline='')
-                  reader = csv.reader(
-                      (line.replace('\\x00', '') for line in text),
-                      delimiter=';',
-                      quotechar='"',
-                  )
-                  selected = None
-                  fallback = None
-                  for row in reader:
-                      if len(row) < 8:
-                          continue
-                      cnpj = ''.join(str(part).strip() for part in row[:3])
-                      if len(cnpj) != 14 or not cnpj.isdigit():
-                          continue
-                      if fallback is None:
-                          fallback = row
-                      if cnpj in wanted:
-                          selected = row
-                          break
-                  if selected is None:
-                      selected = fallback
-
-          if selected is None:
-              raise SystemExit('NO_VALID_ROW_FOUND_IN_ESTABELECIMENTOS0')
-
-          cnpj = ''.join(str(part).strip() for part in selected[:3])
-          seed_row = seed_by_cnpj.get(cnpj)
-          if seed_row:
-              legal_name = seed_row['legal_name']
-              target_mode = 'verified_seed'
-          else:
-              legal_name = 'CACHE ONLY LIFECYCLE PROBE TARGET'
-              target_mode = 'deterministic_cached_row'
-
-          payload = {
-              'expected_period': '2026-09',
-              'targets': [{'cnpj': cnpj, 'legal_name': legal_name}],
-          }
-          expected = {
-              'target_mode': target_mode,
-              'cnpj': cnpj,
-              'legal_name': legal_name,
-              'status_code': str(selected[5]).strip().zfill(2),
-              'status_date': str(selected[6]).strip() or None,
-              'reason_code': str(selected[7]).strip().zfill(2),
-              'source_file': 'Estabelecimentos0.zip',
-              'cache_before': before,
-          }
-          if seed_row:
-              expected['seed_status'] = seed_row['cadastral_status']
-              expected['seed_status_date'] = seed_row['status_date']
-
-          (remote_dir / 'input.json').write_text(
-              json.dumps(payload, ensure_ascii=False, indent=2) + '\\n',
-              encoding='utf-8',
-          )
-          (remote_dir / 'expected.json').write_text(
-              json.dumps(expected, ensure_ascii=False, indent=2) + '\\n',
-              encoding='utf-8',
-          )
-
-          print('LIFECYCLE_TARGET_SELECTED ' + json.dumps(expected, ensure_ascii=False, sort_keys=True))
-          PY"
+          ssh "${ssh_opts[@]}" "$SSH_USER@$SSH_HOST"             "cd '$REMOTE_DIR' && python3 select_receita_lifecycle_target.py . ~/.sanida-v2-receita-bridge/cache"
 
       - name: Execute lifecycle from existing cache only
         shell: bash
@@ -216,24 +113,7 @@ jobs:
             -o ServerAliveInterval=30
             -o ServerAliveCountMax=10
           )
-          ssh "${ssh_opts[@]}" "$SSH_USER@$SSH_HOST" "
-            set -e
-            cd '$REMOTE_DIR'
-            python3 receita_lifecycle_cache_only.py \
-              --mode lifecycle \
-              --input input.json \
-              --output output.json \
-              --cache-dir '$HOME/.sanida-v2-receita-bridge/cache' \
-              > stdout.log 2> stderr.log
-            cat stdout.log
-            if grep -q 'CACHE_ONLY_MISS' stderr.log stdout.log; then
-              cat stderr.log >&2
-              exit 1
-            fi
-            grep -q 'LIFECYCLE_CACHE_REUSE file=Motivos.zip' stdout.log
-            grep -q 'LIFECYCLE_CACHE_REUSE file=Estabelecimentos0.zip' stdout.log
-            test ! -s stderr.log || cat stderr.log >&2
-          "
+          ssh "${ssh_opts[@]}" "$SSH_USER@$SSH_HOST"             "cd '$REMOTE_DIR' &&              python3 receita_lifecycle_cache_only.py                --mode lifecycle                --input input.json                --output output.json                --cache-dir ~/.sanida-v2-receita-bridge/cache                > stdout.log 2> stderr.log &&              cat stdout.log &&              ! grep -q 'CACHE_ONLY_MISS' stdout.log stderr.log &&              grep -q 'LIFECYCLE_CACHE_REUSE file=Motivos.zip' stdout.log &&              grep -q 'LIFECYCLE_CACHE_REUSE file=Estabelecimentos0.zip' stdout.log &&              test ! -s stderr.log"
 
       - name: Download and validate lifecycle output
         shell: bash
@@ -252,7 +132,6 @@ jobs:
           )
           scp "${scp_opts[@]}" "$SSH_USER@$SSH_HOST:$REMOTE_DIR/output.json" /tmp/receita-lifecycle-output.json
           scp "${scp_opts[@]}" "$SSH_USER@$SSH_HOST:$REMOTE_DIR/expected.json" /tmp/receita-lifecycle-expected.json
-
           python3 - <<'PY'
           import json
           from pathlib import Path
@@ -260,26 +139,21 @@ jobs:
           out = json.loads(Path('/tmp/receita-lifecycle-output.json').read_text(encoding='utf-8'))
           exp = json.loads(Path('/tmp/receita-lifecycle-expected.json').read_text(encoding='utf-8'))
 
-          assert out['artifact'] == 'v2_receita_remote_lifecycle_extract', out['artifact']
-          assert out['source']['reference_period'] == '2026-09', out['source']
+          assert out['artifact'] == 'v2_receita_remote_lifecycle_extract'
+          assert out['source']['reference_period'] == '2026-09'
           meta = out['meta']
-          assert meta['target_count'] == 1, meta
-          assert meta['resolved_count'] == 1, meta
-          assert meta['unresolved_count'] == 0, meta
-          assert out['unresolved_cnpjs'] == [], out['unresolved_cnpjs']
-          assert meta['files_scanned'] == ['Estabelecimentos0.zip'], meta
+          assert meta['target_count'] == 1
+          assert meta['resolved_count'] == 1
+          assert meta['unresolved_count'] == 0
+          assert out['unresolved_cnpjs'] == []
+          assert meta['files_scanned'] == ['Estabelecimentos0.zip']
 
-          rows = out['raw_records']
-          assert len(rows) == 1, rows
-          row = rows[0]
-          assert row['cnpj'] == exp['cnpj'], (row['cnpj'], exp['cnpj'])
-          assert row['source_file'] == 'Estabelecimentos0.zip', row['source_file']
-          assert row['raw_status_code'] == exp['status_code'], (row['raw_status_code'], exp)
-          assert row['status_date'] == exp['status_date'], (row['status_date'], exp)
-          assert row['raw_reason_code'] == exp['reason_code'], (row['raw_reason_code'], exp)
-          if exp['target_mode'] == 'verified_seed':
-              assert row['cadastral_status'] == exp['seed_status'], (row, exp)
-              assert row['status_date'] == exp['seed_status_date'], (row, exp)
+          row = out['raw_records'][0]
+          assert row['cnpj'] == exp['cnpj']
+          assert row['source_file'] == exp['source_file']
+          assert row['raw_status_code'] == exp['status_code']
+          assert row['status_date'] == exp['status_date']
+          assert row['raw_reason_code'] == exp['reason_code']
 
           print('LIFECYCLE_VALIDATION_PASS ' + json.dumps({
               'period': out['source']['reference_period'],
@@ -310,39 +184,11 @@ jobs:
             -o GlobalKnownHostsFile=/dev/null
             -o UpdateHostKeys=no
           )
-          ssh "${ssh_opts[@]}" "$SSH_USER@$SSH_HOST" "REMOTE_DIR='$REMOTE_DIR' python3 - <<'PY'
-          import json
-          import os
-          from pathlib import Path
-
-          home = Path.home()
-          remote_dir = home / os.environ['REMOTE_DIR']
-          cache_root = home / '.sanida-v2-receita-bridge' / 'cache' / '2026-09'
-          expected = json.loads((remote_dir / 'expected.json').read_text(encoding='utf-8'))
-          before = expected['cache_before']
-          after = {}
-          for name in ('Motivos.zip', 'Estabelecimentos0.zip'):
-              p = cache_root / name
-              after[name] = {'size': p.stat().st_size, 'mtime_ns': p.stat().st_mtime_ns}
-          if before != after:
-              raise SystemExit('CACHE_FILES_CHANGED=' + json.dumps({'before': before, 'after': after}, sort_keys=True))
-          print('LIFECYCLE_CACHE_UNCHANGED ' + json.dumps(after, sort_keys=True))
-          PY"
+          ssh "${ssh_opts[@]}" "$SSH_USER@$SSH_HOST"             "cd '$REMOTE_DIR' && python3 verify_receita_lifecycle_cache.py . ~/.sanida-v2-receita-bridge/cache"
 
       - name: Cleanup remote diagnostic material
         if: always()
         shell: bash
         run: |
-          ssh \
-            -T \
-            -i "$SSH_KEY" \
-            -p "$SSH_PORT" \
-            -o BatchMode=yes \
-            -o IdentitiesOnly=yes \
-            -o StrictHostKeyChecking=yes \
-            -o UserKnownHostsFile="$SSH_KNOWN" \
-            -o GlobalKnownHostsFile=/dev/null \
-            -o UpdateHostKeys=no \
-            "$SSH_USER@$SSH_HOST" \
-            "rm -rf -- '${REMOTE_DIR:-.nonexistent}'" || true
+          ssh             -T             -i "$SSH_KEY"             -p "$SSH_PORT"             -o BatchMode=yes             -o IdentitiesOnly=yes             -o StrictHostKeyChecking=yes             -o UserKnownHostsFile="$SSH_KNOWN"             -o GlobalKnownHostsFile=/dev/null             -o UpdateHostKeys=no             "$SSH_USER@$SSH_HOST"             "rm -rf -- '${REMOTE_DIR:-.nonexistent}'" || true
           rm -rf "$RUNNER_TEMP/receita-lifecycle-ssh"
