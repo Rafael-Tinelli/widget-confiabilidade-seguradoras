@@ -3,9 +3,11 @@ from __future__ import annotations
 import requests
 
 from api.sources.receita_cnpj_bulk import (
+    ReceitaOpenDataRelease,
     _configure_official_session,
     _discover_public_share,
     _propfind,
+    release_fingerprint,
 )
 
 
@@ -106,3 +108,76 @@ def test_receita_public_share_is_discovered_from_current_root_redirect() -> None
     assert dav_root.endswith(
         "/public.php/dav/files/currentShareToken/Dados/Cadastros/CNPJ/"
     )
+
+
+def _fingerprint_release(etag: str, size: int = 1180) -> ReceitaOpenDataRelease:
+    return ReceitaOpenDataRelease(
+        base_url="https://arquivos.receitafederal.gov.br/index.php/s/current",
+        release_url=(
+            "https://arquivos.receitafederal.gov.br/public.php/dav/files/current/"
+            "Dados/Cadastros/CNPJ/2026-09/"
+        ),
+        period="2026-09",
+        establishment_files=("Estabelecimentos0.zip",),
+        resource_metadata=(
+            {
+                "name": "Motivos.zip",
+                "size": size,
+                "last_modified": "Mon, 14 Sep 2026 15:06:40 GMT",
+                "etag": etag,
+            },
+            {
+                "name": "Estabelecimentos0.zip",
+                "size": 2243389254,
+                "last_modified": "Mon, 14 Sep 2026 15:02:59 GMT",
+                "etag": '"d4efe5ace49c8948c4946b5978a62559"',
+            },
+            {
+                "name": "Empresas0.zip",
+                "size": 563070974,
+                "last_modified": "Mon, 14 Sep 2026 15:03:00 GMT",
+                "etag": '"empresas-etag"',
+            },
+            {
+                "name": "Cnaes.zip",
+                "size": 22078,
+                "last_modified": "Mon, 14 Sep 2026 15:03:01 GMT",
+                "etag": '"cnaes-etag"',
+            },
+            {
+                "name": "Naturezas.zip",
+                "size": 1563,
+                "last_modified": "Mon, 14 Sep 2026 15:03:02 GMT",
+                "etag": '"naturezas-etag"',
+            },
+        ),
+    )
+
+
+def test_receita_release_fingerprint_detects_same_period_etag_change() -> None:
+    first = release_fingerprint(
+        _fingerprint_release('"61c9b2d879ce0e232d4e2cb589d9abba"'),
+        purpose="lifecycle",
+    )
+    changed = release_fingerprint(
+        _fingerprint_release('"changed-etag-same-period"'),
+        purpose="lifecycle",
+    )
+
+    assert first != changed
+
+
+def test_receita_identity_fingerprint_includes_company_and_dictionaries() -> None:
+    release = _fingerprint_release('"motivos"')
+    first = release_fingerprint(release, purpose="identity")
+    metadata = list(release.resource_metadata)
+    metadata[2] = {**metadata[2], "etag": '"changed-company-etag"'}
+    changed_release = ReceitaOpenDataRelease(
+        base_url=release.base_url,
+        release_url=release.release_url,
+        period=release.period,
+        establishment_files=release.establishment_files,
+        resource_metadata=tuple(metadata),
+    )
+
+    assert first != release_fingerprint(changed_release, purpose="identity")
