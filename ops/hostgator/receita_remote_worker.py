@@ -11,6 +11,7 @@ HostGator is transport/compute only. Receita Federal remains the data authority.
 import argparse
 import csv
 import fcntl
+import hashlib
 import io
 import json
 import os
@@ -37,6 +38,7 @@ PERIOD_RE = re.compile(r"20\d{2}-\d{2}$")
 ESTABLISHMENT_RE = re.compile(r"Estabelecimentos\d+\.zip$", re.IGNORECASE)
 COMPANY_RE = re.compile(r"Empresas\d+\.zip$", re.IGNORECASE)
 TIMEOUT = (15, 180)
+CACHE_MANIFEST_VERSION = "receita-cnpj-remote-cache-v1"
 
 STATUS_CODE_TO_LABEL = {
     "01": "NULA",
