@@ -110,6 +110,7 @@ jobs:
           set -euo pipefail
           python - <<'PY'
           import json
+          import time
 
           from api.v2.receita_remote_bridge import (
               _config_from_env,
@@ -166,38 +167,23 @@ jobs:
                   f"HostGator free space too low: {available_kb} KB < {minimum_kb} KB"
               )
 
-          detach_probe = _run_transport(
-              [
-                  *ssh,
-                  (
-                      "python3 -c 'import subprocess; "
-                      "p=subprocess.Popen([\"sleep\",\"40\"], "
-                      "stdin=subprocess.DEVNULL, "
-                      "stdout=subprocess.DEVNULL, "
-                      "stderr=subprocess.DEVNULL, "
-                      "start_new_session=True, close_fds=True); "
-                      "print(p.pid)'"
-                  ),
-              ],
-              timeout=10,
+          long_channel_started = time.monotonic()
+          long_channel = _run_transport(
+              [*ssh, "sleep 40; printf 'LONG_CHANNEL_OK\\n'"],
+              timeout=60,
               attempts=3,
           ).stdout.strip()
-          detached_pid = int(detach_probe)
-          detached_check = _run_transport(
-              [
-                  *ssh,
-                  (
-                      f"kill -0 {detached_pid} 2>/dev/null && "
-                      f"kill {detached_pid} 2>/dev/null || true; "
-                      "printf 'DETACHED_OK\\n'"
-                  ),
-              ],
-              timeout=10,
-              attempts=3,
-          ).stdout.strip()
-          if detached_check != "DETACHED_OK":
+          long_channel_seconds = round(
+              time.monotonic() - long_channel_started,
+              3,
+          )
+          if long_channel != "LONG_CHANNEL_OK":
               raise SystemExit(
-                  f"close_fds detach probe failed: {detached_check!r}"
+                  f"long SSH channel probe failed: {long_channel!r}"
+              )
+          if long_channel_seconds < 35:
+              raise SystemExit(
+                  f"long SSH channel returned too early: {long_channel_seconds}s"
               )
 
 
@@ -210,7 +196,7 @@ jobs:
                       "remote_runtime": runtime,
                       "available_kb": available_kb,
                       "minimum_kb": minimum_kb,
-                      "detach_probe_pid": detached_pid,
+                      "long_channel_seconds": long_channel_seconds,
                       "status": "pass",
                   },
                   sort_keys=True,
