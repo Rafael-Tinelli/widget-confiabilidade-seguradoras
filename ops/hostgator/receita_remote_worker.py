@@ -797,6 +797,8 @@ def identity_extract(session, release, payload, cache_dir):
             urljoin(release["release_url"], name),
             cache_root / name,
             files[name].get("size"),
+            reference_period=release["period"],
+            resource_metadata=files[name],
         )
         with zipfile.ZipFile(str(local)) as archive:
             member = first_csv_member(archive)
@@ -854,7 +856,11 @@ def identity_extract(session, release, payload, cache_dir):
 
 
 def discover_payload(release):
-    names = ["Motivos.zip"] + release["establishment_files"]
+    names = [
+        item["name"]
+        for item in release["resources"]
+        if not item.get("is_collection")
+    ]
     return {
         "artifact": "v2_receita_remote_release",
         "base_url": release["base_url"],
