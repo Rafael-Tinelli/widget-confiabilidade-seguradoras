@@ -257,6 +257,124 @@ def _operation_id(mode: str) -> str:
     return value[:160]
 
 
+def _worker_remote_path(config: ReceitaRemoteConfig) -> str:
+    digest = hashlib.sha256(WORKER_PATH.read_bytes()).hexdigest()[:20]
+    return f"{config.remote_root}/workers/receita_remote_worker-{digest}.py"
+
+
+def _upload_text_atomic(
+    ssh: list[str],
+    *,
+    remote_path: str,
+    payload: str,
+) -> None:
+    temp_path = f"{remote_path}.part-{os.getpid()}"
+    command = (
+        "umask 077; "
+        f"cat > {shlex.quote(temp_path)} && "
+        f"chmod 600 {shlex.quote(temp_path)} && "
+        f"mv -f -- {shlex.quote(temp_path)} {shlex.quote(remote_path)}"
+    )
+    _run_transport(
+        [*ssh, command],
+        timeout=120,
+        input_text=payload,
+    )
+
+
+def _remote_file_exists(
+    ssh: list[str],
+    remote_path: str,
+) -> bool:
+    result = _run_transport(
+        [
+            *ssh,
+            (
+                f"if test -s {shlex.quote(remote_path)}; "
+                "then printf '1\\n'; else printf '0\\n'; fi"
+            ),
+        ],
+        timeout=60,
+    )
+    return result.stdout.strip().splitlines()[-1:] == ["1"]
+
+
+def _ensure_remote_worker(
+    ssh: list[str],
+    *,
+    remote_worker: str,
+) -> None:
+    if _remote_file_exists(ssh, remote_worker):
+        return
+    _upload_text_atomic(
+        ssh,
+        remote_path=remote_worker,
+        payload=WORKER_PATH.read_text(encoding="utf-8"),
+    )
+    if not _remote_file_exists(ssh, remote_worker):
+        raise ReceitaRemoteBridgeError("Receita remote worker upload did not persist")
+
+
+def _start_remote_worker(
+    ssh: list[str],
+    *,
+    remote_command: str,
+    remote_start: str,
+    remote_exit: str,
+) -> None:
+    guarded_command = (
+        f"if test -f {shlex.quote(remote_start)} "
+        f"|| test -f {shlex.quote(remote_exit)}; then "
+        "printf 'ALREADY_STARTED\\n'; "
+        f"else {remote_command}; fi"
+    )
+    last_error: ReceitaRemoteBridgeError | None = None
+    for attempt in range(1, 4):
+        try:
+            _run(
+                [*ssh, guarded_command],
+                timeout=120,
+            )
+            return
+        except ReceitaRemoteBridgeError as exc:
+            last_error = exc
+            if not _is_transient_transport_error(exc):
+                raise
+
+            # The channel can disappear after the remote Python process has
+            # accepted the start request. The worker persists a start marker
+            # before daemon detachment, making retry idempotent.
+            time.sleep(_backoff_seconds(attempt))
+            try:
+                marker = _run_transport(
+                    [
+                        *ssh,
+                        (
+                            f"if test -f {shlex.quote(remote_start)} "
+                            f"|| test -f {shlex.quote(remote_exit)}; then "
+                            "printf '1\\n'; else printf '0\\n'; fi"
+                        ),
+                    ],
+                    timeout=60,
+                    attempts=3,
+                )
+                if marker.stdout.strip().splitlines()[-1:] == ["1"]:
+                    print(
+                        "RECEITA_SSH_RECOVERED_AFTER_START_CHANNEL_LOSS "
+                        + json.dumps(
+                            {"attempt": attempt},
+                            sort_keys=True,
+                        ),
+                        flush=True,
+                    )
+                    return
+            except ReceitaRemoteBridgeError:
+                pass
+
+    assert last_error is not None
+    raise last_error
+
+
 def _remote_call(mode: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
     if not remote_bridge_enabled():
         raise ReceitaRemoteBridgeError("Receita remote bridge is not enabled")
@@ -267,145 +385,164 @@ def _remote_call(mode: str, payload: dict[str, Any] | None = None) -> dict[str, 
     operation = _operation_id(mode)
     run_dir = f"{config.remote_root}/runs/{operation}"
     cache_dir = f"{config.remote_root}/cache"
-    remote_worker = f"{run_dir}/worker.py"
+    workers_dir = f"{config.remote_root}/workers"
+    remote_worker = _worker_remote_path(config)
     remote_input = f"{run_dir}/input.json"
     remote_output = f"{run_dir}/output.json"
-    remote = f"{config.user}@{config.host}"
+    remote_exit = f"{run_dir}/exit_code"
+    remote_start = f"{run_dir}/started"
+    remote_stdout = f"{run_dir}/stdout.log"
+    remote_stderr = f"{run_dir}/stderr.log"
 
-    ssh = _ssh_base(config)
-    scp = _scp_base(config)
+    control_path = _control_path(config)
+    ssh = _ssh_base(config, control_path=control_path)
 
     mkdir_command = (
-        f"umask 077; mkdir -p -- {shlex.quote(run_dir)} {shlex.quote(cache_dir)}; "
-        f"rm -f -- {shlex.quote(remote_output)} {shlex.quote(remote_input)}"
+        "umask 077; "
+        f"mkdir -p -- {shlex.quote(run_dir)} {shlex.quote(cache_dir)} "
+        f"{shlex.quote(workers_dir)}; "
+        f"rm -f -- {shlex.quote(remote_output)} {shlex.quote(remote_input)} "
+        f"{shlex.quote(remote_exit)} {shlex.quote(remote_start)} "
+        f"{shlex.quote(remote_stdout)} {shlex.quote(remote_stderr)}"
     )
-    _run([*ssh, mkdir_command], timeout=120)
+    _run_transport([*ssh, mkdir_command], timeout=120)
+    _ensure_remote_worker(ssh, remote_worker=remote_worker)
 
     try:
-        _run([*scp, str(WORKER_PATH), f"{remote}:{remote_worker}"], timeout=120)
-        with tempfile.TemporaryDirectory(prefix="v2-receita-bridge-") as temp_dir:
-            root = Path(temp_dir)
-            if payload is not None:
-                input_path = root / "input.json"
-                input_path.write_text(
-                    json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n",
-                    encoding="utf-8",
+        if payload is not None:
+            _upload_text_atomic(
+                ssh,
+                remote_path=remote_input,
+                payload=json.dumps(
+                    payload,
+                    ensure_ascii=False,
+                    sort_keys=True,
                 )
-                _run(
-                    [*scp, str(input_path), f"{remote}:{remote_input}"],
-                    timeout=120,
-                )
-
-            remote_args = [
-                "python3",
-                remote_worker,
-                "--mode",
-                mode,
-                "--output",
-                remote_output,
-                "--cache-dir",
-                cache_dir,
-            ]
-            if payload is not None:
-                remote_args.extend(["--input", remote_input])
-
-            remote_exit = f"{run_dir}/exit_code"
-            remote_stdout = f"{run_dir}/stdout.log"
-            remote_stderr = f"{run_dir}/stderr.log"
-            remote_args.extend(
-                [
-                    "--daemonize",
-                    "--exit-file",
-                    remote_exit,
-                    "--stdout-log",
-                    remote_stdout,
-                    "--stderr-log",
-                    remote_stderr,
-                ]
+                + "\n",
             )
-            remote_command = " ".join(shlex.quote(part) for part in remote_args)
-            _run([*ssh, remote_command], timeout=120)
 
-            deadline_seconds = 18_000
-            poll_interval_seconds = 20
-            waited = 0
-            exit_code: int | None = None
-            consecutive_probe_failures = 0
-            while waited <= deadline_seconds:
-                try:
-                    probe = _run(
-                        [
-                            *ssh,
-                            (
-                                f"if test -f {shlex.quote(remote_exit)}; then "
-                                f"cat {shlex.quote(remote_exit)}; "
-                                "else printf 'RUNNING\\n'; fi"
-                            ),
-                        ],
-                        timeout=60,
-                    )
-                    consecutive_probe_failures = 0
-                except ReceitaRemoteBridgeError:
-                    consecutive_probe_failures += 1
-                    if consecutive_probe_failures >= 5:
-                        raise
-                    time.sleep(poll_interval_seconds)
-                    waited += poll_interval_seconds
-                    continue
+        remote_args = [
+            "python3",
+            remote_worker,
+            "--mode",
+            mode,
+            "--output",
+            remote_output,
+            "--cache-dir",
+            cache_dir,
+        ]
+        if payload is not None:
+            remote_args.extend(["--input", remote_input])
+        remote_args.extend(
+            [
+                "--daemonize",
+                "--exit-file",
+                remote_exit,
+                "--start-file",
+                remote_start,
+                "--stdout-log",
+                remote_stdout,
+                "--stderr-log",
+                remote_stderr,
+            ]
+        )
+        remote_command = " ".join(shlex.quote(part) for part in remote_args)
+        _start_remote_worker(
+            ssh,
+            remote_command=remote_command,
+            remote_start=remote_start,
+            remote_exit=remote_exit,
+        )
 
-                status = probe.stdout.strip()
-                if status == "RUNNING" or not status:
-                    time.sleep(poll_interval_seconds)
-                    waited += poll_interval_seconds
-                    continue
-                try:
-                    exit_code = int(status.splitlines()[-1])
-                except ValueError as exc:
-                    raise ReceitaRemoteBridgeError(
-                        f"invalid Receita remote worker status: {status!r}"
-                    ) from exc
-                break
-
-            if exit_code is None:
-                raise ReceitaRemoteBridgeError(
-                    "Receita remote worker exceeded the 18000s bridge deadline"
-                )
-            if exit_code != 0:
-                detail = _run(
+        deadline = time.monotonic() + _REMOTE_DEADLINE_SECONDS
+        exit_code: int | None = None
+        consecutive_probe_failures = 0
+        while time.monotonic() <= deadline:
+            try:
+                probe = _run_transport(
                     [
                         *ssh,
                         (
-                            f"tail -c 6000 {shlex.quote(remote_stderr)} "
-                            "2>/dev/null || true"
+                            f"if test -f {shlex.quote(remote_exit)}; then "
+                            f"cat {shlex.quote(remote_exit)}; "
+                            "else printf 'RUNNING\\n'; fi"
                         ),
                     ],
-                    timeout=120,
-                    check=False,
-                ).stdout.strip()
-                raise ReceitaRemoteBridgeError(
-                    "Receita remote worker failed"
-                    + (f": {detail}" if detail else f" with exit={exit_code}")
+                    timeout=60,
+                    attempts=3,
                 )
+                consecutive_probe_failures = 0
+            except ReceitaRemoteBridgeError:
+                consecutive_probe_failures += 1
+                if consecutive_probe_failures >= 5:
+                    raise
+                time.sleep(_POLL_INTERVAL_SECONDS)
+                continue
 
-            output_path = root / "output.json"
-            _run(
-                [*scp, f"{remote}:{remote_output}", str(output_path)],
-                timeout=300,
-            )
+            status = probe.stdout.strip()
+            if status == "RUNNING" or not status:
+                time.sleep(_POLL_INTERVAL_SECONDS)
+                continue
             try:
-                response = json.loads(output_path.read_text(encoding="utf-8"))
-            except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+                exit_code = int(status.splitlines()[-1])
+            except ValueError as exc:
                 raise ReceitaRemoteBridgeError(
-                    "Receita remote worker returned invalid JSON"
+                    f"invalid Receita remote worker status: {status!r}"
                 ) from exc
-            if not isinstance(response, dict):
-                raise ReceitaRemoteBridgeError(
-                    "Receita remote worker output is not a JSON object"
-                )
-            return response
+            break
+
+        if exit_code is None:
+            raise ReceitaRemoteBridgeError(
+                f"Receita remote worker exceeded the {_REMOTE_DEADLINE_SECONDS}s "
+                "bridge deadline"
+            )
+        if exit_code != 0:
+            detail = _run_transport(
+                [
+                    *ssh,
+                    (
+                        f"tail -c 6000 {shlex.quote(remote_stderr)} "
+                        "2>/dev/null || true"
+                    ),
+                ],
+                timeout=120,
+                check=False,
+                attempts=3,
+            ).stdout.strip()
+            raise ReceitaRemoteBridgeError(
+                "Receita remote worker failed"
+                + (f": {detail}" if detail else f" with exit={exit_code}")
+            )
+
+        output = _run_transport(
+            [*ssh, f"cat -- {shlex.quote(remote_output)}"],
+            timeout=120,
+            attempts=6,
+        ).stdout
+        try:
+            response = json.loads(output)
+        except (UnicodeError, json.JSONDecodeError) as exc:
+            raise ReceitaRemoteBridgeError(
+                "Receita remote worker returned invalid JSON"
+            ) from exc
+        if not isinstance(response, dict):
+            raise ReceitaRemoteBridgeError(
+                "Receita remote worker output is not a JSON object"
+            )
+        return response
     finally:
         cleanup = f"rm -rf -- {shlex.quote(run_dir)}"
-        _run([*ssh, cleanup], timeout=120, check=False)
+        try:
+            _run_transport(
+                [*ssh, cleanup],
+                timeout=120,
+                check=False,
+                attempts=3,
+            )
+        except ReceitaRemoteBridgeError:
+            # Ephemeral run directories are namespaced by build/mode. A failed
+            # cleanup must not turn a successful acquisition into stale data.
+            pass
 
 
 def discover_release_remote() -> ReceitaOpenDataRelease:
