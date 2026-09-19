@@ -53,6 +53,7 @@ jobs:
             -o GlobalKnownHostsFile=/dev/null \
             -o UpdateHostKeys=no \
             "$SSH_USER@$SSH_HOST" 'python3 - <<'"'"'PY'"'"'
+          import fcntl
           import json
           import os
           import subprocess
@@ -63,9 +64,28 @@ jobs:
           manifest = cache / "manifest.json"
 
           files = []
+          parts = []
           if cache.is_dir():
               for p in sorted(cache.glob("*.zip")):
                   files.append({"name": p.name, "size": p.stat().st_size})
+              for p in sorted(cache.glob("*.part")):
+                  parts.append({
+                      "name": p.name,
+                      "size": p.stat().st_size,
+                      "mtime_ns": p.stat().st_mtime_ns,
+                  })
+
+          lock_path = root / "cache" / ".worker.lock"
+          lock_held = None
+          lock_path.parent.mkdir(parents=True, exist_ok=True)
+          with lock_path.open("a+") as handle:
+              try:
+                  fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+              except BlockingIOError:
+                  lock_held = True
+              else:
+                  lock_held = False
+                  fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
           manifest_data = {}
           if manifest.is_file():
@@ -88,6 +108,8 @@ jobs:
           print("PREWARM_STATUS " + json.dumps({
               "zip_count": len(files),
               "files": files,
+              "parts": parts,
+              "lock_held": lock_held,
               "manifest_file_count": len((manifest_data.get("files") or {})) if isinstance(manifest_data, dict) else None,
               "manifest_period": manifest_data.get("reference_period") if isinstance(manifest_data, dict) else None,
               "manifest_release_fingerprint": manifest_data.get("release_fingerprint") if isinstance(manifest_data, dict) else None,
