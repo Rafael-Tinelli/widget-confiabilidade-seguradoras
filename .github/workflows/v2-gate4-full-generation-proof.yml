@@ -5,6 +5,11 @@ name: V2 Gate 4 Full Generation Proof
 # no longer an event source.
 on:
   workflow_dispatch:
+  # One-shot trigger for the post-telemetry proof. Remove immediately after
+  # GitHub creates the run.
+  push:
+    branches:
+      - fix/receita-cache-bridge-final
 
 permissions:
   contents: read
