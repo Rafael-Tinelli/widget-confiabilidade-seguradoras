@@ -345,7 +345,8 @@ def release_fingerprint(release: ReceitaOpenDataRelease) -> str:
             )
         rows.append(
             {
-                "name": name,
+                "period": release.period,
+                "filename": name,
                 "etag": etag,
                 "size": int(size),
             }
@@ -353,7 +354,7 @@ def release_fingerprint(release: ReceitaOpenDataRelease) -> str:
     if not rows:
         raise ReceitaOpenDataError("Receita release metadata is empty")
     encoded = json.dumps(
-        sorted(rows, key=lambda row: row["name"]),
+        sorted(rows, key=lambda row: row["filename"]),
         ensure_ascii=False,
         sort_keys=True,
         separators=(",", ":"),
