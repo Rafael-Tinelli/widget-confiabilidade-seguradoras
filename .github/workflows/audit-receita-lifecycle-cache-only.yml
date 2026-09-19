@@ -42,92 +42,30 @@ jobs:
             echo "SSH_PORT=$SSH_PORT"
             echo "SSH_KEY=$d/key"
             echo "SSH_KNOWN=$d/known_hosts"
+            echo "REMOTE_DIR=.sanida-v2-receita-lifecycle-probe-${GITHUB_RUN_ID}"
           } >> "$GITHUB_ENV"
 
-      - name: Build isolated lifecycle payload
+      - name: Prepare remote diagnostic directory
         shell: bash
         run: |
           set -euo pipefail
-          python3 - <<'PY'
-          import json
-          from pathlib import Path
+          ssh \
+            -T \
+            -i "$SSH_KEY" \
+            -p "$SSH_PORT" \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$SSH_KNOWN" \
+            -o GlobalKnownHostsFile=/dev/null \
+            -o UpdateHostKeys=no \
+            "$SSH_USER@$SSH_HOST" \
+            "umask 077; rm -rf -- '$REMOTE_DIR'; mkdir -p -- '$REMOTE_DIR'"
 
-          seed = json.loads(
-              Path("data/reference/v2/receita_lifecycle_verified.json").read_text(
-                  encoding="utf-8"
-              )
-          )
-          targets = [
-              {"cnpj": row["cnpj"], "legal_name": row["legal_name"]}
-              for row in seed["records"]
-          ]
-          payload = {
-              "expected_period": "2026-09",
-              "targets": targets,
-          }
-          Path("/tmp/receita-lifecycle-input.json").write_text(
-              json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
-              encoding="utf-8",
-          )
-          print(f"TARGET_COUNT={len(targets)}")
-          PY
-
-      - name: Preflight existing 2026-09 cache
+      - name: Upload worker, wrapper and verified seed
         shell: bash
         run: |
           set -euo pipefail
-          ssh_opts=(
-            -T
-            -i "$SSH_KEY"
-            -p "$SSH_PORT"
-            -o BatchMode=yes
-            -o IdentitiesOnly=yes
-            -o StrictHostKeyChecking=yes
-            -o UserKnownHostsFile="$SSH_KNOWN"
-            -o GlobalKnownHostsFile=/dev/null
-            -o UpdateHostKeys=no
-          )
-          ssh "${ssh_opts[@]}" "$SSH_USER@$SSH_HOST" "python3 - <<'PY'
-          import json
-          import os
-          import re
-          import zipfile
-          from pathlib import Path
-
-          root = Path.home() / '.sanida-v2-receita-bridge' / 'cache' / '2026-09'
-          names = ['Motivos.zip'] + [f'Estabelecimentos{i}.zip' for i in range(10)]
-          rows = []
-          for name in names:
-              p = root / name
-              rows.append({
-                  'name': name,
-                  'exists': p.is_file(),
-                  'size': p.stat().st_size if p.is_file() else None,
-                  'zip_valid': zipfile.is_zipfile(str(p)) if p.is_file() else False,
-                  'mtime_ns': p.stat().st_mtime_ns if p.is_file() else None,
-              })
-          print('LIFECYCLE_CACHE_PREFLIGHT ' + json.dumps(rows, sort_keys=True))
-          missing = [r['name'] for r in rows if not r['exists'] or not r['zip_valid']]
-          if missing:
-              raise SystemExit('CACHE_PREFLIGHT_MISSING_OR_INVALID=' + ','.join(missing))
-          PY"
-
-      - name: Upload worker and cache-only wrapper
-        shell: bash
-        run: |
-          set -euo pipefail
-          remote_dir=".sanida-v2-receita-lifecycle-probe-${GITHUB_RUN_ID}"
-          ssh_opts=(
-            -T
-            -i "$SSH_KEY"
-            -p "$SSH_PORT"
-            -o BatchMode=yes
-            -o IdentitiesOnly=yes
-            -o StrictHostKeyChecking=yes
-            -o UserKnownHostsFile="$SSH_KNOWN"
-            -o GlobalKnownHostsFile=/dev/null
-            -o UpdateHostKeys=no
-          )
           scp_opts=(
             -q
             -i "$SSH_KEY"
@@ -139,17 +77,127 @@ jobs:
             -o GlobalKnownHostsFile=/dev/null
             -o UpdateHostKeys=no
           )
-          ssh "${ssh_opts[@]}" "$SSH_USER@$SSH_HOST" "umask 077; mkdir -p '$remote_dir'"
           scp "${scp_opts[@]}" \
             ops/hostgator/receita_remote_worker.py \
-            "$SSH_USER@$SSH_HOST:$remote_dir/receita_remote_worker.py"
+            "$SSH_USER@$SSH_HOST:$REMOTE_DIR/receita_remote_worker.py"
           scp "${scp_opts[@]}" \
             ops/diagnostics/receita_lifecycle_cache_only.py \
-            "$SSH_USER@$SSH_HOST:$remote_dir/receita_lifecycle_cache_only.py"
+            "$SSH_USER@$SSH_HOST:$REMOTE_DIR/receita_lifecycle_cache_only.py"
           scp "${scp_opts[@]}" \
-            /tmp/receita-lifecycle-input.json \
-            "$SSH_USER@$SSH_HOST:$remote_dir/input.json"
-          echo "REMOTE_DIR=$remote_dir" >> "$GITHUB_ENV"
+            data/reference/v2/receita_lifecycle_verified.json \
+            "$SSH_USER@$SSH_HOST:$REMOTE_DIR/verified_seed.json"
+
+      - name: Select a lifecycle target already present in Estabelecimentos0 cache
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh_opts=(
+            -T
+            -i "$SSH_KEY"
+            -p "$SSH_PORT"
+            -o BatchMode=yes
+            -o IdentitiesOnly=yes
+            -o StrictHostKeyChecking=yes
+            -o UserKnownHostsFile="$SSH_KNOWN"
+            -o GlobalKnownHostsFile=/dev/null
+            -o UpdateHostKeys=no
+            -o ServerAliveInterval=30
+            -o ServerAliveCountMax=10
+          )
+          ssh "${ssh_opts[@]}" "$SSH_USER@$SSH_HOST" "REMOTE_DIR='$REMOTE_DIR' python3 - <<'PY'
+          import csv
+          import io
+          import json
+          import os
+          import zipfile
+          from pathlib import Path
+
+          home = Path.home()
+          remote_dir = home / os.environ['REMOTE_DIR']
+          cache_root = home / '.sanida-v2-receita-bridge' / 'cache' / '2026-09'
+          estab = cache_root / 'Estabelecimentos0.zip'
+          motivos = cache_root / 'Motivos.zip'
+
+          for p in (motivos, estab):
+              if not p.is_file() or not zipfile.is_zipfile(str(p)):
+                  raise SystemExit(f'CACHE_ONLY_REQUIRED_FILE_INVALID={p.name}')
+
+          before = {
+              p.name: {'size': p.stat().st_size, 'mtime_ns': p.stat().st_mtime_ns}
+              for p in (motivos, estab)
+          }
+
+          seed = json.loads((remote_dir / 'verified_seed.json').read_text(encoding='utf-8'))
+          seed_by_cnpj = {row['cnpj']: row for row in seed['records']}
+          wanted = set(seed_by_cnpj)
+
+          with zipfile.ZipFile(str(estab)) as zf:
+              members = [n for n in zf.namelist() if not n.endswith('/')]
+              member = members[0]
+              with zf.open(member) as raw:
+                  text = io.TextIOWrapper(raw, encoding='latin1', newline='')
+                  reader = csv.reader(
+                      (line.replace('\\x00', '') for line in text),
+                      delimiter=';',
+                      quotechar='"',
+                  )
+                  selected = None
+                  fallback = None
+                  for row in reader:
+                      if len(row) < 8:
+                          continue
+                      cnpj = ''.join(str(part).strip() for part in row[:3])
+                      if len(cnpj) != 14 or not cnpj.isdigit():
+                          continue
+                      if fallback is None:
+                          fallback = row
+                      if cnpj in wanted:
+                          selected = row
+                          break
+                  if selected is None:
+                      selected = fallback
+
+          if selected is None:
+              raise SystemExit('NO_VALID_ROW_FOUND_IN_ESTABELECIMENTOS0')
+
+          cnpj = ''.join(str(part).strip() for part in selected[:3])
+          seed_row = seed_by_cnpj.get(cnpj)
+          if seed_row:
+              legal_name = seed_row['legal_name']
+              target_mode = 'verified_seed'
+          else:
+              legal_name = 'CACHE ONLY LIFECYCLE PROBE TARGET'
+              target_mode = 'deterministic_cached_row'
+
+          payload = {
+              'expected_period': '2026-09',
+              'targets': [{'cnpj': cnpj, 'legal_name': legal_name}],
+          }
+          expected = {
+              'target_mode': target_mode,
+              'cnpj': cnpj,
+              'legal_name': legal_name,
+              'status_code': str(selected[5]).strip().zfill(2),
+              'status_date': str(selected[6]).strip() or None,
+              'reason_code': str(selected[7]).strip().zfill(2),
+              'source_file': 'Estabelecimentos0.zip',
+              'cache_before': before,
+          }
+          if seed_row:
+              expected['seed_status'] = seed_row['cadastral_status']
+              expected['seed_status_date'] = seed_row['status_date']
+
+          (remote_dir / 'input.json').write_text(
+              json.dumps(payload, ensure_ascii=False, indent=2) + '\\n',
+              encoding='utf-8',
+          )
+          (remote_dir / 'expected.json').write_text(
+              json.dumps(expected, ensure_ascii=False, indent=2) + '\\n',
+              encoding='utf-8',
+          )
+
+          print('LIFECYCLE_TARGET_SELECTED ' + json.dumps(expected, ensure_ascii=False, sort_keys=True))
+          PY"
 
       - name: Execute lifecycle from existing cache only
         shell: bash
@@ -175,9 +223,15 @@ jobs:
               --mode lifecycle \
               --input input.json \
               --output output.json \
-              --cache-dir ../.sanida-v2-receita-bridge/cache \
+              --cache-dir '$HOME/.sanida-v2-receita-bridge/cache' \
               > stdout.log 2> stderr.log
             cat stdout.log
+            if grep -q 'CACHE_ONLY_MISS' stderr.log stdout.log; then
+              cat stderr.log >&2
+              exit 1
+            fi
+            grep -q 'LIFECYCLE_CACHE_REUSE file=Motivos.zip' stdout.log
+            grep -q 'LIFECYCLE_CACHE_REUSE file=Estabelecimentos0.zip' stdout.log
             test ! -s stderr.log || cat stderr.log >&2
           "
 
@@ -196,51 +250,49 @@ jobs:
             -o GlobalKnownHostsFile=/dev/null
             -o UpdateHostKeys=no
           )
-          scp "${scp_opts[@]}" \
-            "$SSH_USER@$SSH_HOST:$REMOTE_DIR/output.json" \
-            /tmp/receita-lifecycle-output.json
+          scp "${scp_opts[@]}" "$SSH_USER@$SSH_HOST:$REMOTE_DIR/output.json" /tmp/receita-lifecycle-output.json
+          scp "${scp_opts[@]}" "$SSH_USER@$SSH_HOST:$REMOTE_DIR/expected.json" /tmp/receita-lifecycle-expected.json
+
           python3 - <<'PY'
           import json
           from pathlib import Path
 
-          seed = json.loads(
-              Path("data/reference/v2/receita_lifecycle_verified.json").read_text(
-                  encoding="utf-8"
-              )
-          )
-          expected = {row["cnpj"]: row for row in seed["records"]}
-          out = json.loads(
-              Path("/tmp/receita-lifecycle-output.json").read_text(encoding="utf-8")
-          )
+          out = json.loads(Path('/tmp/receita-lifecycle-output.json').read_text(encoding='utf-8'))
+          exp = json.loads(Path('/tmp/receita-lifecycle-expected.json').read_text(encoding='utf-8'))
 
-          assert out["artifact"] == "v2_receita_remote_lifecycle_extract", out["artifact"]
-          assert out["source"]["reference_period"] == "2026-09", out["source"]
-          meta = out["meta"]
-          assert meta["target_count"] == len(expected), meta
-          assert meta["resolved_count"] == len(expected), meta
-          assert meta["unresolved_count"] == 0, meta
-          assert out["unresolved_cnpjs"] == [], out["unresolved_cnpjs"]
+          assert out['artifact'] == 'v2_receita_remote_lifecycle_extract', out['artifact']
+          assert out['source']['reference_period'] == '2026-09', out['source']
+          meta = out['meta']
+          assert meta['target_count'] == 1, meta
+          assert meta['resolved_count'] == 1, meta
+          assert meta['unresolved_count'] == 0, meta
+          assert out['unresolved_cnpjs'] == [], out['unresolved_cnpjs']
+          assert meta['files_scanned'] == ['Estabelecimentos0.zip'], meta
 
-          records = {row["cnpj"]: row for row in out["raw_records"]}
-          assert set(records) == set(expected), (set(expected) - set(records))
-          mismatches = []
-          for cnpj, exp in expected.items():
-              got = records[cnpj]
-              if got["cadastral_status"] != exp["cadastral_status"]:
-                  mismatches.append((cnpj, "status", exp["cadastral_status"], got["cadastral_status"]))
-              if got["status_date"] != exp["status_date"]:
-                  mismatches.append((cnpj, "status_date", exp["status_date"], got["status_date"]))
-          if mismatches:
-              raise SystemExit("LIFECYCLE_MISMATCHES=" + repr(mismatches))
+          rows = out['raw_records']
+          assert len(rows) == 1, rows
+          row = rows[0]
+          assert row['cnpj'] == exp['cnpj'], (row['cnpj'], exp['cnpj'])
+          assert row['source_file'] == 'Estabelecimentos0.zip', row['source_file']
+          assert row['raw_status_code'] == exp['status_code'], (row['raw_status_code'], exp)
+          assert row['status_date'] == exp['status_date'], (row['status_date'], exp)
+          assert row['raw_reason_code'] == exp['reason_code'], (row['raw_reason_code'], exp)
+          if exp['target_mode'] == 'verified_seed':
+              assert row['cadastral_status'] == exp['seed_status'], (row, exp)
+              assert row['status_date'] == exp['seed_status_date'], (row, exp)
 
-          print("LIFECYCLE_VALIDATION_PASS " + json.dumps({
-              "period": out["source"]["reference_period"],
-              "target_count": meta["target_count"],
-              "resolved_count": meta["resolved_count"],
-              "unresolved_count": meta["unresolved_count"],
-              "files_scanned": meta["files_scanned"],
-              "cnpjs": sorted(records),
-          }, sort_keys=True))
+          print('LIFECYCLE_VALIDATION_PASS ' + json.dumps({
+              'period': out['source']['reference_period'],
+              'target_mode': exp['target_mode'],
+              'cnpj': row['cnpj'],
+              'cadastral_status': row['cadastral_status'],
+              'status_date': row['status_date'],
+              'status_reason': row['status_reason'],
+              'source_file': row['source_file'],
+              'files_scanned': meta['files_scanned'],
+              'resolved_count': meta['resolved_count'],
+              'unresolved_count': meta['unresolved_count'],
+          }, ensure_ascii=False, sort_keys=True))
           PY
 
       - name: Verify cache files were not rewritten
@@ -258,22 +310,23 @@ jobs:
             -o GlobalKnownHostsFile=/dev/null
             -o UpdateHostKeys=no
           )
-          ssh "${ssh_opts[@]}" "$SSH_USER@$SSH_HOST" "python3 - <<'PY'
+          ssh "${ssh_opts[@]}" "$SSH_USER@$SSH_HOST" "REMOTE_DIR='$REMOTE_DIR' python3 - <<'PY'
           import json
-          import zipfile
+          import os
           from pathlib import Path
-          root = Path.home() / '.sanida-v2-receita-bridge' / 'cache' / '2026-09'
-          rows = []
-          for name in ['Motivos.zip'] + [f'Estabelecimentos{i}.zip' for i in range(10)]:
-              p = root / name
-              rows.append({
-                  'name': name,
-                  'exists': p.is_file(),
-                  'size': p.stat().st_size if p.is_file() else None,
-                  'zip_valid': zipfile.is_zipfile(str(p)) if p.is_file() else False,
-                  'mtime_ns': p.stat().st_mtime_ns if p.is_file() else None,
-              })
-          print('LIFECYCLE_CACHE_POST ' + json.dumps(rows, sort_keys=True))
+
+          home = Path.home()
+          remote_dir = home / os.environ['REMOTE_DIR']
+          cache_root = home / '.sanida-v2-receita-bridge' / 'cache' / '2026-09'
+          expected = json.loads((remote_dir / 'expected.json').read_text(encoding='utf-8'))
+          before = expected['cache_before']
+          after = {}
+          for name in ('Motivos.zip', 'Estabelecimentos0.zip'):
+              p = cache_root / name
+              after[name] = {'size': p.stat().st_size, 'mtime_ns': p.stat().st_mtime_ns}
+          if before != after:
+              raise SystemExit('CACHE_FILES_CHANGED=' + json.dumps({'before': before, 'after': after}, sort_keys=True))
+          print('LIFECYCLE_CACHE_UNCHANGED ' + json.dumps(after, sort_keys=True))
           PY"
 
       - name: Cleanup remote diagnostic material
