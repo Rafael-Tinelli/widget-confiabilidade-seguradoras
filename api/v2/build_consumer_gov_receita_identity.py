@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -156,13 +157,16 @@ def build_snapshot(
         )
         return None
 
+    use_local_mirror = bool(
+        os.getenv("V2_RECEITA_LOCAL_MIRROR_DIR", "").strip()
+    )
     payload = (
         build_identity_remote(
             entities,
             providers,
             release=release,
         )
-        if remote_bridge_enabled()
+        if remote_bridge_enabled() and not use_local_mirror
         else build_filtered_identity_snapshot(
             entities,
             providers,
