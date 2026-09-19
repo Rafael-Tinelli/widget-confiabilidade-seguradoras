@@ -202,6 +202,56 @@ jobs:
           scp "${scp_opts[@]}" /tmp/receita-release-metadata.json             "$V2_RECEITA_SSH_USER@$V2_RECEITA_SSH_HOST:$remote_dir/release.json"
           ssh "${ssh_opts[@]}" "$V2_RECEITA_SSH_USER@$V2_RECEITA_SSH_HOST"             "python3 '$remote_dir/receita_cache_manifest.py'               --metadata '$remote_dir/release.json'               --cache-root ~/.sanida-v2-receita-bridge/cache; rc=\$?; rm -rf -- '$remote_dir'; exit \$rc"
 
+      - name: Probe single-session mirror transport and SHA-256
+        run: |
+          set -euo pipefail
+          probe_dir="$RUNNER_TEMP/v2-receita-mirror-probe"
+          rm -rf "$probe_dir"
+          mkdir -p "$probe_dir"
+          ssh \
+            -T \
+            -i "$V2_RECEITA_SSH_KEY_FILE" \
+            -p "$V2_RECEITA_SSH_PORT" \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$V2_RECEITA_SSH_KNOWN_HOSTS_FILE" \
+            -o GlobalKnownHostsFile=/dev/null \
+            -o UpdateHostKeys=no \
+            "$V2_RECEITA_SSH_USER@$V2_RECEITA_SSH_HOST" \
+            "cd '.sanida-v2-receita-bridge/cache/2026-09' && tar -cf - -- manifest.json Motivos.zip" \
+            | tar -xf - -C "$probe_dir"
+          PROBE_DIR="$probe_dir" python - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+
+          root = Path(os.environ["PROBE_DIR"])
+          manifest = json.loads(
+              (root / "manifest.json").read_text(encoding="utf-8")
+          )
+          path = root / "Motivos.zip"
+          digest = hashlib.sha256(path.read_bytes()).hexdigest()
+          expected = manifest["files"]["Motivos.zip"]["local"]["sha256"]
+          if digest != expected:
+              raise SystemExit(
+                  f"mirror transport SHA mismatch: {digest} != {expected}"
+              )
+          print(
+              "MIRROR_TRANSPORT_PASS "
+              + json.dumps(
+                  {
+                      "file": "Motivos.zip",
+                      "size": path.stat().st_size,
+                      "sha256": digest,
+                  },
+                  sort_keys=True,
+              )
+          )
+          PY
+          rm -rf "$probe_dir"
+
       - name: Validate Full Generation local-compute contract
         run: |
           set -euo pipefail
