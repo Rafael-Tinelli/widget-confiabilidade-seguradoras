@@ -405,5 +405,44 @@ def test_transport_does_not_retry_semantic_remote_failure(monkeypatch) -> None:
     assert len(calls) == 1
 
 
-def test_remote_worker_deadline_allows_long_synchronous_execution() -> None:
+def test_remote_worker_deadline_allows_long_detached_execution() -> None:
     assert bridge._REMOTE_DEADLINE_SECONDS >= 18_000
+
+
+def test_detached_launch_uses_setsid_force_fork() -> None:
+    command = bridge._detached_launch_command(
+        remote_command="python3 worker.py --mode lifecycle",
+        remote_start=".bridge/runs/op/started",
+        remote_exit=".bridge/runs/op/exit_code",
+        remote_stdout=".bridge/runs/op/stdout.log",
+        remote_stderr=".bridge/runs/op/stderr.log",
+    )
+
+    assert "nohup setsid -f python3 worker.py --mode lifecycle" in command
+    assert "</dev/null" in command
+    assert ">>.bridge/runs/op/stdout.log" in command
+    assert "2>>.bridge/runs/op/stderr.log" in command
+    assert "printf 'LAUNCHED" in command
+
+
+def test_launch_remote_worker_returns_on_launched(monkeypatch) -> None:
+    calls = []
+
+    def fake_transport(command, **kwargs):
+        calls.append((command, kwargs))
+        return subprocess.CompletedProcess(command, 0, "LAUNCHED\n", "")
+
+    monkeypatch.setattr(bridge, "_run_transport", fake_transport)
+
+    bridge._launch_remote_worker(
+        ["ssh", "example"],
+        remote_command="python3 worker.py",
+        remote_start=".bridge/runs/op/started",
+        remote_exit=".bridge/runs/op/exit_code",
+        remote_stdout=".bridge/runs/op/stdout.log",
+        remote_stderr=".bridge/runs/op/stderr.log",
+    )
+
+    assert len(calls) == 1
+    assert calls[0][1]["timeout"] == 15
+    assert calls[0][1]["attempts"] == 3
