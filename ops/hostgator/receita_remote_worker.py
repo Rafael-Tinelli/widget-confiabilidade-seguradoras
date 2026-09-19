@@ -414,13 +414,17 @@ def remote_file_fingerprint(period, name, metadata):
     }
 
 
-def release_fingerprint(release):
-    files = resource_map(release)
-    names = (
+def required_release_files(release):
+    return (
         ["Motivos.zip", "Cnaes.zip", "Naturezas.zip"]
         + list(release.get("company_files") or [])
         + list(release.get("establishment_files") or [])
     )
+
+
+def release_fingerprint(release):
+    files = resource_map(release)
+    names = required_release_files(release)
     rows = [
         remote_file_fingerprint(release["period"], name, files[name])
         for name in names
@@ -866,15 +870,59 @@ def identity_extract(session, release, payload, cache_dir):
     }
 
 
+def prewarm_release(session, release, cache_dir):
+    cache_root = cache_period_root(cache_dir, release["period"])
+    rows = []
+    for name in required_release_files(release):
+        local, status = acquire_cached_zip(
+            session,
+            release,
+            name,
+            cache_root,
+        )
+        rows.append(
+            {
+                "name": name,
+                "status": status,
+                "size": local.stat().st_size,
+                "sha256": sha256_file(local),
+            }
+        )
+
+    manifest = load_cache_manifest(cache_root)
+    fingerprint = release_fingerprint(release)
+    if manifest.get("release_fingerprint") != fingerprint:
+        raise WorkerError("Receita cache manifest release fingerprint mismatch after prewarm")
+    if set((manifest.get("files") or {}).keys()) < set(required_release_files(release)):
+        raise WorkerError("Receita cache manifest incomplete after prewarm")
+
+    return {
+        "artifact": "v2_receita_remote_cache_prewarm",
+        "generated_at": utc_now(),
+        "period": release["period"],
+        "release_fingerprint": fingerprint,
+        "files": rows,
+        "summary": {
+            "file_count": len(rows),
+            "downloaded": sum(row["status"] == "downloaded" for row in rows),
+            "reused_unchanged": sum(
+                row["status"] == "reused_unchanged" for row in rows
+            ),
+        },
+    }
+
+
 def discover_payload(release):
-    names = ["Motivos.zip"] + release["establishment_files"]
+    names = required_release_files(release)
     return {
         "artifact": "v2_receita_remote_release",
         "base_url": release["base_url"],
         "release_url": release["release_url"],
         "period": release["period"],
         "establishment_files": release["establishment_files"],
+        "company_files": release["company_files"],
         "reasons_file": "Motivos.zip",
+        "release_fingerprint": release_fingerprint(release),
         "resource_metadata": release_metadata(release, names),
     }
 
@@ -937,6 +985,12 @@ def execute(args):
             release = discover_release(session)
             if args.mode == "discover":
                 result = discover_payload(release)
+            elif args.mode == "prewarm":
+                result = prewarm_release(
+                    session,
+                    release,
+                    args.cache_dir,
+                )
             else:
                 payload = load_input(args.input)
                 if args.mode == "lifecycle":
@@ -971,7 +1025,11 @@ def write_exit_marker(path, code):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--mode", choices=("discover", "lifecycle", "identity"), required=True)
+    parser.add_argument(
+        "--mode",
+        choices=("discover", "prewarm", "lifecycle", "identity"),
+        required=True,
+    )
     parser.add_argument("--input")
     parser.add_argument("--output", required=True)
     parser.add_argument("--cache-dir", required=True)
