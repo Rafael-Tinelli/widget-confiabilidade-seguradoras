@@ -48,6 +48,13 @@ def main():
     if not cache_root.is_dir():
         raise SystemExit("CACHE_MANIFEST_PERIOD_MISSING=" + period)
 
+    manifest_path = cache_root / "manifest.json"
+    previous = {}
+    if manifest_path.is_file():
+        loaded = json.loads(manifest_path.read_text(encoding="utf-8"))
+        if str(loaded.get("reference_period") or "") == period:
+            previous = dict(loaded.get("files") or {})
+
     entries = {}
     for remote in sorted(resources, key=lambda row: str(row.get("name") or "")):
         name = str(remote.get("name") or "")
@@ -70,13 +77,41 @@ def main():
         if not zipfile.is_zipfile(str(path)):
             raise SystemExit("CACHE_MANIFEST_INVALID_ZIP=" + name)
 
+        remote_identity = {
+            "size": expected_size,
+            "etag": str(remote.get("etag") or ""),
+            "last_modified": str(remote.get("last_modified") or ""),
+        }
+        previous_entry = previous.get(name) or {}
+        previous_remote = previous_entry.get("remote") or {}
+        if previous_remote and previous_remote != remote_identity:
+            raise SystemExit(
+                "CACHE_REMOTE_FINGERPRINT_CHANGED="
+                + name
+                + ":"
+                + json.dumps(
+                    {
+                        "previous": previous_remote,
+                        "current": remote_identity,
+                    },
+                    sort_keys=True,
+                )
+            )
+
         digest = sha256_file(path)
+        previous_local = previous_entry.get("local") or {}
+        previous_sha = str(previous_local.get("sha256") or "")
+        if previous_sha and digest != previous_sha:
+            raise SystemExit(
+                "CACHE_LOCAL_SHA256_MISMATCH="
+                + name
+                + ":"
+                + digest
+                + "!="
+                + previous_sha
+            )
         entries[name] = {
-            "remote": {
-                "size": expected_size,
-                "etag": str(remote.get("etag") or ""),
-                "last_modified": str(remote.get("last_modified") or ""),
-            },
+            "remote": remote_identity,
             "local": {
                 "size": actual_size,
                 "sha256": digest,
@@ -115,7 +150,6 @@ def main():
         "reference_period": period,
         "files": entries,
     }
-    manifest_path = cache_root / "manifest.json"
     atomic_write(manifest_path, manifest)
     print(
         "CACHE_MANIFEST_READY "
