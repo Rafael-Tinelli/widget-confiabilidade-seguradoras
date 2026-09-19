@@ -204,7 +204,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python ops/diagnostics/compare_receita_identity_fixture.py \
+          PYTHONPATH="$GITHUB_WORKSPACE" python ops/diagnostics/compare_receita_identity_fixture.py \
             /tmp/receita-identity-fixture/fixture \
             /tmp/receita-identity-fixture/fixture/raw_worker_identity.json
 
