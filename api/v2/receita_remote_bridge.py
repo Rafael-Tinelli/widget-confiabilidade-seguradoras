@@ -394,22 +394,13 @@ def _start_remote_worker(
     remote_command: str,
     remote_start: str,
     remote_exit: str,
-    remote_stdout: str,
-    remote_stderr: str,
 ) -> None:
-    # Force a second fork on the remote host so the worker is not coupled to
-    # the SSH session. The Python worker writes its own PID to remote_start.
     guarded_command = (
         "umask 077; "
         f"if test -f {shlex.quote(remote_start)} "
         f"|| test -f {shlex.quote(remote_exit)}; then "
         "printf 'ALREADY_STARTED\\n'; "
-        "else "
-        f"nohup setsid -f {remote_command} "
-        f"</dev/null >>{shlex.quote(remote_stdout)} "
-        f"2>>{shlex.quote(remote_stderr)}; "
-        "printf 'LAUNCHED\\n'; "
-        "fi"
+        f"else {remote_command}; fi"
     )
     last_error: ReceitaRemoteBridgeError | None = None
     for attempt in range(1, 4):
@@ -419,7 +410,7 @@ def _start_remote_worker(
                 timeout=15,
             )
             status = result.stdout.strip()
-            if status in {"LAUNCHED", "ALREADY_STARTED"}:
+            if status.startswith("STARTED:") or status == "ALREADY_STARTED":
                 return
             raise ReceitaRemoteBridgeError(
                 f"unexpected Receita remote launch response: {status!r}"
@@ -540,10 +531,15 @@ def _remote_call(mode: str, payload: dict[str, Any] | None = None) -> dict[str, 
             remote_args.extend(["--input", remote_input])
         remote_args.extend(
             [
+                "--spawn-detached",
                 "--exit-file",
                 remote_exit,
                 "--start-file",
                 remote_start,
+                "--stdout-log",
+                remote_stdout,
+                "--stderr-log",
+                remote_stderr,
             ]
         )
         remote_command = " ".join(shlex.quote(part) for part in remote_args)
@@ -557,8 +553,6 @@ def _remote_call(mode: str, payload: dict[str, Any] | None = None) -> dict[str, 
                 remote_command=remote_command,
                 remote_start=remote_start,
                 remote_exit=remote_exit,
-                remote_stdout=remote_stdout,
-                remote_stderr=remote_stderr,
             )
 
         poll_started_at = time.monotonic()
