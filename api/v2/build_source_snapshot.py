@@ -610,26 +610,29 @@ def _receita_snapshot(
         temp = destination.with_suffix(destination.suffix + ".incoming")
         if temp.exists():
             temp.unlink()
-        if remote_bridge_enabled():
+        use_local_mirror = bool(
+            os.getenv("V2_RECEITA_LOCAL_MIRROR_DIR", "").strip()
+        )
+        if remote_bridge_enabled() and not use_local_mirror:
             payload = refresh_lifecycle_remote(
                 entities,
                 release=release,
             )
-            meta = payload.setdefault("meta", {})
-            meta["target_universe_hash"] = target_hash
-            meta["target_universe_hash_method"] = "sorted_normalized_cnpjs_v1"
-            meta["gate4_cache_contract_version"] = (
-                RECEITA_LIFECYCLE_CACHE_CONTRACT_VERSION
-            )
-            meta["source_release_fingerprint"] = current_release_fingerprint
-            validate_refresh_payload(payload)
-            write_snapshot_atomic(payload, temp)
         else:
             payload = refresh_receita_lifecycle(
                 output=temp,
                 release=release,
                 entities=entities,
             )
+        meta = payload.setdefault("meta", {})
+        meta["target_universe_hash"] = target_hash
+        meta["target_universe_hash_method"] = "sorted_normalized_cnpjs_v1"
+        meta["gate4_cache_contract_version"] = (
+            RECEITA_LIFECYCLE_CACHE_CONTRACT_VERSION
+        )
+        meta["source_release_fingerprint"] = current_release_fingerprint
+        validate_refresh_payload(payload)
+        write_snapshot_atomic(payload, temp)
         if not payload.get("records"):
             raise SourceSnapshotError("Receita lifecycle refresh returned no records")
         temp.replace(destination)
