@@ -1,0 +1,101 @@
+name: Audit Receita Prewarm Status
+
+on:
+  push:
+    branches:
+      - audit/receita-prewarm-status-20260919
+
+permissions:
+  contents: read
+
+jobs:
+  status:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Configure pinned SSH
+        env:
+          SSH_HOST: ${{ secrets.V2_HOSTGATOR_HOST }}
+          SSH_USER: ${{ secrets.V2_HOSTGATOR_USER }}
+          SSH_PRIVATE_KEY: ${{ secrets.V2_HOSTGATOR_SSH_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.V2_HOSTGATOR_KNOWN_HOSTS }}
+          SSH_PORT: ${{ vars.V2_HOSTGATOR_SSH_PORT }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          SSH_PORT=${SSH_PORT:-22}
+          d="$RUNNER_TEMP/ssh"
+          umask 077
+          install -d -m 700 "$d"
+          printf '%s\n' "$SSH_PRIVATE_KEY" | tr -d '\r' > "$d/key"
+          printf '%s\n' "$SSH_KNOWN_HOSTS" | tr -d '\r' > "$d/known_hosts"
+          chmod 600 "$d/key" "$d/known_hosts"
+          {
+            echo "SSH_HOST=$SSH_HOST"
+            echo "SSH_USER=$SSH_USER"
+            echo "SSH_PORT=$SSH_PORT"
+            echo "SSH_KEY=$d/key"
+            echo "SSH_KNOWN=$d/known_hosts"
+          } >> "$GITHUB_ENV"
+
+      - name: Read only prewarm status
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh \
+            -T \
+            -i "$SSH_KEY" \
+            -p "$SSH_PORT" \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$SSH_KNOWN" \
+            -o GlobalKnownHostsFile=/dev/null \
+            -o UpdateHostKeys=no \
+            "$SSH_USER@$SSH_HOST" 'python3 - <<'"'"'PY'"'"'
+          import json
+          import os
+          import subprocess
+          from pathlib import Path
+
+          root = Path.home() / ".sanida-v2-receita-bridge"
+          cache = root / "cache" / "2026-09"
+          manifest = cache / "manifest.json"
+
+          files = []
+          if cache.is_dir():
+              for p in sorted(cache.glob("*.zip")):
+                  files.append({"name": p.name, "size": p.stat().st_size})
+
+          manifest_data = {}
+          if manifest.is_file():
+              try:
+                  manifest_data = json.loads(manifest.read_text(encoding="utf-8"))
+              except Exception as exc:
+                  manifest_data = {"error": f"{type(exc).__name__}: {exc}"}
+
+          try:
+              ps = subprocess.run(
+                  ["ps", "-u", str(os.getuid()), "-o", "pid,etime,args"],
+                  text=True,
+                  capture_output=True,
+                  check=False,
+              ).stdout.splitlines()
+              workers = [line.strip() for line in ps if "receita_remote_worker" in line or "worker.py --mode" in line]
+          except Exception as exc:
+              workers = [f"ps_error={type(exc).__name__}:{exc}"]
+
+          print("PREWARM_STATUS " + json.dumps({
+              "zip_count": len(files),
+              "files": files,
+              "manifest_file_count": len((manifest_data.get("files") or {})) if isinstance(manifest_data, dict) else None,
+              "manifest_period": manifest_data.get("reference_period") if isinstance(manifest_data, dict) else None,
+              "manifest_release_fingerprint": manifest_data.get("release_fingerprint") if isinstance(manifest_data, dict) else None,
+              "workers": workers,
+          }, sort_keys=True))
+          PY'
+
+      - name: Cleanup
+        if: always()
+        shell: bash
+        run: rm -rf "$RUNNER_TEMP/ssh"
