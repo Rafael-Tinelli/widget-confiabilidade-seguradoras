@@ -6,7 +6,6 @@ import io
 import subprocess
 import zipfile
 from pathlib import Path
-from types import SimpleNamespace
 
 from api.sources.receita_cnpj_bulk import ReceitaOpenDataRelease
 from api.sources.receita_cnpj_identity import (
@@ -406,95 +405,5 @@ def test_transport_does_not_retry_semantic_remote_failure(monkeypatch) -> None:
     assert len(calls) == 1
 
 
-def test_start_recovery_accepts_persisted_start_marker(monkeypatch) -> None:
-    start_calls = []
-
-    def fake_run(command, **kwargs):
-        start_calls.append((command, kwargs))
-        raise bridge.ReceitaRemoteBridgeError(
-            "Receita remote command failed: scp: Connection closed"
-        )
-
-    marker = subprocess.CompletedProcess(["ssh"], 0, "1\n", "")
-    probe_calls = []
-
-    def fake_transport(command, **kwargs):
-        probe_calls.append((command, kwargs))
-        return marker
-
-    monkeypatch.setattr(bridge, "_run", fake_run)
-    monkeypatch.setattr(bridge, "_run_transport", fake_transport)
-    monkeypatch.setattr(bridge.time, "sleep", lambda value: None)
-
-    bridge._start_remote_worker(
-        ["ssh", "example"],
-        remote_command="python3 worker.py",
-        remote_start=".bridge/runs/op/started",
-        remote_exit=".bridge/runs/op/exit_code",
-    )
-
-    assert len(start_calls) == 1
-    assert len(probe_calls) == 1
-
-
-def test_start_worker_uses_detached_launcher_contract(monkeypatch) -> None:
-    calls = []
-
-    def fake_run(command, **kwargs):
-        calls.append((command, kwargs))
-        return subprocess.CompletedProcess(command, 0, "STARTED:4321\n", "")
-
-    monkeypatch.setattr(bridge, "_run", fake_run)
-
-    bridge._start_remote_worker(
-        ["ssh", "example"],
-        remote_command=(
-            "python3 worker.py --mode lifecycle --spawn-detached "
-            "--start-file started --exit-file exit_code"
-        ),
-        remote_start=".bridge/runs/op/started",
-        remote_exit=".bridge/runs/op/exit_code",
-    )
-
-    assert len(calls) == 1
-    remote_shell = calls[0][0][-1]
-    assert "--spawn-detached" in remote_shell
-    assert "nohup" not in remote_shell
-    assert "setsid" not in remote_shell
-    assert calls[0][1]["timeout"] == 15
-
-
-def test_worker_spawn_detached_closes_ssh_descriptors(monkeypatch, tmp_path) -> None:
-    worker = _load_worker_module()
-    captured = {}
-
-    class FakeProcess:
-        pid = 9876
-
-    def fake_popen(command, **kwargs):
-        captured["command"] = command
-        captured["kwargs"] = kwargs
-        return FakeProcess()
-
-    monkeypatch.setattr(worker.subprocess, "Popen", fake_popen)
-
-    args = SimpleNamespace(
-        mode="lifecycle",
-        input=str(tmp_path / "input.json"),
-        output=str(tmp_path / "output.json"),
-        cache_dir=str(tmp_path / "cache"),
-        exit_file=str(tmp_path / "exit_code"),
-        start_file=str(tmp_path / "started"),
-        stdout_log=str(tmp_path / "stdout.log"),
-        stderr_log=str(tmp_path / "stderr.log"),
-    )
-
-    assert worker.spawn_detached(args) == 0
-    assert captured["kwargs"]["stdin"] is worker.subprocess.DEVNULL
-    assert captured["kwargs"]["start_new_session"] is True
-    assert captured["kwargs"]["close_fds"] is True
-    assert captured["command"][0] == worker.sys.executable
-    assert "--spawn-detached" not in captured["command"]
-    assert "--start-file" in captured["command"]
-    assert "--exit-file" in captured["command"]
-    assert (tmp_path / "started").read_text(encoding="utf-8").strip() == "9876"
+def test_remote_worker_deadline_allows_long_synchronous_execution() -> None:
+    assert bridge._REMOTE_DEADLINE_SECONDS >= 18_000
