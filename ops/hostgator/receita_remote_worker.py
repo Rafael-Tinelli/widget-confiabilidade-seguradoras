@@ -518,6 +518,8 @@ def lifecycle_extract(session, release, payload, cache_dir):
                         "raw_status_code": status_code,
                         "raw_reason_code": reason_code,
                     }
+                    if len(found) == len(targets):
+                        break
         scanned.append(name)
         if len(found) == len(targets):
             break
