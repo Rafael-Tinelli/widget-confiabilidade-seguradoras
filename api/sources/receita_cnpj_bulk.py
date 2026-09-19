@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import io
+import json
 import re
 import tempfile
 import time
@@ -37,6 +39,10 @@ ESTABLISHMENT_FILE_RE = re.compile(
     r"Estabelecimentos\d+\.zip$",
     re.IGNORECASE,
 )
+COMPANY_FILE_RE = re.compile(
+    r"Empresas\d+\.zip$",
+    re.IGNORECASE,
+)
 PERIOD_RE = re.compile(r"20\d{2}-\d{2}$")
 DEFAULT_TIMEOUT = (15, 120)
 DAV_PROPFIND_BODY = """<?xml version="1.0"?>
@@ -54,6 +60,45 @@ DAV_PROPFIND_BODY = """<?xml version="1.0"?>
 
 class ReceitaOpenDataError(RuntimeError):
     """Raised when the official CNPJ open-data source cannot be used safely."""
+
+
+def release_fingerprint(
+    release: "ReceitaOpenDataRelease",
+    *,
+    names: Iterable[str] | None = None,
+) -> str:
+    """Hash the current official manifest for the files relevant to a cache.
+
+    Period alone is insufficient because Receita may replace files inside the
+    same monthly directory. ETag + size are the primary remote identity; the
+    Last-Modified value is retained as a secondary signal.
+    """
+    wanted = set(names) if names is not None else None
+    rows = []
+    for item in release.resource_metadata:
+        name = str(item.get("name") or "")
+        if not name or (wanted is not None and name not in wanted):
+            continue
+        rows.append(
+            {
+                "name": name,
+                "size": item.get("size"),
+                "etag": str(item.get("etag") or ""),
+                "last_modified": str(item.get("last_modified") or ""),
+            }
+        )
+    rows.sort(key=lambda row: row["name"].casefold())
+    payload = {
+        "period": release.period,
+        "resources": rows,
+    }
+    encoded = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 @dataclass(frozen=True)
@@ -278,7 +323,17 @@ def discover_latest_release(
             if actual_indexes != expected_indexes:
                 continue
 
-            metadata_names = {"Motivos.zip", *establishments}
+            metadata_names = {
+                "Motivos.zip",
+                "Cnaes.zip",
+                "Naturezas.zip",
+                *establishments,
+                *[
+                    name
+                    for name in files
+                    if COMPANY_FILE_RE.fullmatch(name)
+                ],
+            }
             metadata = tuple(
                 {
                     "name": item["name"],
