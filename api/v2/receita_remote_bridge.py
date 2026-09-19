@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -21,6 +22,30 @@ _SAFE_HOST_RE = re.compile(r"^[A-Za-z0-9.-]+$")
 _SAFE_USER_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 _SAFE_REMOTE_ROOT_RE = re.compile(r"^[A-Za-z0-9._/-]+$")
 _SAFE_BUILD_RE = re.compile(r"[^A-Za-z0-9._-]+")
+_TRANSIENT_TRANSPORT_PATTERNS = (
+    "kex_exchange_identification",
+    "ssh_exchange_identification",
+    "banner exchange",
+    "connection reset by peer",
+    "connection closed",
+    "connection timed out",
+    "connection refused",
+    "connection unexpectedly closed",
+    "closed by remote host",
+    "broken pipe",
+    "lost connection",
+    "packet_write_wait",
+    "client_loop: send disconnect",
+    "mux_client_request_session",
+    "control socket connect",
+    "master refused session request",
+)
+_TRANSPORT_RETRY_ATTEMPTS = 6
+_TRANSPORT_RETRY_BASE_SECONDS = 2
+_TRANSPORT_RETRY_MAX_SECONDS = 20
+_CONTROL_PERSIST_SECONDS = 600
+_POLL_INTERVAL_SECONDS = 45
+_REMOTE_DEADLINE_SECONDS = 18_000
 
 
 class ReceitaRemoteBridgeError(RuntimeError):
