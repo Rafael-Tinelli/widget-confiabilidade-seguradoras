@@ -132,12 +132,47 @@ jobs:
                       f"{result.stdout!r}"
                   )
 
+          runtime = _run_transport(
+              [
+                  *ssh,
+                  (
+                      "python3 -c 'import requests,sys; "
+                      "print(\"%d.%d.%d requests=%s\" % "
+                      "(sys.version_info[0],sys.version_info[1],sys.version_info[2],"
+                      "requests.__version__))'"
+                  ),
+              ],
+              timeout=60,
+              attempts=6,
+          ).stdout.strip()
+          available_kb_text = _run_transport(
+              [
+                  *ssh,
+                  (
+                      "mkdir -p ~/.sanida-v2-receita-bridge/cache && "
+                      "test -w ~/.sanida-v2-receita-bridge/cache && "
+                      "df -Pk \"$HOME\" | tail -1 | awk '{print $4}'"
+                  ),
+              ],
+              timeout=60,
+              attempts=6,
+          ).stdout.strip().splitlines()[-1]
+          available_kb = int(available_kb_text)
+          minimum_kb = 12 * 1024 * 1024
+          if available_kb < minimum_kb:
+              raise SystemExit(
+                  f"HostGator free space too low: {available_kb} KB < {minimum_kb} KB"
+              )
+
           print(
               "RECEITA_SSH_CHANNEL_STRESS "
               + json.dumps(
                   {
                       "channels": 12,
                       "multiplexed": True,
+                      "remote_runtime": runtime,
+                      "available_kb": available_kb,
+                      "minimum_kb": minimum_kb,
                       "status": "pass",
                   },
                   sort_keys=True,
@@ -152,6 +187,7 @@ jobs:
           set -euo pipefail
           python - <<'PY'
           import json
+          import re
           from api.sources.receita_cnpj_bulk import release_fingerprint
           from api.v2.receita_remote_bridge import discover_release_remote
 
@@ -165,8 +201,10 @@ jobs:
           release = releases[-1]
           fingerprint = fingerprints[-1]
           metadata = list(release.resource_metadata)
-          if release.period != "2026-09":
-              raise SystemExit(f"unexpected current Receita period: {release.period}")
+          if not re.fullmatch(r"20\\d{2}-\\d{2}", release.period):
+              raise SystemExit(f"invalid current Receita period: {release.period}")
+          if release.period < "2026-09":
+              raise SystemExit(f"unexpectedly old Receita period: {release.period}")
           if len(fingerprint) != 64:
               raise SystemExit("invalid Receita release fingerprint")
           if not metadata:
