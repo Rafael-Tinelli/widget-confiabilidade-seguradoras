@@ -12,6 +12,11 @@ from api.utils.identifiers import normalize_cnpj_v2
 from api.utils.name_cleaner import normalize_name_key
 from api.v2.build_consumer_gov_157_experiment import ELIGIBILITY_PATH
 from api.v2.consumer_gov_receita_resolution import DEFAULT_RECEITA_IDENTITY_SNAPSHOT
+from api.v2.receita_remote_bridge import (
+    build_identity_remote,
+    discover_release_remote,
+    remote_bridge_enabled,
+)
 
 CONSUMER_IDENTITY_PATH = Path("data/derived/v2/consumer_gov_identity_experiment.json")
 CACHE_KEY_VERSION = "v2-consumer-receita-identity-2"
@@ -128,7 +133,11 @@ def build_snapshot(
     entities, providers = _load_inputs()
     universe_hash = target_universe_hash(entities)
     provider_hash = unresolved_provider_hash(providers)
-    release = discover_latest_release()
+    release = (
+        discover_release_remote()
+        if remote_bridge_enabled()
+        else discover_latest_release()
+    )
     expected_key = _cache_key(
         reference_period=release.period,
         universe_hash=universe_hash,
@@ -142,10 +151,18 @@ def build_snapshot(
         )
         return None
 
-    payload = build_filtered_identity_snapshot(
-        entities,
-        providers,
-        release=release,
+    payload = (
+        build_identity_remote(
+            entities,
+            providers,
+            release=release,
+        )
+        if remote_bridge_enabled()
+        else build_filtered_identity_snapshot(
+            entities,
+            providers,
+            release=release,
+        )
     )
     meta = payload.setdefault("meta", {})
     meta["gate4_cache_key"] = expected_key
