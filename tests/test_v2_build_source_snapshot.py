@@ -373,6 +373,10 @@ def test_incompatible_receita_cache_triggers_fresh_refresh(tmp_path: Path, monke
         "api.v2.build_source_snapshot.discover_latest_release",
         lambda: SimpleNamespace(period="2026-08"),
     )
+    monkeypatch.setattr(
+        "api.v2.build_source_snapshot.release_fingerprint",
+        lambda release, purpose: "f" * 64,
+    )
 
     def fake_refresh(*, output, release, entities):
         assert release.period == "2026-08"
@@ -520,3 +524,53 @@ def test_receita_unavailable_preserves_small_missing_current_cnpj_as_partial(
     assert "legal crosscheck unavailable for 1 current CNPJs" in (
         result.observation.state_reason or ""
     )
+
+
+def test_receita_current_validation_requires_matching_release_fingerprint(
+    tmp_path: Path,
+    monkeypatch,
+):
+    _disable_golden_check(monkeypatch)
+    classification = _classification()
+    target_hash = regulatory_target_universe_hash(classification["entities"])
+    cache_dir = tmp_path / "cache"
+    cache_dir.mkdir()
+    cache = CachedSource(
+        source_id="receita_cnpj_lifecycle",
+        source_url=RECEITA_CNPJ_OPEN_DATA_URL,
+        content_path=cache_dir / "receita_cnpj_lifecycle.json",
+        metadata_path=cache_dir / "receita_cnpj_lifecycle.meta.json",
+    )
+    payload = _receita_payload(
+        target_hash,
+        version=RECEITA_LIFECYCLE_CACHE_CONTRACT_VERSION,
+        cnpjs=_classification_cnpjs(classification),
+    )
+    payload["meta"]["release_fingerprint"] = "a" * 64
+    source = tmp_path / "current.json"
+    source.write_text(json.dumps(payload), encoding="utf-8")
+    cache.store(source, fetched_at="2026-09-19T00:00:00Z")
+
+    monkeypatch.setattr(
+        "api.v2.build_source_snapshot.discover_latest_release",
+        lambda: SimpleNamespace(period="2026-08"),
+    )
+    monkeypatch.setattr(
+        "api.v2.build_source_snapshot.release_fingerprint",
+        lambda release, purpose: "a" * 64,
+    )
+
+    destination = tmp_path / "receita.json"
+    result = _receita_snapshot(
+        classification=classification,
+        destination=destination,
+        cache_dir=cache_dir,
+        existing_snapshot=tmp_path / "missing-existing.json",
+        context=_context(),
+    )
+
+    assert result.used_cache is True
+    lineage = result.observation.to_lineage(_context())
+    assert lineage.state == "fresh"
+    assert lineage.freshness_method == "current_validation"
+    assert "fingerprint unchanged" in (result.observation.state_reason or "")
