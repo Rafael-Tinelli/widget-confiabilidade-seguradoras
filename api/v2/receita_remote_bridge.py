@@ -46,7 +46,6 @@ _TRANSPORT_RETRY_ATTEMPTS = 6
 _TRANSPORT_RETRY_BASE_SECONDS = 2
 _TRANSPORT_RETRY_MAX_SECONDS = 20
 _CONTROL_PERSIST_SECONDS = 600
-_POLL_INTERVAL_SECONDS = 45
 _REMOTE_DEADLINE_SECONDS = 18_000
 
 
@@ -388,70 +387,6 @@ def _ensure_remote_worker(
         raise ReceitaRemoteBridgeError("Receita remote worker upload did not persist")
 
 
-def _start_remote_worker(
-    ssh: list[str],
-    *,
-    remote_command: str,
-    remote_start: str,
-    remote_exit: str,
-) -> None:
-    guarded_command = (
-        "umask 077; "
-        f"if test -f {shlex.quote(remote_start)} "
-        f"|| test -f {shlex.quote(remote_exit)}; then "
-        "printf 'ALREADY_STARTED\\n'; "
-        f"else {remote_command}; fi"
-    )
-    last_error: ReceitaRemoteBridgeError | None = None
-    for attempt in range(1, 4):
-        try:
-            result = _run(
-                [*ssh, guarded_command],
-                timeout=15,
-            )
-            status = result.stdout.strip()
-            if status.startswith("STARTED:") or status == "ALREADY_STARTED":
-                return
-            raise ReceitaRemoteBridgeError(
-                f"unexpected Receita remote launch response: {status!r}"
-            )
-        except ReceitaRemoteBridgeError as exc:
-            last_error = exc
-            if not _is_transient_transport_error(exc):
-                raise
-
-            time.sleep(_backoff_seconds(attempt))
-            try:
-                marker = _run_transport(
-                    [
-                        *ssh,
-                        (
-                            f"if test -s {shlex.quote(remote_start)} "
-                            f"|| test -f {shlex.quote(remote_exit)}; then "
-                            "printf '1\\n'; else printf '0\\n'; fi"
-                        ),
-                    ],
-                    timeout=30,
-                    attempts=3,
-                )
-                if marker.stdout.strip().splitlines()[-1:] == ["1"]:
-                    print(
-                        "RECEITA_SSH_RECOVERED_AFTER_START_CHANNEL_LOSS "
-                        + json.dumps(
-                            {"attempt": attempt},
-                            sort_keys=True,
-                        ),
-                        file=sys.stderr,
-                        flush=True,
-                    )
-                    return
-            except ReceitaRemoteBridgeError:
-                pass
-
-    assert last_error is not None
-    raise last_error
-
-
 def _remote_call(mode: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
     if not remote_bridge_enabled():
         raise ReceitaRemoteBridgeError("Receita remote bridge is not enabled")
@@ -466,10 +401,6 @@ def _remote_call(mode: str, payload: dict[str, Any] | None = None) -> dict[str, 
     remote_worker = _worker_remote_path(config)
     remote_input = f"{run_dir}/input.json"
     remote_output = f"{run_dir}/output.json"
-    remote_exit = f"{run_dir}/exit_code"
-    remote_start = f"{run_dir}/started"
-    remote_stdout = f"{run_dir}/stdout.log"
-    remote_stderr = f"{run_dir}/stderr.log"
 
     control_path = _control_path(config)
     ssh = _ssh_base(config, control_path=control_path)
@@ -478,9 +409,7 @@ def _remote_call(mode: str, payload: dict[str, Any] | None = None) -> dict[str, 
         "umask 077; "
         f"mkdir -p -- {shlex.quote(run_dir)} {shlex.quote(cache_dir)} "
         f"{shlex.quote(workers_dir)}; "
-        f"rm -f -- {shlex.quote(remote_output)} {shlex.quote(remote_input)} "
-        f"{shlex.quote(remote_exit)} {shlex.quote(remote_start)} "
-        f"{shlex.quote(remote_stdout)} {shlex.quote(remote_stderr)}"
+        f"rm -f -- {shlex.quote(remote_output)} {shlex.quote(remote_input)}"
     )
     with _bridge_phase(
         mode=mode,
@@ -498,23 +427,24 @@ def _remote_call(mode: str, payload: dict[str, Any] | None = None) -> dict[str, 
 
     try:
         if payload is not None:
+            serialized_payload = (
+                json.dumps(
+                    payload,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                )
+                + "\n"
+            )
             with _bridge_phase(
                 mode=mode,
                 operation=operation,
                 phase="upload_input",
-                payload_bytes=len(
-                    json.dumps(payload, ensure_ascii=False, sort_keys=True).encode()
-                ),
+                payload_bytes=len(serialized_payload.encode()),
             ):
                 _upload_text_atomic(
                     ssh,
                     remote_path=remote_input,
-                    payload=json.dumps(
-                        payload,
-                        ensure_ascii=False,
-                        sort_keys=True,
-                    )
-                    + "\n",
+                    payload=serialized_payload,
                 )
 
         remote_args = [
@@ -529,215 +459,34 @@ def _remote_call(mode: str, payload: dict[str, Any] | None = None) -> dict[str, 
         ]
         if payload is not None:
             remote_args.extend(["--input", remote_input])
-        remote_args.extend(
-            [
-                "--spawn-detached",
-                "--exit-file",
-                remote_exit,
-                "--start-file",
-                remote_start,
-                "--stdout-log",
-                remote_stdout,
-                "--stderr-log",
-                remote_stderr,
-            ]
-        )
         remote_command = " ".join(shlex.quote(part) for part in remote_args)
+
         with _bridge_phase(
             mode=mode,
             operation=operation,
-            phase="launch_worker",
+            phase="execute_worker",
         ):
-            _start_remote_worker(
-                ssh,
-                remote_command=remote_command,
-                remote_start=remote_start,
-                remote_exit=remote_exit,
-            )
-
-        poll_started_at = time.monotonic()
-        _bridge_event(
-            mode=mode,
-            operation=operation,
-            phase="poll_worker",
-            event="start",
-        )
-        deadline = time.monotonic() + _REMOTE_DEADLINE_SECONDS
-        startup_deadline = time.monotonic() + 30
-        exit_code: int | None = None
-        consecutive_probe_failures = 0
-        dead_observations = 0
-        unexpected_worker_restarts = 0
-        while time.monotonic() <= deadline:
-            try:
-                probe = _run_transport(
-                    [
-                        *ssh,
-                        (
-                            f"if test -f {shlex.quote(remote_exit)}; then "
-                            "printf 'EXIT:'; "
-                            f"cat {shlex.quote(remote_exit)}; "
-                            f"elif test -s {shlex.quote(remote_start)}; then "
-                            f"pid=$(cat {shlex.quote(remote_start)} 2>/dev/null || true); "
-                            "case \"$pid\" in "
-                            "''|*[!0-9]*) printf 'STARTING\\n' ;; "
-                            "*) if kill -0 \"$pid\" 2>/dev/null; then "
-                            "printf 'RUNNING\\n'; "
-                            "else printf 'DEAD:%s\\n' \"$pid\"; fi ;; "
-                            "esac; "
-                            "else printf 'STARTING\\n'; fi"
-                        ),
-                    ],
-                    timeout=60,
-                    attempts=3,
-                )
-                consecutive_probe_failures = 0
-            except ReceitaRemoteBridgeError:
-                consecutive_probe_failures += 1
-                if consecutive_probe_failures >= 5:
-                    raise
-                time.sleep(_POLL_INTERVAL_SECONDS)
-                continue
-
-            status = probe.stdout.strip()
-            if status == "STARTING" or not status:
-                dead_observations = 0
-                if time.monotonic() > startup_deadline:
-                    detail = _run_transport(
-                        [
-                            *ssh,
-                            (
-                                f"tail -c 3000 {shlex.quote(remote_stderr)} "
-                                "2>/dev/null || true"
-                            ),
-                        ],
-                        timeout=30,
-                        check=False,
-                        attempts=3,
-                    ).stdout.strip()
-                    raise ReceitaRemoteBridgeError(
-                        "Receita remote worker did not establish a start marker "
-                        "within 30s"
-                        + (f": {detail}" if detail else "")
-                    )
-                time.sleep(2)
-                continue
-            if status == "RUNNING":
-                dead_observations = 0
-                time.sleep(_POLL_INTERVAL_SECONDS)
-                continue
-
-            if status.startswith("DEAD:"):
-                dead_observations += 1
-                if dead_observations < 2:
-                    time.sleep(5)
-                    continue
-                if unexpected_worker_restarts >= 2:
-                    raise ReceitaRemoteBridgeError(
-                        "Receita remote worker disappeared without exit marker "
-                        f"after {unexpected_worker_restarts} restart attempts: {status}"
-                    )
-
-                detail = _run_transport(
-                    [
-                        *ssh,
-                        (
-                            f"tail -c 3000 {shlex.quote(remote_stderr)} "
-                            "2>/dev/null || true"
-                        ),
-                    ],
-                    timeout=60,
-                    check=False,
-                    attempts=3,
-                ).stdout.strip()
-                _run_transport(
-                    [
-                        *ssh,
-                        (
-                            f"rm -f -- {shlex.quote(remote_start)} "
-                            f"{shlex.quote(remote_exit)}"
-                        ),
-                    ],
-                    timeout=60,
-                    attempts=3,
-                )
-                unexpected_worker_restarts += 1
-                dead_observations = 0
-                print(
-                    "RECEITA_REMOTE_WORKER_RESTART "
-                    + json.dumps(
-                        {
-                            "restart": unexpected_worker_restarts,
-                            "status": status,
-                            "stderr_tail": detail[-600:],
-                        },
-                        ensure_ascii=False,
-                        sort_keys=True,
-                    ),
-                    flush=True,
-                )
-                with _bridge_phase(
-                    mode=mode,
-                    operation=operation,
-                    phase="restart_worker",
-                    restart=unexpected_worker_restarts,
-                ):
-                    _start_remote_worker(
-                        ssh,
-                        remote_command=remote_command,
-                        remote_start=remote_start,
-                        remote_exit=remote_exit,
-                        remote_stdout=remote_stdout,
-                        remote_stderr=remote_stderr,
-                    )
-                time.sleep(5)
-                continue
-
-            if status.startswith("EXIT:"):
-                raw_exit = status.split(":", 1)[1].strip()
-                try:
-                    exit_code = int(raw_exit.splitlines()[-1])
-                except ValueError as exc:
-                    raise ReceitaRemoteBridgeError(
-                        f"invalid Receita remote worker exit status: {status!r}"
-                    ) from exc
-                break
-
-            raise ReceitaRemoteBridgeError(
-                f"invalid Receita remote worker status: {status!r}"
-            )
-
-        _bridge_event(
-            mode=mode,
-            operation=operation,
-            phase="poll_worker",
-            event="end",
-            started_at=poll_started_at,
-            exit_code=exit_code,
-            restarts=unexpected_worker_restarts,
-        )
-
-        if exit_code is None:
-            raise ReceitaRemoteBridgeError(
-                f"Receita remote worker exceeded the {_REMOTE_DEADLINE_SECONDS}s "
-                "bridge deadline"
-            )
-        if exit_code != 0:
-            detail = _run_transport(
-                [
-                    *ssh,
-                    (
-                        f"tail -c 6000 {shlex.quote(remote_stderr)} "
-                        "2>/dev/null || true"
-                    ),
-                ],
-                timeout=120,
-                check=False,
+            worker_result = _run_transport(
+                [*ssh, remote_command],
+                timeout=_REMOTE_DEADLINE_SECONDS,
                 attempts=3,
-            ).stdout.strip()
-            raise ReceitaRemoteBridgeError(
-                "Receita remote worker failed"
-                + (f": {detail}" if detail else f" with exit={exit_code}")
+            )
+
+        worker_stdout = worker_result.stdout.strip()
+        if worker_stdout:
+            print(
+                "RECEITA_REMOTE_WORKER_STDOUT "
+                + json.dumps(
+                    {
+                        "mode": mode,
+                        "operation": operation,
+                        "tail": worker_stdout[-4000:],
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                ),
+                file=sys.stderr,
+                flush=True,
             )
 
         with _bridge_phase(
@@ -750,6 +499,7 @@ def _remote_call(mode: str, payload: dict[str, Any] | None = None) -> dict[str, 
                 timeout=60,
                 attempts=6,
             ).stdout
+
         try:
             response = json.loads(output)
         except (UnicodeError, json.JSONDecodeError) as exc:
