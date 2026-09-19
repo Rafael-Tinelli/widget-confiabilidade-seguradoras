@@ -6,6 +6,7 @@ import io
 import subprocess
 import zipfile
 from pathlib import Path
+from types import SimpleNamespace
 
 from api.sources.receita_cnpj_bulk import ReceitaOpenDataRelease
 from api.sources.receita_cnpj_identity import (
@@ -461,3 +462,39 @@ def test_start_worker_uses_detached_launcher_contract(monkeypatch) -> None:
     assert "nohup" not in remote_shell
     assert "setsid" not in remote_shell
     assert calls[0][1]["timeout"] == 15
+
+
+def test_worker_spawn_detached_closes_ssh_descriptors(monkeypatch, tmp_path) -> None:
+    worker = _load_worker_module()
+    captured = {}
+
+    class FakeProcess:
+        pid = 9876
+
+    def fake_popen(command, **kwargs):
+        captured["command"] = command
+        captured["kwargs"] = kwargs
+        return FakeProcess()
+
+    monkeypatch.setattr(worker.subprocess, "Popen", fake_popen)
+
+    args = SimpleNamespace(
+        mode="lifecycle",
+        input=str(tmp_path / "input.json"),
+        output=str(tmp_path / "output.json"),
+        cache_dir=str(tmp_path / "cache"),
+        exit_file=str(tmp_path / "exit_code"),
+        start_file=str(tmp_path / "started"),
+        stdout_log=str(tmp_path / "stdout.log"),
+        stderr_log=str(tmp_path / "stderr.log"),
+    )
+
+    assert worker.spawn_detached(args) == 0
+    assert captured["kwargs"]["stdin"] is worker.subprocess.DEVNULL
+    assert captured["kwargs"]["start_new_session"] is True
+    assert captured["kwargs"]["close_fds"] is True
+    assert captured["command"][0] == worker.sys.executable
+    assert "--spawn-detached" not in captured["command"]
+    assert "--start-file" in captured["command"]
+    assert "--exit-file" in captured["command"]
+    assert (tmp_path / "started").read_text(encoding="utf-8").strip() == "9876"
