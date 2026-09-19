@@ -5,11 +5,6 @@ name: V2 Gate 4 Full Generation Proof
 # no longer an event source.
 on:
   workflow_dispatch:
-  # One-shot branch trigger used because the connected GitHub action surface
-  # cannot invoke workflow_dispatch directly. Remove after run creation.
-  push:
-    branches:
-      - fix/receita-cache-bridge-final
 
 permissions:
   contents: read
