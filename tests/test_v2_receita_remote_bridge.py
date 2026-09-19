@@ -3,6 +3,7 @@ from __future__ import annotations
 import ast
 import importlib.util
 import json
+import subprocess
 import zipfile
 from pathlib import Path
 
@@ -314,3 +315,49 @@ def test_remote_worker_cache_manifest_reuses_and_invalidates_same_size_tamper(
     assert refreshed["files"]["Motivos.zip"]["provenance"] == (
         "downloaded_current_manifest"
     )
+
+
+def test_remote_run_retries_transport_exit_255(monkeypatch) -> None:
+    calls = {"count": 0}
+
+    def fake_run(*args, **kwargs):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise subprocess.CalledProcessError(
+                255,
+                args[0],
+                stderr="scp: Connection closed",
+            )
+        return subprocess.CompletedProcess(args[0], 0, stdout="ok", stderr="")
+
+    monkeypatch.setattr(bridge.subprocess, "run", fake_run)
+    monkeypatch.setattr(bridge.time, "sleep", lambda *_: None)
+
+    result = bridge._run(["scp", "source", "dest"], retries=3)
+
+    assert result.returncode == 0
+    assert calls["count"] == 2
+
+
+def test_remote_run_does_not_retry_deterministic_command_failure(monkeypatch) -> None:
+    calls = {"count": 0}
+
+    def fake_run(*args, **kwargs):
+        calls["count"] += 1
+        raise subprocess.CalledProcessError(
+            1,
+            args[0],
+            stderr="deterministic remote failure",
+        )
+
+    monkeypatch.setattr(bridge.subprocess, "run", fake_run)
+    monkeypatch.setattr(bridge.time, "sleep", lambda *_: None)
+
+    try:
+        bridge._run(["ssh", "host", "false"], retries=3)
+    except bridge.ReceitaRemoteBridgeError as exc:
+        assert "deterministic remote failure" in str(exc)
+    else:
+        raise AssertionError("deterministic failure must propagate")
+
+    assert calls["count"] == 1
