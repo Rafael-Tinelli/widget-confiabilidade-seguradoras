@@ -170,27 +170,36 @@ jobs:
               [
                   *ssh,
                   (
-                      "probe=\"$HOME/.sanida-v2-receita-bridge/detach-probe\"; "
-                      "rm -f \"$probe.pid\" \"$probe.out\" \"$probe.err\"; "
-                      "nohup setsid -f sh -c "
-                      "'echo $ > \"$1.pid\"; sleep 40' sh \"$probe\" "
-                      "</dev/null >\"$probe.out\" 2>\"$probe.err\"; "
-                      "for i in 1 2 3 4 5; do "
-                      "test -s \"$probe.pid\" && break; sleep 1; done; "
-                      "pid=$(cat \"$probe.pid\" 2>/dev/null || true); "
-                      "test -n \"$pid\"; kill -0 \"$pid\" 2>/dev/null; "
-                      "printf 'DETACHED:%s\\n' \"$pid\"; "
-                      "kill \"$pid\" 2>/dev/null || true; "
-                      "rm -f \"$probe.pid\" \"$probe.out\" \"$probe.err\""
+                      "python3 -c 'import subprocess; "
+                      "p=subprocess.Popen([\"sleep\",\"40\"], "
+                      "stdin=subprocess.DEVNULL, "
+                      "stdout=subprocess.DEVNULL, "
+                      "stderr=subprocess.DEVNULL, "
+                      "start_new_session=True, close_fds=True); "
+                      "print(p.pid)'"
                   ),
               ],
               timeout=10,
               attempts=3,
           ).stdout.strip()
-          if not detach_probe.startswith("DETACHED:"):
+          detached_pid = int(detach_probe)
+          detached_check = _run_transport(
+              [
+                  *ssh,
+                  (
+                      f"kill -0 {detached_pid} 2>/dev/null && "
+                      f"kill {detached_pid} 2>/dev/null || true; "
+                      "printf 'DETACHED_OK\\n'"
+                  ),
+              ],
+              timeout=10,
+              attempts=3,
+          ).stdout.strip()
+          if detached_check != "DETACHED_OK":
               raise SystemExit(
-                  f"setsid -f detach probe failed: {detach_probe!r}"
+                  f"close_fds detach probe failed: {detached_check!r}"
               )
+
 
           print(
               "RECEITA_SSH_CHANNEL_STRESS "
@@ -201,7 +210,7 @@ jobs:
                       "remote_runtime": runtime,
                       "available_kb": available_kb,
                       "minimum_kb": minimum_kb,
-                      "detach_probe": detach_probe,
+                      "detach_probe_pid": detached_pid,
                       "status": "pass",
                   },
                   sort_keys=True,
