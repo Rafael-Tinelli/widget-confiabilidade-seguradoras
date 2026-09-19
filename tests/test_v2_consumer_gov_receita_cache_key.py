@@ -43,6 +43,7 @@ def test_existing_snapshot_is_reusable_only_with_complete_gate4_cache_key(tmp_pa
     path = tmp_path / "receita.json"
     expected = _cache_key(
         reference_period="2026-08",
+        release_fingerprint_value="c" * 64,
         universe_hash="a" * 64,
         provider_hash="b" * 64,
     )
@@ -53,6 +54,7 @@ def test_existing_snapshot_is_reusable_only_with_complete_gate4_cache_key(tmp_pa
 
     assert _existing_cache_key(path) == expected
     assert expected["version"] == CACHE_KEY_VERSION
+    assert expected["release_fingerprint"] == "c" * 64
     assert expected["target_universe_hash_method"] == TARGET_UNIVERSE_HASH_METHOD
 
     path.write_text(
@@ -65,3 +67,19 @@ def test_existing_snapshot_is_reusable_only_with_complete_gate4_cache_key(tmp_pa
         encoding="utf-8",
     )
     assert _existing_cache_key(path) is None
+
+
+def test_release_fingerprint_change_invalidates_identity_cache_key() -> None:
+    first = _cache_key(
+        reference_period="2026-09",
+        release_fingerprint_value="a" * 64,
+        universe_hash="b" * 64,
+        provider_hash="c" * 64,
+    )
+    changed = _cache_key(
+        reference_period="2026-09",
+        release_fingerprint_value="d" * 64,
+        universe_hash="b" * 64,
+        provider_hash="c" * 64,
+    )
+    assert first != changed
