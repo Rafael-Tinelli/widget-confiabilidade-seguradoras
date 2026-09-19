@@ -166,6 +166,32 @@ jobs:
                   f"HostGator free space too low: {available_kb} KB < {minimum_kb} KB"
               )
 
+          detach_probe = _run_transport(
+              [
+                  *ssh,
+                  (
+                      "probe=\"$HOME/.sanida-v2-receita-bridge/detach-probe\"; "
+                      "rm -f \"$probe.pid\" \"$probe.out\" \"$probe.err\"; "
+                      "nohup setsid -f sh -c "
+                      "'echo $ > \"$1.pid\"; sleep 40' sh \"$probe\" "
+                      "</dev/null >\"$probe.out\" 2>\"$probe.err\"; "
+                      "for i in 1 2 3 4 5; do "
+                      "test -s \"$probe.pid\" && break; sleep 1; done; "
+                      "pid=$(cat \"$probe.pid\" 2>/dev/null || true); "
+                      "test -n \"$pid\"; kill -0 \"$pid\" 2>/dev/null; "
+                      "printf 'DETACHED:%s\\n' \"$pid\"; "
+                      "kill \"$pid\" 2>/dev/null || true; "
+                      "rm -f \"$probe.pid\" \"$probe.out\" \"$probe.err\""
+                  ),
+              ],
+              timeout=10,
+              attempts=3,
+          ).stdout.strip()
+          if not detach_probe.startswith("DETACHED:"):
+              raise SystemExit(
+                  f"setsid -f detach probe failed: {detach_probe!r}"
+              )
+
           print(
               "RECEITA_SSH_CHANNEL_STRESS "
               + json.dumps(
@@ -175,6 +201,7 @@ jobs:
                       "remote_runtime": runtime,
                       "available_kb": available_kb,
                       "minimum_kb": minimum_kb,
+                      "detach_probe": detach_probe,
                       "status": "pass",
                   },
                   sort_keys=True,
