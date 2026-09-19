@@ -164,6 +164,37 @@ def _run(
         ) from exc
 
 
+def _run_detached_ssh(
+    command: list[str],
+    *,
+    timeout: int = 60,
+) -> None:
+    """Launch an ssh -f client without capture pipes that can keep it attached."""
+    try:
+        process = subprocess.Popen(
+            command,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+        return_code = process.wait(timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
+        process.kill()
+        process.wait()
+        raise ReceitaRemoteBridgeError(
+            f"Receita detached SSH launch timed out after {timeout}s"
+        ) from exc
+    except OSError as exc:
+        raise ReceitaRemoteBridgeError(
+            f"Receita detached SSH launch failed: {exc}"
+        ) from exc
+    if return_code != 0:
+        raise ReceitaRemoteBridgeError(
+            f"Receita detached SSH launch failed with exit={return_code}"
+        )
+
+
 def _operation_id(mode: str) -> str:
     build_id = os.getenv("V2_BUILD_ID", "").strip() or "manual"
     value = _SAFE_BUILD_RE.sub("-", f"{build_id}-{mode}").strip("-")
@@ -232,13 +263,23 @@ def _remote_call(mode: str, payload: dict[str, Any] | None = None) -> dict[str, 
             remote_stderr = f"{run_dir}/stderr.log"
             remote_args.extend(["--exit-file", remote_exit])
             remote_command = " ".join(shlex.quote(part) for part in remote_args)
-            launch_command = (
-                f"nohup {remote_command} "
+            exit_temp = remote_exit + ".launcher.tmp"
+            remote_script = (
+                f"{remote_command} "
                 f"> {shlex.quote(remote_stdout)} "
                 f"2> {shlex.quote(remote_stderr)} "
-                "</dev/null &"
+                "</dev/null; "
+                "code=$?; "
+                f"if ! test -f {shlex.quote(remote_exit)}; then "
+                f"printf '%s\\n' \"$code\" > {shlex.quote(exit_temp)}; "
+                f"mv -f -- {shlex.quote(exit_temp)} {shlex.quote(remote_exit)}; "
+                "fi"
             )
-            _run([*ssh, launch_command], timeout=60)
+            launch_ssh = [*ssh[:-1], "-f", "-n", ssh[-1]]
+            _run_detached_ssh(
+                [*launch_ssh, "sh -c " + shlex.quote(remote_script)],
+                timeout=60,
+            )
 
             deadline_seconds = 18_000
             poll_interval_seconds = 20
