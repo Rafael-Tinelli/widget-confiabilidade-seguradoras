@@ -457,6 +457,8 @@ def _remote_call(mode: str, payload: dict[str, Any] | None = None) -> dict[str, 
         deadline = time.monotonic() + _REMOTE_DEADLINE_SECONDS
         exit_code: int | None = None
         consecutive_probe_failures = 0
+        dead_observations = 0
+        unexpected_worker_restarts = 0
         while time.monotonic() <= deadline:
             try:
                 probe = _run_transport(
@@ -464,8 +466,17 @@ def _remote_call(mode: str, payload: dict[str, Any] | None = None) -> dict[str, 
                         *ssh,
                         (
                             f"if test -f {shlex.quote(remote_exit)}; then "
+                            "printf 'EXIT:'; "
                             f"cat {shlex.quote(remote_exit)}; "
-                            "else printf 'RUNNING\\n'; fi"
+                            f"elif test -s {shlex.quote(remote_start)}; then "
+                            f"pid=$(cat {shlex.quote(remote_start)} 2>/dev/null || true); "
+                            "case \"$pid\" in "
+                            "''|*[!0-9]*) printf 'STARTING\\n' ;; "
+                            "*) if kill -0 \"$pid\" 2>/dev/null; then "
+                            "printf 'RUNNING\\n'; "
+                            "else printf 'DEAD:%s\\n' \"$pid\"; fi ;; "
+                            "esac; "
+                            "else printf 'STARTING\\n'; fi"
                         ),
                     ],
                     timeout=60,
@@ -480,16 +491,82 @@ def _remote_call(mode: str, payload: dict[str, Any] | None = None) -> dict[str, 
                 continue
 
             status = probe.stdout.strip()
-            if status == "RUNNING" or not status:
+            if status in {"RUNNING", "STARTING"} or not status:
+                dead_observations = 0
                 time.sleep(_POLL_INTERVAL_SECONDS)
                 continue
-            try:
-                exit_code = int(status.splitlines()[-1])
-            except ValueError as exc:
-                raise ReceitaRemoteBridgeError(
-                    f"invalid Receita remote worker status: {status!r}"
-                ) from exc
-            break
+
+            if status.startswith("DEAD:"):
+                dead_observations += 1
+                if dead_observations < 2:
+                    time.sleep(5)
+                    continue
+                if unexpected_worker_restarts >= 2:
+                    raise ReceitaRemoteBridgeError(
+                        "Receita remote worker disappeared without exit marker "
+                        f"after {unexpected_worker_restarts} restart attempts: {status}"
+                    )
+
+                detail = _run_transport(
+                    [
+                        *ssh,
+                        (
+                            f"tail -c 3000 {shlex.quote(remote_stderr)} "
+                            "2>/dev/null || true"
+                        ),
+                    ],
+                    timeout=60,
+                    check=False,
+                    attempts=3,
+                ).stdout.strip()
+                _run_transport(
+                    [
+                        *ssh,
+                        (
+                            f"rm -f -- {shlex.quote(remote_start)} "
+                            f"{shlex.quote(remote_exit)}"
+                        ),
+                    ],
+                    timeout=60,
+                    attempts=3,
+                )
+                unexpected_worker_restarts += 1
+                dead_observations = 0
+                print(
+                    "RECEITA_REMOTE_WORKER_RESTART "
+                    + json.dumps(
+                        {
+                            "restart": unexpected_worker_restarts,
+                            "status": status,
+                            "stderr_tail": detail[-600:],
+                        },
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    ),
+                    flush=True,
+                )
+                _start_remote_worker(
+                    ssh,
+                    remote_command=remote_command,
+                    remote_start=remote_start,
+                    remote_exit=remote_exit,
+                )
+                time.sleep(5)
+                continue
+
+            if status.startswith("EXIT:"):
+                raw_exit = status.split(":", 1)[1].strip()
+                try:
+                    exit_code = int(raw_exit.splitlines()[-1])
+                except ValueError as exc:
+                    raise ReceitaRemoteBridgeError(
+                        f"invalid Receita remote worker exit status: {status!r}"
+                    ) from exc
+                break
+
+            raise ReceitaRemoteBridgeError(
+                f"invalid Receita remote worker status: {status!r}"
+            )
 
         if exit_code is None:
             raise ReceitaRemoteBridgeError(
