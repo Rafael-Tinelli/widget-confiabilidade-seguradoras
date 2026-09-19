@@ -8,6 +8,7 @@ import shlex
 import subprocess
 import tempfile
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -208,6 +209,75 @@ def _backoff_seconds(attempt: int) -> int:
     )
 
 
+def _bridge_event(
+    *,
+    mode: str,
+    operation: str,
+    phase: str,
+    event: str,
+    started_at: float | None = None,
+    error: BaseException | None = None,
+    **details: Any,
+) -> None:
+    payload: dict[str, Any] = {
+        "mode": mode,
+        "operation": operation,
+        "phase": phase,
+        "event": event,
+    }
+    if started_at is not None:
+        payload["duration_seconds"] = round(time.monotonic() - started_at, 3)
+    if error is not None:
+        payload["error_type"] = type(error).__name__
+        payload["error"] = str(error)[-1200:]
+    payload.update(details)
+    print(
+        "RECEITA_BRIDGE_PHASE "
+        + json.dumps(payload, ensure_ascii=False, sort_keys=True),
+        flush=True,
+    )
+
+
+@contextmanager
+def _bridge_phase(
+    *,
+    mode: str,
+    operation: str,
+    phase: str,
+    **details: Any,
+):
+    started_at = time.monotonic()
+    _bridge_event(
+        mode=mode,
+        operation=operation,
+        phase=phase,
+        event="start",
+        **details,
+    )
+    try:
+        yield
+    except BaseException as exc:
+        _bridge_event(
+            mode=mode,
+            operation=operation,
+            phase=phase,
+            event="error",
+            started_at=started_at,
+            error=exc,
+            **details,
+        )
+        raise
+    else:
+        _bridge_event(
+            mode=mode,
+            operation=operation,
+            phase=phase,
+            event="end",
+            started_at=started_at,
+            **details,
+        )
+
+
 def _run_transport(
     command: list[str],
     *,
@@ -321,41 +391,56 @@ def _start_remote_worker(
     remote_command: str,
     remote_start: str,
     remote_exit: str,
+    remote_stdout: str,
+    remote_stderr: str,
 ) -> None:
+    # Backgrounding is owned by the remote shell, not by Python. This makes
+    # the SSH channel return immediately and gives the bridge the real worker
+    # PID for liveness checks.
     guarded_command = (
+        "umask 077; "
         f"if test -f {shlex.quote(remote_start)} "
         f"|| test -f {shlex.quote(remote_exit)}; then "
         "printf 'ALREADY_STARTED\\n'; "
-        f"else {remote_command}; fi"
+        "else "
+        f"nohup setsid {remote_command} "
+        f"</dev/null >>{shlex.quote(remote_stdout)} "
+        f"2>>{shlex.quote(remote_stderr)} & "
+        "pid=$!; "
+        f"printf '%s\\n' \"$pid\" > {shlex.quote(remote_start)}; "
+        "printf 'STARTED:%s\\n' \"$pid\"; "
+        "fi"
     )
     last_error: ReceitaRemoteBridgeError | None = None
     for attempt in range(1, 4):
         try:
-            _run(
+            result = _run(
                 [*ssh, guarded_command],
-                timeout=120,
+                timeout=30,
             )
-            return
+            status = result.stdout.strip()
+            if status.startswith("STARTED:") or status == "ALREADY_STARTED":
+                return
+            raise ReceitaRemoteBridgeError(
+                f"unexpected Receita remote launch response: {status!r}"
+            )
         except ReceitaRemoteBridgeError as exc:
             last_error = exc
             if not _is_transient_transport_error(exc):
                 raise
 
-            # The channel can disappear after the remote Python process has
-            # accepted the start request. The worker persists a start marker
-            # before daemon detachment, making retry idempotent.
             time.sleep(_backoff_seconds(attempt))
             try:
                 marker = _run_transport(
                     [
                         *ssh,
                         (
-                            f"if test -f {shlex.quote(remote_start)} "
+                            f"if test -s {shlex.quote(remote_start)} "
                             f"|| test -f {shlex.quote(remote_exit)}; then "
                             "printf '1\\n'; else printf '0\\n'; fi"
                         ),
                     ],
-                    timeout=60,
+                    timeout=30,
                     attempts=3,
                 )
                 if marker.stdout.strip().splitlines()[-1:] == ["1"]:
@@ -405,21 +490,40 @@ def _remote_call(mode: str, payload: dict[str, Any] | None = None) -> dict[str, 
         f"{shlex.quote(remote_exit)} {shlex.quote(remote_start)} "
         f"{shlex.quote(remote_stdout)} {shlex.quote(remote_stderr)}"
     )
-    _run_transport([*ssh, mkdir_command], timeout=120)
-    _ensure_remote_worker(ssh, remote_worker=remote_worker)
+    with _bridge_phase(
+        mode=mode,
+        operation=operation,
+        phase="prepare_remote_run_dir",
+    ):
+        _run_transport([*ssh, mkdir_command], timeout=60)
+
+    with _bridge_phase(
+        mode=mode,
+        operation=operation,
+        phase="ensure_remote_worker",
+    ):
+        _ensure_remote_worker(ssh, remote_worker=remote_worker)
 
     try:
         if payload is not None:
-            _upload_text_atomic(
-                ssh,
-                remote_path=remote_input,
-                payload=json.dumps(
-                    payload,
-                    ensure_ascii=False,
-                    sort_keys=True,
+            with _bridge_phase(
+                mode=mode,
+                operation=operation,
+                phase="upload_input",
+                payload_bytes=len(
+                    json.dumps(payload, ensure_ascii=False, sort_keys=True).encode()
+                ),
+            ):
+                _upload_text_atomic(
+                    ssh,
+                    remote_path=remote_input,
+                    payload=json.dumps(
+                        payload,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    )
+                    + "\n",
                 )
-                + "\n",
-            )
 
         remote_args = [
             "python3",
@@ -435,25 +539,32 @@ def _remote_call(mode: str, payload: dict[str, Any] | None = None) -> dict[str, 
             remote_args.extend(["--input", remote_input])
         remote_args.extend(
             [
-                "--daemonize",
                 "--exit-file",
                 remote_exit,
-                "--start-file",
-                remote_start,
-                "--stdout-log",
-                remote_stdout,
-                "--stderr-log",
-                remote_stderr,
             ]
         )
         remote_command = " ".join(shlex.quote(part) for part in remote_args)
-        _start_remote_worker(
-            ssh,
-            remote_command=remote_command,
-            remote_start=remote_start,
-            remote_exit=remote_exit,
-        )
+        with _bridge_phase(
+            mode=mode,
+            operation=operation,
+            phase="launch_worker",
+        ):
+            _start_remote_worker(
+                ssh,
+                remote_command=remote_command,
+                remote_start=remote_start,
+                remote_exit=remote_exit,
+                remote_stdout=remote_stdout,
+                remote_stderr=remote_stderr,
+            )
 
+        poll_started_at = time.monotonic()
+        _bridge_event(
+            mode=mode,
+            operation=operation,
+            phase="poll_worker",
+            event="start",
+        )
         deadline = time.monotonic() + _REMOTE_DEADLINE_SECONDS
         exit_code: int | None = None
         consecutive_probe_failures = 0
@@ -545,12 +656,20 @@ def _remote_call(mode: str, payload: dict[str, Any] | None = None) -> dict[str, 
                     ),
                     flush=True,
                 )
-                _start_remote_worker(
-                    ssh,
-                    remote_command=remote_command,
-                    remote_start=remote_start,
-                    remote_exit=remote_exit,
-                )
+                with _bridge_phase(
+                    mode=mode,
+                    operation=operation,
+                    phase="restart_worker",
+                    restart=unexpected_worker_restarts,
+                ):
+                    _start_remote_worker(
+                        ssh,
+                        remote_command=remote_command,
+                        remote_start=remote_start,
+                        remote_exit=remote_exit,
+                        remote_stdout=remote_stdout,
+                        remote_stderr=remote_stderr,
+                    )
                 time.sleep(5)
                 continue
 
@@ -567,6 +686,16 @@ def _remote_call(mode: str, payload: dict[str, Any] | None = None) -> dict[str, 
             raise ReceitaRemoteBridgeError(
                 f"invalid Receita remote worker status: {status!r}"
             )
+
+        _bridge_event(
+            mode=mode,
+            operation=operation,
+            phase="poll_worker",
+            event="end",
+            started_at=poll_started_at,
+            exit_code=exit_code,
+            restarts=unexpected_worker_restarts,
+        )
 
         if exit_code is None:
             raise ReceitaRemoteBridgeError(
@@ -591,11 +720,16 @@ def _remote_call(mode: str, payload: dict[str, Any] | None = None) -> dict[str, 
                 + (f": {detail}" if detail else f" with exit={exit_code}")
             )
 
-        output = _run_transport(
-            [*ssh, f"cat -- {shlex.quote(remote_output)}"],
-            timeout=120,
-            attempts=6,
-        ).stdout
+        with _bridge_phase(
+            mode=mode,
+            operation=operation,
+            phase="read_output",
+        ):
+            output = _run_transport(
+                [*ssh, f"cat -- {shlex.quote(remote_output)}"],
+                timeout=60,
+                attempts=6,
+            ).stdout
         try:
             response = json.loads(output)
         except (UnicodeError, json.JSONDecodeError) as exc:
@@ -610,12 +744,17 @@ def _remote_call(mode: str, payload: dict[str, Any] | None = None) -> dict[str, 
     finally:
         cleanup = f"rm -rf -- {shlex.quote(run_dir)}"
         try:
-            _run_transport(
-                [*ssh, cleanup],
-                timeout=120,
-                check=False,
-                attempts=3,
-            )
+            with _bridge_phase(
+                mode=mode,
+                operation=operation,
+                phase="cleanup_remote_run_dir",
+            ):
+                _run_transport(
+                    [*ssh, cleanup],
+                    timeout=60,
+                    check=False,
+                    attempts=3,
+                )
         except ReceitaRemoteBridgeError:
             # Ephemeral run directories are namespaced by build/mode. A failed
             # cleanup must not turn a successful acquisition into stale data.
