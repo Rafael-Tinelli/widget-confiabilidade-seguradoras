@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import csv
 import hashlib
-import json
 import io
+import json
 import re
 import tempfile
 import time
@@ -79,7 +79,7 @@ def release_fingerprint(release: ReceitaOpenDataRelease) -> str:
                     "etag": item.get("etag"),
                     "last_modified": item.get("last_modified"),
                 }
-                for item in release.resource_metadata
+                for item in getattr(release, "resource_metadata", ())
                 if str(item.get("name") or "")
             ],
             key=lambda item: item["name"],
