@@ -19,7 +19,6 @@ jobs:
     timeout-minutes: 360
     env:
       V2_BUILD_ID: v2-receita-pre-full-${{ github.run_id }}-a${{ github.run_attempt }}
-      V2_RECEITA_REMOTE_ENABLED: "1"
       V2_RECEITA_SSH_HOST: ${{ secrets.V2_HOSTGATOR_HOST }}
       V2_RECEITA_SSH_USER: ${{ secrets.V2_HOSTGATOR_USER }}
       V2_RECEITA_SSH_PORT: ${{ vars.V2_HOSTGATOR_SSH_PORT }}
@@ -81,6 +80,7 @@ jobs:
           ssh-keygen -F "$known_host_lookup" -f "$known_hosts_file" >/dev/null
 
           {
+            echo "V2_RECEITA_REMOTE_ENABLED=1"
             echo "V2_RECEITA_SSH_PORT=$SSH_PORT"
             echo "V2_RECEITA_SSH_KEY_FILE=$key_file"
             echo "V2_RECEITA_SSH_KNOWN_HOSTS_FILE=$known_hosts_file"
