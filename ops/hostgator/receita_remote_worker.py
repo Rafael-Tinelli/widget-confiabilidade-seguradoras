@@ -805,11 +805,11 @@ def identity_extract(session, release, payload, cache_dir):
     selected = []
     establishment_files_scanned = []
     for name in release["establishment_files"]:
-        local = download_zip(
+        local, _ = acquire_cached_zip(
             session,
-            urljoin(release["release_url"], name),
-            cache_root / name,
-            files[name].get("size"),
+            release,
+            name,
+            cache_root,
         )
         with zipfile.ZipFile(str(local)) as archive:
             member = first_csv_member(archive)
