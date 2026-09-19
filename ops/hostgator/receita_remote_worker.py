@@ -948,9 +948,10 @@ def main():
             )
         write_start_marker(args.start_file)
         daemonize(args.stdout_log, args.stderr_log)
-        # Replace the short-lived launcher PID with the detached worker PID so
-        # the bridge can distinguish an active job from an unmarked SIGKILL.
-        write_start_marker(args.start_file)
+
+    # In normal bridge mode the remote shell owns detachment via setsid -f.
+    # Persist the real Python worker PID after that detachment.
+    write_start_marker(args.start_file)
 
     exit_code = 0
     try:
