@@ -19,6 +19,7 @@ import re
 import resource
 import shutil
 import sys
+import threading
 import time
 import traceback
 import unicodedata
@@ -928,6 +929,20 @@ def write_start_marker(path):
     temp.replace(target)
 
 
+def heartbeat_loop(path, stop_event):
+    if not path:
+        return
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    counter = 0
+    while not stop_event.is_set():
+        counter += 1
+        temp = target.with_suffix(target.suffix + ".tmp")
+        temp.write_text(str(counter) + "\n", encoding="utf-8")
+        temp.replace(target)
+        stop_event.wait(5)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--mode", choices=("discover", "lifecycle", "identity"), required=True)
@@ -937,6 +952,7 @@ def main():
     parser.add_argument("--daemonize", action="store_true")
     parser.add_argument("--exit-file")
     parser.add_argument("--start-file")
+    parser.add_argument("--heartbeat-file")
     parser.add_argument("--stdout-log")
     parser.add_argument("--stderr-log")
     args = parser.parse_args()
@@ -953,6 +969,16 @@ def main():
     # "LAUNCHING"; polling treats that as startup-in-progress.
     write_start_marker(args.start_file)
 
+    heartbeat_stop = threading.Event()
+    heartbeat_thread = None
+    if args.heartbeat_file:
+        heartbeat_thread = threading.Thread(
+            target=heartbeat_loop,
+            args=(args.heartbeat_file, heartbeat_stop),
+            daemon=True,
+        )
+        heartbeat_thread.start()
+
     exit_code = 0
     try:
         execute(args)
@@ -960,6 +986,9 @@ def main():
         traceback.print_exc()
         exit_code = 1
     finally:
+        heartbeat_stop.set()
+        if heartbeat_thread is not None:
+            heartbeat_thread.join(timeout=2)
         write_exit_marker(args.exit_file, exit_code)
 
     return exit_code

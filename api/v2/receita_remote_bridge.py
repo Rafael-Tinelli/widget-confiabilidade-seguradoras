@@ -394,10 +394,10 @@ def _detached_launch_command(
     remote_command: str,
     remote_start: str,
     remote_exit: str,
+    remote_stdout: str,
     remote_stderr: str,
 ) -> str:
     start_claim = f"{remote_start}.claim"
-    exit_claim = f"{remote_exit}.launch-failed"
     return (
         "umask 077; "
         f"if test -f {shlex.quote(remote_start)} "
@@ -406,16 +406,10 @@ def _detached_launch_command(
         "else "
         f"printf 'LAUNCHING\\n' > {shlex.quote(start_claim)} && "
         f"mv -f -- {shlex.quote(start_claim)} {shlex.quote(remote_start)} && "
-        f"if {remote_command}; then "
+        f"( {remote_command} "
+        f"</dev/null >>{shlex.quote(remote_stdout)} "
+        f"2>>{shlex.quote(remote_stderr)} & ); "
         "printf 'LAUNCHED\n'; "
-        "else "
-        "rc=$?; "
-        f"printf '%s\\n' \"$rc\" > {shlex.quote(exit_claim)} && "
-        f"mv -f -- {shlex.quote(exit_claim)} {shlex.quote(remote_exit)}; "
-        f"printf 'launch command failed rc=%s\\n' \"$rc\" "
-        f">>{shlex.quote(remote_stderr)}; "
-        "exit \"$rc\"; "
-        "fi; "
         "fi"
     )
 
@@ -426,12 +420,14 @@ def _launch_remote_worker(
     remote_command: str,
     remote_start: str,
     remote_exit: str,
+    remote_stdout: str,
     remote_stderr: str,
 ) -> None:
     launch_command = _detached_launch_command(
         remote_command=remote_command,
         remote_start=remote_start,
         remote_exit=remote_exit,
+        remote_stdout=remote_stdout,
         remote_stderr=remote_stderr,
     )
     result = _run_transport(
@@ -453,12 +449,15 @@ def _poll_remote_worker(
     operation: str,
     remote_start: str,
     remote_exit: str,
+    remote_heartbeat: str,
     remote_stderr: str,
 ) -> int:
     started_at = time.monotonic()
     deadline = started_at + _REMOTE_DEADLINE_SECONDS
     startup_deadline = started_at + 30
-    dead_observations = 0
+    heartbeat_deadline_seconds = 90
+    last_heartbeat_value = ""
+    last_heartbeat_change = started_at
 
     _bridge_event(
         mode=mode,
@@ -476,13 +475,11 @@ def _poll_remote_worker(
                     "printf 'EXIT:'; "
                     f"cat {shlex.quote(remote_exit)}; "
                     f"elif test -s {shlex.quote(remote_start)}; then "
-                    f"pid=$(cat {shlex.quote(remote_start)} 2>/dev/null || true); "
-                    "case \"$pid\" in "
-                    "''|*[!0-9]*) printf 'STARTING\n' ;; "
-                    "*) if kill -0 \"$pid\" 2>/dev/null; then "
-                    "printf 'RUNNING\n'; "
-                    "else printf 'DEAD:%s\n' \"$pid\"; fi ;; "
-                    "esac; "
+                    "printf 'START:'; "
+                    f"cat {shlex.quote(remote_start)} 2>/dev/null || true; "
+                    "printf '|HEARTBEAT:'; "
+                    f"cat {shlex.quote(remote_heartbeat)} 2>/dev/null || true; "
+                    "printf '\\n'; "
                     "else printf 'STARTING\n'; fi"
                 ),
             ],
@@ -512,32 +509,64 @@ def _poll_remote_worker(
             time.sleep(2)
             continue
 
-        if status == "RUNNING":
-            dead_observations = 0
+        if status.startswith("START:"):
+            body = status[len("START:"):]
+            start_value, separator, heartbeat_value = body.partition("|HEARTBEAT:")
+            start_value = start_value.strip()
+            heartbeat_value = heartbeat_value.strip() if separator else ""
+            now = time.monotonic()
+
+            if start_value == "LAUNCHING" or not start_value.isdigit():
+                if now > startup_deadline:
+                    detail = _run_transport(
+                        [
+                            *ssh,
+                            (
+                                f"tail -c 3000 {shlex.quote(remote_stderr)} "
+                                "2>/dev/null || true"
+                            ),
+                        ],
+                        timeout=30,
+                        check=False,
+                        attempts=3,
+                    ).stdout.strip()
+                    raise ReceitaRemoteBridgeError(
+                        "Receita remote worker did not replace launch claim with PID "
+                        "within 30s"
+                        + (f": {detail}" if detail else "")
+                    )
+                time.sleep(2)
+                continue
+
+            if heartbeat_value:
+                if heartbeat_value != last_heartbeat_value:
+                    last_heartbeat_value = heartbeat_value
+                    last_heartbeat_change = now
+                elif now - last_heartbeat_change > heartbeat_deadline_seconds:
+                    detail = _run_transport(
+                        [
+                            *ssh,
+                            (
+                                f"tail -c 4000 {shlex.quote(remote_stderr)} "
+                                "2>/dev/null || true"
+                            ),
+                        ],
+                        timeout=30,
+                        check=False,
+                        attempts=3,
+                    ).stdout.strip()
+                    raise ReceitaRemoteBridgeError(
+                        "Receita remote worker heartbeat stalled for more than "
+                        f"{heartbeat_deadline_seconds}s"
+                        + (f": {detail}" if detail else "")
+                    )
+            elif now > startup_deadline:
+                raise ReceitaRemoteBridgeError(
+                    "Receita remote worker established PID but no heartbeat within 30s"
+                )
+
             time.sleep(15)
             continue
-
-        if status.startswith("DEAD:"):
-            dead_observations += 1
-            if dead_observations < 2:
-                time.sleep(3)
-                continue
-            detail = _run_transport(
-                [
-                    *ssh,
-                    (
-                        f"tail -c 4000 {shlex.quote(remote_stderr)} "
-                        "2>/dev/null || true"
-                    ),
-                ],
-                timeout=30,
-                check=False,
-                attempts=3,
-            ).stdout.strip()
-            raise ReceitaRemoteBridgeError(
-                "Receita remote worker disappeared without exit marker"
-                + (f": {detail}" if detail else f" ({status})")
-            )
 
         if status.startswith("EXIT:"):
             raw_exit = status.split(":", 1)[1].strip()
@@ -582,6 +611,7 @@ def _remote_call(mode: str, payload: dict[str, Any] | None = None) -> dict[str, 
     remote_output = f"{run_dir}/output.json"
     remote_start = f"{run_dir}/started"
     remote_exit = f"{run_dir}/exit_code"
+    remote_heartbeat = f"{run_dir}/heartbeat"
     remote_stdout = f"{run_dir}/stdout.log"
     remote_stderr = f"{run_dir}/stderr.log"
 
@@ -594,6 +624,7 @@ def _remote_call(mode: str, payload: dict[str, Any] | None = None) -> dict[str, 
         f"{shlex.quote(workers_dir)}; "
         f"rm -f -- {shlex.quote(remote_output)} {shlex.quote(remote_input)} "
         f"{shlex.quote(remote_start)} {shlex.quote(remote_exit)} "
+        f"{shlex.quote(remote_heartbeat)} "
         f"{shlex.quote(remote_stdout)} {shlex.quote(remote_stderr)}"
     )
     with _bridge_phase(
@@ -645,6 +676,8 @@ def _remote_call(mode: str, payload: dict[str, Any] | None = None) -> dict[str, 
             remote_start,
             "--exit-file",
             remote_exit,
+            "--heartbeat-file",
+            remote_heartbeat,
             "--daemonize",
             "--stdout-log",
             remote_stdout,
@@ -665,6 +698,7 @@ def _remote_call(mode: str, payload: dict[str, Any] | None = None) -> dict[str, 
                 remote_command=remote_command,
                 remote_start=remote_start,
                 remote_exit=remote_exit,
+                remote_stdout=remote_stdout,
                 remote_stderr=remote_stderr,
             )
 
@@ -674,6 +708,7 @@ def _remote_call(mode: str, payload: dict[str, Any] | None = None) -> dict[str, 
             operation=operation,
             remote_start=remote_start,
             remote_exit=remote_exit,
+            remote_heartbeat=remote_heartbeat,
             remote_stderr=remote_stderr,
         )
         if exit_code != 0:

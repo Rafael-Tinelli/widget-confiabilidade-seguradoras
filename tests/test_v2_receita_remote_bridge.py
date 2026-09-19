@@ -409,17 +409,22 @@ def test_remote_worker_deadline_allows_long_detached_execution() -> None:
     assert bridge._REMOTE_DEADLINE_SECONDS >= 18_000
 
 
-def test_detached_launch_claims_start_before_self_daemonized_worker() -> None:
+def test_detached_launch_claims_start_and_backgrounds_self_daemonized_worker() -> None:
     command = bridge._detached_launch_command(
         remote_command="python3 worker.py --mode lifecycle --daemonize",
         remote_start=".bridge/runs/op/started",
         remote_exit=".bridge/runs/op/exit_code",
+        remote_stdout=".bridge/runs/op/stdout.log",
         remote_stderr=".bridge/runs/op/stderr.log",
     )
 
     assert "printf 'LAUNCHING" in command
     assert ".bridge/runs/op/started.claim" in command
     assert "python3 worker.py --mode lifecycle --daemonize" in command
+    assert "</dev/null" in command
+    assert ">>.bridge/runs/op/stdout.log" in command
+    assert "2>>.bridge/runs/op/stderr.log" in command
+    assert " & );" in command
     assert "nohup" not in command
     assert "setsid -f" not in command
     assert "printf 'LAUNCHED" in command
@@ -439,6 +444,7 @@ def test_launch_remote_worker_returns_on_launched(monkeypatch) -> None:
         remote_command="python3 worker.py",
         remote_start=".bridge/runs/op/started",
         remote_exit=".bridge/runs/op/exit_code",
+        remote_stdout=".bridge/runs/op/stdout.log",
         remote_stderr=".bridge/runs/op/stderr.log",
     )
 
@@ -473,3 +479,17 @@ def test_full_generation_acceptance_mode_requires_fresh_receita() -> None:
     assert "receita_consumer_identity" in workflow
     assert '{"current_fetch", "current_validation"}' in workflow
     assert "Receita acceptance proof failed" in workflow
+
+
+def test_remote_call_uses_heartbeat_not_cross_session_kill_probe() -> None:
+    source = Path("api/v2/receita_remote_bridge.py").read_text(encoding="utf-8")
+    assert '"--heartbeat-file"' in source
+    assert "heartbeat stalled" in source
+    assert 'kill -0 "$pid"' not in source
+
+
+def test_worker_heartbeat_is_periodic_and_atomic() -> None:
+    source = Path("ops/hostgator/receita_remote_worker.py").read_text(encoding="utf-8")
+    assert "def heartbeat_loop(" in source
+    assert "stop_event.wait(5)" in source
+    assert "temp.replace(target)" in source
