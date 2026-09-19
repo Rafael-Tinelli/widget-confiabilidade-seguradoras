@@ -918,6 +918,16 @@ def write_exit_marker(path, code):
     temp.replace(target)
 
 
+def write_start_marker(path):
+    if not path:
+        return
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temp = target.with_suffix(target.suffix + ".tmp")
+    temp.write_text(str(os.getpid()) + "\n", encoding="utf-8")
+    temp.replace(target)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--mode", choices=("discover", "lifecycle", "identity"), required=True)
@@ -926,6 +936,7 @@ def main():
     parser.add_argument("--cache-dir", required=True)
     parser.add_argument("--daemonize", action="store_true")
     parser.add_argument("--exit-file")
+    parser.add_argument("--start-file")
     parser.add_argument("--stdout-log")
     parser.add_argument("--stderr-log")
     args = parser.parse_args()
@@ -936,6 +947,7 @@ def main():
                 "--daemonize requires --exit-file, --stdout-log and --stderr-log"
             )
         daemonize(args.stdout_log, args.stderr_log)
+        write_start_marker(args.start_file)
 
     exit_code = 0
     try:
