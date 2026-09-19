@@ -290,11 +290,24 @@ def discover_release(session):
             [name for name in files if ESTABLISHMENT_RE.fullmatch(name)],
             key=lambda name: int(re.search(r"(\d+)", name).group(1)),
         )
-        if "Motivos.zip" not in files or not establishments:
+        companies = sorted(
+            [name for name in files if COMPANY_RE.fullmatch(name)],
+            key=lambda name: int(re.search(r"(\d+)", name).group(1)),
+        )
+        required = {"Motivos.zip", "Cnaes.zip", "Naturezas.zip"}
+        if not required.issubset(files) or not establishments or not companies:
             continue
-        expected = list(range(len(establishments)))
-        actual = [int(re.search(r"(\d+)", name).group(1)) for name in establishments]
-        if actual != expected:
+        expected_establishments = list(range(len(establishments)))
+        actual_establishments = [
+            int(re.search(r"(\d+)", name).group(1)) for name in establishments
+        ]
+        expected_companies = list(range(len(companies)))
+        actual_companies = [
+            int(re.search(r"(\d+)", name).group(1)) for name in companies
+        ]
+        if actual_establishments != expected_establishments:
+            continue
+        if actual_companies != expected_companies:
             continue
         return {
             "base_url": share_url,
@@ -302,6 +315,7 @@ def discover_release(session):
             "release_url": release_url,
             "period": period,
             "establishment_files": establishments,
+            "company_files": companies,
             "resources": resources,
         }
     raise WorkerError("no complete Receita CNPJ monthly release found")
