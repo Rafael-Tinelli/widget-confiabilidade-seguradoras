@@ -200,8 +200,7 @@ jobs:
           ssh "${ssh_opts[@]}" "$V2_RECEITA_SSH_USER@$V2_RECEITA_SSH_HOST"             "umask 077; rm -rf -- '$remote_dir'; mkdir -p -- '$remote_dir'"
           scp "${scp_opts[@]}" ops/hostgator/receita_cache_manifest.py             "$V2_RECEITA_SSH_USER@$V2_RECEITA_SSH_HOST:$remote_dir/receita_cache_manifest.py"
           scp "${scp_opts[@]}" /tmp/receita-release-metadata.json             "$V2_RECEITA_SSH_USER@$V2_RECEITA_SSH_HOST:$remote_dir/release.json"
-          ssh "${ssh_opts[@]}" "$V2_RECEITA_SSH_USER@$V2_RECEITA_SSH_HOST"             "python3 '$remote_dir/receita_cache_manifest.py'               --metadata '$remote_dir/release.json'               --cache-root ~/.sanida-v2-receita-bridge/cache"
-          ssh "${ssh_opts[@]}" "$V2_RECEITA_SSH_USER@$V2_RECEITA_SSH_HOST"             "rm -rf -- '$remote_dir'"
+          ssh "${ssh_opts[@]}" "$V2_RECEITA_SSH_USER@$V2_RECEITA_SSH_HOST"             "python3 '$remote_dir/receita_cache_manifest.py'               --metadata '$remote_dir/release.json'               --cache-root ~/.sanida-v2-receita-bridge/cache; rc=\$?; rm -rf -- '$remote_dir'; exit \$rc"
 
       - name: Validate Full Generation local-compute contract
         run: |
