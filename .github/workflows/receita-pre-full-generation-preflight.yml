@@ -201,7 +201,7 @@ jobs:
           release = releases[-1]
           fingerprint = fingerprints[-1]
           metadata = list(release.resource_metadata)
-          if not re.fullmatch(r"20\\d{2}-\\d{2}", release.period):
+          if not re.fullmatch(r"20\d{2}-\d{2}", release.period):
               raise SystemExit(f"invalid current Receita period: {release.period}")
           if release.period < "2026-09":
               raise SystemExit(f"unexpectedly old Receita period: {release.period}")
