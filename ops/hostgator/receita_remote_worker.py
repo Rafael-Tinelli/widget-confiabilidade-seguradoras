@@ -880,12 +880,14 @@ def prewarm_release(session, release, cache_dir):
             name,
             cache_root,
         )
+        manifest = load_cache_manifest(cache_root)
+        entry = (manifest.get("files") or {}).get(name) or {}
         rows.append(
             {
                 "name": name,
                 "status": status,
                 "size": local.stat().st_size,
-                "sha256": sha256_file(local),
+                "sha256": str(entry.get("sha256") or ""),
             }
         )
 
