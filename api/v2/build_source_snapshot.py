@@ -15,7 +15,11 @@ from api.sources.receita_cnpj import (
     RECEITA_CNPJ_OPEN_DATA_URL,
     load_filtered_lifecycle_snapshot,
 )
-from api.sources.receita_cnpj_bulk import discover_latest_release
+from api.sources.receita_cnpj_bulk import (
+    discover_latest_release,
+    release_fingerprint,
+    resource_metadata_fingerprint,
+)
 from api.sources.ses import (
     SES_LISTAEMPRESAS_URL,
     SES_ZIP_URL,
@@ -506,58 +510,102 @@ def _receita_snapshot(
             if remote_bridge_enabled()
             else discover_latest_release()
         )
+        lifecycle_resource_names = [
+            release.reasons_file,
+            *release.establishment_files,
+        ]
+        current_release_fingerprint = release_fingerprint(
+            release,
+            names=lifecycle_resource_names,
+        )
         if cache.content_path.is_file():
             cached_payload = json.loads(cache.content_path.read_text(encoding="utf-8"))
             cached_period = str(
                 (cached_payload.get("source") or {}).get("reference_period") or ""
             )
             if cached_period == release.period:
-                try:
-                    fetched_at, migrated = _materialize_compatible_receita_cache(
-                        cache=cache,
-                        destination=destination,
-                        entities=entities,
-                        target_hash=target_hash,
+                cached_source = cached_payload.get("source") or {}
+                cached_meta = cached_payload.get("meta") or {}
+                cached_release_fingerprint = str(
+                    cached_meta.get("source_release_fingerprint") or ""
+                ).strip()
+                if not cached_release_fingerprint:
+                    cached_release_fingerprint = resource_metadata_fingerprint(
+                        cached_period,
+                        cached_source.get("resource_metadata") or [],
+                        names=lifecycle_resource_names,
                     )
-                except (
-                    SourceCacheError,
-                    SourceSnapshotError,
-                    ReceitaRefreshValidationError,
-                    OSError,
-                    ValueError,
-                    json.JSONDecodeError,
-                ) as exc:
+                if cached_release_fingerprint != current_release_fingerprint:
                     cache_validation_error = (
-                        "current cache validation failed: "
-                        f"{type(exc).__name__}: {exc}"
+                        "current cache manifest fingerprint differs from official "
+                        "Receita release; refresh required"
                     )
-                    destination.unlink(missing_ok=True)
                 else:
-                    materialized_payload = json.loads(
-                        destination.read_text(encoding="utf-8")
-                    )
-                    unresolved_current = _payload_unresolved_cnpjs(materialized_payload)
-                    if unresolved_current:
+                    try:
+                        fetched_at, migrated = _materialize_compatible_receita_cache(
+                            cache=cache,
+                            destination=destination,
+                            entities=entities,
+                            target_hash=target_hash,
+                        )
+                    except (
+                        SourceCacheError,
+                        SourceSnapshotError,
+                        ReceitaRefreshValidationError,
+                        OSError,
+                        ValueError,
+                        json.JSONDecodeError,
+                    ) as exc:
                         cache_validation_error = (
-                            "current cache validation incomplete: "
-                            f"{len(unresolved_current)} current CNPJs lack Receita lifecycle "
-                            f"evidence; sample={unresolved_current[:5]}; official refresh required"
+                            "current cache validation failed: "
+                            f"{type(exc).__name__}: {exc}"
                         )
                         destination.unlink(missing_ok=True)
                     else:
-                        observation = SourceObservation(
-                            source_id=source_id,
-                            source_url=source_url,
-                            snapshot_path=destination,
-                            fetched_at=fetched_at,
-                            current_validation_succeeded=True,
-                            state_reason=(
-                                "official release period unchanged and Receita CNPJ target "
-                                "population compatible"
-                                + ("; compatible cache migrated to v2" if migrated else "")
-                            ),
+                        materialized_payload = json.loads(
+                            destination.read_text(encoding="utf-8")
                         )
-                        return AcquisitionResult(observation=observation, used_cache=True)
+                        materialized_meta = materialized_payload.setdefault("meta", {})
+                        if (
+                            materialized_meta.get("source_release_fingerprint")
+                            != current_release_fingerprint
+                        ):
+                            materialized_meta["source_release_fingerprint"] = (
+                                current_release_fingerprint
+                            )
+                            write_snapshot_atomic(materialized_payload, destination)
+                            cache.store(destination, fetched_at=fetched_at)
+                        unresolved_current = _payload_unresolved_cnpjs(
+                            materialized_payload
+                        )
+                        if unresolved_current:
+                            cache_validation_error = (
+                                "current cache validation incomplete: "
+                                f"{len(unresolved_current)} current CNPJs lack Receita lifecycle "
+                                f"evidence; sample={unresolved_current[:5]}; official refresh required"
+                            )
+                            destination.unlink(missing_ok=True)
+                        else:
+                            observation = SourceObservation(
+                                source_id=source_id,
+                                source_url=source_url,
+                                snapshot_path=destination,
+                                fetched_at=fetched_at,
+                                current_validation_succeeded=True,
+                                state_reason=(
+                                    "official release manifest fingerprint unchanged and "
+                                    "Receita CNPJ target population compatible"
+                                    + (
+                                        "; compatible cache migrated to v2"
+                                        if migrated
+                                        else ""
+                                    )
+                                ),
+                            )
+                            return AcquisitionResult(
+                                observation=observation,
+                                used_cache=True,
+                            )
 
         temp = destination.with_suffix(destination.suffix + ".incoming")
         if temp.exists():
@@ -573,6 +621,7 @@ def _receita_snapshot(
             meta["gate4_cache_contract_version"] = (
                 RECEITA_LIFECYCLE_CACHE_CONTRACT_VERSION
             )
+            meta["source_release_fingerprint"] = current_release_fingerprint
             validate_refresh_payload(payload)
             write_snapshot_atomic(payload, temp)
         else:
