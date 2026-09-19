@@ -12,7 +12,7 @@ permissions:
 jobs:
   preflight:
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 40
     env:
       V2_RECEITA_SSH_HOST: ${{ secrets.V2_HOSTGATOR_HOST }}
       V2_RECEITA_SSH_USER: ${{ secrets.V2_HOSTGATOR_USER }}
@@ -160,6 +160,50 @@ jobs:
               'free_bytes': usage.free,
           }, sort_keys=True))
           PY"
+
+      - name: Run daemonized full-cache identity bridge
+        env:
+          V2_BUILD_ID: receita-bridge-full-cache-${{ github.run_id }}
+          V2_RECEITA_REMOTE_ENABLED: "1"
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from api.v2.receita_remote_bridge import build_identity_remote, discover_release_remote
+
+          release = discover_release_remote()
+          payload = build_identity_remote(
+              [{
+                  "cnpj": "41277393000162",
+                  "entity_id": "bridge-full-cache-probe",
+                  "legal_name": "GERVASIO JOSE NUNES",
+              }],
+              ["SANIDA QZXWVT PROVIDER 987654321"],
+              release=release,
+          )
+          meta = payload["meta"]
+          match = payload["provider_matches"][0]
+          if release.period != "2026-09":
+              raise SystemExit(f"unexpected period: {release.period}")
+          if meta["target_cnpjs"] != 1 or meta["target_cnpjs_enriched"] != 1:
+              raise SystemExit(f"target enrichment failed: {meta}")
+          if meta["provider_queries"] != 1 or meta["provider_no_candidate"] != 1:
+              raise SystemExit(f"provider contract failed: {meta}")
+          if len(meta["company_files_scanned"]) != 10:
+              raise SystemExit("company national scan incomplete")
+          if len(meta["establishment_files_scanned"]) != 10:
+              raise SystemExit("establishment national scan incomplete")
+          if match["candidate_state"] != "no_candidate":
+              raise SystemExit(f"unexpected candidate state: {match}")
+          print("RECEITA_BRIDGE_IDENTITY_FULL_CACHE_PASS " + json.dumps({
+              "reference_period": release.period,
+              "company_files_scanned": len(meta["company_files_scanned"]),
+              "establishment_files_scanned": len(meta["establishment_files_scanned"]),
+              "target_cnpjs_enriched": meta["target_cnpjs_enriched"],
+              "candidate_state": match["candidate_state"],
+          }, sort_keys=True))
+          PY
 
       - name: Cleanup SSH
         if: always()
