@@ -195,7 +195,11 @@ def _run(
 
 
 def _operation_id(mode: str) -> str:
-    build_id = os.getenv("V2_BUILD_ID", "").strip() or "manual"
+    build_id = os.getenv("V2_BUILD_ID", "").strip()
+    if not build_id:
+        run_id = os.getenv("GITHUB_RUN_ID", "").strip()
+        run_attempt = os.getenv("GITHUB_RUN_ATTEMPT", "").strip() or "1"
+        build_id = f"github-{run_id}-a{run_attempt}" if run_id else "manual"
     value = _SAFE_BUILD_RE.sub("-", f"{build_id}-{mode}").strip("-")
     if not value:
         raise ReceitaRemoteBridgeError("cannot derive Receita remote operation id")
