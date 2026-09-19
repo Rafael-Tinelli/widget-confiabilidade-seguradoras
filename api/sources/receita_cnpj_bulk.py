@@ -62,20 +62,16 @@ class ReceitaOpenDataError(RuntimeError):
     """Raised when the official CNPJ open-data source cannot be used safely."""
 
 
-def release_fingerprint(
-    release: "ReceitaOpenDataRelease",
+def resource_metadata_fingerprint(
+    period: str,
+    metadata: Iterable[dict[str, Any]],
     *,
     names: Iterable[str] | None = None,
 ) -> str:
-    """Hash the current official manifest for the files relevant to a cache.
-
-    Period alone is insufficient because Receita may replace files inside the
-    same monthly directory. ETag + size are the primary remote identity; the
-    Last-Modified value is retained as a secondary signal.
-    """
+    """Hash stable remote manifest fields for the selected release resources."""
     wanted = set(names) if names is not None else None
     rows = []
-    for item in release.resource_metadata:
+    for item in metadata:
         name = str(item.get("name") or "")
         if not name or (wanted is not None and name not in wanted):
             continue
@@ -89,7 +85,7 @@ def release_fingerprint(
         )
     rows.sort(key=lambda row: row["name"].casefold())
     payload = {
-        "period": release.period,
+        "period": str(period or ""),
         "resources": rows,
     }
     encoded = json.dumps(
@@ -99,6 +95,24 @@ def release_fingerprint(
         separators=(",", ":"),
     ).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
+
+
+def release_fingerprint(
+    release: "ReceitaOpenDataRelease",
+    *,
+    names: Iterable[str] | None = None,
+) -> str:
+    """Hash the current official manifest for the files relevant to a cache.
+
+    Period alone is insufficient because Receita may replace files inside the
+    same monthly directory. ETag + size are the primary remote identity; the
+    Last-Modified value is retained as a secondary signal.
+    """
+    return resource_metadata_fingerprint(
+        release.period,
+        release.resource_metadata,
+        names=names,
+    )
 
 
 @dataclass(frozen=True)
