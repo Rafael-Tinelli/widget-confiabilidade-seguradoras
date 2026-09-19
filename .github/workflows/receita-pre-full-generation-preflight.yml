@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - fix/receita-cache-bridge-final
+    paths-ignore:
+      - .github/workflows/v2-gate4-full-generation-proof.yml
   workflow_dispatch:
 
 permissions:
