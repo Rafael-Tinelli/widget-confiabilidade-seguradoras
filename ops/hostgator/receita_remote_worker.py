@@ -11,6 +11,7 @@ HostGator is transport/compute only. Receita Federal remains the data authority.
 import argparse
 import csv
 import fcntl
+import hashlib
 import io
 import json
 import os
@@ -330,6 +331,18 @@ def sanitized_csv_reader(raw):
     return csv.reader(sanitized, delimiter=";", quotechar='"')
 
 
+CACHE_MANIFEST_NAME = ".cache-manifest.json"
+CACHE_MANIFEST_VERSION = "receita-cache-manifest-v1"
+
+
+def sha256_file(path):
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(8 * 1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def valid_cached_zip(path, expected_size):
     if not path.is_file():
         return False
@@ -338,10 +351,127 @@ def valid_cached_zip(path, expected_size):
     return zipfile.is_zipfile(str(path))
 
 
-def download_zip(session, url, destination, expected_size=None, retries=5):
+def remote_resource_fingerprint(reference_period, name, metadata):
+    etag = str((metadata or {}).get("etag") or "").strip() or None
+    last_modified = str((metadata or {}).get("last_modified") or "").strip() or None
+    size = (metadata or {}).get("size")
+    return {
+        "version": "receita-resource-fingerprint-v1",
+        "reference_period": str(reference_period),
+        "filename": str(name),
+        "size": int(size) if size is not None else None,
+        "etag": etag,
+        "last_modified_fallback": None if etag else last_modified,
+    }
+
+
+def load_cache_manifest(root):
+    path = Path(root) / CACHE_MANIFEST_NAME
+    if not path.is_file():
+        return {"version": CACHE_MANIFEST_VERSION, "files": {}}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {"version": CACHE_MANIFEST_VERSION, "files": {}}
+    if not isinstance(payload, dict) or payload.get("version") != CACHE_MANIFEST_VERSION:
+        return {"version": CACHE_MANIFEST_VERSION, "files": {}}
+    files = payload.get("files")
+    if not isinstance(files, dict):
+        files = {}
+    return {"version": CACHE_MANIFEST_VERSION, "files": files}
+
+
+def save_cache_manifest(root, manifest):
+    path = Path(root) / CACHE_MANIFEST_NAME
+    temp = path.with_suffix(path.suffix + ".tmp")
+    temp.write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    temp.replace(path)
+
+
+def _record_cached_file(root, destination, fingerprint, manifest, provenance):
+    stat = destination.stat()
+    entry = {
+        "remote_fingerprint": fingerprint,
+        "sha256": sha256_file(destination),
+        "local_size": stat.st_size,
+        "local_mtime_ns": stat.st_mtime_ns,
+        "validated_at": utc_now(),
+        "provenance": provenance,
+    }
+    manifest.setdefault("files", {})[destination.name] = entry
+    save_cache_manifest(root, manifest)
+    return entry
+
+
+def download_zip(
+    session,
+    url,
+    destination,
+    expected_size=None,
+    retries=5,
+    *,
+    reference_period=None,
+    resource_metadata=None,
+):
     destination.parent.mkdir(parents=True, exist_ok=True)
+    fingerprint = None
+    manifest = None
+    entry = None
+    if reference_period and resource_metadata is not None:
+        fingerprint = remote_resource_fingerprint(
+            reference_period,
+            destination.name,
+            resource_metadata,
+        )
+        manifest = load_cache_manifest(destination.parent)
+        entry = manifest.get("files", {}).get(destination.name)
+
     if valid_cached_zip(destination, expected_size):
-        return destination
+        if fingerprint is None:
+            return destination
+        if entry and entry.get("remote_fingerprint") == fingerprint:
+            stat = destination.stat()
+            if (
+                entry.get("local_size") == stat.st_size
+                and entry.get("local_mtime_ns") == stat.st_mtime_ns
+                and entry.get("sha256")
+            ):
+                print(
+                    "RECEITA_CACHE reused_unchanged "
+                    f"file={destination.name} size={stat.st_size}",
+                    flush=True,
+                )
+                return destination
+            actual_sha = sha256_file(destination)
+            if actual_sha == entry.get("sha256"):
+                entry["local_size"] = stat.st_size
+                entry["local_mtime_ns"] = stat.st_mtime_ns
+                entry["validated_at"] = utc_now()
+                save_cache_manifest(destination.parent, manifest)
+                print(
+                    "RECEITA_CACHE reused_unchanged "
+                    f"file={destination.name} size={stat.st_size} rehashed=true",
+                    flush=True,
+                )
+                return destination
+        elif entry is None:
+            _record_cached_file(
+                destination.parent,
+                destination,
+                fingerprint,
+                manifest,
+                "adopted_existing_current_manifest",
+            )
+            print(
+                "RECEITA_CACHE reused_unchanged "
+                f"file={destination.name} size={destination.stat().st_size} adopted=true",
+                flush=True,
+            )
+            return destination
+
     destination.unlink(missing_ok=True)
     temp = destination.with_suffix(destination.suffix + ".part")
     last_error = None
@@ -368,6 +498,21 @@ def download_zip(session, url, destination, expected_size=None, retries=5):
             if not zipfile.is_zipfile(str(temp)):
                 raise WorkerError(f"downloaded Receita file is not ZIP: {url}")
             temp.replace(destination)
+            if fingerprint is not None:
+                if manifest is None:
+                    manifest = load_cache_manifest(destination.parent)
+                _record_cached_file(
+                    destination.parent,
+                    destination,
+                    fingerprint,
+                    manifest,
+                    "downloaded_current_manifest",
+                )
+            print(
+                "RECEITA_CACHE downloaded "
+                f"file={destination.name} size={destination.stat().st_size}",
+                flush=True,
+            )
             return destination
         except (requests.RequestException, OSError, WorkerError) as exc:
             last_error = exc
@@ -472,6 +617,8 @@ def lifecycle_extract(session, release, payload, cache_dir):
         urljoin(release["release_url"], "Motivos.zip"),
         cache_root / "Motivos.zip",
         reason_meta.get("size"),
+        reference_period=release["period"],
+        resource_metadata=reason_meta,
     )
     reason_map = load_reason_map(reasons_zip)
 
@@ -484,6 +631,8 @@ def lifecycle_extract(session, release, payload, cache_dir):
             urljoin(release["release_url"], name),
             cache_root / name,
             metadata.get("size"),
+            reference_period=release["period"],
+            resource_metadata=metadata,
         )
         with zipfile.ZipFile(str(local)) as archive:
             member = first_csv_member(archive)
@@ -586,12 +735,16 @@ def identity_extract(session, release, payload, cache_dir):
         urljoin(release["release_url"], "Cnaes.zip"),
         cache_root / "Cnaes.zip",
         files["Cnaes.zip"].get("size"),
+        reference_period=release["period"],
+        resource_metadata=files["Cnaes.zip"],
     )
     nature_zip = download_zip(
         session,
         urljoin(release["release_url"], "Naturezas.zip"),
         cache_root / "Naturezas.zip",
         files["Naturezas.zip"].get("size"),
+        reference_period=release["period"],
+        resource_metadata=files["Naturezas.zip"],
     )
     cnae_map = load_code_map(cnae_zip)
     nature_map = load_code_map(nature_zip)
@@ -605,6 +758,8 @@ def identity_extract(session, release, payload, cache_dir):
             urljoin(release["release_url"], name),
             cache_root / name,
             files[name].get("size"),
+            reference_period=release["period"],
+            resource_metadata=files[name],
         )
         with zipfile.ZipFile(str(local)) as archive:
             member = first_csv_member(archive)
