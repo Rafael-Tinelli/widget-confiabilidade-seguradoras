@@ -6,6 +6,7 @@ import os
 import re
 import shlex
 import subprocess
+import sys
 import tempfile
 import time
 from contextlib import contextmanager
@@ -234,6 +235,7 @@ def _bridge_event(
     print(
         "RECEITA_BRIDGE_PHASE "
         + json.dumps(payload, ensure_ascii=False, sort_keys=True),
+        file=sys.stderr,
         flush=True,
     )
 
@@ -312,6 +314,7 @@ def _run_transport(
                     ensure_ascii=False,
                     sort_keys=True,
                 ),
+                file=sys.stderr,
                 flush=True,
             )
             time.sleep(delay)
