@@ -361,3 +361,11 @@ def test_remote_run_does_not_retry_deterministic_command_failure(monkeypatch) ->
         raise AssertionError("deterministic failure must propagate")
 
     assert calls["count"] == 1
+
+
+def test_operation_id_uses_github_run_when_build_id_absent(monkeypatch) -> None:
+    monkeypatch.delenv("V2_BUILD_ID", raising=False)
+    monkeypatch.setenv("GITHUB_RUN_ID", "12345")
+    monkeypatch.setenv("GITHUB_RUN_ATTEMPT", "2")
+
+    assert bridge._operation_id("discover") == "github-12345-a2-discover"
