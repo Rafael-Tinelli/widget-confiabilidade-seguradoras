@@ -39,6 +39,7 @@ ESTABLISHMENT_FILE_RE = re.compile(
     r"Estabelecimentos\d+\.zip$",
     re.IGNORECASE,
 )
+COMPANY_FILE_RE = re.compile(r"Empresas\d+\.zip$", re.IGNORECASE)
 PERIOD_RE = re.compile(r"20\d{2}-\d{2}$")
 DEFAULT_TIMEOUT = (15, 120)
 DAV_PROPFIND_BODY = """<?xml version="1.0"?>
