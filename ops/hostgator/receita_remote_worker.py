@@ -357,7 +357,7 @@ def load_cache_manifest(destination):
         return {"version": 1, "files": {}}
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
+    except (OSError, UnicodeError, json.JSONDecodeError):
         return {"version": 1, "files": {}}
     if not isinstance(payload, dict) or not isinstance(payload.get("files"), dict):
         return {"version": 1, "files": {}}
