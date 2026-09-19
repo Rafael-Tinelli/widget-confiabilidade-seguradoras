@@ -192,7 +192,10 @@ def _remote_call(mode: str, payload: dict[str, Any] | None = None) -> dict[str, 
 
     mkdir_command = (
         f"umask 077; mkdir -p -- {shlex.quote(run_dir)} {shlex.quote(cache_dir)}; "
-        f"rm -f -- {shlex.quote(remote_output)} {shlex.quote(remote_input)}"
+        f"rm -f -- {shlex.quote(remote_output)} {shlex.quote(remote_input)} "
+        f"{shlex.quote(run_dir + '/exit_code')} "
+        f"{shlex.quote(run_dir + '/stdout.log')} "
+        f"{shlex.quote(run_dir + '/stderr.log')}"
     )
     _run([*ssh, mkdir_command], timeout=120)
 
@@ -227,19 +230,15 @@ def _remote_call(mode: str, payload: dict[str, Any] | None = None) -> dict[str, 
             remote_exit = f"{run_dir}/exit_code"
             remote_stdout = f"{run_dir}/stdout.log"
             remote_stderr = f"{run_dir}/stderr.log"
-            remote_args.extend(
-                [
-                    "--daemonize",
-                    "--exit-file",
-                    remote_exit,
-                    "--stdout-log",
-                    remote_stdout,
-                    "--stderr-log",
-                    remote_stderr,
-                ]
-            )
+            remote_args.extend(["--exit-file", remote_exit])
             remote_command = " ".join(shlex.quote(part) for part in remote_args)
-            _run([*ssh, remote_command], timeout=120)
+            launch_command = (
+                f"nohup {remote_command} "
+                f"> {shlex.quote(remote_stdout)} "
+                f"2> {shlex.quote(remote_stderr)} "
+                "</dev/null &"
+            )
+            _run([*ssh, launch_command], timeout=60)
 
             deadline_seconds = 18_000
             poll_interval_seconds = 20
