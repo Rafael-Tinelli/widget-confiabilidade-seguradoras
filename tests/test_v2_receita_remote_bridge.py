@@ -430,7 +430,37 @@ def test_start_recovery_accepts_persisted_start_marker(monkeypatch) -> None:
         remote_command="python3 worker.py",
         remote_start=".bridge/runs/op/started",
         remote_exit=".bridge/runs/op/exit_code",
+        remote_stdout=".bridge/runs/op/stdout.log",
+        remote_stderr=".bridge/runs/op/stderr.log",
     )
 
     assert len(start_calls) == 1
     assert len(probe_calls) == 1
+
+
+def test_start_worker_uses_shell_detach_and_real_pid_marker(monkeypatch) -> None:
+    calls = []
+
+    def fake_run(command, **kwargs):
+        calls.append((command, kwargs))
+        return subprocess.CompletedProcess(command, 0, "STARTED:4321\n", "")
+
+    monkeypatch.setattr(bridge, "_run", fake_run)
+
+    bridge._start_remote_worker(
+        ["ssh", "example"],
+        remote_command="python3 worker.py --mode lifecycle",
+        remote_start=".bridge/runs/op/started",
+        remote_exit=".bridge/runs/op/exit_code",
+        remote_stdout=".bridge/runs/op/stdout.log",
+        remote_stderr=".bridge/runs/op/stderr.log",
+    )
+
+    assert len(calls) == 1
+    remote_shell = calls[0][0][-1]
+    assert "nohup setsid python3 worker.py --mode lifecycle" in remote_shell
+    assert "</dev/null" in remote_shell
+    assert "2>>.bridge/runs/op/stderr.log" in remote_shell
+    assert "pid=$!" in remote_shell
+    assert ".bridge/runs/op/started" in remote_shell
+    assert calls[0][1]["timeout"] == 30
