@@ -1,0 +1,64 @@
+name: Audit Receita Identity Cache Inventory
+
+on:
+  push:
+    branches:
+      - audit/receita-lifecycle-20260918
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inventory:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Configure pinned SSH
+        env:
+          SSH_HOST: ${{ secrets.V2_HOSTGATOR_HOST }}
+          SSH_USER: ${{ secrets.V2_HOSTGATOR_USER }}
+          SSH_PRIVATE_KEY: ${{ secrets.V2_HOSTGATOR_SSH_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.V2_HOSTGATOR_KNOWN_HOSTS }}
+          SSH_PORT: ${{ vars.V2_HOSTGATOR_SSH_PORT }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${SSH_HOST:?missing SSH host}"
+          : "${SSH_USER:?missing SSH user}"
+          SSH_PORT=${SSH_PORT:-22}
+          d="$RUNNER_TEMP/receita-identity-inventory-ssh"
+          umask 077
+          install -d -m 700 "$d"
+          printf '%s\n' "$SSH_PRIVATE_KEY" | tr -d '\r' > "$d/key"
+          printf '%s\n' "$SSH_KNOWN_HOSTS" | tr -d '\r' > "$d/known_hosts"
+          chmod 600 "$d/key" "$d/known_hosts"
+          {
+            echo "SSH_HOST=$SSH_HOST"
+            echo "SSH_USER=$SSH_USER"
+            echo "SSH_PORT=$SSH_PORT"
+            echo "SSH_KEY=$d/key"
+            echo "SSH_KNOWN=$d/known_hosts"
+          } >> "$GITHUB_ENV"
+
+      - name: Inventory 2026-09 Receita cache
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh \
+            -T \
+            -i "$SSH_KEY" \
+            -p "$SSH_PORT" \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$SSH_KNOWN" \
+            -o GlobalKnownHostsFile=/dev/null \
+            -o UpdateHostKeys=no \
+            "$SSH_USER@$SSH_HOST" \
+            "python3 -c 'import json,zipfile; from pathlib import Path; root=Path.home()/".sanida-v2-receita-bridge"/"cache"/"2026-09"; rows=[]; [rows.append({"name":p.name,"size":p.stat().st_size,"zip_valid":zipfile.is_zipfile(str(p)),"mtime_ns":p.stat().st_mtime_ns}) for p in sorted(root.glob("*.zip"))]; print("IDENTITY_CACHE_INVENTORY "+json.dumps(rows,sort_keys=True))'"
+
+      - name: Cleanup
+        if: always()
+        shell: bash
+        run: rm -rf "$RUNNER_TEMP/receita-identity-inventory-ssh"
