@@ -3,7 +3,7 @@ name: Audit Receita Identity Cache Inventory
 on:
   push:
     branches:
-      - audit/receita-lifecycle-20260918
+      - audit/receita-identity-20260918
   workflow_dispatch:
 
 permissions:
@@ -14,6 +14,8 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
+      - uses: actions/checkout@v4
+
       - name: Configure pinned SSH
         env:
           SSH_HOST: ${{ secrets.V2_HOSTGATOR_HOST }}
@@ -28,6 +30,7 @@ jobs:
           : "${SSH_USER:?missing SSH user}"
           SSH_PORT=${SSH_PORT:-22}
           d="$RUNNER_TEMP/receita-identity-inventory-ssh"
+          rm -rf "$d"
           umask 077
           install -d -m 700 "$d"
           printf '%s\n' "$SSH_PRIVATE_KEY" | tr -d '\r' > "$d/key"
@@ -39,7 +42,25 @@ jobs:
             echo "SSH_PORT=$SSH_PORT"
             echo "SSH_KEY=$d/key"
             echo "SSH_KNOWN=$d/known_hosts"
+            echo "REMOTE_SCRIPT=.receita-identity-cache-inventory-${GITHUB_RUN_ID}.py"
           } >> "$GITHUB_ENV"
+
+      - name: Upload inventory script
+        shell: bash
+        run: |
+          set -euo pipefail
+          scp \
+            -q \
+            -i "$SSH_KEY" \
+            -P "$SSH_PORT" \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$SSH_KNOWN" \
+            -o GlobalKnownHostsFile=/dev/null \
+            -o UpdateHostKeys=no \
+            ops/diagnostics/inventory_receita_identity_cache.py \
+            "$SSH_USER@$SSH_HOST:$REMOTE_SCRIPT"
 
       - name: Inventory 2026-09 Receita cache
         shell: bash
@@ -56,9 +77,22 @@ jobs:
             -o GlobalKnownHostsFile=/dev/null \
             -o UpdateHostKeys=no \
             "$SSH_USER@$SSH_HOST" \
-            "python3 -c 'import json,zipfile; from pathlib import Path; root=Path.home()/".sanida-v2-receita-bridge"/"cache"/"2026-09"; rows=[]; [rows.append({"name":p.name,"size":p.stat().st_size,"zip_valid":zipfile.is_zipfile(str(p)),"mtime_ns":p.stat().st_mtime_ns}) for p in sorted(root.glob("*.zip"))]; print("IDENTITY_CACHE_INVENTORY "+json.dumps(rows,sort_keys=True))'"
+            "python3 '$REMOTE_SCRIPT'"
 
       - name: Cleanup
         if: always()
         shell: bash
-        run: rm -rf "$RUNNER_TEMP/receita-identity-inventory-ssh"
+        run: |
+          ssh \
+            -T \
+            -i "$SSH_KEY" \
+            -p "$SSH_PORT" \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$SSH_KNOWN" \
+            -o GlobalKnownHostsFile=/dev/null \
+            -o UpdateHostKeys=no \
+            "$SSH_USER@$SSH_HOST" \
+            "rm -f -- '$REMOTE_SCRIPT'" || true
+          rm -rf "$RUNNER_TEMP/receita-identity-inventory-ssh"
