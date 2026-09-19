@@ -946,8 +946,8 @@ def main():
             parser.error(
                 "--daemonize requires --exit-file, --stdout-log and --stderr-log"
             )
-        daemonize(args.stdout_log, args.stderr_log)
         write_start_marker(args.start_file)
+        daemonize(args.stdout_log, args.stderr_log)
 
     exit_code = 0
     try:
