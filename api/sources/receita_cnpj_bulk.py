@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import io
+import json
 import re
 import tempfile
 import time
@@ -64,6 +66,77 @@ class ReceitaOpenDataRelease:
     establishment_files: tuple[str, ...]
     reasons_file: str = "Motivos.zip"
     resource_metadata: tuple[dict[str, Any], ...] = ()
+
+
+
+def release_resource_names(
+    release: ReceitaOpenDataRelease,
+    *,
+    purpose: str,
+) -> tuple[str, ...]:
+    """Return the official resource set that determines one Receita artifact."""
+    metadata_names = {
+        str(item.get("name") or "")
+        for item in release.resource_metadata
+        if str(item.get("name") or "")
+    }
+    if purpose == "lifecycle":
+        names = {release.reasons_file, *release.establishment_files}
+    elif purpose == "identity":
+        names = {
+            "Cnaes.zip",
+            "Naturezas.zip",
+            *release.establishment_files,
+            *(name for name in metadata_names if COMPANY_FILE_RE.fullmatch(name)),
+        }
+    else:
+        raise ValueError(f"unsupported Receita release fingerprint purpose: {purpose}")
+    missing = sorted(names - metadata_names)
+    if missing:
+        raise ReceitaOpenDataError(
+            "Receita release metadata is incomplete for "
+            f"{purpose}: missing={missing}"
+        )
+    return tuple(sorted(names, key=str.casefold))
+
+
+def release_fingerprint(
+    release: ReceitaOpenDataRelease,
+    *,
+    purpose: str,
+) -> str:
+    """Hash current official manifest metadata for cache-current validation."""
+    by_name = {
+        str(item.get("name") or ""): item
+        for item in release.resource_metadata
+        if str(item.get("name") or "")
+    }
+    resources = []
+    for name in release_resource_names(release, purpose=purpose):
+        item = by_name[name]
+        etag = str(item.get("etag") or "").strip() or None
+        size = item.get("size")
+        last_modified = str(item.get("last_modified") or "").strip() or None
+        resources.append(
+            {
+                "name": name,
+                "size": int(size) if size is not None else None,
+                "etag": etag,
+                "last_modified_fallback": None if etag else last_modified,
+            }
+        )
+    encoded = json.dumps(
+        {
+            "version": "receita-release-fingerprint-v1",
+            "period": release.period,
+            "purpose": purpose,
+            "resources": resources,
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def _utc_now() -> str:
@@ -278,7 +351,6 @@ def discover_latest_release(
             if actual_indexes != expected_indexes:
                 continue
 
-            metadata_names = {"Motivos.zip", *establishments}
             metadata = tuple(
                 {
                     "name": item["name"],
@@ -287,7 +359,7 @@ def discover_latest_release(
                     "etag": item.get("etag"),
                 }
                 for item in resources
-                if item["name"] in metadata_names
+                if not item.get("is_collection")
             )
             return ReceitaOpenDataRelease(
                 base_url=share_url,
