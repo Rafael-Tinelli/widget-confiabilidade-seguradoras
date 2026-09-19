@@ -1,0 +1,112 @@
+name: Audit Receita Cache Probe
+
+on:
+  push:
+    branches:
+      - audit/receita-cache-20260918
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  cache-probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure pinned SSH
+        env:
+          SSH_HOST: ${{ secrets.V2_HOSTGATOR_HOST }}
+          SSH_USER: ${{ secrets.V2_HOSTGATOR_USER }}
+          SSH_PRIVATE_KEY: ${{ secrets.V2_HOSTGATOR_SSH_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.V2_HOSTGATOR_KNOWN_HOSTS }}
+          SSH_PORT: ${{ vars.V2_HOSTGATOR_SSH_PORT }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${SSH_HOST:?missing SSH host}"
+          : "${SSH_USER:?missing SSH user}"
+          SSH_PORT=${SSH_PORT:-22}
+          d="$RUNNER_TEMP/receita-cache-probe-ssh"
+          rm -rf "$d"
+          umask 077
+          install -d -m 700 "$d"
+          printf '%s\n' "$SSH_PRIVATE_KEY" | tr -d '\r' > "$d/key"
+          printf '%s\n' "$SSH_KNOWN_HOSTS" | tr -d '\r' > "$d/known_hosts"
+          chmod 600 "$d/key" "$d/known_hosts"
+          {
+            echo "SSH_HOST=$SSH_HOST"
+            echo "SSH_USER=$SSH_USER"
+            echo "SSH_PORT=$SSH_PORT"
+            echo "SSH_KEY=$d/key"
+            echo "SSH_KNOWN=$d/known_hosts"
+          } >> "$GITHUB_ENV"
+
+      - name: Upload isolated cache probe
+        shell: bash
+        run: |
+          set -euo pipefail
+          remote_script=".receita-cache-probe-${GITHUB_RUN_ID}.py"
+          scp \
+            -i "$SSH_KEY" \
+            -P "$SSH_PORT" \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$SSH_KNOWN" \
+            -o GlobalKnownHostsFile=/dev/null \
+            -o UpdateHostKeys=no \
+            ops/diagnostics/receita_cache_probe.py \
+            "$SSH_USER@$SSH_HOST:$remote_script"
+          echo "REMOTE_SCRIPT=$remote_script" >> "$GITHUB_ENV"
+
+      - name: Execute first download, reuse, tamper and invalidation
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh_opts=(
+            -T
+            -i "$SSH_KEY"
+            -p "$SSH_PORT"
+            -o BatchMode=yes
+            -o IdentitiesOnly=yes
+            -o StrictHostKeyChecking=yes
+            -o UserKnownHostsFile="$SSH_KNOWN"
+            -o GlobalKnownHostsFile=/dev/null
+            -o UpdateHostKeys=no
+          )
+          ssh "${ssh_opts[@]}" "$SSH_USER@$SSH_HOST" "PROBE_SCRIPT='$REMOTE_SCRIPT' bash -s" <<'REMOTE'
+          set -euo pipefail
+          cache_dir="$(mktemp -d "$HOME/.receita-cache-probe.XXXXXX")"
+          cleanup() {
+            rm -rf "$cache_dir" "$HOME/$PROBE_SCRIPT"
+          }
+          trap cleanup EXIT
+
+          echo "=== CACHE PROBE PHASE 1: first acquisition ==="
+          python3 "$HOME/$PROBE_SCRIPT" ensure \
+            --cache-dir "$cache_dir" \
+            --expect-status downloaded
+
+          echo "=== CACHE PROBE PHASE 2: unchanged remote/local cache ==="
+          python3 "$HOME/$PROBE_SCRIPT" ensure \
+            --cache-dir "$cache_dir" \
+            --expect-status reused_unchanged
+
+          echo "=== CACHE PROBE PHASE 3: same-size local tamper ==="
+          python3 "$HOME/$PROBE_SCRIPT" tamper \
+            --cache-dir "$cache_dir"
+
+          echo "=== CACHE PROBE PHASE 4: tamper must invalidate and redownload ==="
+          python3 "$HOME/$PROBE_SCRIPT" ensure \
+            --cache-dir "$cache_dir" \
+            --expect-status downloaded \
+            --expect-reason sha256_mismatch
+          REMOTE
+
+      - name: Cleanup SSH material
+        if: always()
+        shell: bash
+        run: rm -rf "$RUNNER_TEMP/receita-cache-probe-ssh"
