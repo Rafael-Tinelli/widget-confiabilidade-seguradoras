@@ -397,21 +397,18 @@ def _start_remote_worker(
     remote_stdout: str,
     remote_stderr: str,
 ) -> None:
-    # Backgrounding is owned by the remote shell, not by Python. This makes
-    # the SSH channel return immediately and gives the bridge the real worker
-    # PID for liveness checks.
+    # Force a second fork on the remote host so the worker is not coupled to
+    # the SSH session. The Python worker writes its own PID to remote_start.
     guarded_command = (
         "umask 077; "
         f"if test -f {shlex.quote(remote_start)} "
         f"|| test -f {shlex.quote(remote_exit)}; then "
         "printf 'ALREADY_STARTED\\n'; "
         "else "
-        f"nohup setsid {remote_command} "
+        f"nohup setsid -f {remote_command} "
         f"</dev/null >>{shlex.quote(remote_stdout)} "
-        f"2>>{shlex.quote(remote_stderr)} & "
-        "pid=$!; "
-        f"printf '%s\\n' \"$pid\" > {shlex.quote(remote_start)}; "
-        "printf 'STARTED:%s\\n' \"$pid\"; "
+        f"2>>{shlex.quote(remote_stderr)}; "
+        "printf 'LAUNCHED\\n'; "
         "fi"
     )
     last_error: ReceitaRemoteBridgeError | None = None
@@ -419,10 +416,10 @@ def _start_remote_worker(
         try:
             result = _run(
                 [*ssh, guarded_command],
-                timeout=30,
+                timeout=15,
             )
             status = result.stdout.strip()
-            if status.startswith("STARTED:") or status == "ALREADY_STARTED":
+            if status in {"LAUNCHED", "ALREADY_STARTED"}:
                 return
             raise ReceitaRemoteBridgeError(
                 f"unexpected Receita remote launch response: {status!r}"
@@ -453,6 +450,7 @@ def _start_remote_worker(
                             {"attempt": attempt},
                             sort_keys=True,
                         ),
+                        file=sys.stderr,
                         flush=True,
                     )
                     return
@@ -544,6 +542,8 @@ def _remote_call(mode: str, payload: dict[str, Any] | None = None) -> dict[str, 
             [
                 "--exit-file",
                 remote_exit,
+                "--start-file",
+                remote_start,
             ]
         )
         remote_command = " ".join(shlex.quote(part) for part in remote_args)
