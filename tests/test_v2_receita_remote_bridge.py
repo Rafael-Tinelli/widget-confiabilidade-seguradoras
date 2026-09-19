@@ -443,7 +443,7 @@ def test_start_worker_uses_shell_detach_and_real_pid_marker(monkeypatch) -> None
 
     def fake_run(command, **kwargs):
         calls.append((command, kwargs))
-        return subprocess.CompletedProcess(command, 0, "STARTED:4321\n", "")
+        return subprocess.CompletedProcess(command, 0, "LAUNCHED\n", "")
 
     monkeypatch.setattr(bridge, "_run", fake_run)
 
@@ -458,9 +458,9 @@ def test_start_worker_uses_shell_detach_and_real_pid_marker(monkeypatch) -> None
 
     assert len(calls) == 1
     remote_shell = calls[0][0][-1]
-    assert "nohup setsid python3 worker.py --mode lifecycle" in remote_shell
+    assert "nohup setsid -f python3 worker.py --mode lifecycle" in remote_shell
     assert "</dev/null" in remote_shell
     assert "2>>.bridge/runs/op/stderr.log" in remote_shell
-    assert "pid=$!" in remote_shell
+    assert "pid=$!" not in remote_shell
     assert ".bridge/runs/op/started" in remote_shell
-    assert calls[0][1]["timeout"] == 30
+    assert calls[0][1]["timeout"] == 15
