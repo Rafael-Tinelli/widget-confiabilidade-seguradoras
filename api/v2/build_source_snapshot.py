@@ -36,6 +36,11 @@ from api.v2.build_classification_inventory import (
     write_classification_inventory,
 )
 from api.v2.generation import BuildContext
+from api.v2.receita_remote_bridge import (
+    discover_release_remote,
+    refresh_lifecycle_remote,
+    remote_bridge_enabled,
+)
 from api.v2.refresh_receita_lifecycle import (
     DEFAULT_MIN_COVERAGE,
     LEGACY_RECEITA_LIFECYCLE_CACHE_CONTRACT_VERSIONS,
@@ -496,7 +501,11 @@ def _receita_snapshot(
     cache_validation_error: str | None = None
     current_error: str | None = None
     try:
-        release = discover_latest_release()
+        release = (
+            discover_release_remote()
+            if remote_bridge_enabled()
+            else discover_latest_release()
+        )
         if cache.content_path.is_file():
             cached_payload = json.loads(cache.content_path.read_text(encoding="utf-8"))
             cached_period = str(
@@ -553,11 +562,25 @@ def _receita_snapshot(
         temp = destination.with_suffix(destination.suffix + ".incoming")
         if temp.exists():
             temp.unlink()
-        payload = refresh_receita_lifecycle(
-            output=temp,
-            release=release,
-            entities=entities,
-        )
+        if remote_bridge_enabled():
+            payload = refresh_lifecycle_remote(
+                entities,
+                release=release,
+            )
+            meta = payload.setdefault("meta", {})
+            meta["target_universe_hash"] = target_hash
+            meta["target_universe_hash_method"] = "sorted_normalized_cnpjs_v1"
+            meta["gate4_cache_contract_version"] = (
+                RECEITA_LIFECYCLE_CACHE_CONTRACT_VERSION
+            )
+            validate_refresh_payload(payload)
+            write_snapshot_atomic(payload, temp)
+        else:
+            payload = refresh_receita_lifecycle(
+                output=temp,
+                release=release,
+                entities=entities,
+            )
         if not payload.get("records"):
             raise SourceSnapshotError("Receita lifecycle refresh returned no records")
         temp.replace(destination)
