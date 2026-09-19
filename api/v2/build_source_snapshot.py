@@ -15,7 +15,7 @@ from api.sources.receita_cnpj import (
     RECEITA_CNPJ_OPEN_DATA_URL,
     load_filtered_lifecycle_snapshot,
 )
-from api.sources.receita_cnpj_bulk import discover_latest_release
+from api.sources.receita_cnpj_bulk import discover_latest_release, release_fingerprint
 from api.sources.ses import (
     SES_LISTAEMPRESAS_URL,
     SES_ZIP_URL,
@@ -506,12 +506,19 @@ def _receita_snapshot(
             if remote_bridge_enabled()
             else discover_latest_release()
         )
+        current_release_fingerprint = release_fingerprint(release)
         if cache.content_path.is_file():
             cached_payload = json.loads(cache.content_path.read_text(encoding="utf-8"))
             cached_period = str(
                 (cached_payload.get("source") or {}).get("reference_period") or ""
             )
-            if cached_period == release.period:
+            cached_release_fingerprint = str(
+                (cached_payload.get("meta") or {}).get("release_fingerprint") or ""
+            )
+            if (
+                cached_period == release.period
+                and cached_release_fingerprint == current_release_fingerprint
+            ):
                 try:
                     fetched_at, migrated = _materialize_compatible_receita_cache(
                         cache=cache,
@@ -552,8 +559,8 @@ def _receita_snapshot(
                             fetched_at=fetched_at,
                             current_validation_succeeded=True,
                             state_reason=(
-                                "official release period unchanged and Receita CNPJ target "
-                                "population compatible"
+                                "official release fingerprint unchanged and Receita CNPJ "
+                                "target population compatible"
                                 + ("; compatible cache migrated to v2" if migrated else "")
                             ),
                         )
@@ -567,20 +574,21 @@ def _receita_snapshot(
                 entities,
                 release=release,
             )
-            meta = payload.setdefault("meta", {})
-            meta["target_universe_hash"] = target_hash
-            meta["target_universe_hash_method"] = "sorted_normalized_cnpjs_v1"
-            meta["gate4_cache_contract_version"] = (
-                RECEITA_LIFECYCLE_CACHE_CONTRACT_VERSION
-            )
-            validate_refresh_payload(payload)
-            write_snapshot_atomic(payload, temp)
         else:
             payload = refresh_receita_lifecycle(
                 output=temp,
                 release=release,
                 entities=entities,
             )
+        meta = payload.setdefault("meta", {})
+        meta["target_universe_hash"] = target_hash
+        meta["target_universe_hash_method"] = "sorted_normalized_cnpjs_v1"
+        meta["gate4_cache_contract_version"] = (
+            RECEITA_LIFECYCLE_CACHE_CONTRACT_VERSION
+        )
+        meta["release_fingerprint"] = current_release_fingerprint
+        validate_refresh_payload(payload)
+        write_snapshot_atomic(payload, temp)
         if not payload.get("records"):
             raise SourceSnapshotError("Receita lifecycle refresh returned no records")
         temp.replace(destination)
