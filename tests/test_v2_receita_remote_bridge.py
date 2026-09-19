@@ -409,19 +409,19 @@ def test_remote_worker_deadline_allows_long_detached_execution() -> None:
     assert bridge._REMOTE_DEADLINE_SECONDS >= 18_000
 
 
-def test_detached_launch_uses_setsid_force_fork() -> None:
+def test_detached_launch_claims_start_before_self_daemonized_worker() -> None:
     command = bridge._detached_launch_command(
-        remote_command="python3 worker.py --mode lifecycle",
+        remote_command="python3 worker.py --mode lifecycle --daemonize",
         remote_start=".bridge/runs/op/started",
         remote_exit=".bridge/runs/op/exit_code",
-        remote_stdout=".bridge/runs/op/stdout.log",
         remote_stderr=".bridge/runs/op/stderr.log",
     )
 
-    assert "nohup setsid -f python3 worker.py --mode lifecycle" in command
-    assert "</dev/null" in command
-    assert ">>.bridge/runs/op/stdout.log" in command
-    assert "2>>.bridge/runs/op/stderr.log" in command
+    assert "printf 'LAUNCHING" in command
+    assert ".bridge/runs/op/started.claim" in command
+    assert "python3 worker.py --mode lifecycle --daemonize" in command
+    assert "nohup" not in command
+    assert "setsid -f" not in command
     assert "printf 'LAUNCHED" in command
 
 
@@ -439,10 +439,37 @@ def test_launch_remote_worker_returns_on_launched(monkeypatch) -> None:
         remote_command="python3 worker.py",
         remote_start=".bridge/runs/op/started",
         remote_exit=".bridge/runs/op/exit_code",
-        remote_stdout=".bridge/runs/op/stdout.log",
         remote_stderr=".bridge/runs/op/stderr.log",
     )
 
     assert len(calls) == 1
     assert calls[0][1]["timeout"] == 15
     assert calls[0][1]["attempts"] == 3
+
+
+def test_remote_call_passes_self_daemonize_contract() -> None:
+    source = Path("api/v2/receita_remote_bridge.py").read_text(encoding="utf-8")
+    assert '"--daemonize"' in source
+    assert '"--stdout-log"' in source
+    assert '"--stderr-log"' in source
+
+
+def test_worker_writes_authoritative_start_marker_after_daemonize() -> None:
+    source = Path("ops/hostgator/receita_remote_worker.py").read_text(encoding="utf-8")
+    daemon_block = source.split("if args.daemonize:", 1)[1].split(
+        "write_start_marker(args.start_file)", 1
+    )[0]
+    assert "daemonize(args.stdout_log, args.stderr_log)" in daemon_block
+    assert "write_start_marker(args.start_file)" not in daemon_block
+
+
+def test_full_generation_acceptance_mode_requires_fresh_receita() -> None:
+    workflow = Path(
+        ".github/workflows/v2-gate4-full-generation-proof.yml"
+    ).read_text(encoding="utf-8")
+    assert "require_receita_fresh:" in workflow
+    assert "V2_REQUIRE_RECEITA_FRESH" in workflow
+    assert "receita_cnpj_lifecycle" in workflow
+    assert "receita_consumer_identity" in workflow
+    assert '{"current_fetch", "current_validation"}' in workflow
+    assert "Receita acceptance proof failed" in workflow

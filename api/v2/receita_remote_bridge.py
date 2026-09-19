@@ -41,6 +41,7 @@ _TRANSIENT_TRANSPORT_PATTERNS = (
     "mux_client_request_session",
     "control socket connect",
     "master refused session request",
+    "receita remote command timed out after",
 )
 _TRANSPORT_RETRY_ATTEMPTS = 6
 _TRANSPORT_RETRY_BASE_SECONDS = 2
@@ -393,19 +394,28 @@ def _detached_launch_command(
     remote_command: str,
     remote_start: str,
     remote_exit: str,
-    remote_stdout: str,
     remote_stderr: str,
 ) -> str:
+    start_claim = f"{remote_start}.claim"
+    exit_claim = f"{remote_exit}.launch-failed"
     return (
         "umask 077; "
         f"if test -f {shlex.quote(remote_start)} "
         f"|| test -f {shlex.quote(remote_exit)}; then "
         "printf 'ALREADY_STARTED\n'; "
         "else "
-        f"nohup setsid -f {remote_command} "
-        f"</dev/null >>{shlex.quote(remote_stdout)} "
-        f"2>>{shlex.quote(remote_stderr)}; "
+        f"printf 'LAUNCHING\\n' > {shlex.quote(start_claim)} && "
+        f"mv -f -- {shlex.quote(start_claim)} {shlex.quote(remote_start)} && "
+        f"if {remote_command}; then "
         "printf 'LAUNCHED\n'; "
+        "else "
+        "rc=$?; "
+        f"printf '%s\\n' \"$rc\" > {shlex.quote(exit_claim)} && "
+        f"mv -f -- {shlex.quote(exit_claim)} {shlex.quote(remote_exit)}; "
+        f"printf 'launch command failed rc=%s\\n' \"$rc\" "
+        f">>{shlex.quote(remote_stderr)}; "
+        "exit \"$rc\"; "
+        "fi; "
         "fi"
     )
 
@@ -416,14 +426,12 @@ def _launch_remote_worker(
     remote_command: str,
     remote_start: str,
     remote_exit: str,
-    remote_stdout: str,
     remote_stderr: str,
 ) -> None:
     launch_command = _detached_launch_command(
         remote_command=remote_command,
         remote_start=remote_start,
         remote_exit=remote_exit,
-        remote_stdout=remote_stdout,
         remote_stderr=remote_stderr,
     )
     result = _run_transport(
@@ -637,6 +645,11 @@ def _remote_call(mode: str, payload: dict[str, Any] | None = None) -> dict[str, 
             remote_start,
             "--exit-file",
             remote_exit,
+            "--daemonize",
+            "--stdout-log",
+            remote_stdout,
+            "--stderr-log",
+            remote_stderr,
         ]
         if payload is not None:
             remote_args.extend(["--input", remote_input])
@@ -652,7 +665,6 @@ def _remote_call(mode: str, payload: dict[str, Any] | None = None) -> dict[str, 
                 remote_command=remote_command,
                 remote_start=remote_start,
                 remote_exit=remote_exit,
-                remote_stdout=remote_stdout,
                 remote_stderr=remote_stderr,
             )
 

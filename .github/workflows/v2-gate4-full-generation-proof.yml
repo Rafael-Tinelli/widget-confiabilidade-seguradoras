@@ -5,6 +5,12 @@ name: V2 Gate 4 Full Generation Proof
 # no longer an event source.
 on:
   workflow_dispatch:
+    inputs:
+      require_receita_fresh:
+        description: "Acceptance proof: fail unless both Receita sources are fresh"
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -20,6 +26,7 @@ jobs:
     env:
       V2_SOURCE_HEAD_SHA: ${{ github.sha }}
       V2_BUILD_ID: v2-gate4-full-${{ github.run_id }}-a${{ github.run_attempt }}
+      V2_REQUIRE_RECEITA_FRESH: ${{ inputs.require_receita_fresh && '1' || '0' }}
       V2_SOURCE_CACHE_DIR: data/cache/v2/source
       SES_ALLOW_INSECURE_SSL: "0"
       SUSEP_LICENSED_VERIFY_SSL: "1"
@@ -131,6 +138,8 @@ jobs:
             api/v2/build_public_distribution_manifest.py \
             api/v2/install_public_generation.py \
             api/v2/build_ranking_eligibility_preflight.py \
+            api/v2/receita_remote_bridge.py \
+            ops/hostgator/receita_remote_worker.py \
             tests/test_v2_gate4_pipeline.py \
             tests/test_v2_gate4_pipeline_static_contract.py \
             tests/test_v2_generation.py \
@@ -141,7 +150,8 @@ jobs:
             tests/test_v2_gate4_pipeline_static_contract.py \
             tests/test_v2_generation.py \
             tests/test_v2_financial_publication_audit.py \
-            tests/test_v2_public_generation_install.py
+            tests/test_v2_public_generation_install.py \
+            tests/test_v2_receita_remote_bridge.py
 
       - name: Ensure versioned Consumer.gov bootstrap is available
         run: |
@@ -215,6 +225,9 @@ jobs:
 
           build_id = os.environ["V2_BUILD_ID"]
           source_head = os.environ["V2_SOURCE_HEAD_SHA"]
+          require_receita_fresh = (
+              os.environ.get("V2_REQUIRE_RECEITA_FRESH", "0") == "1"
+          )
 
           missing = [
               output
@@ -250,6 +263,38 @@ jobs:
                       raise SystemExit(f"unusable {name} source state: {row}")
                   if len(str(row.get("sha256") or "")) != 64:
                       raise SystemExit(f"missing {name} source hash: {row.get('source_id')}")
+
+          all_source_rows = {
+              str(row.get("source_id")): row
+              for payload in (source_lineage, conduct_lineage)
+              for row in payload.get("sources") or []
+          }
+          receita_source_ids = (
+              "receita_cnpj_lifecycle",
+              "receita_consumer_identity",
+          )
+          receita_proof = {}
+          for source_id in receita_source_ids:
+              row = all_source_rows.get(source_id)
+              if row is None:
+                  raise SystemExit(
+                      f"Receita acceptance source missing from lineage: {source_id}"
+                  )
+              receita_proof[source_id] = {
+                  "state": row.get("state"),
+                  "freshness_method": row.get("freshness_method"),
+                  "used_cache": row.get("used_cache"),
+                  "current_error": row.get("current_error"),
+              }
+              if require_receita_fresh and (
+                  row.get("state") != "fresh"
+                  or row.get("freshness_method")
+                  not in {"current_fetch", "current_validation"}
+              ):
+                  raise SystemExit(
+                      "Receita acceptance proof failed: "
+                      f"{source_id}={receita_proof[source_id]}"
+                  )
 
           watchdog = json.loads(
               Path("data/derived/v2/relationship_watchdog.json").read_text(encoding="utf-8")
@@ -336,6 +381,8 @@ jobs:
               "conduct_source_count": len(conduct_lineage.get("sources") or []),
               "watchdog_blocking_drift": 0,
               "ranking_eligible": 0,
+              "receita_fresh_required": require_receita_fresh,
+              "receita_proof": receita_proof,
               "conduct_status": conduct.get("status"),
               "financial_publication_audit_status": financial_audit.get("status"),
               "financial_reference_period": financial_audit.get("reference_period"),

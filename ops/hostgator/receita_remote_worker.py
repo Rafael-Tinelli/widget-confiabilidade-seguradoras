@@ -946,9 +946,11 @@ def main():
             parser.error(
                 "--daemonize requires --exit-file, --stdout-log and --stderr-log"
             )
-        write_start_marker(args.start_file)
         daemonize(args.stdout_log, args.stderr_log)
 
+    # The authoritative PID marker is written only by the fully detached
+    # grandchild. The SSH-side launch claim may temporarily contain
+    # "LAUNCHING"; polling treats that as startup-in-progress.
     write_start_marker(args.start_file)
 
     exit_code = 0
