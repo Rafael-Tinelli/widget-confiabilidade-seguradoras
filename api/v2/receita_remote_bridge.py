@@ -175,7 +175,7 @@ def _operation_id(mode: str) -> str:
 def _remote_call(mode: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
     if not remote_bridge_enabled():
         raise ReceitaRemoteBridgeError("Receita remote bridge is not enabled")
-    if mode not in {"discover", "lifecycle", "identity"}:
+    if mode not in {"discover", "prewarm", "lifecycle", "identity"}:
         raise ReceitaRemoteBridgeError(f"unsupported Receita remote mode: {mode}")
 
     config = _config_from_env()
@@ -322,6 +322,32 @@ def _remote_call(mode: str, payload: dict[str, Any] | None = None) -> dict[str, 
         cleanup = f"rm -rf -- {shlex.quote(run_dir)}"
         _run([*ssh, cleanup], timeout=120, check=False)
 
+
+
+def prewarm_remote_cache() -> dict[str, Any]:
+    payload = _remote_call("prewarm")
+    if payload.get("artifact") != "v2_receita_remote_cache_prewarm":
+        raise ReceitaRemoteBridgeError("unexpected Receita remote prewarm artifact")
+    period = str(payload.get("period") or "").strip()
+    fingerprint = str(payload.get("release_fingerprint") or "").strip()
+    rows = list(payload.get("files") or [])
+    summary = dict(payload.get("summary") or {})
+    if not re.fullmatch(r"20\d{2}-\d{2}", period):
+        raise ReceitaRemoteBridgeError("Receita remote prewarm has invalid period")
+    if len(fingerprint) != 64:
+        raise ReceitaRemoteBridgeError("Receita remote prewarm fingerprint is invalid")
+    if not rows:
+        raise ReceitaRemoteBridgeError("Receita remote prewarm returned no files")
+    if int(summary.get("file_count") or 0) != len(rows):
+        raise ReceitaRemoteBridgeError("Receita remote prewarm file count mismatch")
+    for row in rows:
+        if str(row.get("status") or "") not in {"downloaded", "reused_unchanged"}:
+            raise ReceitaRemoteBridgeError("Receita remote prewarm has invalid cache status")
+        if int(row.get("size") or 0) <= 0:
+            raise ReceitaRemoteBridgeError("Receita remote prewarm has invalid file size")
+        if len(str(row.get("sha256") or "")) != 64:
+            raise ReceitaRemoteBridgeError("Receita remote prewarm has invalid SHA-256")
+    return payload
 
 def discover_release_remote() -> ReceitaOpenDataRelease:
     payload = _remote_call("discover")
