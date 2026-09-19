@@ -10,8 +10,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: v2-gate4-full-generation-${{ github.ref }}
-  cancel-in-progress: true
+  group: v2-receita-hostgator-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   full-generation-proof:
