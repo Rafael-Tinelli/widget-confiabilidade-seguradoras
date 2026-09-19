@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import ast
 import importlib.util
+import json
+import zipfile
 from pathlib import Path
 
 from api.sources.receita_cnpj_bulk import ReceitaOpenDataRelease
@@ -214,4 +216,101 @@ def test_remote_identity_extract_is_revalidated_and_finalized_locally(monkeypatc
     assert (
         match["candidates"][0]["project_legal_name"]
         == "EMPRESA TESTE SEGURADORA S.A."
+    )
+
+
+def test_remote_worker_cache_manifest_reuses_and_invalidates_same_size_tamper(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    worker = _load_worker_module()
+    source = tmp_path / "source.zip"
+    with zipfile.ZipFile(source, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("data.csv", "a;b\n1;2\n")
+
+    cache_root = tmp_path / "cache" / "2026-09"
+    cache_root.mkdir(parents=True)
+    destination = cache_root / "Motivos.zip"
+    destination.write_bytes(source.read_bytes())
+    metadata = {
+        "name": "Motivos.zip",
+        "size": destination.stat().st_size,
+        "etag": '"stable-etag"',
+        "last_modified": "Mon, 14 Sep 2026 15:06:40 GMT",
+    }
+
+    class _NoNetworkSession:
+        def get(self, *args, **kwargs):
+            raise AssertionError("network must not be used for adopted/reused cache")
+
+    session = _NoNetworkSession()
+    first = worker.download_zip(
+        session,
+        "https://example.invalid/Motivos.zip",
+        destination,
+        metadata["size"],
+        reference_period="2026-09",
+        resource_metadata=metadata,
+    )
+    assert first == destination
+
+    manifest_path = cache_root / worker.CACHE_MANIFEST_NAME
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    entry = manifest["files"]["Motivos.zip"]
+    assert entry["provenance"] == "adopted_existing_current_manifest"
+
+    worker.download_zip(
+        session,
+        "https://example.invalid/Motivos.zip",
+        destination,
+        metadata["size"],
+        reference_period="2026-09",
+        resource_metadata=metadata,
+    )
+
+    data = bytearray(destination.read_bytes())
+    data[len(data) // 2] ^= 0xFF
+    destination.write_bytes(data)
+    assert destination.stat().st_size == metadata["size"]
+
+    class _DownloadResponse:
+        status_code = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def raise_for_status(self):
+            return None
+
+        def iter_content(self, chunk_size):
+            yield source.read_bytes()
+
+    class _DownloadSession:
+        auth = None
+
+        class _Cookies:
+            @staticmethod
+            def clear():
+                return None
+
+        cookies = _Cookies()
+
+        def get(self, *args, **kwargs):
+            return _DownloadResponse()
+
+    repaired = worker.download_zip(
+        _DownloadSession(),
+        "https://example.invalid/Motivos.zip",
+        destination,
+        metadata["size"],
+        reference_period="2026-09",
+        resource_metadata=metadata,
+    )
+    assert repaired.read_bytes() == source.read_bytes()
+    refreshed = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert refreshed["files"]["Motivos.zip"]["provenance"] == (
+        "downloaded_current_manifest"
     )
