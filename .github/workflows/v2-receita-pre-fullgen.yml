@@ -47,7 +47,8 @@ jobs:
             api/v2/build_consumer_gov_receita_identity.py \
             api/v2/build_source_snapshot.py \
             api/v2/receita_remote_bridge.py \
-            ops/hostgator/receita_remote_worker.py
+            ops/hostgator/receita_remote_worker.py \
+            ops/hostgator/receita_cache_manifest.py
           python -m pytest -q \
             tests/test_receita_cnpj_bulk_webdav.py \
             tests/test_v2_receita_cnpj_identity.py \
@@ -202,17 +203,33 @@ jobs:
           ssh "${ssh_opts[@]}" "$V2_RECEITA_SSH_USER@$V2_RECEITA_SSH_HOST"             "python3 '$remote_dir/receita_cache_manifest.py'               --metadata '$remote_dir/release.json'               --cache-root ~/.sanida-v2-receita-bridge/cache"
           ssh "${ssh_opts[@]}" "$V2_RECEITA_SSH_USER@$V2_RECEITA_SSH_HOST"             "rm -rf -- '$remote_dir'"
 
-      - name: Enforce known HostGator compute boundary
+      - name: Validate Full Generation local-compute contract
         run: |
           set -euo pipefail
           python - <<'PY'
-          # Full national identity scanning on HostGator has already been observed
-          # to be killed by the hosting envelope. Until compute is moved/chunked,
-          # this preflight deliberately prevents treating the branch as Full
-          # Generation-ready merely because transport/cache are healthy.
-          raise SystemExit(
-              "PRE_FULLGEN_BLOCKER: transport/cache are healthy, but nationwide "
-              "Receita identity parsing must not run as one HostGator Python scan"
+          from pathlib import Path
+
+          workflow = Path(
+              ".github/workflows/v2-gate4-full-generation-proof.yml"
+          ).read_text(encoding="utf-8")
+          required = [
+              "V2_RECEITA_LOCAL_MIRROR_DIR",
+              "Build current Receita manifest contract",
+              "Seal HostGator Receita cache against current manifest",
+              "Materialize validated Receita mirror on GitHub runner",
+              "Verify local Receita mirror byte-for-byte",
+          ]
+          missing = [token for token in required if token not in workflow]
+          if missing:
+              raise SystemExit(
+                  "Full Generation local-compute contract incomplete: "
+                  + repr(missing)
+              )
+          if "fix/receita-public-dav-auth" in workflow:
+              raise SystemExit("retired Receita experiment branch trigger remains")
+          print(
+              "PRE_FULLGEN_READY: HostGator acquisition/cache + "
+              "GitHub canonical parsing contract present"
           )
           PY
 
