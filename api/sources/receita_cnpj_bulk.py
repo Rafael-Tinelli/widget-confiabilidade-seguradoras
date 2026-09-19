@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import csv
+import hashlib
+import json
 import io
 import re
 import tempfile
@@ -64,6 +66,32 @@ class ReceitaOpenDataRelease:
     establishment_files: tuple[str, ...]
     reasons_file: str = "Motivos.zip"
     resource_metadata: tuple[dict[str, Any], ...] = ()
+
+
+def release_fingerprint(release: ReceitaOpenDataRelease) -> str:
+    payload = {
+        "period": release.period,
+        "resources": sorted(
+            [
+                {
+                    "name": str(item.get("name") or ""),
+                    "size": item.get("size"),
+                    "etag": item.get("etag"),
+                    "last_modified": item.get("last_modified"),
+                }
+                for item in release.resource_metadata
+                if str(item.get("name") or "")
+            ],
+            key=lambda item: item["name"],
+        ),
+    }
+    encoded = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def _utc_now() -> str:
