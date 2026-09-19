@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import ast
 import importlib.util
+import io
+import zipfile
 from pathlib import Path
 
 from api.sources.receita_cnpj_bulk import ReceitaOpenDataRelease
@@ -215,3 +217,106 @@ def test_remote_identity_extract_is_revalidated_and_finalized_locally(monkeypatc
         match["candidates"][0]["project_legal_name"]
         == "EMPRESA TESTE SEGURADORA S.A."
     )
+
+
+def _zip_bytes(payload: bytes) -> bytes:
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_STORED) as archive:
+        archive.writestr("fixture.csv", payload)
+    return buffer.getvalue()
+
+
+class _FakeResponse:
+    def __init__(self, payload: bytes):
+        self.payload = payload
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+    def raise_for_status(self):
+        return None
+
+    def iter_content(self, chunk_size=8192):
+        del chunk_size
+        yield self.payload
+
+
+class _FakeSession:
+    def __init__(self, payload: bytes):
+        self.payload = payload
+        self.calls = 0
+        self.auth = None
+
+        class _Cookies:
+            def clear(self):
+                return None
+
+        self.cookies = _Cookies()
+
+    def get(self, url, **kwargs):
+        del url, kwargs
+        self.calls += 1
+        return _FakeResponse(self.payload)
+
+
+def test_remote_worker_cache_reuses_fingerprint_and_rejects_same_size_tamper(
+    tmp_path,
+) -> None:
+    worker = _load_worker_module()
+    official = _zip_bytes(b"AAAA")
+    tampered = _zip_bytes(b"BBBB")
+    assert len(official) == len(tampered)
+
+    session = _FakeSession(official)
+    destination = tmp_path / "Motivos.zip"
+
+    worker.download_zip(
+        session,
+        "https://example.invalid/Motivos.zip",
+        destination,
+        len(official),
+        '"etag-1"',
+        "Mon, 14 Sep 2026 15:06:40 GMT",
+    )
+    assert session.calls == 1
+
+    # Same remote fingerprint + same local SHA-256: no GET.
+    worker.download_zip(
+        session,
+        "https://example.invalid/Motivos.zip",
+        destination,
+        len(official),
+        '"etag-1"',
+        "Mon, 14 Sep 2026 15:06:40 GMT",
+    )
+    assert session.calls == 1
+
+    # Replace with another valid ZIP of exactly the same byte length.
+    destination.write_bytes(tampered)
+    assert zipfile.is_zipfile(destination)
+    assert destination.stat().st_size == len(official)
+
+    worker.download_zip(
+        session,
+        "https://example.invalid/Motivos.zip",
+        destination,
+        len(official),
+        '"etag-1"',
+        "Mon, 14 Sep 2026 15:06:40 GMT",
+    )
+    assert session.calls == 2
+    assert destination.read_bytes() == official
+
+    # A changed remote fingerprint also invalidates otherwise intact bytes.
+    worker.download_zip(
+        session,
+        "https://example.invalid/Motivos.zip",
+        destination,
+        len(official),
+        '"etag-2"',
+        "Mon, 14 Sep 2026 15:06:40 GMT",
+    )
+    assert session.calls == 3
