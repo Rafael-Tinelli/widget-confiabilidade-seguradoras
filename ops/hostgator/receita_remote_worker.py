@@ -699,7 +699,16 @@ def identity_extract(session, release, payload, cache_dir):
 
 
 def discover_payload(release):
-    names = ["Motivos.zip"] + release["establishment_files"]
+    files = resource_map(release)
+    names = sorted(
+        {
+            "Motivos.zip",
+            "Cnaes.zip",
+            "Naturezas.zip",
+            *release["establishment_files"],
+            *[name for name in files if COMPANY_RE.fullmatch(name)],
+        }
+    )
     return {
         "artifact": "v2_receita_remote_release",
         "base_url": release["base_url"],
