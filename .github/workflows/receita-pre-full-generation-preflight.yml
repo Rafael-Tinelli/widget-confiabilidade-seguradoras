@@ -6,6 +6,7 @@ on:
       - fix/receita-cache-bridge-final
     paths-ignore:
       - .github/workflows/v2-gate4-full-generation-proof.yml
+      - .github/workflows/tmp-receita-full-lifecycle-proof.yml
   workflow_dispatch:
 
 permissions:
@@ -13,7 +14,7 @@ permissions:
 
 concurrency:
   group: v2-receita-hostgator-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   preflight:
