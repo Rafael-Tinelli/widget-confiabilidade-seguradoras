@@ -454,3 +454,15 @@ def test_remote_identity_worker_is_cpu_sharded() -> None:
     assert '"split",' in source
     assert "_run_identity_chunk" in source
     assert "120-second CPU limit per process" in source
+
+
+def test_remote_lifecycle_worker_is_cpu_sharded() -> None:
+    source = Path("ops/hostgator/receita_remote_worker.py").read_text(encoding="utf-8")
+    assert "lifecycle_establishment_chunk" in source
+    assert "def _scan_lifecycle_chunk(" in source
+    lifecycle = source.split("def lifecycle_extract(", 1)[1].split(
+        "IDENTITY_CHUNK_BYTES", 1
+    )[0]
+    assert "_scan_zip_via_chunk_workers(" in lifecycle
+    assert 'mode="lifecycle_establishment_chunk"' in lifecycle
+    assert "RECEITA_REMOTE_CHUNK" in source

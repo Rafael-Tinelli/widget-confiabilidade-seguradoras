@@ -584,6 +584,7 @@ def lifecycle_extract(session, release, payload, cache_dir):
 
     found = {}
     scanned = []
+    scratch_base = cache_root / ".lifecycle-work"
     for name in release["establishment_files"]:
         metadata = files.get(name) or {}
         local = download_zip(
@@ -594,41 +595,40 @@ def lifecycle_extract(session, release, payload, cache_dir):
             metadata.get("etag"),
             metadata.get("last_modified"),
         )
-        with zipfile.ZipFile(str(local)) as archive:
-            member = first_csv_member(archive)
-            with archive.open(member) as raw:
-                reader = sanitized_csv_reader(raw)
-                for row in reader:
-                    if len(row) < 8:
-                        continue
-                    cnpj = normalize_cnpj("".join(str(part).strip() for part in row[:3]))
-                    if not cnpj or cnpj not in targets:
-                        continue
-                    status_code = str(row[5]).strip().zfill(2)
-                    status_label = STATUS_CODE_TO_LABEL.get(status_code)
-                    if not status_label:
-                        raise WorkerError(
-                            f"unsupported Receita status code {status_code} for {cnpj}"
-                        )
-                    reason_code = str(row[7]).strip().zfill(2)
-                    found[cnpj] = {
-                        "cnpj": cnpj,
-                        "legal_name": targets[cnpj],
-                        "cadastral_status": status_label,
-                        "status_date": str(row[6]).strip() or None,
-                        "status_reason": reason_map.get(reason_code),
-                        "source_authority": "Receita Federal do Brasil",
-                        "source_document": "Dados Abertos do CNPJ / Estabelecimentos",
-                        "source_mode": "official_open_data_bulk",
-                        "observed_at": today_utc(),
-                        "source_period": release["period"],
-                        "source_url": urljoin(release["release_url"], name),
-                        "source_file": name,
-                        "raw_status_code": status_code,
-                        "raw_reason_code": reason_code,
-                    }
-                    if len(found) == len(targets):
-                        break
+        remaining = sorted(set(targets) - set(found))
+        partials = _scan_zip_via_chunk_workers(
+            local_zip=local,
+            mode="lifecycle_establishment_chunk",
+            payload={"target_cnpjs": remaining},
+            scratch_root=scratch_base / name,
+        )
+        for partial in partials:
+            for cnpj, raw_record in (partial.get("records") or {}).items():
+                if cnpj not in targets:
+                    continue
+                status_code = str(raw_record.get("status_code") or "").zfill(2)
+                status_label = STATUS_CODE_TO_LABEL.get(status_code)
+                if not status_label:
+                    raise WorkerError(
+                        f"unsupported Receita status code {status_code} for {cnpj}"
+                    )
+                reason_code = str(raw_record.get("reason_code") or "").zfill(2)
+                found[cnpj] = {
+                    "cnpj": cnpj,
+                    "legal_name": targets[cnpj],
+                    "cadastral_status": status_label,
+                    "status_date": raw_record.get("status_date") or None,
+                    "status_reason": reason_map.get(reason_code),
+                    "source_authority": "Receita Federal do Brasil",
+                    "source_document": "Dados Abertos do CNPJ / Estabelecimentos",
+                    "source_mode": "official_open_data_bulk",
+                    "observed_at": today_utc(),
+                    "source_period": release["period"],
+                    "source_url": urljoin(release["release_url"], name),
+                    "source_file": name,
+                    "raw_status_code": status_code,
+                    "raw_reason_code": reason_code,
+                }
         scanned.append(name)
         if len(found) == len(targets):
             break
@@ -657,7 +657,6 @@ def lifecycle_extract(session, release, payload, cache_dir):
         "unresolved_cnpjs": unresolved,
         "raw_records": [found[key] for key in sorted(found)],
     }
-
 
 
 IDENTITY_CHUNK_BYTES = 256 * 1024 * 1024
@@ -807,6 +806,31 @@ def _scan_company_chunk(chunk_file, payload):
     }
 
 
+def _scan_lifecycle_chunk(chunk_file, payload):
+    targets = {
+        str(value)
+        for value in payload.get("target_cnpjs") or []
+        if len(str(value)) == 14
+    }
+    records = {}
+    with Path(chunk_file).open("rb") as raw:
+        reader = sanitized_csv_reader(raw)
+        for row in reader:
+            if len(row) < 8:
+                continue
+            cnpj = normalize_cnpj("".join(str(part).strip() for part in row[:3]))
+            if not cnpj or cnpj not in targets:
+                continue
+            records[cnpj] = {
+                "status_code": str(row[5]).strip().zfill(2),
+                "status_date": str(row[6]).strip() or None,
+                "reason_code": str(row[7]).strip().zfill(2),
+            }
+            if len(records) == len(targets):
+                break
+    return {"records": records}
+
+
 def _scan_establishment_chunk(chunk_file, payload):
     targets = {
         str(value)
@@ -892,7 +916,7 @@ def _scan_zip_via_chunk_workers(
             output_path.unlink(missing_ok=True)
             chunk_file.unlink(missing_ok=True)
             print(
-                "RECEITA_IDENTITY_CHUNK "
+                "RECEITA_REMOTE_CHUNK "
                 f"mode={mode} zip={Path(local_zip).name} "
                 f"chunk={index + 1}/{len(chunks)}",
                 flush=True,
@@ -1071,6 +1095,8 @@ def write_output(path, payload):
 
 
 def execute(args):
+    if args.mode == "lifecycle_establishment_chunk":
+        return _scan_lifecycle_chunk(args.chunk_file, load_input(args.input))
     if args.mode == "identity_company_chunk":
         return _scan_company_chunk(args.chunk_file, load_input(args.input))
     if args.mode == "identity_establishment_chunk":
@@ -1137,6 +1163,7 @@ def main():
             "discover",
             "lifecycle",
             "identity",
+            "lifecycle_establishment_chunk",
             "identity_company_chunk",
             "identity_establishment_chunk",
         ),
@@ -1150,15 +1177,19 @@ def main():
     parser.add_argument("--start-file")
     args = parser.parse_args()
 
-    # HostGator imposes a 120-second CPU limit per process. Identity's heavy
-    # scan is orchestrated here but parsed in bounded child processes so no
-    # single parser consumes the whole CPU budget.
+    # HostGator imposes a 120-second CPU limit per process. Lifecycle and
+    # identity scans are orchestrated here but parsed in bounded child
+    # processes so no single parser consumes the whole CPU budget.
     write_start_marker(args.start_file)
 
     exit_code = 0
     try:
         result = execute(args)
-        if args.mode in {"identity_company_chunk", "identity_establishment_chunk"}:
+        if args.mode in {
+            "lifecycle_establishment_chunk",
+            "identity_company_chunk",
+            "identity_establishment_chunk",
+        }:
             write_output(args.output, result)
     except Exception:  # noqa: BLE001 - worker must always persist an exit marker
         traceback.print_exc()
