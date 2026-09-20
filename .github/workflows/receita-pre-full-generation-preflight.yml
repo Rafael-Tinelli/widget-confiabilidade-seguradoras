@@ -204,15 +204,13 @@ jobs:
           )
           PY
 
-      - name: Prove detached worker survives the former launch timeout
+      - name: Prove foreground SSH session survives shared-host reap horizon
         if: env.V2_RECEITA_REMOTE_ENABLED == '1'
         shell: bash
         run: |
           set -euo pipefail
           python - <<'PY'
           import json
-          import shlex
-          import threading
           import time
 
           from api.v2.receita_remote_bridge import (
@@ -220,92 +218,34 @@ jobs:
               _control_path,
               _run_transport,
               _ssh_base,
-              discover_release_remote,
           )
 
           config = _config_from_env()
           control_path = _control_path(config)
           ssh = _ssh_base(config, control_path=control_path)
-          lock_path = f"{config.remote_root}/cache/.worker.lock"
-          marker_path = f"{config.remote_root}/detach-preflight.lock-held"
-
-          holder_code = (
-              "import fcntl,time;"
-              "from pathlib import Path;"
-              f"lock=Path({lock_path!r});"
-              "lock.parent.mkdir(parents=True,exist_ok=True);"
-              "handle=lock.open('a+');"
-              "fcntl.flock(handle.fileno(),fcntl.LOCK_EX);"
-              f"marker=Path({marker_path!r});"
-              "marker.write_text('held\\n',encoding='utf-8');"
-              "time.sleep(110);"
-              "marker.unlink(missing_ok=True)"
-          )
-          holder_command = "python3 -c " + shlex.quote(holder_code)
-          holder_errors = []
-
-          def hold_lock():
-              try:
-                  _run_transport(
-                      [*ssh, holder_command],
-                      timeout=150,
-                      attempts=3,
-                  )
-              except Exception as exc:  # noqa: BLE001 - surfaced below
-                  holder_errors.append(exc)
-
-          holder = threading.Thread(target=hold_lock, daemon=True)
-          holder.start()
-
-          marker_ready = False
-          for _ in range(20):
-              probe = _run_transport(
-                  [
-                      *ssh,
-                      (
-                          f"if test -s {shlex.quote(marker_path)}; "
-                          "then printf 'HELD\\n'; else printf 'WAITING\\n'; fi"
-                      ),
-                  ],
-                  timeout=30,
-                  attempts=3,
-              ).stdout.strip()
-              if probe == "HELD":
-                  marker_ready = True
-                  break
-              time.sleep(0.5)
-          if not marker_ready:
-              raise SystemExit("could not establish remote cache-lock holder")
 
           started = time.monotonic()
-          release = discover_release_remote()
-          elapsed = round(time.monotonic() - started, 3)
-
-          holder.join(timeout=150)
-          if holder.is_alive():
-              raise SystemExit("remote cache-lock holder did not terminate")
-          if holder_errors:
-              raise SystemExit(f"remote cache-lock holder failed: {holder_errors[-1]}")
-          if elapsed < 100:
-              raise SystemExit(
-                  f"detached worker proof returned too early: {elapsed}s"
-              )
-
-          _run_transport(
-              [*ssh, f"rm -f -- {shlex.quote(marker_path)}"],
-              timeout=30,
-              check=False,
+          result = _run_transport(
+              [*ssh, "sleep 150; printf 'FOREGROUND_150_OK\\n'"],
+              timeout=180,
               attempts=3,
           )
+          elapsed = round(time.monotonic() - started, 3)
+          if result.stdout.strip() != "FOREGROUND_150_OK":
+              raise SystemExit(
+                  f"foreground 150s probe failed: {result.stdout!r}"
+              )
+          if elapsed < 145:
+              raise SystemExit(
+                  f"foreground 150s probe returned too early: {elapsed}s"
+              )
 
           print(
-              "RECEITA_DETACHED_WORKER_STRESS "
+              "RECEITA_FOREGROUND_SSH_STRESS "
               + json.dumps(
                   {
-                      "period": release.period,
-                      "blocked_seconds_floor": 100,
                       "elapsed_seconds": elapsed,
-                      "former_launch_timeout_seconds": 15,
+                      "shared_host_reap_horizon_seconds": 120,
                       "status": "pass",
                   },
                   sort_keys=True,

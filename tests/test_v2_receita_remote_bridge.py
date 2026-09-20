@@ -405,68 +405,24 @@ def test_transport_does_not_retry_semantic_remote_failure(monkeypatch) -> None:
     assert len(calls) == 1
 
 
-def test_remote_worker_deadline_allows_long_detached_execution() -> None:
+def test_remote_worker_deadline_allows_long_foreground_execution() -> None:
     assert bridge._REMOTE_DEADLINE_SECONDS >= 18_000
 
 
-def test_detached_launch_claims_start_and_backgrounds_self_daemonized_worker() -> None:
-    command = bridge._detached_launch_command(
-        remote_command="python3 worker.py --mode lifecycle --daemonize",
-        remote_start=".bridge/runs/op/started",
-        remote_exit=".bridge/runs/op/exit_code",
-        remote_stdout=".bridge/runs/op/stdout.log",
-        remote_stderr=".bridge/runs/op/stderr.log",
-    )
-
-    assert "printf 'LAUNCHING" in command
-    assert ".bridge/runs/op/started.claim" in command
-    assert "python3 worker.py --mode lifecycle --daemonize" in command
-    assert "</dev/null" in command
-    assert ">>.bridge/runs/op/stdout.log" in command
-    assert "2>>.bridge/runs/op/stderr.log" in command
-    assert " & );" in command
-    assert "nohup" not in command
-    assert "setsid -f" not in command
-    assert "printf 'LAUNCHED" in command
-
-
-def test_launch_remote_worker_returns_on_launched(monkeypatch) -> None:
-    calls = []
-
-    def fake_transport(command, **kwargs):
-        calls.append((command, kwargs))
-        return subprocess.CompletedProcess(command, 0, "LAUNCHED\n", "")
-
-    monkeypatch.setattr(bridge, "_run_transport", fake_transport)
-
-    bridge._launch_remote_worker(
-        ["ssh", "example"],
-        remote_command="python3 worker.py",
-        remote_start=".bridge/runs/op/started",
-        remote_exit=".bridge/runs/op/exit_code",
-        remote_stdout=".bridge/runs/op/stdout.log",
-        remote_stderr=".bridge/runs/op/stderr.log",
-    )
-
-    assert len(calls) == 1
-    assert calls[0][1]["timeout"] == 15
-    assert calls[0][1]["attempts"] == 3
-
-
-def test_remote_call_passes_self_daemonize_contract() -> None:
+def test_remote_call_uses_foreground_worker_not_detachment() -> None:
     source = Path("api/v2/receita_remote_bridge.py").read_text(encoding="utf-8")
-    assert '"--daemonize"' in source
-    assert '"--stdout-log"' in source
-    assert '"--stderr-log"' in source
+    assert "execute_worker_foreground" in source
+    assert '"--daemonize"' not in source
+    assert '"--heartbeat-file"' not in source
+    assert "_poll_remote_worker" not in source
+    assert "_detached_launch_command" not in source
 
 
-def test_worker_writes_authoritative_start_marker_after_daemonize() -> None:
+def test_remote_worker_has_no_daemonization_contract() -> None:
     source = Path("ops/hostgator/receita_remote_worker.py").read_text(encoding="utf-8")
-    daemon_block = source.split("if args.daemonize:", 1)[1].split(
-        "write_start_marker(args.start_file)", 1
-    )[0]
-    assert "daemonize(args.stdout_log, args.stderr_log)" in daemon_block
-    assert "write_start_marker(args.start_file)" not in daemon_block
+    assert "def daemonize(" not in source
+    assert "start_heartbeat_process" not in source
+    assert "HostGator shared hosting reaps detached/orphan processes" in source
 
 
 def test_full_generation_acceptance_mode_requires_fresh_receita() -> None:
@@ -479,24 +435,6 @@ def test_full_generation_acceptance_mode_requires_fresh_receita() -> None:
     assert "receita_consumer_identity" in workflow
     assert '{"current_fetch", "current_validation"}' in workflow
     assert "Receita acceptance proof failed" in workflow
-
-
-def test_remote_call_uses_heartbeat_not_cross_session_kill_probe() -> None:
-    source = Path("api/v2/receita_remote_bridge.py").read_text(encoding="utf-8")
-    assert '"--heartbeat-file"' in source
-    assert "heartbeat stalled" in source
-    assert 'kill -0 "$pid"' not in source
-
-
-def test_worker_heartbeat_is_process_based_and_parent_coupled() -> None:
-    source = Path("ops/hostgator/receita_remote_worker.py").read_text(encoding="utf-8")
-    assert "def start_heartbeat_process(" in source
-    assert "os.pipe()" in source
-    assert "os.fork()" in source
-    assert "select.select([read_fd], [], [], 5)" in source
-    assert "temp.replace(target)" in source
-    assert "threading.Thread" not in source
-    assert "def stop_heartbeat_process(" in source
 
 
 def test_remote_diagnostics_are_preserved_on_bridge_failure() -> None:
