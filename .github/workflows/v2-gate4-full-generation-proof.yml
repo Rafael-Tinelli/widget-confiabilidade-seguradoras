@@ -11,9 +11,6 @@ on:
         required: false
         default: false
         type: boolean
-  push:
-    branches:
-      - fix/receita-cache-bridge-final
 
 permissions:
   contents: read
@@ -29,7 +26,7 @@ jobs:
     env:
       V2_SOURCE_HEAD_SHA: ${{ github.sha }}
       V2_BUILD_ID: v2-gate4-full-${{ github.run_id }}-a${{ github.run_attempt }}
-      V2_REQUIRE_RECEITA_FRESH: ${{ github.event_name == 'push' && '1' || (inputs.require_receita_fresh && '1' || '0') }}
+      V2_REQUIRE_RECEITA_FRESH: ${{ inputs.require_receita_fresh && '1' || '0' }}
       V2_SOURCE_CACHE_DIR: data/cache/v2/source
       SES_ALLOW_INSECURE_SSL: "0"
       SUSEP_LICENSED_VERIFY_SSL: "1"
