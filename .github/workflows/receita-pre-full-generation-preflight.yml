@@ -18,7 +18,7 @@ concurrency:
 jobs:
   preflight:
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 90
     env:
       V2_BUILD_ID: receita-preflight-${{ github.run_id }}-a${{ github.run_attempt }}
       V2_RECEITA_REMOTE_ENABLED: ${{ secrets.V2_HOSTGATOR_HOST != '' && secrets.V2_HOSTGATOR_USER != '' && secrets.V2_HOSTGATOR_SSH_KEY != '' && secrets.V2_HOSTGATOR_KNOWN_HOSTS != '' && '1' || '0' }}
@@ -48,6 +48,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          command -v unzip >/dev/null
+          command -v split >/dev/null
           python -m py_compile \
             api/sources/receita_cnpj_bulk.py \
             api/sources/receita_cnpj_identity.py \

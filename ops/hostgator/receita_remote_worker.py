@@ -17,6 +17,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import sys
 import time
 import traceback
@@ -658,6 +659,249 @@ def lifecycle_extract(session, release, payload, cache_dir):
     }
 
 
+
+IDENTITY_CHUNK_BYTES = 256 * 1024 * 1024
+
+
+def _write_json(path, payload):
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _read_json(path):
+    payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise WorkerError(f"chunk payload is not an object: {path}")
+    return payload
+
+
+def _materialize_zip_chunks(zip_path, scratch_root):
+    zip_path = Path(zip_path)
+    scratch_root = Path(scratch_root)
+    shutil.rmtree(str(scratch_root), ignore_errors=True)
+    scratch_root.mkdir(parents=True, exist_ok=True)
+
+    with zipfile.ZipFile(str(zip_path)) as archive:
+        member = first_csv_member(archive)
+
+    prefix = str(scratch_root / "part-")
+    unzip_process = subprocess.Popen(
+        ["unzip", "-p", str(zip_path), member],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    try:
+        split_process = subprocess.run(
+            [
+                "split",
+                "-C",
+                str(IDENTITY_CHUNK_BYTES),
+                "-d",
+                "-a",
+                "4",
+                "-",
+                prefix,
+            ],
+            stdin=unzip_process.stdout,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+    finally:
+        if unzip_process.stdout is not None:
+            unzip_process.stdout.close()
+
+    unzip_stderr = b""
+    if unzip_process.stderr is not None:
+        unzip_stderr = unzip_process.stderr.read()
+    unzip_return = unzip_process.wait()
+    if unzip_return != 0:
+        raise WorkerError(
+            "unzip failed while materializing identity chunks "
+            f"for {zip_path.name}: rc={unzip_return} "
+            f"stderr={unzip_stderr.decode('utf-8', 'replace')[-2000:]}"
+        )
+    if split_process.returncode != 0:
+        raise WorkerError(
+            "split failed while materializing identity chunks "
+            f"for {zip_path.name}: rc={split_process.returncode} "
+            f"stderr={split_process.stderr.decode('utf-8', 'replace')[-2000:]}"
+        )
+
+    chunks = sorted(
+        path for path in scratch_root.iterdir()
+        if path.is_file() and path.name.startswith("part-")
+    )
+    if not chunks:
+        raise WorkerError(f"identity chunk materialization produced no files: {zip_path}")
+    return chunks
+
+
+def _run_identity_chunk(mode, chunk_file, input_path, output_path):
+    command = [
+        sys.executable,
+        str(Path(__file__).resolve()),
+        "--mode",
+        mode,
+        "--chunk-file",
+        str(chunk_file),
+        "--input",
+        str(input_path),
+        "--output",
+        str(output_path),
+        "--cache-dir",
+        str(Path(chunk_file).parent),
+    ]
+    result = subprocess.run(
+        command,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise WorkerError(
+            f"identity chunk worker failed mode={mode} "
+            f"chunk={Path(chunk_file).name} rc={result.returncode}: "
+            f"{result.stderr.decode('utf-8', 'replace')[-4000:]}"
+        )
+    return _read_json(output_path)
+
+
+def _scan_company_chunk(chunk_file, payload):
+    target_bases = {
+        str(value)
+        for value in payload.get("target_bases") or []
+        if len(str(value)) == 8
+    }
+    indexes = build_query_indexes(payload.get("providers") or [])
+    companies_by_base = {}
+    legal_matches_by_base = {}
+
+    with Path(chunk_file).open("rb") as raw:
+        reader = sanitized_csv_reader(raw)
+        for row in reader:
+            if len(row) < 3:
+                continue
+            base = digits(row[0])
+            if len(base) != 8:
+                continue
+            legal_name = str(row[1] or "").strip()
+            nature_code = digits(row[2])
+            matches = match_name_to_queries(legal_name, indexes, "legal_name")
+            if base in target_bases or matches:
+                companies_by_base[base] = {
+                    "cnpj_base": base,
+                    "legal_name_receita": legal_name or None,
+                    "legal_nature_code": nature_code or None,
+                }
+            if matches:
+                legal_matches_by_base.setdefault(base, []).extend(matches)
+
+    return {
+        "companies_by_base": companies_by_base,
+        "legal_matches_by_base": legal_matches_by_base,
+    }
+
+
+def _scan_establishment_chunk(chunk_file, payload):
+    targets = {
+        str(value)
+        for value in payload.get("target_cnpjs") or []
+        if len(str(value)) == 14
+    }
+    indexes = build_query_indexes(payload.get("providers") or [])
+    legal_matches_by_base = {
+        str(base): list(matches)
+        for base, matches in (payload.get("legal_matches_by_base") or {}).items()
+    }
+    selected = []
+
+    with Path(chunk_file).open("rb") as raw:
+        reader = sanitized_csv_reader(raw)
+        for row in reader:
+            if len(row) < 13:
+                continue
+            cnpj = normalize_cnpj("".join(str(part).strip() for part in row[:3]))
+            if not cnpj:
+                continue
+            base = cnpj[:8]
+            is_head_office = str(row[3]).strip() == "1"
+            need_target = cnpj in targets
+            legal_matches = legal_matches_by_base.get(base) or []
+            trade_matches = []
+            if is_head_office:
+                trade_matches = match_name_to_queries(
+                    str(row[4] or "").strip(),
+                    indexes,
+                    "trade_name",
+                )
+            matches = legal_matches + trade_matches
+            if not need_target and not (is_head_office and matches):
+                continue
+            selected.append(
+                {
+                    "row": row,
+                    "provider_matches": matches if is_head_office else [],
+                }
+            )
+
+    return {"selected_establishments": selected}
+
+
+def _merge_match_lists(destination, source):
+    for base, matches in source.items():
+        current = destination.setdefault(base, [])
+        seen = {(str(item[0]), str(item[1])) for item in current if len(item) == 2}
+        for item in matches:
+            if not isinstance(item, list) or len(item) != 2:
+                continue
+            key = (str(item[0]), str(item[1]))
+            if key not in seen:
+                current.append([key[0], key[1]])
+                seen.add(key)
+
+
+def _scan_zip_via_chunk_workers(
+    *,
+    local_zip,
+    mode,
+    payload,
+    scratch_root,
+):
+    scratch_root = Path(scratch_root)
+    chunks_root = scratch_root / "chunks"
+    input_path = scratch_root / "chunk-input.json"
+    output_path = scratch_root / "chunk-output.json"
+    _write_json(input_path, payload)
+
+    chunks = _materialize_zip_chunks(local_zip, chunks_root)
+    partials = []
+    try:
+        for index, chunk_file in enumerate(chunks):
+            partial = _run_identity_chunk(
+                mode,
+                chunk_file,
+                input_path,
+                output_path,
+            )
+            partials.append(partial)
+            output_path.unlink(missing_ok=True)
+            chunk_file.unlink(missing_ok=True)
+            print(
+                "RECEITA_IDENTITY_CHUNK "
+                f"mode={mode} zip={Path(local_zip).name} "
+                f"chunk={index + 1}/{len(chunks)}",
+                flush=True,
+            )
+    finally:
+        shutil.rmtree(str(scratch_root), ignore_errors=True)
+    return partials
+
+
 def identity_extract(session, release, payload, cache_dir):
     require_expected_period(release, payload.get("expected_period"))
     targets = {}
@@ -675,7 +919,6 @@ def identity_extract(session, release, payload, cache_dir):
     if not providers:
         raise WorkerError("remote identity extraction received no provider names")
 
-    indexes = build_query_indexes(providers)
     target_bases = {cnpj[:8] for cnpj in targets}
     files = resource_map(release)
     companies = sorted(
@@ -708,9 +951,15 @@ def identity_extract(session, release, payload, cache_dir):
     cnae_map = load_code_map(cnae_zip)
     nature_map = load_code_map(nature_zip)
 
+    scratch_base = cache_root / ".identity-work"
     companies_by_base = {}
     legal_matches_by_base = {}
     company_files_scanned = []
+
+    company_payload = {
+        "target_bases": sorted(target_bases),
+        "providers": providers,
+    }
     for name in companies:
         local = download_zip(
             session,
@@ -720,36 +969,32 @@ def identity_extract(session, release, payload, cache_dir):
             files[name].get("etag"),
             files[name].get("last_modified"),
         )
-        with zipfile.ZipFile(str(local)) as archive:
-            member = first_csv_member(archive)
-            with archive.open(member) as raw:
-                reader = sanitized_csv_reader(raw)
-                for row in reader:
-                    if len(row) < 3:
-                        continue
-                    base = digits(row[0])
-                    if len(base) != 8:
-                        continue
-                    legal_name = str(row[1] or "").strip()
-                    nature_code = digits(row[2])
-                    matches = match_name_to_queries(
-                        legal_name, indexes, "legal_name"
-                    )
-                    if base in target_bases or matches:
-                        companies_by_base[base] = {
-                            "cnpj_base": base,
-                            "legal_name_receita": legal_name or None,
-                            "legal_nature_code": nature_code or None,
-                            "legal_nature": nature_map.get(nature_code)
-                            if nature_code
-                            else None,
-                        }
-                    if matches:
-                        legal_matches_by_base.setdefault(base, []).extend(matches)
+        partials = _scan_zip_via_chunk_workers(
+            local_zip=local,
+            mode="identity_company_chunk",
+            payload=company_payload,
+            scratch_root=scratch_base / name,
+        )
+        for partial in partials:
+            for base, company in (partial.get("companies_by_base") or {}).items():
+                companies_by_base[str(base)] = dict(company)
+            _merge_match_lists(
+                legal_matches_by_base,
+                partial.get("legal_matches_by_base") or {},
+            )
         company_files_scanned.append(name)
+
+    for company in companies_by_base.values():
+        nature_code = str(company.get("legal_nature_code") or "")
+        company["legal_nature"] = nature_map.get(nature_code) if nature_code else None
 
     selected = []
     establishment_files_scanned = []
+    establishment_payload = {
+        "target_cnpjs": sorted(targets),
+        "providers": providers,
+        "legal_matches_by_base": legal_matches_by_base,
+    }
     for name in release["establishment_files"]:
         local = download_zip(
             session,
@@ -759,36 +1004,14 @@ def identity_extract(session, release, payload, cache_dir):
             files[name].get("etag"),
             files[name].get("last_modified"),
         )
-        with zipfile.ZipFile(str(local)) as archive:
-            member = first_csv_member(archive)
-            with archive.open(member) as raw:
-                reader = sanitized_csv_reader(raw)
-                for row in reader:
-                    if len(row) < 13:
-                        continue
-                    cnpj = normalize_cnpj("".join(str(part).strip() for part in row[:3]))
-                    if not cnpj:
-                        continue
-                    base = cnpj[:8]
-                    is_head_office = str(row[3]).strip() == "1"
-                    need_target = cnpj in targets
-                    legal_matches = legal_matches_by_base.get(base) or []
-                    trade_matches = []
-                    if is_head_office:
-                        trade_matches = match_name_to_queries(
-                            str(row[4] or "").strip(),
-                            indexes,
-                            "trade_name",
-                        )
-                    matches = legal_matches + trade_matches
-                    if not need_target and not (is_head_office and matches):
-                        continue
-                    selected.append(
-                        {
-                            "row": row,
-                            "provider_matches": matches if is_head_office else [],
-                        }
-                    )
+        partials = _scan_zip_via_chunk_workers(
+            local_zip=local,
+            mode="identity_establishment_chunk",
+            payload=establishment_payload,
+            scratch_root=scratch_base / name,
+        )
+        for partial in partials:
+            selected.extend(partial.get("selected_establishments") or [])
         establishment_files_scanned.append(name)
 
     return {
@@ -848,6 +1071,11 @@ def write_output(path, payload):
 
 
 def execute(args):
+    if args.mode == "identity_company_chunk":
+        return _scan_company_chunk(args.chunk_file, load_input(args.input))
+    if args.mode == "identity_establishment_chunk":
+        return _scan_establishment_chunk(args.chunk_file, load_input(args.input))
+
     cache_root = Path(args.cache_dir)
     cache_root.mkdir(parents=True, exist_ok=True)
     lock_path = cache_root / ".worker.lock"
@@ -903,21 +1131,35 @@ def write_start_marker(path):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--mode", choices=("discover", "lifecycle", "identity"), required=True)
+    parser.add_argument(
+        "--mode",
+        choices=(
+            "discover",
+            "lifecycle",
+            "identity",
+            "identity_company_chunk",
+            "identity_establishment_chunk",
+        ),
+        required=True,
+    )
     parser.add_argument("--input")
+    parser.add_argument("--chunk-file")
     parser.add_argument("--output", required=True)
     parser.add_argument("--cache-dir", required=True)
     parser.add_argument("--exit-file")
     parser.add_argument("--start-file")
     args = parser.parse_args()
 
-    # HostGator shared hosting reaps detached/orphan processes. Keep the worker
-    # in the foreground of the pinned SSH session for its entire lifetime.
+    # HostGator imposes a 120-second CPU limit per process. Identity's heavy
+    # scan is orchestrated here but parsed in bounded child processes so no
+    # single parser consumes the whole CPU budget.
     write_start_marker(args.start_file)
 
     exit_code = 0
     try:
-        execute(args)
+        result = execute(args)
+        if args.mode in {"identity_company_chunk", "identity_establishment_chunk"}:
+            write_output(args.output, result)
     except Exception:  # noqa: BLE001 - worker must always persist an exit marker
         traceback.print_exc()
         exit_code = 1

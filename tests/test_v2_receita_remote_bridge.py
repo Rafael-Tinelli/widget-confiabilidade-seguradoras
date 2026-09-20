@@ -442,3 +442,15 @@ def test_remote_diagnostics_are_preserved_on_bridge_failure() -> None:
     assert "completed_successfully = False" in source
     assert "completed_successfully = True" in source
     assert "preserve_remote_diagnostics" in source
+
+
+def test_remote_identity_worker_is_cpu_sharded() -> None:
+    source = Path("ops/hostgator/receita_remote_worker.py").read_text(encoding="utf-8")
+    assert "IDENTITY_CHUNK_BYTES = 256 * 1024 * 1024" in source
+    assert "identity_company_chunk" in source
+    assert "identity_establishment_chunk" in source
+    assert "_materialize_zip_chunks" in source
+    assert '["unzip", "-p"' in source
+    assert '"split",' in source
+    assert "_run_identity_chunk" in source
+    assert "120-second CPU limit per process" in source
