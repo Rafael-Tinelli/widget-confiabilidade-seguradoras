@@ -17,9 +17,9 @@ import json
 import os
 import re
 import resource
+import select
 import shutil
 import sys
-import threading
 import time
 import traceback
 import unicodedata
@@ -929,18 +929,58 @@ def write_start_marker(path):
     temp.replace(target)
 
 
-def heartbeat_loop(path, stop_event):
+def start_heartbeat_process(path):
     if not path:
-        return
+        return None
+
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
-    counter = 0
-    while not stop_event.is_set():
-        counter += 1
-        temp = target.with_suffix(target.suffix + ".tmp")
-        temp.write_text(str(counter) + "\n", encoding="utf-8")
-        temp.replace(target)
-        stop_event.wait(5)
+    read_fd, write_fd = os.pipe()
+    child_pid = os.fork()
+
+    if child_pid == 0:
+        os.close(write_fd)
+        counter = 0
+        try:
+            while True:
+                ready, _, _ = select.select([read_fd], [], [], 5)
+                if ready:
+                    if not os.read(read_fd, 1):
+                        break
+                    break
+
+                counter += 1
+                try:
+                    temp = target.with_suffix(target.suffix + ".tmp")
+                    temp.write_text(str(counter) + "\n", encoding="utf-8")
+                    temp.replace(target)
+                except Exception:  # noqa: BLE001 - watchdog must survive transient FS errors
+                    traceback.print_exc()
+        finally:
+            try:
+                os.close(read_fd)
+            except OSError:
+                pass
+        os._exit(0)
+
+    os.close(read_fd)
+    return write_fd, child_pid
+
+
+def stop_heartbeat_process(handle):
+    if handle is None:
+        return
+
+    write_fd, child_pid = handle
+    try:
+        os.close(write_fd)
+    except OSError:
+        pass
+
+    try:
+        os.waitpid(child_pid, 0)
+    except ChildProcessError:
+        pass
 
 
 def main():
@@ -969,15 +1009,7 @@ def main():
     # "LAUNCHING"; polling treats that as startup-in-progress.
     write_start_marker(args.start_file)
 
-    heartbeat_stop = threading.Event()
-    heartbeat_thread = None
-    if args.heartbeat_file:
-        heartbeat_thread = threading.Thread(
-            target=heartbeat_loop,
-            args=(args.heartbeat_file, heartbeat_stop),
-            daemon=True,
-        )
-        heartbeat_thread.start()
+    heartbeat_handle = start_heartbeat_process(args.heartbeat_file)
 
     exit_code = 0
     try:
@@ -986,9 +1018,7 @@ def main():
         traceback.print_exc()
         exit_code = 1
     finally:
-        heartbeat_stop.set()
-        if heartbeat_thread is not None:
-            heartbeat_thread.join(timeout=2)
+        stop_heartbeat_process(heartbeat_handle)
         write_exit_marker(args.exit_file, exit_code)
 
     return exit_code

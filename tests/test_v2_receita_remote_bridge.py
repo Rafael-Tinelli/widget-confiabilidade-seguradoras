@@ -488,8 +488,19 @@ def test_remote_call_uses_heartbeat_not_cross_session_kill_probe() -> None:
     assert 'kill -0 "$pid"' not in source
 
 
-def test_worker_heartbeat_is_periodic_and_atomic() -> None:
+def test_worker_heartbeat_is_process_based_and_parent_coupled() -> None:
     source = Path("ops/hostgator/receita_remote_worker.py").read_text(encoding="utf-8")
-    assert "def heartbeat_loop(" in source
-    assert "stop_event.wait(5)" in source
+    assert "def start_heartbeat_process(" in source
+    assert "os.pipe()" in source
+    assert "os.fork()" in source
+    assert "select.select([read_fd], [], [], 5)" in source
     assert "temp.replace(target)" in source
+    assert "threading.Thread" not in source
+    assert "def stop_heartbeat_process(" in source
+
+
+def test_remote_diagnostics_are_preserved_on_bridge_failure() -> None:
+    source = Path("api/v2/receita_remote_bridge.py").read_text(encoding="utf-8")
+    assert "completed_successfully = False" in source
+    assert "completed_successfully = True" in source
+    assert "preserve_remote_diagnostics" in source

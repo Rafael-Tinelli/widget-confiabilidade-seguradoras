@@ -238,7 +238,7 @@ jobs:
               "fcntl.flock(handle.fileno(),fcntl.LOCK_EX);"
               f"marker=Path({marker_path!r});"
               "marker.write_text('held\\n',encoding='utf-8');"
-              "time.sleep(35);"
+              "time.sleep(110);"
               "marker.unlink(missing_ok=True)"
           )
           holder_command = "python3 -c " + shlex.quote(holder_code)
@@ -248,7 +248,7 @@ jobs:
               try:
                   _run_transport(
                       [*ssh, holder_command],
-                      timeout=60,
+                      timeout=150,
                       attempts=3,
                   )
               except Exception as exc:  # noqa: BLE001 - surfaced below
@@ -281,12 +281,12 @@ jobs:
           release = discover_release_remote()
           elapsed = round(time.monotonic() - started, 3)
 
-          holder.join(timeout=60)
+          holder.join(timeout=150)
           if holder.is_alive():
               raise SystemExit("remote cache-lock holder did not terminate")
           if holder_errors:
               raise SystemExit(f"remote cache-lock holder failed: {holder_errors[-1]}")
-          if elapsed < 20:
+          if elapsed < 100:
               raise SystemExit(
                   f"detached worker proof returned too early: {elapsed}s"
               )
@@ -303,7 +303,7 @@ jobs:
               + json.dumps(
                   {
                       "period": release.period,
-                      "blocked_seconds_floor": 20,
+                      "blocked_seconds_floor": 100,
                       "elapsed_seconds": elapsed,
                       "former_launch_timeout_seconds": 15,
                       "status": "pass",
@@ -399,6 +399,61 @@ jobs:
                       "cadastral_status": records[0]["cadastral_status"],
                       "files_scanned": result["meta"]["files_scanned"],
                       "resolved_count": result["meta"]["resolved_count"],
+                  },
+                  ensure_ascii=False,
+                  sort_keys=True,
+              )
+          )
+          PY
+
+      - name: Verify identity smoke through final bridge
+        if: env.V2_RECEITA_REMOTE_ENABLED == '1'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+
+          from api.v2.receita_remote_bridge import (
+              build_identity_remote,
+              discover_release_remote,
+          )
+
+          release = discover_release_remote()
+          result = build_identity_remote(
+              [
+                  {
+                      "cnpj": "41.277.393/0001-62",
+                      "entity_id": "preflight-gervasio-jose-nunes",
+                      "legal_name": "GERVASIO JOSE NUNES",
+                  }
+              ],
+              ["GERVASIO JOSE NUNES"],
+              release=release,
+          )
+
+          records = result["canonical_records"]
+          if len(records) != 1 or records[0]["cnpj"] != "41277393000162":
+              raise SystemExit(
+                  f"unexpected identity smoke canonical records: {records}"
+              )
+          matches = result["provider_matches"]
+          if not matches:
+              raise SystemExit("identity smoke produced no provider match rows")
+
+          print(
+              "RECEITA_IDENTITY_SMOKE "
+              + json.dumps(
+                  {
+                      "period": release.period,
+                      "cnpj": records[0]["cnpj"],
+                      "entity_id": records[0].get("entity_id"),
+                      "provider_rows": len(matches),
+                      "company_files_scanned": result["meta"]["company_files_scanned"],
+                      "establishment_files_scanned": (
+                          result["meta"]["establishment_files_scanned"]
+                      ),
+                      "status": "pass",
                   },
                   ensure_ascii=False,
                   sort_keys=True,

@@ -641,6 +641,7 @@ def _remote_call(mode: str, payload: dict[str, Any] | None = None) -> dict[str, 
     ):
         _ensure_remote_worker(ssh, remote_worker=remote_worker)
 
+    completed_successfully = False
     try:
         if payload is not None:
             serialized_payload = (
@@ -750,23 +751,33 @@ def _remote_call(mode: str, payload: dict[str, Any] | None = None) -> dict[str, 
             raise ReceitaRemoteBridgeError(
                 "Receita remote worker output is not a JSON object"
             )
+        completed_successfully = True
         return response
     finally:
-        cleanup = f"rm -rf -- {shlex.quote(run_dir)}"
-        try:
-            with _bridge_phase(
+        if completed_successfully:
+            cleanup = f"rm -rf -- {shlex.quote(run_dir)}"
+            try:
+                with _bridge_phase(
+                    mode=mode,
+                    operation=operation,
+                    phase="cleanup_remote_run_dir",
+                ):
+                    _run_transport(
+                        [*ssh, cleanup],
+                        timeout=60,
+                        check=False,
+                        attempts=3,
+                    )
+            except ReceitaRemoteBridgeError:
+                pass
+        else:
+            _bridge_event(
                 mode=mode,
                 operation=operation,
-                phase="cleanup_remote_run_dir",
-            ):
-                _run_transport(
-                    [*ssh, cleanup],
-                    timeout=60,
-                    check=False,
-                    attempts=3,
-                )
-        except ReceitaRemoteBridgeError:
-            pass
+                phase="preserve_remote_diagnostics",
+                event="end",
+                remote_run_dir=run_dir,
+            )
 
 
 def discover_release_remote() -> ReceitaOpenDataRelease:
