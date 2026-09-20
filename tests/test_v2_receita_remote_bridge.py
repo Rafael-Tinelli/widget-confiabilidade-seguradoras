@@ -422,7 +422,7 @@ def test_remote_worker_has_no_daemonization_contract() -> None:
     source = Path("ops/hostgator/receita_remote_worker.py").read_text(encoding="utf-8")
     assert "def daemonize(" not in source
     assert "start_heartbeat_process" not in source
-    assert "HostGator shared hosting reaps detached/orphan processes" in source
+    assert "120-second CPU limit per process" in source
 
 
 def test_full_generation_acceptance_mode_requires_fresh_receita() -> None:
