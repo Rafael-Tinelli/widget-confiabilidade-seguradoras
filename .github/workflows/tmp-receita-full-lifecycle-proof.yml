@@ -1,0 +1,153 @@
+name: Temporary Receita Full Lifecycle Proof
+
+on:
+  push:
+    branches:
+      - fix/receita-cache-bridge-final
+    paths:
+      - .github/workflows/tmp-receita-full-lifecycle-proof.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: v2-receita-hostgator-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  prove:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      V2_BUILD_ID: receita-full-lifecycle-proof-${{ github.run_id }}-a${{ github.run_attempt }}
+      V2_RECEITA_REMOTE_ENABLED: "1"
+      V2_RECEITA_SSH_HOST: ${{ secrets.V2_HOSTGATOR_HOST }}
+      V2_RECEITA_SSH_USER: ${{ secrets.V2_HOSTGATOR_USER }}
+      V2_RECEITA_SSH_PORT: ${{ vars.V2_HOSTGATOR_SSH_PORT }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          python -m pip install -r requirements.txt
+
+      - name: Configure pinned SSH
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.V2_HOSTGATOR_SSH_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.V2_HOSTGATOR_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          SSH_PORT=${V2_RECEITA_SSH_PORT:-22}
+          ssh_dir="$RUNNER_TEMP/v2-receita-proof-ssh"
+          mkdir -p "$ssh_dir"
+          chmod 700 "$ssh_dir"
+          printf '%s\n' "$SSH_PRIVATE_KEY" | tr -d '\r' > "$ssh_dir/key"
+          printf '%s\n' "$SSH_KNOWN_HOSTS" | tr -d '\r' > "$ssh_dir/known_hosts"
+          chmod 600 "$ssh_dir/key" "$ssh_dir/known_hosts"
+          ssh-keygen -y -P '' -f "$ssh_dir/key" >/dev/null
+          known_host_lookup="$V2_RECEITA_SSH_HOST"
+          if [[ "$SSH_PORT" != "22" ]]; then
+            known_host_lookup="[$V2_RECEITA_SSH_HOST]:$SSH_PORT"
+          fi
+          ssh-keygen -F "$known_host_lookup" -f "$ssh_dir/known_hosts" >/dev/null
+          {
+            echo "V2_RECEITA_SSH_PORT=$SSH_PORT"
+            echo "V2_RECEITA_SSH_KEY_FILE=$ssh_dir/key"
+            echo "V2_RECEITA_SSH_KNOWN_HOSTS_FILE=$ssh_dir/known_hosts"
+          } >> "$GITHUB_ENV"
+
+      - name: Re-run exact Full Generation lifecycle payload
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from api.v2.receita_remote_bridge import (
+              _config_from_env,
+              _control_path,
+              _run_transport,
+              _ssh_base,
+              discover_release_remote,
+              refresh_lifecycle_remote,
+          )
+
+          source_path = (
+              ".sanida-v2-receita-bridge/runs/"
+              "v2-gate4-full-35510181493-a1-lifecycle/input.json"
+          )
+          config = _config_from_env()
+          ssh = _ssh_base(config, control_path=_control_path(config))
+          raw = _run_transport(
+              [*ssh, f"cat -- {source_path}"],
+              timeout=60,
+              attempts=6,
+          ).stdout
+          original = json.loads(raw)
+          targets = list(original.get("targets") or [])
+          if len(targets) < 200:
+              raise SystemExit(
+                  f"preserved Full Generation lifecycle payload unexpectedly small: {len(targets)}"
+              )
+
+          release = discover_release_remote()
+          if release.period != str(original.get("expected_period") or ""):
+              raise SystemExit(
+                  "preserved Full Generation payload period no longer matches current release: "
+                  f"payload={original.get('expected_period')} current={release.period}"
+              )
+
+          entities = [
+              {
+                  "cnpj": row.get("cnpj"),
+                  "legal_name": row.get("legal_name"),
+              }
+              for row in targets
+          ]
+          result = refresh_lifecycle_remote(entities, release=release)
+          meta = result["meta"]
+          target_count = int(meta["target_count"])
+          resolved_count = int(meta["resolved_count"])
+          unresolved_count = int(meta["unresolved_count"])
+          coverage = resolved_count / target_count if target_count else 0.0
+
+          if target_count != len(targets):
+              raise SystemExit(
+                  f"target count mismatch: expected={len(targets)} got={target_count}"
+              )
+          if resolved_count + unresolved_count != target_count:
+              raise SystemExit(
+                  "resolved + unresolved does not equal target count: "
+                  f"{resolved_count}+{unresolved_count}!={target_count}"
+              )
+          if coverage < 0.95:
+              raise SystemExit(f"lifecycle coverage below contract: {coverage:.2%}")
+
+          print(
+              "RECEITA_FULL_LIFECYCLE_PROOF "
+              + json.dumps(
+                  {
+                      "period": release.period,
+                      "target_count": target_count,
+                      "resolved_count": resolved_count,
+                      "unresolved_count": unresolved_count,
+                      "coverage": coverage,
+                      "files_scanned": meta.get("files_scanned"),
+                      "status": "pass",
+                  },
+                  sort_keys=True,
+              )
+          )
+          PY
+
+      - name: Cleanup SSH material
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/v2-receita-proof-ssh"
