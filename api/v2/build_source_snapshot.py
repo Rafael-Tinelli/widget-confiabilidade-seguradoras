@@ -853,8 +853,12 @@ def build_source_snapshot(
     sandbox_state = sandbox.observation.to_lineage(context).state
     sandbox_history = update_sandbox_lifecycle_history(
         sandbox_history,
-        current_rows=_load_record_snapshot(sandbox_path),
-        current_licensed_rows=_load_record_snapshot(licensed_path),
+        current_rows=(
+            _load_record_snapshot(sandbox_path) if sandbox_path.is_file() else []
+        ),
+        current_licensed_rows=(
+            _load_record_snapshot(licensed_path) if licensed_path.is_file() else []
+        ),
         observed_at=context.generated_at,
         source_state=sandbox_state,
     )
