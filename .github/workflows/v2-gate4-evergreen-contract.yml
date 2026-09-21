@@ -20,6 +20,15 @@ on:
       - "api/v2/build_eligibility_inventory.py"
       - "api/v2/build_financial_evidence_inventory.py"
       - "api/v2/build_lifecycle_relationship_inventory.py"
+      - "api/v2/regulatory_temporal_scope.py"
+      - "api/v2/financial_evidence.py"
+      - "api/v2/build_consumer_gov_conduct_evidence.py"
+      - "api/v2/build_conduct_coverage_reconciliation.py"
+      - "api/v2/build_conduct_comparative_calibration_v2.py"
+      - "api/v2/build_public_search_profile_contract.py"
+      - "api/v2/market_relationship_conduct_core.py"
+      - "api/v2/public_profile_regulatory_semantics.py"
+      - "data/reference/v2/consumer_gov_provider_resolutions.json"
       - "data/reference/v2/verified_relationships.json"
       - "data/reference/v2/conduct_subject_relationships.json"
       - "data/reference/v2/sandbox_brand_relationships.json"
@@ -35,6 +44,13 @@ on:
       - "tests/test_v2_relationship_watchdog.py"
       - "tests/test_v2_gate4_pipeline.py"
       - "tests/test_v2_eligibility_inventory.py"
+      - "tests/test_v2_regulatory_temporal_scope.py"
+      - "tests/test_v2_financial_evidence.py"
+      - "tests/test_v2_consumer_gov_identity.py"
+      - "tests/test_v2_conduct_coverage_reconciliation.py"
+      - "tests/test_v2_conduct_comparative_calibration_v2.py"
+      - "tests/test_v2_public_search_profile_contract.py"
+      - "tests/test_v2_public_market_relationship_semantics.py"
       - "docs/gate4-evergreen-publication.md"
       - ".github/workflows/v2-gate4-evergreen-contract.yml"
 
@@ -89,6 +105,14 @@ jobs:
             api/v2/build_eligibility_inventory.py \
             api/v2/build_financial_evidence_inventory.py \
             api/v2/build_lifecycle_relationship_inventory.py \
+            api/v2/regulatory_temporal_scope.py \
+            api/v2/financial_evidence.py \
+            api/v2/build_consumer_gov_conduct_evidence.py \
+            api/v2/build_conduct_coverage_reconciliation.py \
+            api/v2/build_conduct_comparative_calibration_v2.py \
+            api/v2/build_public_search_profile_contract.py \
+            api/v2/market_relationship_conduct_core.py \
+            api/v2/public_profile_regulatory_semantics.py \
             tests/test_v2_generation.py \
             tests/test_v2_public_generation_install.py \
             tests/test_v2_source_snapshot.py \
@@ -100,7 +124,14 @@ jobs:
             tests/test_v2_consumer_gov_receita_cache_key.py \
             tests/test_v2_relationship_watchdog.py \
             tests/test_v2_gate4_pipeline.py \
-            tests/test_v2_eligibility_inventory.py
+            tests/test_v2_eligibility_inventory.py \
+            tests/test_v2_regulatory_temporal_scope.py \
+            tests/test_v2_financial_evidence.py \
+            tests/test_v2_consumer_gov_identity.py \
+            tests/test_v2_conduct_coverage_reconciliation.py \
+            tests/test_v2_conduct_comparative_calibration_v2.py \
+            tests/test_v2_public_search_profile_contract.py \
+            tests/test_v2_public_market_relationship_semantics.py
 
       - name: Run Gate 4 contract tests
         run: |
@@ -117,7 +148,14 @@ jobs:
             tests/test_v2_consumer_gov_receita_cache_key.py \
             tests/test_v2_relationship_watchdog.py \
             tests/test_v2_gate4_pipeline.py \
-            tests/test_v2_eligibility_inventory.py
+            tests/test_v2_eligibility_inventory.py \
+            tests/test_v2_regulatory_temporal_scope.py \
+            tests/test_v2_financial_evidence.py \
+            tests/test_v2_consumer_gov_identity.py \
+            tests/test_v2_conduct_coverage_reconciliation.py \
+            tests/test_v2_conduct_comparative_calibration_v2.py \
+            tests/test_v2_public_search_profile_contract.py \
+            tests/test_v2_public_market_relationship_semantics.py
 
       - name: Materialize validated pipeline contract
         run: |
