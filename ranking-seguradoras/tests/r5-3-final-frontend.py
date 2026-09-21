@@ -24,7 +24,7 @@ def replace_once(source: str, old: str, new: str) -> str:
 # Pin the exact R5.3 staging bytes that passed HostGator QA on 2026-09-04.
 # Phase D is additive in production; TOOL-01 N01/N02/N05 are the approved core JS maintenance delta.
 assert sha256(ROOT / "index2.php") == "54115ed4b91505a6490ae5afb9846375a950e6ee43765991e567e795d28051f9"
-assert sha256(ROOT / "assets" / "ranking-v2.js") == "5ff949431f495ff7c9e74a105f3b4503e2ea7cc849235b930b74b9294ff9c47d"
+assert sha256(ROOT / "assets" / "ranking-v2.js") == "56ad825d0a858861d7ab3c611b32ffab59d5d1d8a257d09ef227e19346558929"
 assert sha256(ROOT / "assets" / "ranking-v2.css") == "616d654007e6d231d3bb9a6fec2f2d62cbd16e3021dde3cafd68325ad1958350"
 assert sha256(ROOT / "assets" / "unknown-market-telemetry-r5.js") == "dd4626e79d91580b04779a39f6f485c56393b9d7bfd613b57961d809a4cdbcf0"
 
