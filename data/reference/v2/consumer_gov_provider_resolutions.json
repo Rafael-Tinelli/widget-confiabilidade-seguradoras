@@ -232,18 +232,6 @@
       ]
     },
     {
-      "provider_name": "LTI Seguros",
-      "resolution_state": "outside_157",
-      "resolution_kind": "sandbox_participant",
-      "reason_code": "sandbox_never_enters_ordinary_insurer_universe",
-      "evidence": [
-        {
-          "authority": "SUSEP Sandbox",
-          "fact": "The v2 regulatory classification identifies LTI Seguros as a Sandbox participant, outside the 157 ordinary-current-insurer comparison universe."
-        }
-      ]
-    },
-    {
       "provider_name": "Bradesco Capitalização",
       "resolution_state": "outside_157",
       "resolution_kind": "capitalization_company",
