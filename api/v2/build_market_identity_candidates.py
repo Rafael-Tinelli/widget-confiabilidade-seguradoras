@@ -138,7 +138,13 @@ def build_market_identity_candidates(
             regulated_entity_delta_observations(previous_licensed, current_licensed)
         )
     if previous_sandbox is not None and current_sandbox is not None:
-        observations.extend(sandbox_delta_observations(previous_sandbox, current_sandbox))
+        observations.extend(
+            sandbox_delta_observations(
+                previous_sandbox,
+                current_sandbox,
+                current_licensed or [],
+            )
+        )
 
     payload = candidate_registry_from_observations(
         observations, sensor_status=sensor_status
@@ -217,7 +223,20 @@ def main() -> None:
         args.previous_sandbox,
         args.current_sandbox,
         lambda payload: _rows(payload, "participants", "records"),
-        sandbox_delta_observations,
+        lambda previous, current: sandbox_delta_observations(
+            previous,
+            current,
+            (
+                _rows(
+                    _load_json(args.current_licensed),
+                    "entities",
+                    "records",
+                )
+                if args.current_licensed is not None
+                and args.current_licensed.exists()
+                else []
+            ),
+        ),
         statuses=statuses,
         errors=errors,
     )
