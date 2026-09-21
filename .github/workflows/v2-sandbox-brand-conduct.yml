@@ -177,4 +177,6 @@ jobs:
         with:
           name: v2-sandbox-brand-conduct-${{ github.run_id }}
           retention-days: 14
-          path: data/derived/v2/sandbox_brand_conduct_evidence.json
+          path: |
+            data/derived/v2/market_relationship_conduct_evidence.json
+            data/derived/v2/sandbox_brand_conduct_evidence.json
