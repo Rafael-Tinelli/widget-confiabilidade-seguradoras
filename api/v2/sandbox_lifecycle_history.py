@@ -40,6 +40,24 @@ def _event_id(cnpj: str, event: dict[str, Any]) -> str:
     return f"sandbox-event:{digest}"
 
 
+def _inferred_authorization_extended(row: dict[str, Any]) -> bool:
+    """Repair legacy rows that predate the explicit extension boolean.
+
+    The official raw status/end-date text is authoritative evidence for the
+    extension signal. Older cached Sandbox rows may lack the explicit boolean;
+    treating a missing field as False would manufacture a contradiction when
+    the preserved raw text explicitly says the authorization was extended.
+    """
+
+    if row.get("authorization_extended") is True:
+        return True
+    raw = " ".join(
+        str(row.get(field) or "")
+        for field in ("raw_status", "authorization_end_raw")
+    ).casefold()
+    return bool(row.get("authorization_extended")) or "prorrogad" in raw
+
+
 def _snapshot(row: dict[str, Any]) -> dict[str, Any]:
     return {
         "legal_name": row.get("legal_name") or row.get("name"),
@@ -50,7 +68,7 @@ def _snapshot(row: dict[str, Any]) -> dict[str, Any]:
         "authorization_start": row.get("authorization_start"),
         "authorization_end": row.get("authorization_end"),
         "authorization_end_raw": row.get("authorization_end_raw"),
-        "authorization_extended": bool(row.get("authorization_extended")),
+        "authorization_extended": _inferred_authorization_extended(row),
         "modalities": row.get("modalities"),
         "source": row.get("source"),
     }
@@ -103,6 +121,12 @@ def _record_index(payload: dict[str, Any] | None) -> dict[str, dict[str, Any]]:
             )
         row["cnpj"] = cnpj
         row["events"] = list(row.get("events") or [])
+        last_snapshot = dict(row.get("last_snapshot") or {})
+        if last_snapshot:
+            last_snapshot["authorization_extended"] = (
+                _inferred_authorization_extended(last_snapshot)
+            )
+            row["last_snapshot"] = last_snapshot
         result[cnpj] = row
     return result
 

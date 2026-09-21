@@ -109,8 +109,11 @@ def test_stale_source_never_turns_absence_into_exit_or_graduation():
 
 
 def test_extension_change_is_preserved_as_event_without_overwriting_prior_event():
+    before = _lti_sandbox(extended=False)
+    before["raw_status"] = "Autorizada"
+    before["authorization_end_raw"] = "20/03/2026"
     history = seed_sandbox_lifecycle_history(
-        [_lti_sandbox(extended=False)],
+        [before],
         observed_at="2026-03-20T00:00:00Z",
     )
 
@@ -151,3 +154,38 @@ def test_removal_without_current_license_is_not_called_discontinuation():
     assert record["current_sandbox_present"] is False
     assert record["current_outcome"] == "not_present_in_current_sandbox"
     assert "discontinued" not in str(record).casefold()
+
+
+def test_legacy_cached_history_repairs_extension_flag_from_preserved_raw_text():
+    history = seed_sandbox_lifecycle_history(
+        [_lti_sandbox()],
+        observed_at="2026-09-15T02:26:32Z",
+    )
+    record = history["records"][0]
+    record["last_snapshot"]["authorization_extended"] = False
+    assert "prorrogada" in record["last_snapshot"]["raw_status"].casefold()
+
+    updated = update_sandbox_lifecycle_history(
+        history,
+        current_rows=[],
+        current_licensed_rows=[_lti_license()],
+        observed_at="2026-09-21T22:10:58Z",
+        source_state="fresh",
+    )
+
+    repaired = updated["records"][0]["last_snapshot"]
+    assert repaired["authorization_extended"] is True
+    assert updated["records"][0]["current_outcome"] == "graduated_to_ordinary_license"
+
+
+def test_extension_inference_does_not_flip_plain_authorization_to_true():
+    row = _lti_sandbox(extended=False)
+    row["raw_status"] = "Autorizada"
+    row["authorization_end_raw"] = "20/03/2026"
+
+    history = seed_sandbox_lifecycle_history(
+        [row],
+        observed_at="2026-03-20T00:00:00Z",
+    )
+
+    assert history["records"][0]["last_snapshot"]["authorization_extended"] is False
