@@ -109,8 +109,11 @@ def test_stale_source_never_turns_absence_into_exit_or_graduation():
 
 
 def test_extension_change_is_preserved_as_event_without_overwriting_prior_event():
+    before = _lti_sandbox(extended=False)
+    before["raw_status"] = "Autorizada"
+    before["authorization_end_raw"] = "20/03/2026"
     history = seed_sandbox_lifecycle_history(
-        [_lti_sandbox(extended=False)],
+        [before],
         observed_at="2026-03-20T00:00:00Z",
     )
 
