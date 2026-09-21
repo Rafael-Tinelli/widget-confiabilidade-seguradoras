@@ -26,6 +26,8 @@ on:
       - "api/v2/build_conduct_coverage_reconciliation.py"
       - "api/v2/build_conduct_comparative_calibration_v2.py"
       - "api/v2/build_public_search_profile_contract.py"
+      - "api/v2/build_market_relationship_conduct_evidence.py"
+      - "api/v2/build_sandbox_brand_conduct_evidence.py"
       - "api/v2/market_relationship_conduct_core.py"
       - "api/v2/public_profile_regulatory_semantics.py"
       - "data/reference/v2/consumer_gov_provider_resolutions.json"
@@ -50,6 +52,7 @@ on:
       - "tests/test_v2_conduct_coverage_reconciliation.py"
       - "tests/test_v2_conduct_comparative_calibration_v2.py"
       - "tests/test_v2_public_search_profile_contract.py"
+      - "tests/test_v2_market_relationship_conduct.py"
       - "tests/test_v2_public_market_relationship_semantics.py"
       - "docs/gate4-evergreen-publication.md"
       - ".github/workflows/v2-gate4-evergreen-contract.yml"
@@ -111,6 +114,8 @@ jobs:
             api/v2/build_conduct_coverage_reconciliation.py \
             api/v2/build_conduct_comparative_calibration_v2.py \
             api/v2/build_public_search_profile_contract.py \
+            api/v2/build_market_relationship_conduct_evidence.py \
+            api/v2/build_sandbox_brand_conduct_evidence.py \
             api/v2/market_relationship_conduct_core.py \
             api/v2/public_profile_regulatory_semantics.py \
             tests/test_v2_generation.py \
@@ -131,6 +136,7 @@ jobs:
             tests/test_v2_conduct_coverage_reconciliation.py \
             tests/test_v2_conduct_comparative_calibration_v2.py \
             tests/test_v2_public_search_profile_contract.py \
+            tests/test_v2_market_relationship_conduct.py \
             tests/test_v2_public_market_relationship_semantics.py
 
       - name: Run Gate 4 contract tests
@@ -155,6 +161,7 @@ jobs:
             tests/test_v2_conduct_coverage_reconciliation.py \
             tests/test_v2_conduct_comparative_calibration_v2.py \
             tests/test_v2_public_search_profile_contract.py \
+            tests/test_v2_market_relationship_conduct.py \
             tests/test_v2_public_market_relationship_semantics.py
 
       - name: Materialize validated pipeline contract
