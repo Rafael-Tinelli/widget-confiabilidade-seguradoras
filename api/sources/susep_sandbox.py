@@ -284,7 +284,15 @@ def fetch_sandbox_participants(
             document,
             flags=re.IGNORECASE | re.DOTALL,
         )
-        title = _text(title_match.group(1)) if title_match else None
+        title = (
+            re.sub(
+                r"\\s+",
+                " ",
+                html.unescape(re.sub(r"<[^>]+>", " ", title_match.group(1))),
+            ).strip()
+            if title_match
+            else None
+        )
         raise SandboxSourceError(
             "SUSEP Sandbox participant page returned too few records: "
             f"{len(records)}; bytes={len(response.content)}; "
