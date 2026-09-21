@@ -85,6 +85,8 @@ def _regulatory_label(entity: dict[str, Any]) -> str:
         return "Entidade histórica incorporada"
     if state == "historical_closed_entity":
         return "Entidade jurídica histórica"
+    if state == "historical_sandbox_participant":
+        return "Participação histórica no Sandbox regulatório"
     if entity_type == "sandbox_participant" or regime == "sandbox":
         return "Participante do Sandbox regulatório"
     if regime == "special":
@@ -162,6 +164,15 @@ def _entity_intro(entity: dict[str, Any], by_id: dict[str, dict[str, Any]]) -> s
             "seguradora considerada pelo comparador ordinário."
         )
     if entity_type == "insurer":
+        sandbox_history = (entity.get("evidence") or {}).get("sandbox_history") or {}
+        if sandbox_history.get("current_outcome") == "graduated_to_ordinary_license":
+            return (
+                f"{name} é identificada atualmente como seguradora no cadastro "
+                "regulatório consultado. Antes da autorização ordinária atual, "
+                "participou do Sandbox regulatório da SUSEP; esse histórico é "
+                "preservado sem confundir o regime experimental anterior com a "
+                "situação regulatória corrente."
+            )
         return (
             f"{name} é identificada como seguradora no cadastro regulatório consultado. "
             "Cada sinal só é apresentado quando sua evidência sustenta a afirmação."
@@ -943,6 +954,39 @@ def _brand_profile(
     }
 
 
+def _public_sandbox_history(entity: dict[str, Any]) -> dict[str, Any] | None:
+    history = (entity.get("evidence") or {}).get("sandbox_history")
+    if not isinstance(history, dict):
+        return None
+    events = []
+    for raw in history.get("events") or []:
+        event = dict(raw)
+        events.append(
+            {
+                "event_type": event.get("event_type"),
+                "observed_at": event.get("observed_at"),
+                "previous_value": event.get("previous_value"),
+                "observed_value": event.get("observed_value"),
+                "fip_code": event.get("fip_code"),
+            }
+        )
+    return {
+        "participated": True,
+        "editions": list(history.get("editions") or []),
+        "first_seen": history.get("first_seen"),
+        "last_seen_in_current_sandbox": history.get("last_seen_in_current_sandbox"),
+        "current_sandbox_present": history.get("current_sandbox_present"),
+        "current_outcome": history.get("current_outcome"),
+        "last_snapshot": dict(history.get("last_snapshot") or {}),
+        "ordinary_license": (
+            dict(history.get("ordinary_license") or {})
+            if history.get("ordinary_license")
+            else None
+        ),
+        "events": events,
+    }
+
+
 def _entity_profile(
     entity: dict[str, Any],
     *,
@@ -982,7 +1026,7 @@ def _entity_profile(
         },
         "lifecycle": {
             "legal_lifecycle": entity.get("legal_lifecycle"),
-            "is_historical": context.get("filter_bucket") == "historical",
+            "is_historical": context.get("filter_bucket") in {"historical", "sandbox_history"},
             "successor_profile_id": (
                 f"entity:{successor['entity_id']}" if successor else None
             ),
@@ -990,6 +1034,9 @@ def _entity_profile(
             "successor_chain": [
                 f"entity:{value}" for value in context.get("successor_chain") or []
             ],
+        },
+        "regulatory_history": {
+            "sandbox": _public_sandbox_history(entity),
         },
         "public_summary": {
             "headline": _regulatory_label(entity),
