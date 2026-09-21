@@ -132,6 +132,20 @@ def _entity_intro(entity: dict[str, Any], by_id: dict[str, dict[str, Any]]) -> s
             f"{name} aparece como pessoa jurídica histórica/baixada no cadastro jurídico "
             "consultado e não deve ser confundida com uma seguradora atual."
         )
+    if state == "historical_sandbox_participant":
+        history = (entity.get("evidence") or {}).get("sandbox_history") or {}
+        if history.get("current_outcome") == "sandbox_authorization_cancelled":
+            return (
+                f"{name} participou do Sandbox regulatório da SUSEP e permanece "
+                "pesquisável como registro histórico. A autorização temporária consta "
+                "como cancelada nas evidências preservadas pela ferramenta."
+            )
+        return (
+            f"{name} participou do Sandbox regulatório da SUSEP e permanece "
+            "pesquisável como registro histórico. A empresa não aparece na fotografia "
+            "corrente do Sandbox usada pela ferramenta; essa ausência, sozinha, não é "
+            "tratada como prova de encerramento ou descontinuação."
+        )
     if entity_type == "sandbox_participant" or regime == "sandbox":
         return (
             f"{name} aparece no cadastro público consultado como participante do Sandbox "
@@ -1026,7 +1040,8 @@ def _entity_profile(
         },
         "lifecycle": {
             "legal_lifecycle": entity.get("legal_lifecycle"),
-            "is_historical": context.get("filter_bucket") in {"historical", "sandbox_history"},
+            "is_historical": context.get("filter_bucket")
+            in {"historical", "sandbox_history"},
             "successor_profile_id": (
                 f"entity:{successor['entity_id']}" if successor else None
             ),
