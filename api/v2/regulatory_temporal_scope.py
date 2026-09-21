@@ -86,9 +86,6 @@ def period_scope(entity: dict[str, Any], period: int) -> dict[str, Any]:
     if period < transition:
         scope = "historical_sandbox_period"
         eligible = False
-    elif period == transition:
-        scope = "transition_month_excluded"
-        eligible = False
     elif period < first_full:
         scope = "transition_month_excluded"
         eligible = False
