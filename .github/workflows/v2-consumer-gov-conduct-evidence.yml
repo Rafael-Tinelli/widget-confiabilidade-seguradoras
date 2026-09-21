@@ -263,10 +263,31 @@ jobs:
               int(entity["totals"]["complaints"])
               for entity in conduct["entities"]
           )
-          if entity_total != int(summary["matched_current_insurer_complaints"]):
+          ordinary_scope_total = int(
+              summary["ordinary_scope_matched_current_insurer_complaints"]
+          )
+          if entity_total != ordinary_scope_total:
               raise SystemExit(
-                  f"entity total mismatch: {entity_total} != "
-                  f"{summary['matched_current_insurer_complaints']}"
+                  f"ordinary-scope entity total mismatch: {entity_total} != "
+                  f"{ordinary_scope_total}"
+              )
+          historical_total = sum(
+              int(
+                  ((entity.get("pre_ordinary_history") or {}).get("totals") or {}).get(
+                      "complaints"
+                  )
+                  or 0
+              )
+              for entity in conduct["entities"]
+          )
+          if (
+              entity_total
+              + historical_total
+              != int(summary["matched_current_insurer_complaints"])
+          ):
+              raise SystemExit(
+                  "identity complaint total does not reconcile ordinary and historical "
+                  "regulatory scopes"
               )
 
           for entity in conduct["entities"]:
