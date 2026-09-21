@@ -544,10 +544,13 @@ def build_conduct_evidence() -> dict[str, Any]:
         },
         "resolution_summary": {
             "complaints_total": source_total,
-            "matched_current_insurer_complaints": entity_total,
-            "matched_current_insurer_identity_complaints": matched_identity_total,
+            "matched_current_insurer_complaints": matched_identity_total,
+            "ordinary_scope_matched_current_insurer_complaints": entity_total,
             "historical_pre_ordinary_complaints": historical_total,
             "matched_current_insurer_ratio": (
+                matched_identity_total / source_total if source_total else None
+            ),
+            "ordinary_scope_matched_ratio": (
                 entity_total / source_total if source_total else None
             ),
             "outside_157_complaints": int(resolution_counts["outside_157"]),
