@@ -178,6 +178,9 @@
     const market = marketIdentity(profile);
     if (market?.public_label) return market.public_label;
     if (profile?.profile_kind === "brand") return "Marca / identidade comercial";
+    if (profile?.regulatory?.query_state === "historical_sandbox_participant") {
+      return "Participação histórica no Sandbox SUSEP";
+    }
     if (profile?.regulatory?.regime === "sandbox") return "Participante do Sandbox SUSEP";
     if (profile?.regulatory?.filter_bucket === "insurers") return "Seguradora autorizada pela SUSEP";
     if (profile?.lifecycle?.is_historical) return "Empresa em registro histórico";

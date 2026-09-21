@@ -14,12 +14,17 @@ SANDBOX_PARTICIPANTS_URL = (
     "seguradoras-participantes-do-sandbox-1"
 )
 _DEFAULT_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (compatible; SanidaResearch/1.0; +https://sanida.com.br)",
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/153.0.0.0 Safari/537.36"
+    ),
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.5",
+    "Cache-Control": "no-cache",
 }
 _BLOCK_END_RE = re.compile(
-    r"</(?:p|div|li|h[1-6]|tr|td|th|section|article|dd|dt)>",
+    r"</(?:p|div|li|h[1-6]|tr|td|th|caption|section|article|dd|dt)>",
     flags=re.IGNORECASE,
 )
 _FIELD_LABELS = (
@@ -169,14 +174,21 @@ def _edition_marker(line: str) -> str | None:
 
 
 def _participant_name_before_status(lines: list[str], status_index: int) -> str | None:
-    for candidate in reversed(lines[max(0, status_index - 4) : status_index]):
+    candidates: list[str] = []
+    for candidate in reversed(lines[max(0, status_index - 6) : status_index]):
         clean = candidate.strip().strip("|:–—-").strip()
         if not clean or _is_any_field_label(clean) or _edition_marker(clean):
             continue
-        # Values from a preceding participant should not occur here because
-        # STATUS is the first field of every official participant block.
-        return clean
-    return None
+        candidates.append(clean)
+
+    # The current gov.br accordion inserts a short <caption> (for example
+    # "Coover") between the legal accordion title ("Coover Seguradora S.A.")
+    # and the STATUS row. Prefer the nearby legal-company label when present.
+    for candidate in candidates:
+        normalized = _normalize_label(candidate)
+        if "segur" in normalized or "sociedade" in normalized:
+            return candidate
+    return candidates[0] if candidates else None
 
 
 def parse_sandbox_participants_html(document: str) -> list[dict[str, Any]]:
@@ -220,6 +232,9 @@ def parse_sandbox_participants_html(document: str) -> list[dict[str, Any]]:
         cnpj = normalize_cnpj_v2(fields.get("cnpj"))
         if not cnpj:
             raise SandboxSourceError(f"Sandbox participant without valid CNPJ: {name}")
+        status_text = " ".join(
+            part for part in (raw_status, fields.get("end_raw") or "") if part
+        )
         records.append(
             {
                 "legal_name": name,
@@ -230,6 +245,10 @@ def parse_sandbox_participants_html(document: str) -> list[dict[str, Any]]:
                 "authorization_start": _extract_date(fields.get("start_raw")),
                 "authorization_end": _extract_date(fields.get("end_raw")),
                 "authorization_end_raw": fields.get("end_raw"),
+                "authorization_extended": (
+                    "prorrogada" in _normalize_label(status_text)
+                    or "prorrogado" in _normalize_label(status_text)
+                ),
                 "modalities": fields.get("modalities"),
                 "source": SANDBOX_PARTICIPANTS_URL,
             }
@@ -264,10 +283,28 @@ def fetch_sandbox_participants(
         raise SandboxSourceError(
             f"SUSEP Sandbox participants returned HTTP {response.status_code}"
         )
-    records = parse_sandbox_participants_html(_decode_content(response.content))
+    document = _decode_content(response.content)
+    records = parse_sandbox_participants_html(document)
     if len(records) < 5:
+        title_match = re.search(
+            r"<title\\b[^>]*>(.*?)</title>",
+            document,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        title = (
+            re.sub(
+                r"\\s+",
+                " ",
+                html.unescape(re.sub(r"<[^>]+>", " ", title_match.group(1))),
+            ).strip()
+            if title_match
+            else None
+        )
         raise SandboxSourceError(
-            f"SUSEP Sandbox participant page returned too few records: {len(records)}"
+            "SUSEP Sandbox participant page returned too few records: "
+            f"{len(records)}; bytes={len(response.content)}; "
+            f"content_type={response.headers.get('Content-Type')!r}; "
+            f"final_url={response.url!s}; title={title!r}"
         )
     if not any(item["regulatory_status"] == "temporary_authorized" for item in records):
         raise SandboxSourceError("SUSEP Sandbox page has no active temporary authorization")

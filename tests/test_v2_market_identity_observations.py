@@ -222,6 +222,84 @@ def test_new_sandbox_participant_is_detected_by_exact_cnpj_and_not_ordinary_infe
     assert "ordinary_insurer" not in observation.values()
 
 
+
+def test_sandbox_lifecycle_detects_status_date_and_extension_changes():
+    previous = [
+        {
+            "cnpj": "43409064000153",
+            "legal_name": "KAKAU SEGURADORA S.A.",
+            "regulatory_status": "temporary_authorized",
+            "authorization_end": "2025-12-16",
+            "authorization_extended": False,
+            "modalities": "Seguros de Danos",
+        }
+    ]
+    current = [
+        {
+            "cnpj": "43409064000153",
+            "legal_name": "KAKAU SEGURADORA S.A.",
+            "regulatory_status": "temporary_authorized",
+            "authorization_end": "2025-12-16",
+            "authorization_extended": True,
+            "modalities": "Seguros de Danos e Pessoas",
+        }
+    ]
+
+    observations = sandbox_delta_observations(previous, current)
+
+    assert {row["candidate_type"] for row in observations} == {
+        "sandbox_extension_change",
+        "sandbox_modalities_change",
+    }
+
+
+def test_lti_regression_sandbox_removal_plus_current_license_is_graduation_candidate():
+    previous = [
+        {
+            "cnpj": "47006254000180",
+            "legal_name": "LTI Seguros S.A.",
+            "regulatory_status": "temporary_authorized",
+            "authorization_end": "2026-03-20",
+            "authorization_extended": True,
+        }
+    ]
+    current = []
+    licensed = [
+        {
+            "fip_code": "001988",
+            "cnpj": "47006254000180",
+            "legal_name": "LTI SEGUROS S.A.",
+            "entity_type": "insurer",
+        }
+    ]
+
+    observations = sandbox_delta_observations(previous, current, licensed)
+
+    assert len(observations) == 1
+    observation = observations[0]
+    assert observation["candidate_type"] == "sandbox_graduated_to_ordinary_license"
+    assert observation["candidate_anchor"] == "cnpj:47006254000180"
+    assert observation["fip_code"] == "001988"
+    assert observation["confidence_semantics"] == (
+        "deterministic_same_cnpj_regulatory_transition"
+    )
+
+
+def test_sandbox_removal_without_current_license_is_not_called_graduation():
+    previous = [
+        {
+            "cnpj": "39768897000133",
+            "legal_name": "COOVER SEGURADORA S.A.",
+            "regulatory_status": "sandbox_authorization_cancelled",
+        }
+    ]
+
+    observations = sandbox_delta_observations(previous, [], [])
+
+    assert len(observations) == 1
+    assert observations[0]["candidate_type"] == "sandbox_participant_removed"
+    assert observations[0]["confidence_semantics"] == "official_current_sandbox_absence"
+
 def test_exact_same_unknown_query_fuses_sources_but_similarity_never_resolves_identity():
     widget = widget_unknown_search_observations(
         [{"normalized_query": "Nova Marca", "count": 2, "distinct_day_count": 2}],

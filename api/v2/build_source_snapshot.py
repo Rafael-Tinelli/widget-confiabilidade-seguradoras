@@ -46,6 +46,11 @@ from api.v2.refresh_receita_lifecycle import (
     validate_refresh_payload,
     write_snapshot_atomic,
 )
+from api.v2.sandbox_lifecycle_history import (
+    seed_sandbox_lifecycle_history,
+    update_sandbox_lifecycle_history,
+    write_sandbox_lifecycle_history,
+)
 from api.v2.source_cache import (
     AcquisitionResult,
     CachedSource,
@@ -263,6 +268,57 @@ def _load_record_snapshot(path: Path) -> list[dict[str, Any]]:
     return [dict(row) for row in rows]
 
 
+def _assert_no_stale_sandbox_override(
+    *,
+    licensed: AcquisitionResult,
+    sandbox: AcquisitionResult,
+    licensed_path: Path,
+    sandbox_path: Path,
+    context: BuildContext,
+) -> None:
+    """Fail closed when stale Sandbox state could override a fresh license.
+
+    The licensed-entities source can contain active Sandbox participants, so a
+    fresh licensed match alone is not proof of graduation. Conversely, a stale
+    Sandbox snapshot must never be allowed to win silently over fresh current
+    regulatory evidence. Until the Sandbox source is fresh again, an overlap is
+    an unresolved regulatory-state conflict and publication must stop.
+    """
+
+    licensed_state = licensed.observation.to_lineage(context).state
+    sandbox_state = sandbox.observation.to_lineage(context).state
+    if licensed_state != "fresh" or sandbox_state != "stale":
+        return
+
+    licensed_by_cnpj = {
+        cnpj: row
+        for row in _load_record_snapshot(licensed_path)
+        if row.get("entity_type") == "insurer"
+        and (cnpj := normalize_cnpj_v2(row.get("cnpj")))
+    }
+    stale_active_sandbox = {
+        cnpj: row
+        for row in _load_record_snapshot(sandbox_path)
+        if row.get("regulatory_status") == "temporary_authorized"
+        and (cnpj := normalize_cnpj_v2(row.get("cnpj")))
+    }
+    conflicts = sorted(set(licensed_by_cnpj) & set(stale_active_sandbox))
+    if conflicts:
+        sample = [
+            {
+                "cnpj": cnpj,
+                "licensed_name": licensed_by_cnpj[cnpj].get("legal_name"),
+                "stale_sandbox_name": stale_active_sandbox[cnpj].get("legal_name"),
+            }
+            for cnpj in conflicts[:10]
+        ]
+        raise SourceSnapshotError(
+            "stale Sandbox snapshot overlaps fresh licensed insurers; "
+            "current regulatory regime cannot be resolved safely: "
+            f"count={len(conflicts)} sample={sample}"
+        )
+
+
 def _acquire_record_source(
     *,
     source_id: str,
@@ -286,6 +342,41 @@ def _acquire_record_source(
         validate_path=_json_records_validator,
         context=context,
     )
+
+
+def _load_sandbox_history(path: Path) -> dict[str, Any] | None:
+    if not path.is_file():
+        return None
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if payload.get("artifact") != "v2_sandbox_regulatory_history":
+        raise SourceSnapshotError("unexpected Sandbox lifecycle cache artifact")
+    return payload
+
+
+def _bootstrap_sandbox_history_from_validated_cache(
+    *,
+    cache: CachedSource,
+    history_path: Path,
+    previous_snapshot_path: Path,
+) -> dict[str, Any] | None:
+    existing = _load_sandbox_history(history_path)
+    if existing is not None:
+        return existing
+    try:
+        fetched_at = cache.materialize(previous_snapshot_path)
+        _json_records_validator(previous_snapshot_path)
+    except Exception:  # noqa: BLE001
+        if previous_snapshot_path.exists():
+            previous_snapshot_path.unlink()
+        return None
+    try:
+        return seed_sandbox_lifecycle_history(
+            _load_record_snapshot(previous_snapshot_path),
+            observed_at=fetched_at,
+        )
+    finally:
+        if previous_snapshot_path.exists():
+            previous_snapshot_path.unlink()
 
 
 def _bootstrap_receita_cache(
@@ -738,6 +829,18 @@ def build_source_snapshot(
         fetcher=fetch_special_regime_records,
         context=context,
     )
+    sandbox_cache = _cache_for(
+        cache_dir,
+        source_id="susep_sandbox",
+        source_url=SANDBOX_PARTICIPANTS_URL,
+        suffix=".json",
+    )
+    sandbox_history_cache_path = cache_dir / "susep_sandbox_history.json"
+    sandbox_history = _bootstrap_sandbox_history_from_validated_cache(
+        cache=sandbox_cache,
+        history_path=sandbox_history_cache_path,
+        previous_snapshot_path=source_dir / "susep_sandbox_previous.json",
+    )
     sandbox = _acquire_record_source(
         source_id="susep_sandbox",
         source_url=SANDBOX_PARTICIPANTS_URL,
@@ -747,6 +850,22 @@ def build_source_snapshot(
         context=context,
     )
 
+    sandbox_state = sandbox.observation.to_lineage(context).state
+    sandbox_history = update_sandbox_lifecycle_history(
+        sandbox_history,
+        current_rows=(
+            _load_record_snapshot(sandbox_path) if sandbox_path.is_file() else []
+        ),
+        current_licensed_rows=(
+            _load_record_snapshot(licensed_path) if licensed_path.is_file() else []
+        ),
+        observed_at=context.generated_at,
+        source_state=sandbox_state,
+    )
+    sandbox_history_path = source_dir / "susep_sandbox_history.json"
+    write_sandbox_lifecycle_history(sandbox_history, sandbox_history_path)
+    write_sandbox_lifecycle_history(sandbox_history, sandbox_history_cache_path)
+
     preliminary = [base, lista, licensed, special, sandbox]
     write_source_lineage(
         lineage_path,
@@ -754,6 +873,13 @@ def build_source_snapshot(
         context,
     )
     _require_available(preliminary, context)
+    _assert_no_stale_sandbox_override(
+        licensed=licensed,
+        sandbox=sandbox,
+        licensed_path=licensed_path,
+        sandbox_path=sandbox_path,
+        context=context,
+    )
 
     companies = load_ses_master_companies(
         base_completa=base_path,
@@ -764,6 +890,7 @@ def build_source_snapshot(
         _load_record_snapshot(licensed_path),
         _load_record_snapshot(special_path),
         _load_record_snapshot(sandbox_path),
+        sandbox_history=sandbox_history,
     )
     classification_path = source_dir / "classification_inventory.json"
     write_classification_inventory(classification, classification_path)
@@ -802,6 +929,7 @@ def build_source_snapshot(
     return {
         "build": context.as_dict(),
         "classification_path": str(classification_path),
+        "sandbox_history_path": str(sandbox_history_path),
         "receita_lifecycle_records_path": str(receita_records),
         "base_completa_path": str(base_path),
         "listaempresas_path": str(lista_path),

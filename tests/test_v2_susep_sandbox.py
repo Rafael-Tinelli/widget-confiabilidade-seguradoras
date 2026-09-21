@@ -34,6 +34,7 @@ def test_parse_sandbox_distinguishes_authorized_and_cancelled():
     assert clubfix["authorization_start"] == "2023-03-21"
     assert clubfix["authorization_end"] == "2026-05-19"
     assert "prorrogada" in clubfix["authorization_end_raw"].casefold()
+    assert clubfix["authorization_extended"] is True
 
 
 def test_parse_sandbox_split_table_cells_like_current_gov_renderer():
@@ -54,6 +55,7 @@ def test_parse_sandbox_split_table_cells_like_current_gov_renderer():
     assert record["legal_name"] == "Novo Seguros S.A."
     assert record["cnpj"] == "50182327000108"
     assert record["regulatory_status"] == "temporary_authorized"
+    assert record["authorization_extended"] is False
     assert record["authorization_start"] == "2023-10-31"
     assert record["authorization_end"] == "2026-10-30"
 
@@ -71,3 +73,44 @@ def test_status_text_not_date_decides_current_authorization():
 
     assert record["authorization_end"] == "2025-12-16"
     assert record["regulatory_status"] == "temporary_authorized"
+    assert record["authorization_extended"] is True
+
+
+def test_parse_sandbox_current_govbr_accordion_caption_markup():
+    document = """
+    <h2>2ª edição do Sandbox</h2>
+    <div class="accordion ui fluid styled">
+      <div class="title accordion-title">
+        <span class="fa-solid fa-angle-down"></span>
+        <span>Clubfix Seguradora S.A.</span>
+      </div>
+      <div class="content">
+        <table class="slate-table-block">
+          <caption class="sr-only">Clubfix</caption>
+          <tbody>
+            <tr>
+              <td><p><strong>STATUS</strong></p></td>
+              <td><p><strong>Autorizada</strong> (Autorização prorrogada)</p></td>
+            </tr>
+            <tr><td><p><strong>CNPJ</strong></p></td><td><p>43.095.690/0001-12</p></td></tr>
+            <tr>
+              <td><p><strong>DATA DE INICIO DA AUTORIZAÇÃO TEMPORÁRIA</strong></p></td>
+              <td><p>21/03/2023</p></td>
+            </tr>
+            <tr>
+              <td><p><strong>DATA FINAL DA AUTORIZAÇÃO TEMPORÁRIA</strong></p></td>
+              <td><p>19/05/2026 (Autorização prorrogada)</p></td>
+            </tr>
+            <tr><td><p><strong>MODALIDADES</strong></p></td><td><p>Seguros de Danos e Pessoas</p></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+    """
+
+    record = parse_sandbox_participants_html(document)[0]
+
+    assert record["legal_name"] == "Clubfix Seguradora S.A."
+    assert record["cnpj"] == "43095690000112"
+    assert record["regulatory_status"] == "temporary_authorized"
+    assert record["authorization_extended"] is True
