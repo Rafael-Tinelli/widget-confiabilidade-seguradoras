@@ -74,12 +74,10 @@ def test_registry_keeps_viver_previdencia_outside_without_transfer_to_insurer() 
     assert result["entity_id"] is None
 
 
-def test_registry_preserves_outside_universe_state() -> None:
+def test_graduated_sandbox_provider_is_not_frozen_in_curated_registry() -> None:
     registry = load_provider_resolution_registry()
-    result = resolve_curated_provider("LTI Seguros", {}, registry)
-    assert result is not None
-    assert result["resolution_state"] == "outside_157"
-    assert result["entity_id"] is None
+
+    assert resolve_curated_provider("LTI Seguros", {}, registry) is None
 
 
 def test_unregistered_provider_is_not_guessed() -> None:

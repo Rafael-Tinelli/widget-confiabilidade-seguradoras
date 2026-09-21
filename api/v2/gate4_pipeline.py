@@ -280,14 +280,22 @@ STAGES: tuple[PipelineStage, ...] = (
     PipelineStage(
         stage_id="sandbox_brand_conduct",
         kind="derive",
-        dependencies=("eligibility", "conduct_source_snapshot"),
+        dependencies=("lifecycle", "eligibility", "conduct_source_snapshot"),
         commands=(_module("api.v2.build_sandbox_brand_conduct_evidence"),),
-        outputs=("data/derived/v2/sandbox_brand_conduct_evidence.json",),
+        outputs=(
+            "data/derived/v2/market_relationship_conduct_evidence.json",
+            "data/derived/v2/sandbox_brand_conduct_evidence.json",
+        ),
     ),
     PipelineStage(
         stage_id="public_profiles",
         kind="derive",
-        dependencies=("lifecycle", "leaderboards", "sandbox_brand_conduct"),
+        dependencies=(
+            "lifecycle",
+            "leaderboards",
+            "sandbox_brand_conduct",
+            "consumer_conduct",
+        ),
         commands=(
             _module("api.v2.public_profile_regulatory_semantics"),
             _module("api.v2.validate_public_search_profile_contract"),

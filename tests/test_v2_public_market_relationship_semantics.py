@@ -109,3 +109,66 @@ def test_public_context_is_not_sandbox_specific_and_preserves_multi_carrier_spli
     assert policy["risk_bearer_relation_never_transfers_complaints"] is True
     assert policy["multi_carrier_relationships_must_remain_separate"] is True
     assert output["population"]["multi_risk_bearer_brand_profiles"] == 1
+
+
+def test_graduated_risk_bearer_context_warns_about_mixed_regulatory_history():
+    contract = {
+        "artifact": "v2_public_search_profile_contract",
+        "version": "old",
+        "profiles": [
+            {
+                "profile_id": "brand:loovi",
+                "profile_kind": "brand",
+                "identity": {"name": "Loovi"},
+                "limits": [],
+            }
+        ],
+        "search_index": [],
+        "population": {},
+        "publication_policy": {},
+    }
+    market_conduct = {
+        "artifact": "v2_market_relationship_conduct_evidence",
+        "brands": [
+            {
+                "brand_id": "brand:loovi",
+                "market_identity": {
+                    "identity_state": "verified",
+                    "legal_name": "CW TECHNOLOGY LTDA.",
+                    "cnpj": "00000000000100",
+                    "distribution_role": "insurance_representative",
+                    "distribution_role_state": "verified",
+                    "evidence": {"authority": "Fonte"},
+                },
+                "market_identity_conduct_summary": _summary(17),
+                "risk_bearers": [
+                    {
+                        "profile_id": "entity:fip:001988",
+                        "entity_id": "fip:001988",
+                        "name": "LTI SEGUROS S.A.",
+                        "cnpj": "47006254000180",
+                        "entity_type": "insurer",
+                        "regulatory_regime": "ordinary",
+                        "regulatory_status": "active_licensed",
+                        "regulatory_class": "Seguradora",
+                        "sandbox_history": {
+                            "current_outcome": "graduated_to_ordinary_license",
+                        },
+                        "relationship_status": "current",
+                        "conduct_summary": _summary(1329),
+                    }
+                ],
+            }
+        ],
+    }
+
+    output = apply_market_relationship_semantics(contract, market_conduct)
+    bearer = output["profiles"][0]["market_relationship_context"]["risk_bearers"][0]
+
+    assert bearer["regulatory_class"] == "Seguradora"
+    assert bearer["regulatory_history"]["sandbox"]["current_outcome"] == (
+        "graduated_to_ordinary_license"
+    )
+    assert "pode incluir observações anteriores" in bearer["conduct_context"][
+        "plain_language"
+    ]

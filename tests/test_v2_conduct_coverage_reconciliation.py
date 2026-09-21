@@ -399,3 +399,35 @@ def test_zero_complaints_is_not_labeled_favorable() -> None:
     assert row["conduct_evidence_state"] == "no_observed_complaints"
     assert row["widget_coverage_state"] == "no_observed_complaints_pressure_candidate"
     assert "favorable" not in str(row).lower()
+
+
+def test_graduated_sandbox_preordinary_months_do_not_enter_pressure_exposure() -> None:
+    entity = _entity("lti", "001988", "47006254000180", insurance=True)
+    entity["evidence"] = {
+        "sandbox_history": {
+            "current_outcome": "graduated_to_ordinary_license",
+            "events": [
+                {
+                    "event_type": "sandbox_graduated_to_ordinary_license",
+                    "observed_at": "2026-09-21T16:20:00Z",
+                    "fip_code": "001988",
+                }
+            ],
+        }
+    }
+    eligibility, conduct, ses = _payloads(
+        [entity], {"lti": 0}, {"lti": 1_000_000.0}
+    )
+
+    payload = build_reconciliation(eligibility, conduct, ses, {"relationships": []})
+    row = _by_id(payload)["lti"]
+
+    assert row["insurance_exposure_12m"]["insurance_premium_direct"] == 0.0
+    assert row["regulatory_temporal_scope"]["first_full_ordinary_period"] == 202610
+    assert row["regulatory_temporal_scope"]["ordinary_comparison_months_in_window"] == 0
+    assert row["pressure_comparability"] == {
+        "state": "sandbox_graduation_insufficient_temporal_coverage",
+        "pressure_eligible_candidate": False,
+        "reason_code": "fewer_than_9_full_post_graduation_months",
+        "relationship_ids": [],
+    }

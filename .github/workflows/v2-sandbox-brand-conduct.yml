@@ -87,6 +87,37 @@ jobs:
           done
           echo "Restored Sandbox Conduct inputs from run $run_id"
 
+      - name: Restore latest successful lifecycle input
+        run: |
+          set -euo pipefail
+          branch="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
+          run_id="$(gh run list \
+            --repo "$GITHUB_REPOSITORY" \
+            --workflow "V2 Lifecycle Relationships Validation" \
+            --branch "$branch" \
+            --status success \
+            --limit 30 \
+            --json databaseId \
+            --jq '.[0].databaseId')"
+          if [[ -z "$run_id" || "$run_id" == "null" ]]; then
+            echo "No successful lifecycle artifact found." >&2
+            exit 1
+          fi
+          rm -rf "$RUNNER_TEMP/lifecycle-upstream"
+          mkdir -p "$RUNNER_TEMP/lifecycle-upstream"
+          gh run download "$run_id" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name "v2-lifecycle-relationships-$run_id" \
+            --dir "$RUNNER_TEMP/lifecycle-upstream"
+          source_file="$(find "$RUNNER_TEMP/lifecycle-upstream" -type f \
+            -name "entity_lifecycle_relationship_inventory.json" | head -n 1)"
+          if [[ -z "$source_file" ]]; then
+            echo "Lifecycle artifact missing entity_lifecycle_relationship_inventory.json" >&2
+            exit 1
+          fi
+          cp "$source_file" "data/derived/v2/entity_lifecycle_relationship_inventory.json"
+          echo "Restored lifecycle input from run $run_id"
+
       - name: Refresh preserved Consumer.gov monthly aggregate
         run: |
           set -euo pipefail
@@ -97,48 +128,76 @@ jobs:
           set -euo pipefail
           python -m api.v2.build_sandbox_brand_conduct_evidence
 
-      - name: Validate Sandbox brand boundaries
+      - name: Validate relationship Conduct boundaries
         run: |
           set -euo pipefail
           python - <<'PY'
           import json
           from pathlib import Path
 
-          path = Path("data/derived/v2/sandbox_brand_conduct_evidence.json")
-          payload = json.loads(path.read_text(encoding="utf-8"))
-          if payload.get("artifact") != "v2_sandbox_brand_conduct_evidence":
-              raise SystemExit("unexpected Sandbox brand artifact")
-          if payload.get("status") != "experimental":
-              raise SystemExit("Sandbox brand Conduct must remain experimental")
-          if payload.get("scoring") != "forbidden_in_this_artifact":
-              raise SystemExit("Sandbox brand Conduct must forbid scoring")
-          if payload.get("ranking") != "forbidden_in_this_artifact":
-              raise SystemExit("Sandbox brand Conduct must forbid ranking")
-          if payload.get("ordinary_ranking_effect") != "none":
-              raise SystemExit("Sandbox evidence leaked into ordinary ranking")
-          if len(payload["source"]["months"]) != 12:
-              raise SystemExit("Sandbox brand Conduct must preserve a 12-month film")
+          legacy = json.loads(
+              Path("data/derived/v2/sandbox_brand_conduct_evidence.json").read_text(
+                  encoding="utf-8"
+              )
+          )
+          generic = json.loads(
+              Path("data/derived/v2/market_relationship_conduct_evidence.json").read_text(
+                  encoding="utf-8"
+              )
+          )
 
-          for carrier in payload.get("carriers") or []:
+          if legacy.get("artifact") != "v2_sandbox_brand_conduct_evidence":
+              raise SystemExit("unexpected Sandbox compatibility artifact")
+          if legacy.get("status") != "compatibility_projection":
+              raise SystemExit("Sandbox artifact must remain a compatibility projection")
+          if generic.get("artifact") != "v2_market_relationship_conduct_evidence":
+              raise SystemExit("unexpected generic relationship Conduct artifact")
+          if generic.get("status") != "experimental":
+              raise SystemExit("generic relationship Conduct must remain experimental")
+
+          for payload in (legacy, generic):
+              if payload.get("scoring") != "forbidden_in_this_artifact":
+                  raise SystemExit("relationship Conduct must forbid scoring")
+              if payload.get("ranking") != "forbidden_in_this_artifact":
+                  raise SystemExit("relationship Conduct must forbid ranking")
+              if payload.get("ordinary_ranking_effect") != "none":
+                  raise SystemExit("relationship Conduct leaked into ordinary ranking")
+              if len((payload.get("source") or {}).get("months") or []) != 12:
+                  raise SystemExit("relationship Conduct must preserve a 12-month film")
+
+          if not (generic.get("policy") or {}).get(
+              "regulatory_regime_is_attribute_not_relationship_model"
+          ):
+              raise SystemExit("generic relationship model regressed to Sandbox-specific logic")
+
+          for carrier in legacy.get("carriers") or []:
               if carrier.get("entity_type") != "sandbox_participant":
-                  raise SystemExit("non-Sandbox carrier leaked into Sandbox artifact")
-              if carrier.get("ordinary_ranking_effect") != "none":
-                  raise SystemExit("Sandbox carrier leaked into ordinary ranking")
+                  raise SystemExit("non-Sandbox carrier leaked into Sandbox projection")
+              if carrier.get("regulatory_regime") != "sandbox":
+                  raise SystemExit("ordinary carrier leaked into Sandbox projection")
 
           loovi = next(
-              (brand for brand in payload.get("brands") or [] if brand.get("brand_id") == "brand:loovi"),
+              (
+                  brand
+                  for brand in generic.get("brands") or []
+                  if brand.get("brand_id") == "brand:loovi"
+              ),
               None,
           )
           if loovi is None:
-              raise SystemExit("verified Loovi brand context missing")
-          if loovi.get("risk_carrier_cnpj") != "47006254000180":
+              raise SystemExit("verified Loovi market relationship context missing")
+          lti = next(
+              (
+                  bearer
+                  for bearer in loovi.get("risk_bearers") or []
+                  if bearer.get("cnpj") == "47006254000180"
+              ),
+              None,
+          )
+          if lti is None:
               raise SystemExit("Loovi is not linked to verified LTI carrier")
           if loovi.get("ordinary_ranking_effect") != "none":
-              raise SystemExit("Loovi Sandbox context leaked into ordinary ranking")
-          if loovi.get("conduct_context_policy") != (
-              "carrier_level_context_not_brand_exclusive_attribution"
-          ):
-              raise SystemExit("Loovi attribution policy changed")
+              raise SystemExit("Loovi relationship context leaked into ordinary ranking")
 
           forbidden = {
               "overall_score",
@@ -159,12 +218,15 @@ jobs:
                   for child in value:
                       walk(child)
 
-          walk(payload)
+          walk(legacy)
+          walk(generic)
           print(
               json.dumps(
                   {
-                      "summary": payload["summary"],
-                      "loovi": loovi["carrier_conduct_summary"],
+                      "legacy_summary": legacy["summary"],
+                      "generic_summary": generic["summary"],
+                      "lti_current_regulatory_regime": lti.get("regulatory_regime"),
+                      "lti_conduct_summary": lti.get("conduct_summary"),
                   },
                   ensure_ascii=False,
                   indent=2,
@@ -177,4 +239,6 @@ jobs:
         with:
           name: v2-sandbox-brand-conduct-${{ github.run_id }}
           retention-days: 14
-          path: data/derived/v2/sandbox_brand_conduct_evidence.json
+          path: |
+            data/derived/v2/market_relationship_conduct_evidence.json
+            data/derived/v2/sandbox_brand_conduct_evidence.json

@@ -12,12 +12,17 @@ from api.sources.susep_insurance_exposure import (
     load_susep_insurance_exposure,
 )
 from api.utils.identifiers import normalize_cnpj_v2
+from api.v2.regulatory_temporal_scope import (
+    period_scope,
+    sandbox_graduation_boundary,
+)
 
 ELIGIBILITY_PATH = Path("data/derived/v2/entity_eligibility_inventory.json")
 CONDUCT_PATH = Path("data/derived/v2/consumer_gov_conduct_evidence.json")
 RELATIONSHIPS_PATH = Path("data/reference/v2/conduct_subject_relationships.json")
 OUTPUT_PATH = Path("data/derived/v2/conduct_coverage_reconciliation.json")
-VERSION = "2.0-draft-conduct-coverage-reconciliation-1"
+VERSION = "2.0-draft-conduct-coverage-reconciliation-2"
+MIN_POST_GRADUATION_TEMPORAL_MONTHS = 9
 
 
 class ConductCoverageReconciliationError(RuntimeError):
@@ -160,6 +165,8 @@ def _complaint_count(evidence: dict[str, Any]) -> tuple[dict[str, Any], int]:
 def _insurance_exposure_12m(
     ses_entity: dict[str, Any],
     periods: list[int],
+    *,
+    eligible_periods: set[int] | None = None,
 ) -> dict[str, Any]:
     direct = 0.0
     earned = 0.0
@@ -171,6 +178,8 @@ def _insurance_exposure_12m(
     months = ses_entity.get("months") or {}
 
     for period in periods:
+        if eligible_periods is not None and period not in eligible_periods:
+            continue
         month = months.get(period) or {}
         month_rows = 0
         direct_value = float(month.get("insurance_premium_direct") or 0.0)
@@ -424,14 +433,29 @@ def build_reconciliation(
             )
             film = evidence.get("film")
 
+        boundary = sandbox_graduation_boundary(entity)
+        ordinary_periods = {
+            period
+            for period in periods
+            if period_scope(entity, period)["ordinary_comparison_eligible"]
+        }
         exposure = _insurance_exposure_12m(
-            ses_entities.get(fip) or {"months": {}}, periods
+            ses_entities.get(fip) or {"months": {}},
+            periods,
+            eligible_periods=ordinary_periods,
         )
         subject_relation = subjects.get(cnpj or "")
         target_relations = targets.get(cnpj or "", [])
         pressure = _pressure_state(
             entity, exposure, subject_relation, target_relations
         )
+        if boundary is not None and len(ordinary_periods) < MIN_POST_GRADUATION_TEMPORAL_MONTHS:
+            pressure = {
+                "state": "sandbox_graduation_insufficient_temporal_coverage",
+                "pressure_eligible_candidate": False,
+                "reason_code": "fewer_than_9_full_post_graduation_months",
+                "relationship_ids": list(pressure.get("relationship_ids") or []),
+            }
         widget_state = _widget_coverage_state(
             conduct_state, bool(pressure["pressure_eligible_candidate"])
         )
@@ -479,6 +503,15 @@ def build_reconciliation(
                 "display_name": evidence.get("display_name") if evidence else None,
                 "regulatory_universe_eligible": True,
                 "activities": activities,
+                "regulatory_temporal_scope": (
+                    {
+                        **boundary,
+                        "ordinary_comparison_months_in_window": len(ordinary_periods),
+                        "required_months_for_pressure": MIN_POST_GRADUATION_TEMPORAL_MONTHS,
+                    }
+                    if boundary is not None
+                    else None
+                ),
                 "conduct_evidence_state": conduct_state,
                 "conduct_totals": totals,
                 "conduct_film": film,
@@ -530,6 +563,11 @@ def build_reconciliation(
             "private_pension": "excluded_from_insurance_pressure_denominator",
             "capitalization": "excluded_from_insurance_pressure_denominator",
             "zero_complaints": "no_observed_complaints_is_not_a_favorable_conduct_finding",
+            "sandbox_graduation_temporal_scope": (
+                "pre-graduation and transition-month complaints/exposure remain historical "
+                "and never enter ordinary pressure; at least nine full post-graduation "
+                "months are required for a pressure candidate"
+            ),
         },
         "source": {
             "eligibility_artifact": str(ELIGIBILITY_PATH),
