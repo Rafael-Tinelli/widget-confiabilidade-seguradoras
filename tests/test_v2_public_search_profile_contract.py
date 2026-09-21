@@ -1,4 +1,5 @@
 from api.v2.build_public_search_profile_contract import (
+    apply_pre_ordinary_conduct_context,
     build_public_search_profile_contract,
 )
 
@@ -585,3 +586,66 @@ def test_historical_sandbox_profile_stays_searchable_without_claiming_discontinu
         row["profile_id"] == "entity:cnpj:39768897000133"
         for row in payload["search_index"]
     )
+
+
+def test_graduated_insurer_exposes_pre_ordinary_conduct_without_pressure_effect():
+    lti = _base_entity(
+        "fip:001988",
+        cnpj="47006254000180",
+        legal_name="LTI SEGUROS S.A.",
+    )
+    lti["evidence"] = {
+        "sandbox_history": {
+            "current_outcome": "graduated_to_ordinary_license",
+            "events": [
+                {
+                    "event_type": "sandbox_graduated_to_ordinary_license",
+                    "observed_at": "2026-09-21T16:20:00Z",
+                    "fip_code": "001988",
+                }
+            ],
+        }
+    }
+    payload = build_public_search_profile_contract(
+        _lifecycle([lti]),
+        _explorer([_explorer_row("fip:001988", legal_name="LTI SEGUROS S.A.")]),
+        _empty_sandbox(),
+        {"relationships": []},
+    )
+    conduct = {
+        "artifact": "v2_consumer_gov_conduct_evidence",
+        "entities": [
+            {
+                "entity_id": "fip:001988",
+                "pre_ordinary_history": {
+                    "role": "same_legal_entity_historical_pre_ordinary_conduct",
+                    "boundary": {
+                        "transition_period": 202609,
+                        "first_full_ordinary_period": 202610,
+                    },
+                    "totals": {
+                        "complaints": 1329,
+                        "responded": 1286,
+                        "response_rate": 0.9676,
+                        "finalized": 1329,
+                        "finalized_rate": 1.0,
+                        "satisfaction_count": 619,
+                        "average_satisfaction": 2.6446,
+                    },
+                    "film": {"months_observed": 12, "months_with_complaints": 12},
+                },
+            }
+        ],
+    }
+
+    payload = apply_pre_ordinary_conduct_context(payload, conduct)
+    profile = _profiles(payload)["entity:fip:001988"]
+    history = profile["historical_conduct_context"]
+
+    assert history["metrics"]["complaints"]["value"] == 1329
+    assert history["metrics"]["responded"]["value"] == 1286
+    assert history["metrics"]["satisfaction_count"]["value"] == 619
+    assert history["ordinary_pressure_effect"] == "none"
+    assert history["ordinary_market_baseline_effect"] == "none"
+    assert history["boundary"]["first_full_ordinary_period"] == 202610
+    assert payload["publication_policy"]["pre_ordinary_conduct_enters_ordinary_pressure"] is False
