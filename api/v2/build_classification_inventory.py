@@ -9,6 +9,7 @@ from api.sources.ses import extract_ses_master_and_financials
 from api.sources.susep_licensed import fetch_licensed_entities
 from api.sources.susep_sandbox import fetch_sandbox_participants
 from api.sources.susep_special_regimes import fetch_special_regime_records
+from api.utils.identifiers import normalize_cnpj_v2
 from api.v2.classification import (
     apply_licensed_classification,
     apply_sandbox_classification,
