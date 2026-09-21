@@ -14,9 +14,14 @@ SANDBOX_PARTICIPANTS_URL = (
     "seguradoras-participantes-do-sandbox-1"
 )
 _DEFAULT_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (compatible; SanidaResearch/1.0; +https://sanida.com.br)",
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/153.0.0.0 Safari/537.36"
+    ),
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.5",
+    "Cache-Control": "no-cache",
 }
 _BLOCK_END_RE = re.compile(
     r"</(?:p|div|li|h[1-6]|tr|td|th|section|article|dd|dt)>",
@@ -271,10 +276,20 @@ def fetch_sandbox_participants(
         raise SandboxSourceError(
             f"SUSEP Sandbox participants returned HTTP {response.status_code}"
         )
-    records = parse_sandbox_participants_html(_decode_content(response.content))
+    document = _decode_content(response.content)
+    records = parse_sandbox_participants_html(document)
     if len(records) < 5:
+        title_match = re.search(
+            r"<title\\b[^>]*>(.*?)</title>",
+            document,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        title = _text(title_match.group(1)) if title_match else None
         raise SandboxSourceError(
-            f"SUSEP Sandbox participant page returned too few records: {len(records)}"
+            "SUSEP Sandbox participant page returned too few records: "
+            f"{len(records)}; bytes={len(response.content)}; "
+            f"content_type={response.headers.get('Content-Type')!r}; "
+            f"final_url={response.url!s}; title={title!r}"
         )
     if not any(item["regulatory_status"] == "temporary_authorized" for item in records):
         raise SandboxSourceError("SUSEP Sandbox page has no active temporary authorization")
