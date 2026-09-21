@@ -220,6 +220,9 @@ def parse_sandbox_participants_html(document: str) -> list[dict[str, Any]]:
         cnpj = normalize_cnpj_v2(fields.get("cnpj"))
         if not cnpj:
             raise SandboxSourceError(f"Sandbox participant without valid CNPJ: {name}")
+        status_text = " ".join(
+            part for part in (raw_status, fields.get("end_raw") or "") if part
+        )
         records.append(
             {
                 "legal_name": name,
@@ -230,6 +233,10 @@ def parse_sandbox_participants_html(document: str) -> list[dict[str, Any]]:
                 "authorization_start": _extract_date(fields.get("start_raw")),
                 "authorization_end": _extract_date(fields.get("end_raw")),
                 "authorization_end_raw": fields.get("end_raw"),
+                "authorization_extended": (
+                    "prorrogada" in _normalize_label(status_text)
+                    or "prorrogado" in _normalize_label(status_text)
+                ),
                 "modalities": fields.get("modalities"),
                 "source": SANDBOX_PARTICIPANTS_URL,
             }
