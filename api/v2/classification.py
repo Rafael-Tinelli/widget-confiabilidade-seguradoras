@@ -265,6 +265,7 @@ def _sandbox_evidence(record: dict[str, Any]) -> dict[str, Any]:
         "authorization_start": record.get("authorization_start"),
         "authorization_end": record.get("authorization_end"),
         "authorization_end_raw": record.get("authorization_end_raw"),
+        "authorization_extended": bool(record.get("authorization_extended")),
         "modalities": record.get("modalities"),
     }
 
