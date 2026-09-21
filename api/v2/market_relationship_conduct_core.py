@@ -182,6 +182,10 @@ def build_relationship_model(lifecycle: dict[str, Any]) -> tuple:
                     "regulatory_regime": entity.get("regulatory_regime"),
                     "regulatory_status": entity.get("regulatory_status"),
                     "regulatory_class": regulatory_label(entity),
+                    "sandbox_history": (
+                        dict((entity.get("evidence") or {}).get("sandbox_history") or {})
+                        or None
+                    ),
                     "relationship_status": relation.get("status"),
                     "product_scope": relation.get("scope"),
                     "effective_from": relation.get("effective_from")
@@ -339,6 +343,10 @@ def build_market_relationship_conduct_evidence(
                 "regulatory_regime": entity.get("regulatory_regime"),
                 "regulatory_status": entity.get("regulatory_status"),
                 "regulatory_class": regulatory_label(entity),
+                "sandbox_history": (
+                    dict((entity.get("evidence") or {}).get("sandbox_history") or {})
+                    or None
+                ),
                 "conduct_summary": summary,
             }
         )
