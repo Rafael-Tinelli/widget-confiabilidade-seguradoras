@@ -195,3 +195,33 @@ def test_summary_counts_only_regulatory_universe() -> None:
     assert summary["core_financial_evidence_ready_count"] == 1
     assert summary["assessment_eligible_count"] == 0
     assert summary["ranking_eligible_count"] == 0
+
+
+def test_pre_graduation_financial_history_does_not_complete_ordinary_history() -> None:
+    entity = _eligible_entity()
+    entity["evidence"] = {
+        "sandbox_history": {
+            "current_outcome": "graduated_to_ordinary_license",
+            "events": [
+                {
+                    "event_type": "sandbox_graduated_to_ordinary_license",
+                    "observed_at": "2026-09-21T16:20:00Z",
+                    "fip_code": "000001",
+                }
+            ],
+        }
+    }
+
+    profile = apply_financial_evidence([entity], _source())[0]["financial_evidence"]
+
+    assert profile["state"] == "insufficient_core_evidence"
+    assert profile["core_financial_evidence_ready"] is False
+    assert profile["capital"]["observed_periods_total"] == 0
+    assert profile["balance"]["observed_periods_total"] == 0
+    assert profile["operations"]["observed_periods_total"] == 0
+    assert profile["regulatory_temporal_scope"]["first_full_ordinary_period"] == 202610
+    assert profile["regulatory_temporal_scope"]["excluded_period_counts"] == {
+        "capital": 12,
+        "balance": 12,
+        "insurance_operations": 12,
+    }
