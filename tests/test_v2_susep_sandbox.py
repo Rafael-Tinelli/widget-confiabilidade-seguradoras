@@ -55,7 +55,6 @@ def test_parse_sandbox_split_table_cells_like_current_gov_renderer():
     assert record["legal_name"] == "Novo Seguros S.A."
     assert record["cnpj"] == "50182327000108"
     assert record["regulatory_status"] == "temporary_authorized"
-    assert record["authorization_extended"] is True
     assert record["authorization_extended"] is False
     assert record["authorization_start"] == "2023-10-31"
     assert record["authorization_end"] == "2026-10-30"
@@ -74,3 +73,4 @@ def test_status_text_not_date_decides_current_authorization():
 
     assert record["authorization_end"] == "2025-12-16"
     assert record["regulatory_status"] == "temporary_authorized"
+    assert record["authorization_extended"] is True
