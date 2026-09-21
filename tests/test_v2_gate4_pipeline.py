@@ -72,6 +72,17 @@ def test_public_profiles_declares_consumer_conduct_as_direct_dependency():
     )
 
 
+def test_relationship_conduct_stage_declares_lifecycle_and_both_outputs():
+    mapping = stage_map(STAGES)
+    stage = mapping["sandbox_brand_conduct"]
+
+    assert "lifecycle" in stage.dependencies
+    assert stage.outputs == (
+        "data/derived/v2/market_relationship_conduct_evidence.json",
+        "data/derived/v2/sandbox_brand_conduct_evidence.json",
+    )
+
+
 def test_public_package_depends_on_closed_cross_pillar_chain():
     required = ancestors("distribution_manifest")
 
