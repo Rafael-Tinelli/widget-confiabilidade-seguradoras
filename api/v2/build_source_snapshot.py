@@ -36,6 +36,11 @@ from api.v2.build_classification_inventory import (
     write_classification_inventory,
 )
 from api.v2.generation import BuildContext
+from api.v2.sandbox_lifecycle_history import (
+    seed_sandbox_lifecycle_history,
+    update_sandbox_lifecycle_history,
+    write_sandbox_lifecycle_history,
+)
 from api.v2.refresh_receita_lifecycle import (
     DEFAULT_MIN_COVERAGE,
     LEGACY_RECEITA_LIFECYCLE_CACHE_CONTRACT_VERSIONS,
@@ -337,6 +342,41 @@ def _acquire_record_source(
         validate_path=_json_records_validator,
         context=context,
     )
+
+
+def _load_sandbox_history(path: Path) -> dict[str, Any] | None:
+    if not path.is_file():
+        return None
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if payload.get("artifact") != "v2_sandbox_regulatory_history":
+        raise SourceSnapshotError("unexpected Sandbox lifecycle cache artifact")
+    return payload
+
+
+def _bootstrap_sandbox_history_from_validated_cache(
+    *,
+    cache: CachedSource,
+    history_path: Path,
+    previous_snapshot_path: Path,
+) -> dict[str, Any] | None:
+    existing = _load_sandbox_history(history_path)
+    if existing is not None:
+        return existing
+    try:
+        fetched_at = cache.materialize(previous_snapshot_path)
+        _json_records_validator(previous_snapshot_path)
+    except Exception:  # noqa: BLE001
+        if previous_snapshot_path.exists():
+            previous_snapshot_path.unlink()
+        return None
+    try:
+        return seed_sandbox_lifecycle_history(
+            _load_record_snapshot(previous_snapshot_path),
+            observed_at=fetched_at,
+        )
+    finally:
+        if previous_snapshot_path.exists():
+            previous_snapshot_path.unlink()
 
 
 def _bootstrap_receita_cache(
@@ -789,6 +829,18 @@ def build_source_snapshot(
         fetcher=fetch_special_regime_records,
         context=context,
     )
+    sandbox_cache = _cache_for(
+        cache_dir,
+        source_id="susep_sandbox",
+        source_url=SANDBOX_PARTICIPANTS_URL,
+        suffix=".json",
+    )
+    sandbox_history_cache_path = cache_dir / "susep_sandbox_history.json"
+    sandbox_history = _bootstrap_sandbox_history_from_validated_cache(
+        cache=sandbox_cache,
+        history_path=sandbox_history_cache_path,
+        previous_snapshot_path=source_dir / "susep_sandbox_previous.json",
+    )
     sandbox = _acquire_record_source(
         source_id="susep_sandbox",
         source_url=SANDBOX_PARTICIPANTS_URL,
@@ -797,6 +849,18 @@ def build_source_snapshot(
         fetcher=fetch_sandbox_participants,
         context=context,
     )
+
+    sandbox_state = sandbox.observation.to_lineage(context).state
+    sandbox_history = update_sandbox_lifecycle_history(
+        sandbox_history,
+        current_rows=_load_record_snapshot(sandbox_path),
+        current_licensed_rows=_load_record_snapshot(licensed_path),
+        observed_at=context.generated_at,
+        source_state=sandbox_state,
+    )
+    sandbox_history_path = source_dir / "susep_sandbox_history.json"
+    write_sandbox_lifecycle_history(sandbox_history, sandbox_history_path)
+    write_sandbox_lifecycle_history(sandbox_history, sandbox_history_cache_path)
 
     preliminary = [base, lista, licensed, special, sandbox]
     write_source_lineage(
@@ -822,6 +886,7 @@ def build_source_snapshot(
         _load_record_snapshot(licensed_path),
         _load_record_snapshot(special_path),
         _load_record_snapshot(sandbox_path),
+        sandbox_history=sandbox_history,
     )
     classification_path = source_dir / "classification_inventory.json"
     write_classification_inventory(classification, classification_path)
@@ -860,6 +925,7 @@ def build_source_snapshot(
     return {
         "build": context.as_dict(),
         "classification_path": str(classification_path),
+        "sandbox_history_path": str(sandbox_history_path),
         "receita_lifecycle_records_path": str(receita_records),
         "base_completa_path": str(base_path),
         "listaempresas_path": str(lista_path),
