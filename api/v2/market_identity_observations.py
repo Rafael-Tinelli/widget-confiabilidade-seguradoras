@@ -380,7 +380,17 @@ def regulated_entity_delta_observations(
 def sandbox_delta_observations(
     previous_rows: Iterable[dict[str, Any]],
     current_rows: Iterable[dict[str, Any]],
+    current_licensed_rows: Iterable[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
+    """Detect Sandbox lifecycle changes without deleting historical identities.
+
+    The current Sandbox page is a current-state source, not a complete lifecycle
+    ledger. Therefore removals are observations that need reconciliation. When
+    the exact same CNPJ appears in the current ordinary licensed universe as an
+    insurer, the removal can be identified deterministically as a Sandbox-to-
+    ordinary-license transition candidate. No fuzzy/name matching is used.
+    """
+
     def index(rows: Iterable[dict[str, Any]]) -> dict[str, dict[str, Any]]:
         result: dict[str, dict[str, Any]] = {}
         for raw in rows:
@@ -390,9 +400,20 @@ def sandbox_delta_observations(
                 result[cnpj] = row
         return result
 
+    def licensed_index(rows: Iterable[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+        result: dict[str, dict[str, Any]] = {}
+        for raw in rows:
+            row = dict(raw)
+            cnpj = normalize_cnpj_v2(row.get("cnpj"))
+            if cnpj and row.get("entity_type") == "insurer":
+                result[cnpj] = row
+        return result
+
     previous = index(previous_rows)
     current = index(current_rows)
+    current_licensed = licensed_index(current_licensed_rows or [])
     observations: list[dict[str, Any]] = []
+
     for cnpj in sorted(set(current) - set(previous)):
         row = current[cnpj]
         anchor = f"cnpj:{cnpj}"
@@ -409,6 +430,100 @@ def sandbox_delta_observations(
                 "lifecycle_state": "review_required",
             }
         )
+
+    for cnpj in sorted(set(previous) & set(current)):
+        before = previous[cnpj]
+        row = current[cnpj]
+        anchor = f"cnpj:{cnpj}"
+
+        for field, candidate_type in (
+            ("regulatory_status", "sandbox_status_change"),
+            ("authorization_end", "sandbox_authorization_end_change"),
+            ("authorization_start", "sandbox_authorization_start_change"),
+            ("modalities", "sandbox_modalities_change"),
+        ):
+            before_value = before.get(field)
+            current_value = row.get(field)
+            if before_value != current_value:
+                observations.append(
+                    {
+                        "candidate_key": _candidate_key(
+                            "sandbox", f"{anchor}:{candidate_type}"
+                        ),
+                        "candidate_anchor": anchor,
+                        "source": "susep_sandbox_delta",
+                        "sensor_class": "regulatory",
+                        "confidence_semantics": "official_regulatory_change",
+                        "candidate_type": candidate_type,
+                        "observed_value": current_value,
+                        "previous_value": before_value,
+                        "cnpj": cnpj,
+                        "lifecycle_state": "review_required",
+                    }
+                )
+
+        before_extended = bool(before.get("authorization_extended"))
+        current_extended = bool(row.get("authorization_extended"))
+        if before_extended != current_extended:
+            observations.append(
+                {
+                    "candidate_key": _candidate_key(
+                        "sandbox", f"{anchor}:sandbox_extension_change"
+                    ),
+                    "candidate_anchor": anchor,
+                    "source": "susep_sandbox_delta",
+                    "sensor_class": "regulatory",
+                    "confidence_semantics": "official_regulatory_change",
+                    "candidate_type": "sandbox_extension_change",
+                    "observed_value": current_extended,
+                    "previous_value": before_extended,
+                    "cnpj": cnpj,
+                    "lifecycle_state": "review_required",
+                }
+            )
+
+    for cnpj in sorted(set(previous) - set(current)):
+        before = previous[cnpj]
+        licensed = current_licensed.get(cnpj)
+        anchor = f"cnpj:{cnpj}"
+        graduated = licensed is not None
+        observation = {
+            "candidate_key": _candidate_key(
+                "sandbox",
+                f"{anchor}:"
+                + (
+                    "sandbox_graduated_to_ordinary_license"
+                    if graduated
+                    else "sandbox_participant_removed"
+                ),
+            ),
+            "candidate_anchor": anchor,
+            "source": "susep_sandbox_delta",
+            "sensor_class": "regulatory",
+            "confidence_semantics": (
+                "deterministic_same_cnpj_regulatory_transition"
+                if graduated
+                else "official_current_sandbox_absence"
+            ),
+            "candidate_type": (
+                "sandbox_graduated_to_ordinary_license"
+                if graduated
+                else "sandbox_participant_removed"
+            ),
+            "observed_value": (
+                licensed.get("legal_name")
+                if graduated
+                else before.get("legal_name") or before.get("name")
+            ),
+            "previous_value": before.get("regulatory_status"),
+            "cnpj": cnpj,
+            "lifecycle_state": "review_required",
+        }
+        if graduated:
+            observation["fip_code"] = licensed.get("fip_code")
+            observation["licensed_entity_type"] = licensed.get("entity_type")
+        observations.append(observation)
+
     return observations
 
 
