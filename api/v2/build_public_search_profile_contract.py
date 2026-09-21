@@ -1040,8 +1040,7 @@ def _entity_profile(
         },
         "lifecycle": {
             "legal_lifecycle": entity.get("legal_lifecycle"),
-            "is_historical": context.get("filter_bucket")
-            in {"historical", "sandbox_history"},
+            "is_historical": context.get("filter_bucket") == "historical",
             "successor_profile_id": (
                 f"entity:{successor['entity_id']}" if successor else None
             ),
