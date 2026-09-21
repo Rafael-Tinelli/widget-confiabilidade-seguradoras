@@ -34,6 +34,7 @@ def test_parse_sandbox_distinguishes_authorized_and_cancelled():
     assert clubfix["authorization_start"] == "2023-03-21"
     assert clubfix["authorization_end"] == "2026-05-19"
     assert "prorrogada" in clubfix["authorization_end_raw"].casefold()
+    assert clubfix["authorization_extended"] is True
 
 
 def test_parse_sandbox_split_table_cells_like_current_gov_renderer():
@@ -54,6 +55,8 @@ def test_parse_sandbox_split_table_cells_like_current_gov_renderer():
     assert record["legal_name"] == "Novo Seguros S.A."
     assert record["cnpj"] == "50182327000108"
     assert record["regulatory_status"] == "temporary_authorized"
+    assert record["authorization_extended"] is True
+    assert record["authorization_extended"] is False
     assert record["authorization_start"] == "2023-10-31"
     assert record["authorization_end"] == "2026-10-30"
 
