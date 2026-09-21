@@ -1,0 +1,45 @@
+name: TEMP Sandbox Source Probe
+
+on:
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install minimal dependencies
+        run: python -m pip install requests
+      - name: Probe current SUSEP Sandbox source
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from api.sources.susep_sandbox import fetch_sandbox_participants
+
+          rows = fetch_sandbox_participants()
+          by_cnpj = {row["cnpj"]: row for row in rows}
+
+          print(f"SANDBOX_LIVE_COUNT={len(rows)}")
+          print("SANDBOX_LIVE_CNPJS=" + ",".join(sorted(by_cnpj)))
+          print(f"LTI_PRESENT={'47006254000180' in by_cnpj}")
+
+          assert len(rows) >= 5
+          assert "47006254000180" not in by_cnpj
+          extended = [
+              row for row in rows
+              if row.get("authorization_extended")
+          ]
+          print(f"EXTENDED_COUNT={len(extended)}")
+          assert extended
+          PY
