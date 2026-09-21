@@ -480,3 +480,108 @@ def test_search_index_contains_entities_and_brands_without_fuzzy_identity_decisi
         row for row in payload["search_index"] if row["profile_id"] == "brand:teste"
     )
     assert "teste seguros" in brand_entry["search_text"]
+
+
+def test_graduated_sandbox_insurer_keeps_history_but_current_status_is_ordinary():
+    lti = _base_entity(
+        "fip:001988",
+        cnpj="47006254000180",
+        legal_name="LTI SEGUROS S.A.",
+    )
+    lti["evidence"] = {
+        "sandbox_history": {
+            "cnpj": "47006254000180",
+            "legal_name": "LTI Seguros S.A.",
+            "editions": ["2ª edição do Sandbox"],
+            "first_seen": "2023-01-20T00:00:00Z",
+            "last_seen_in_current_sandbox": "2026-09-15T02:26:32Z",
+            "current_sandbox_present": False,
+            "current_outcome": "graduated_to_ordinary_license",
+            "last_snapshot": {
+                "regulatory_status": "temporary_authorized",
+                "authorization_end": "2026-03-20",
+                "authorization_extended": True,
+            },
+            "ordinary_license": {
+                "fip_code": "001988",
+                "legal_name": "LTI SEGUROS S.A.",
+                "entity_type": "insurer",
+            },
+            "events": [
+                {
+                    "event_type": "sandbox_graduated_to_ordinary_license",
+                    "observed_at": "2026-09-21T16:20:00Z",
+                    "previous_value": "temporary_authorized",
+                    "observed_value": "active_licensed",
+                    "fip_code": "001988",
+                }
+            ],
+        }
+    }
+
+    payload = build_public_search_profile_contract(
+        _lifecycle([lti]),
+        _explorer([_explorer_row("fip:001988", legal_name="LTI SEGUROS S.A.")]),
+        _empty_sandbox(),
+        {"relationships": []},
+    )
+    profile = _profiles(payload)["entity:fip:001988"]
+
+    assert profile["regulatory"]["regime"] == "ordinary"
+    assert profile["regulatory"]["status"] == "active_licensed"
+    assert profile["regulatory"]["label"] == "Seguradora"
+    assert profile["lifecycle"]["is_historical"] is False
+    assert profile["regulatory_history"]["sandbox"]["participated"] is True
+    assert profile["regulatory_history"]["sandbox"]["current_outcome"] == (
+        "graduated_to_ordinary_license"
+    )
+    assert "Antes da autorização ordinária atual" in profile["public_summary"]["quick_answer"]
+
+
+def test_historical_sandbox_profile_stays_searchable_without_claiming_discontinuation():
+    former = _base_entity(
+        "cnpj:39768897000133",
+        cnpj="39768897000133",
+        legal_name="COOVER SEGURADORA S.A.",
+        entity_type="sandbox_participant",
+        regime="sandbox",
+        status="sandbox_history_only",
+    )
+    former["query_context"] = {
+        "entity_state": "historical_sandbox_participant",
+        "filter_bucket": "sandbox_history",
+    }
+    former["evidence"] = {
+        "sandbox_history": {
+            "cnpj": "39768897000133",
+            "legal_name": "COOVER SEGURADORA S.A.",
+            "editions": ["1ª edição do Sandbox"],
+            "first_seen": "2021-03-01T00:00:00Z",
+            "last_seen_in_current_sandbox": "2026-09-15T18:44:00Z",
+            "current_sandbox_present": False,
+            "current_outcome": "not_present_in_current_sandbox",
+            "last_snapshot": {
+                "regulatory_status": "sandbox_authorization_cancelled",
+            },
+            "ordinary_license": None,
+            "events": [],
+        }
+    }
+
+    payload = build_public_search_profile_contract(
+        _lifecycle([former]),
+        _explorer([]),
+        _empty_sandbox(),
+        {"relationships": []},
+    )
+    profile = _profiles(payload)["entity:cnpj:39768897000133"]
+
+    assert profile["lifecycle"]["is_historical"] is True
+    assert profile["regulatory"]["filter_bucket"] == "sandbox_history"
+    assert profile["regulatory"]["label"] == "Participação histórica no Sandbox regulatório"
+    assert profile["regulatory_history"]["sandbox"]["participated"] is True
+    assert "descontinuação" in profile["public_summary"]["quick_answer"]
+    assert any(
+        row["profile_id"] == "entity:cnpj:39768897000133"
+        for row in payload["search_index"]
+    )
