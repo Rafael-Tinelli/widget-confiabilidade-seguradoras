@@ -287,7 +287,12 @@ STAGES: tuple[PipelineStage, ...] = (
     PipelineStage(
         stage_id="public_profiles",
         kind="derive",
-        dependencies=("lifecycle", "leaderboards", "sandbox_brand_conduct"),
+        dependencies=(
+            "lifecycle",
+            "leaderboards",
+            "sandbox_brand_conduct",
+            "consumer_conduct",
+        ),
         commands=(
             _module("api.v2.public_profile_regulatory_semantics"),
             _module("api.v2.validate_public_search_profile_contract"),
