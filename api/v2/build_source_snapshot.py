@@ -263,6 +263,57 @@ def _load_record_snapshot(path: Path) -> list[dict[str, Any]]:
     return [dict(row) for row in rows]
 
 
+def _assert_no_stale_sandbox_override(
+    *,
+    licensed: AcquisitionResult,
+    sandbox: AcquisitionResult,
+    licensed_path: Path,
+    sandbox_path: Path,
+    context: BuildContext,
+) -> None:
+    """Fail closed when stale Sandbox state could override a fresh license.
+
+    The licensed-entities source can contain active Sandbox participants, so a
+    fresh licensed match alone is not proof of graduation. Conversely, a stale
+    Sandbox snapshot must never be allowed to win silently over fresh current
+    regulatory evidence. Until the Sandbox source is fresh again, an overlap is
+    an unresolved regulatory-state conflict and publication must stop.
+    """
+
+    licensed_state = licensed.observation.to_lineage(context).state
+    sandbox_state = sandbox.observation.to_lineage(context).state
+    if licensed_state != "fresh" or sandbox_state != "stale":
+        return
+
+    licensed_by_cnpj = {
+        cnpj: row
+        for row in _load_record_snapshot(licensed_path)
+        if row.get("entity_type") == "insurer"
+        and (cnpj := normalize_cnpj_v2(row.get("cnpj")))
+    }
+    stale_active_sandbox = {
+        cnpj: row
+        for row in _load_record_snapshot(sandbox_path)
+        if row.get("regulatory_status") == "temporary_authorized"
+        and (cnpj := normalize_cnpj_v2(row.get("cnpj")))
+    }
+    conflicts = sorted(set(licensed_by_cnpj) & set(stale_active_sandbox))
+    if conflicts:
+        sample = [
+            {
+                "cnpj": cnpj,
+                "licensed_name": licensed_by_cnpj[cnpj].get("legal_name"),
+                "stale_sandbox_name": stale_active_sandbox[cnpj].get("legal_name"),
+            }
+            for cnpj in conflicts[:10]
+        ]
+        raise SourceSnapshotError(
+            "stale Sandbox snapshot overlaps fresh licensed insurers; "
+            "current regulatory regime cannot be resolved safely: "
+            f"count={len(conflicts)} sample={sample}"
+        )
+
+
 def _acquire_record_source(
     *,
     source_id: str,
@@ -754,6 +805,13 @@ def build_source_snapshot(
         context,
     )
     _require_available(preliminary, context)
+    _assert_no_stale_sandbox_override(
+        licensed=licensed,
+        sandbox=sandbox,
+        licensed_path=licensed_path,
+        sandbox_path=sandbox_path,
+        context=context,
+    )
 
     companies = load_ses_master_companies(
         base_completa=base_path,
