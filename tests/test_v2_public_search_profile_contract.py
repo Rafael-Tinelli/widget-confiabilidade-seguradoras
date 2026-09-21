@@ -549,7 +549,7 @@ def test_historical_sandbox_profile_stays_searchable_without_claiming_discontinu
     )
     former["query_context"] = {
         "entity_state": "historical_sandbox_participant",
-        "filter_bucket": "sandbox_history",
+        "filter_bucket": "historical",
     }
     former["evidence"] = {
         "sandbox_history": {
@@ -577,7 +577,7 @@ def test_historical_sandbox_profile_stays_searchable_without_claiming_discontinu
     profile = _profiles(payload)["entity:cnpj:39768897000133"]
 
     assert profile["lifecycle"]["is_historical"] is True
-    assert profile["regulatory"]["filter_bucket"] == "sandbox_history"
+    assert profile["regulatory"]["filter_bucket"] == "historical"
     assert profile["regulatory"]["label"] == "Participação histórica no Sandbox regulatório"
     assert profile["regulatory_history"]["sandbox"]["participated"] is True
     assert "descontinuação" in profile["public_summary"]["quick_answer"]
