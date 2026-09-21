@@ -379,3 +379,57 @@ def test_calibration_v2_preserves_mix_and_excluded_reason() -> None:
     assert by_id["fip:000001"]["portfolio_12m"]["nearest_mix_peers"][0]["entity_id"] == "fip:000002"
     assert payload["diagnostics"]["shrinkage_applied"] is False
     assert payload["diagnostics"]["peer_groups_selected"] is False
+
+
+def test_calibration_v2_excludes_preordinary_months_from_complaints_and_premium() -> None:
+    graduated = _conduct_entity("fip:001988", [0, 5], 3.0)
+    graduated["monthly"][0]["ordinary_comparison_eligible"] = False
+    graduated["monthly"][0]["regulatory_scope"] = "historical_sandbox_period"
+    graduated["monthly"][1]["ordinary_comparison_eligible"] = True
+    graduated["monthly"][1]["regulatory_scope"] = "ordinary_post_graduation_full_month"
+
+    ordinary = _conduct_entity("fip:000002", [5, 5], 4.0)
+    conduct = {
+        "source": {
+            "months": ["2026-01", "2026-02"],
+            "core": {"state": "available"},
+            "taxonomy_evidence": {"state": "source_unavailable"},
+        },
+        "entities": [graduated, ordinary],
+    }
+    reconciliation = {
+        "entities": [
+            _candidate("fip:001988", "001988", "LTI"),
+            _candidate("fip:000002", "000002", "B"),
+        ]
+    }
+    ses = {
+        "periods": [202601, 202602],
+        "entities": {
+            "001988": {
+                "months": {
+                    202601: _ses_month(1_000_000.0, 1001),
+                    202602: _ses_month(100.0, 1001),
+                }
+            },
+            "000002": {
+                "months": {
+                    202601: _ses_month(100.0, 2001),
+                    202602: _ses_month(100.0, 2001),
+                }
+            },
+        },
+    }
+
+    payload = build_calibration_v2(conduct, reconciliation, ses)
+    row = next(item for item in payload["entities"] if item["entity_id"] == "fip:001988")
+
+    assert row["ordinary_comparison_months"] == 1
+    assert row["complaints_12m"] == 5
+    assert row["premium_direct_12m"] == pytest.approx(100.0)
+    assert row["monthly"][0]["state"] == "not_comparable_pre_ordinary_regulatory_scope"
+    assert row["monthly"][0]["premium_direct"] == 0.0
+    assert row["monthly"][0]["complaints"] == 0
+    assert row["monthly"][1]["state"] == "available"
+    assert payload["monthly_market"][0]["comparable_entities"] == 1
+    assert payload["monthly_market"][0]["market_premium_direct"] == pytest.approx(100.0)
