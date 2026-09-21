@@ -465,6 +465,18 @@ def _aligned_entity(
         direct = float(item["premium_direct"])
         complaints = int(item["complaints"])
         market_complaints, market_premium = baselines[month]
+        if not bool(item.get("ordinary_comparison_eligible", True)):
+            monthly.append(
+                {
+                    **item,
+                    "state": "not_comparable_pre_ordinary_regulatory_scope",
+                    "reason_code": "pre_graduation_or_transition_month",
+                    "expected_complaints": None,
+                    "pressure_ratio": None,
+                }
+            )
+            ratios.append(None)
+            continue
         if direct <= 0 or market_premium <= 0:
             monthly.append(
                 {
@@ -524,6 +536,7 @@ def _aligned_entity(
             "entity_id", "fip_code", "cnpj", "legal_name", "display_name",
             "complaints_12m", "premium_direct_12m", "premium_earned_12m_diagnostic",
             "premium_earned_complete_months", "premium_earned_diagnostic_complete",
+            "ordinary_comparison_months",
         )},
         "pressure_12m": pressure,
         "monthly": monthly,
@@ -649,6 +662,10 @@ def build_calibration_v2(
             "periods": periods,
             "series_policy": "no_cross_source_stitching",
             "period_policy": "chronological_consecutive_months",
+            "regulatory_temporal_policy": (
+                "pre-graduation and transition-month observations are excluded from "
+                "ordinary pressure; only full post-graduation months are comparable"
+            ),
         },
         "population": {
             "reconciliation_entities": len(reconciliation.get("entities") or []),
