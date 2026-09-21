@@ -87,6 +87,37 @@ jobs:
           done
           echo "Restored Sandbox Conduct inputs from run $run_id"
 
+      - name: Restore latest successful lifecycle input
+        run: |
+          set -euo pipefail
+          branch="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
+          run_id="$(gh run list \
+            --repo "$GITHUB_REPOSITORY" \
+            --workflow "V2 Lifecycle Relationships Validation" \
+            --branch "$branch" \
+            --status success \
+            --limit 30 \
+            --json databaseId \
+            --jq '.[0].databaseId')"
+          if [[ -z "$run_id" || "$run_id" == "null" ]]; then
+            echo "No successful lifecycle artifact found." >&2
+            exit 1
+          fi
+          rm -rf "$RUNNER_TEMP/lifecycle-upstream"
+          mkdir -p "$RUNNER_TEMP/lifecycle-upstream"
+          gh run download "$run_id" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name "v2-lifecycle-relationships-$run_id" \
+            --dir "$RUNNER_TEMP/lifecycle-upstream"
+          source_file="$(find "$RUNNER_TEMP/lifecycle-upstream" -type f \
+            -name "entity_lifecycle_relationship_inventory.json" | head -n 1)"
+          if [[ -z "$source_file" ]]; then
+            echo "Lifecycle artifact missing entity_lifecycle_relationship_inventory.json" >&2
+            exit 1
+          fi
+          cp "$source_file" "data/derived/v2/entity_lifecycle_relationship_inventory.json"
+          echo "Restored lifecycle input from run $run_id"
+
       - name: Refresh preserved Consumer.gov monthly aggregate
         run: |
           set -euo pipefail
