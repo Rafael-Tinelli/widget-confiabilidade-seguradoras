@@ -45,6 +45,10 @@ from api.v2.consumer_gov_universe_resolution import (
     build_full_universe_provider_index,
     resolve_provider_against_full_universe,
 )
+from api.v2.regulatory_temporal_scope import (
+    period_scope,
+    sandbox_graduation_boundary,
+)
 
 OUTPUT_PATH = Path("data/derived/v2/consumer_gov_conduct_evidence.json")
 
@@ -234,8 +238,17 @@ def build_conduct_evidence() -> dict[str, Any]:
         entity_id: {month: {} for month in months}
         for entity_id in eligible_by_id
     }
+    historical_entity_stats: dict[str, dict[str, dict[str, Any]]] = {
+        entity_id: {month: {} for month in months}
+        for entity_id in eligible_by_id
+    }
+    graduation_boundaries = {
+        entity_id: sandbox_graduation_boundary(entity)
+        for entity_id, entity in eligible_by_id.items()
+    }
     source_month_totals: Counter[str] = Counter()
     market_month_totals: Counter[str] = Counter()
+    historical_pre_ordinary_month_totals: Counter[str] = Counter()
     resolution_counts: Counter[str] = Counter()
     resolution_methods: Counter[str] = Counter()
     outside_names: Counter[str] = Counter()
@@ -301,18 +314,47 @@ def build_conduct_evidence() -> dict[str, Any]:
                     "resolved Consumer.gov provider to non-eligible entity: "
                     f"{provider} -> {entity_id}"
                 )
-            market_month_totals[month] += complaints
-            added = add_entry_statistics(entity_stats[entity_id][month], entry)
+
+            scope = period_scope(
+                eligible_by_id[entity_id],
+                int(month.replace("-", "")),
+            )
+            if not scope["ordinary_comparison_eligible"]:
+                historical_pre_ordinary_month_totals[month] += complaints
+                added = add_entry_statistics(
+                    historical_entity_stats[entity_id][month],
+                    entry,
+                )
+            else:
+                market_month_totals[month] += complaints
+                added = add_entry_statistics(entity_stats[entity_id][month], entry)
             if added != complaints:
                 raise RuntimeError(
                     f"aggregate complaint count changed while merging {provider} {month}"
                 )
 
+    def resolve_for_ordinary_taxonomy(provider: str, month: str) -> dict[str, Any]:
+        resolution = resolve(provider, month)
+        if str(resolution.get("resolution_state") or "") != "matched_current_insurer":
+            return resolution
+        entity_id = str(resolution.get("entity_id") or "")
+        entity = eligible_by_id.get(entity_id)
+        if entity is None:
+            return resolution
+        scope = period_scope(entity, int(month.replace("-", "")))
+        if scope["ordinary_comparison_eligible"]:
+            return resolution
+        return {
+            "resolution_state": "outside_ordinary_temporal_scope",
+            "entity_id": entity_id,
+            "match_method": "regulatory_temporal_scope_exclusion",
+        }
+
     taxonomy_state, taxonomy_by_entity_month, taxonomy_catalog = (
         build_cached_taxonomy_enrichment(
             months,
             list(eligible_by_id),
-            resolve,
+            resolve_for_ordinary_taxonomy,
             core_source_month_totals=dict(source_month_totals),
             core_market_month_totals=dict(market_month_totals),
         )
@@ -322,19 +364,26 @@ def build_conduct_evidence() -> dict[str, Any]:
     film_signals: Counter[str] = Counter()
     history_states: Counter[str] = Counter()
     observed_entities = 0
+    historical_observed_entities = 0
 
     for entity_id, entity in sorted(
         eligible_by_id.items(),
         key=lambda item: str(item[1].get("legal_name") or item[0]),
     ):
         monthly: list[dict[str, Any]] = []
+        historical_monthly: list[dict[str, Any]] = []
         aggregate_taxonomy = {key: Counter() for key in TAXONOMY_COLUMNS}
         for month in months:
+            scope = period_scope(entity, int(month.replace("-", "")))
             month_payload = aggregate_entry_to_month(
                 month,
                 {"statistics": entity_stats[entity_id][month]},
                 matched_current_insurer_market_complaints=market_month_totals[month],
             )
+            month_payload["ordinary_comparison_eligible"] = bool(
+                scope["ordinary_comparison_eligible"]
+            )
+            month_payload["regulatory_scope"] = scope["scope"]
             month_taxonomy = taxonomy_by_entity_month[entity_id][month]
             month_payload["taxonomy"] = {
                 key: _sorted_counter(month_taxonomy[key])
@@ -344,12 +393,45 @@ def build_conduct_evidence() -> dict[str, Any]:
                 aggregate_taxonomy[key].update(month_taxonomy[key])
             monthly.append(month_payload)
 
+            historical_payload = aggregate_entry_to_month(
+                month,
+                {"statistics": historical_entity_stats[entity_id][month]},
+                matched_current_insurer_market_complaints=(
+                    historical_pre_ordinary_month_totals[month]
+                ),
+            )
+            historical_payload["ordinary_comparison_eligible"] = False
+            historical_payload["regulatory_scope"] = scope["scope"]
+            historical_monthly.append(historical_payload)
+
         totals = _entity_totals(monthly)
+        historical_totals = _entity_totals(historical_monthly)
         if totals["complaints"] > 0:
             observed_entities += 1
+        if historical_totals["complaints"] > 0:
+            historical_observed_entities += 1
         film = build_conduct_film(monthly)
         film_signals[str(film["conduct_signal"])] += 1
         history_states[str(film["history_state"])] += 1
+
+        boundary = graduation_boundaries[entity_id]
+        pre_ordinary_history = None
+        if boundary is not None:
+            pre_ordinary_history = {
+                "availability": "available",
+                "role": "same_legal_entity_historical_pre_ordinary_conduct",
+                "ordinary_pressure_effect": "none",
+                "ordinary_market_baseline_effect": "none",
+                "boundary": boundary,
+                "totals": historical_totals,
+                "monthly": historical_monthly,
+                "film": build_conduct_film(historical_monthly),
+                "public_note": (
+                    "Consumer.gov evidence observed before the first full ordinary-license "
+                    "month remains attached to the same legal entity as historical context, "
+                    "but does not enter ordinary-insurer pressure or market baselines."
+                ),
+            }
 
         entities_out.append(
             {
@@ -358,6 +440,8 @@ def build_conduct_evidence() -> dict[str, Any]:
                 "cnpj": entity.get("cnpj"),
                 "legal_name": entity.get("legal_name"),
                 "display_name": entity.get("display_name"),
+                "regulatory_temporal_scope": boundary,
+                "pre_ordinary_history": pre_ordinary_history,
                 "totals": totals,
                 "taxonomy": {
                     key: _sorted_counter(counter)
@@ -368,11 +452,17 @@ def build_conduct_evidence() -> dict[str, Any]:
             }
         )
 
-    matched_total = int(resolution_counts["matched_current_insurer"])
+    matched_identity_total = int(resolution_counts["matched_current_insurer"])
     entity_total = sum(int(item["totals"]["complaints"]) for item in entities_out)
-    if entity_total != matched_total:
+    historical_total = sum(
+        int(((item.get("pre_ordinary_history") or {}).get("totals") or {}).get("complaints") or 0)
+        for item in entities_out
+    )
+    if entity_total + historical_total != matched_identity_total:
         raise RuntimeError(
-            f"matched complaint totals do not reconcile: {entity_total} != {matched_total}"
+            "matched complaint totals do not reconcile across ordinary and historical "
+            f"regulatory scopes: {entity_total} + {historical_total} != "
+            f"{matched_identity_total}"
         )
 
     source_total = sum(source_month_totals.values())
@@ -434,6 +524,12 @@ def build_conduct_evidence() -> dict[str, Any]:
                 "Consumer score from 1 to 5 preserved through scoreSum and "
                 "satisfactionCount; sample size remains explicit."
             ),
+            "regulatory_temporal_scope": (
+                "When a Sandbox participant graduates to an ordinary insurer, complaint "
+                "identity is preserved across the same legal entity, but pre-graduation and "
+                "transition-month observations remain historical context and do not enter "
+                "ordinary-insurer pressure or market baselines."
+            ),
             "taxonomy": (
                 "Optional enrichment from authentic Base Completa raw rows only. Missing raw "
                 "files do not block conduct_core; a present-but-invalid or population-mismatched "
@@ -443,13 +539,16 @@ def build_conduct_evidence() -> dict[str, Any]:
         "universe": {
             "regulatory_eligible_insurers": len(eligible),
             "observed_insurers": observed_entities,
+            "historical_pre_ordinary_observed_insurers": historical_observed_entities,
             "coverage_ratio": observed_entities / len(eligible) if eligible else None,
         },
         "resolution_summary": {
             "complaints_total": source_total,
-            "matched_current_insurer_complaints": matched_total,
+            "matched_current_insurer_complaints": entity_total,
+            "matched_current_insurer_identity_complaints": matched_identity_total,
+            "historical_pre_ordinary_complaints": historical_total,
             "matched_current_insurer_ratio": (
-                matched_total / source_total if source_total else None
+                entity_total / source_total if source_total else None
             ),
             "outside_157_complaints": int(resolution_counts["outside_157"]),
             "ambiguous_complaints": int(resolution_counts["ambiguous"]),
@@ -467,6 +566,9 @@ def build_conduct_evidence() -> dict[str, Any]:
                     source_month_totals[month]
                 ),
                 "matched_current_insurer_complaints": int(market_month_totals[month]),
+                "historical_pre_ordinary_complaints": int(
+                    historical_pre_ordinary_month_totals[month]
+                ),
                 "matched_ratio": (
                     market_month_totals[month] / source_month_totals[month]
                     if source_month_totals[month]
