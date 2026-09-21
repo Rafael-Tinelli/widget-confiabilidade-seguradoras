@@ -27,6 +27,7 @@ def _event_id(cnpj: str, event: dict[str, Any]) -> str:
         {
             "cnpj": cnpj,
             "event_type": event.get("event_type"),
+            "observed_at": event.get("observed_at"),
             "previous_value": event.get("previous_value"),
             "observed_value": event.get("observed_value"),
             "fip_code": event.get("fip_code"),
