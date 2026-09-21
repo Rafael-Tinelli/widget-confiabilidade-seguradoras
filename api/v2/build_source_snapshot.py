@@ -36,11 +36,6 @@ from api.v2.build_classification_inventory import (
     write_classification_inventory,
 )
 from api.v2.generation import BuildContext
-from api.v2.sandbox_lifecycle_history import (
-    seed_sandbox_lifecycle_history,
-    update_sandbox_lifecycle_history,
-    write_sandbox_lifecycle_history,
-)
 from api.v2.refresh_receita_lifecycle import (
     DEFAULT_MIN_COVERAGE,
     LEGACY_RECEITA_LIFECYCLE_CACHE_CONTRACT_VERSIONS,
@@ -50,6 +45,11 @@ from api.v2.refresh_receita_lifecycle import (
     regulatory_target_universe_hash,
     validate_refresh_payload,
     write_snapshot_atomic,
+)
+from api.v2.sandbox_lifecycle_history import (
+    seed_sandbox_lifecycle_history,
+    update_sandbox_lifecycle_history,
+    write_sandbox_lifecycle_history,
 )
 from api.v2.source_cache import (
     AcquisitionResult,
