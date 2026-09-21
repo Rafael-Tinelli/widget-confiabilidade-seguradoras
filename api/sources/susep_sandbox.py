@@ -24,7 +24,7 @@ _DEFAULT_HEADERS = {
     "Cache-Control": "no-cache",
 }
 _BLOCK_END_RE = re.compile(
-    r"</(?:p|div|li|h[1-6]|tr|td|th|section|article|dd|dt)>",
+    r"</(?:p|div|li|h[1-6]|tr|td|th|caption|section|article|dd|dt)>",
     flags=re.IGNORECASE,
 )
 _FIELD_LABELS = (
@@ -174,14 +174,21 @@ def _edition_marker(line: str) -> str | None:
 
 
 def _participant_name_before_status(lines: list[str], status_index: int) -> str | None:
-    for candidate in reversed(lines[max(0, status_index - 4) : status_index]):
+    candidates: list[str] = []
+    for candidate in reversed(lines[max(0, status_index - 6) : status_index]):
         clean = candidate.strip().strip("|:–—-").strip()
         if not clean or _is_any_field_label(clean) or _edition_marker(clean):
             continue
-        # Values from a preceding participant should not occur here because
-        # STATUS is the first field of every official participant block.
-        return clean
-    return None
+        candidates.append(clean)
+
+    # The current gov.br accordion inserts a short <caption> (for example
+    # "Coover") between the legal accordion title ("Coover Seguradora S.A.")
+    # and the STATUS row. Prefer the nearby legal-company label when present.
+    for candidate in candidates:
+        normalized = _normalize_label(candidate)
+        if "segur" in normalized or "sociedade" in normalized:
+            return candidate
+    return candidates[0] if candidates else None
 
 
 def parse_sandbox_participants_html(document: str) -> list[dict[str, Any]]:
