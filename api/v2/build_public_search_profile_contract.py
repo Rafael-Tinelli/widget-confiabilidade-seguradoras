@@ -10,6 +10,7 @@ from typing import Any
 LIFECYCLE_PATH = Path("data/derived/v2/entity_lifecycle_relationship_inventory.json")
 EXPLORER_PATH = Path("data/derived/v2/public/insurer_explorer.json")
 SANDBOX_CONDUCT_PATH = Path("data/derived/v2/sandbox_brand_conduct_evidence.json")
+CONDUCT_EVIDENCE_PATH = Path("data/derived/v2/consumer_gov_conduct_evidence.json")
 CONDUCT_RELATIONSHIPS_PATH = Path(
     "data/reference/v2/conduct_subject_relationships.json"
 )
@@ -689,6 +690,60 @@ def _sandbox_metrics(totals: dict[str, Any]) -> dict[str, Any]:
             meaning="Média de satisfação entre quem avaliou, dependente da amostra.",
         ),
     }
+
+
+def apply_pre_ordinary_conduct_context(
+    payload: dict[str, Any],
+    conduct: dict[str, Any],
+) -> dict[str, Any]:
+    if conduct.get("artifact") != "v2_consumer_gov_conduct_evidence":
+        raise PublicSearchProfileContractError(
+            "unexpected Consumer.gov Conduct artifact for historical context"
+        )
+
+    by_entity = {
+        str(row.get("entity_id") or ""): row
+        for row in conduct.get("entities") or []
+        if row.get("entity_id")
+    }
+    attached = 0
+    for profile in payload.get("profiles") or []:
+        if profile.get("profile_kind") != "entity":
+            continue
+        entity_id = str((profile.get("identity") or {}).get("entity_id") or "")
+        row = by_entity.get(entity_id)
+        history = (row or {}).get("pre_ordinary_history")
+        if not isinstance(history, dict):
+            continue
+
+        totals = dict(history.get("totals") or {})
+        profile["historical_conduct_context"] = {
+            "availability": "available",
+            "regulatory_scope": "pre_ordinary_sandbox_history",
+            "role": history.get("role"),
+            "ordinary_pressure_effect": "none",
+            "ordinary_market_baseline_effect": "none",
+            "boundary": dict(history.get("boundary") or {}),
+            "metrics": _sandbox_metrics(totals),
+            "trajectory_context": _sandbox_film(history.get("film")),
+            "plain_language": (
+                "Estes números pertencem à mesma pessoa jurídica, mas foram observados "
+                "antes do primeiro mês completo sob a licença ordinária. Permanecem "
+                "visíveis como histórico e não entram na pressão de reclamações nem no "
+                "baseline das seguradoras ordinárias."
+            ),
+        }
+        attached += 1
+
+    population = dict(payload.get("population") or {})
+    population["profiles_with_pre_ordinary_conduct_history"] = attached
+    payload["population"] = population
+
+    policy = dict(payload.get("publication_policy") or {})
+    policy["pre_ordinary_conduct_history_is_preserved"] = True
+    policy["pre_ordinary_conduct_enters_ordinary_pressure"] = False
+    payload["publication_policy"] = policy
+    return payload
 
 
 def _brand_subject_metrics(totals: dict[str, Any]) -> dict[str, Any]:
@@ -1397,13 +1452,18 @@ def build_from_files(
     lifecycle_path: Path = LIFECYCLE_PATH,
     explorer_path: Path = EXPLORER_PATH,
     sandbox_conduct_path: Path = SANDBOX_CONDUCT_PATH,
+    conduct_path: Path = CONDUCT_EVIDENCE_PATH,
     conduct_relationships_path: Path = CONDUCT_RELATIONSHIPS_PATH,
 ) -> dict[str, Any]:
-    return build_public_search_profile_contract(
+    payload = build_public_search_profile_contract(
         json.loads(lifecycle_path.read_text(encoding="utf-8")),
         json.loads(explorer_path.read_text(encoding="utf-8")),
         json.loads(sandbox_conduct_path.read_text(encoding="utf-8")),
         json.loads(conduct_relationships_path.read_text(encoding="utf-8")),
+    )
+    return apply_pre_ordinary_conduct_context(
+        payload,
+        json.loads(conduct_path.read_text(encoding="utf-8")),
     )
 
 
