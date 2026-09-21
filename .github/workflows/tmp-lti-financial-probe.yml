@@ -1,0 +1,46 @@
+name: TEMP LTI Financial Probe
+
+on:
+  push:
+    branches:
+      - fix/sandbox-lifecycle-evergreen
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      SES_ALLOW_INSECURE_SSL: "0"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install dependencies
+        run: |
+          python -m pip install -r requirements.txt
+      - name: Probe FIP 001988 financial source
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from api.sources.susep_financial_evidence import load_susep_financial_evidence
+
+          payload = load_susep_financial_evidence(["001988"])
+          row = (payload.get("entities") or {}).get("001988") or {}
+          print("REFERENCE_PERIODS=" + json.dumps(payload.get("reference_periods"), sort_keys=True))
+          print("PERIOD_MATURITY=" + json.dumps(payload.get("period_maturity"), sort_keys=True))
+          summary = {
+              "capital_history": row.get("capital_history"),
+              "balance_periods": sorted(row.get("balance_periods") or []),
+              "insurance_operation_periods": sorted(row.get("insurance_operation_periods") or []),
+              "nonzero_premium_periods": sorted(row.get("nonzero_premium_periods") or []),
+              "duplicate_capital_rows": row.get("duplicate_capital_rows"),
+              "duplicate_capital_rows_by_period": row.get("duplicate_capital_rows_by_period"),
+          }
+          print("LTI_FINANCIAL=" + json.dumps(summary, ensure_ascii=False, sort_keys=True))
+          PY
