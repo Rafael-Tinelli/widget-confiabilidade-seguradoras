@@ -23,14 +23,44 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install -r requirements.txt
+      - name: Download current official SES base
+        run: |
+          set -euo pipefail
+          mkdir -p data/raw/ses
+          python - <<'PY'
+          import requests
+          from pathlib import Path
+          from api.sources.ses import SES_HEADERS, SES_ZIP_URL, SES_ZIP_URL_FALLBACK
+
+          target = Path("data/raw/ses/BaseCompleta.zip")
+          last = None
+          for url in (SES_ZIP_URL, SES_ZIP_URL_FALLBACK):
+              try:
+                  with requests.get(url, headers=SES_HEADERS, timeout=180, stream=True) as r:
+                      r.raise_for_status()
+                      with target.open("wb") as fh:
+                          for chunk in r.iter_content(1024 * 1024):
+                              if chunk:
+                                  fh.write(chunk)
+                  print(f"SES_ZIP_BYTES={target.stat().st_size}")
+                  break
+              except Exception as exc:
+                  last = exc
+          else:
+              raise SystemExit(f"SES download failed: {last}")
+          PY
       - name: Probe FIP 001988 financial source
         run: |
           set -euo pipefail
           python - <<'PY'
           import json
+          from pathlib import Path
           from api.sources.susep_financial_evidence import load_susep_financial_evidence
 
-          payload = load_susep_financial_evidence(["001988"])
+          payload = load_susep_financial_evidence(
+              ["001988"],
+              zip_path=Path("data/raw/ses/BaseCompleta.zip"),
+          )
           row = (payload.get("entities") or {}).get("001988") or {}
           print("REFERENCE_PERIODS=" + json.dumps(payload.get("reference_periods"), sort_keys=True))
           print("PERIOD_MATURITY=" + json.dumps(payload.get("period_maturity"), sort_keys=True))
