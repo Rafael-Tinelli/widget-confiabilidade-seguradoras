@@ -1,0 +1,25 @@
+name: TEMP Dispatch HostGator Publication
+
+on:
+  push:
+    branches:
+      - ops/publication-trigger-20260921
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Publish exact Full Generation 121
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh workflow run v2-hostgator-publication.yml \
+            --repo "$GITHUB_REPOSITORY" \
+            --ref main \
+            -f source_run_id=35669911491 \
+            -f confirm_publication=PUBLISH
