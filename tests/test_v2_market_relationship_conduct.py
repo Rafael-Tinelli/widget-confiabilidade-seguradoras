@@ -111,49 +111,6 @@ def _identity():
     return {"source": {"months": MONTHS}}
 
 
-def _canonical_conduct(ordinary_complaints=44):
-    monthly = [
-        {
-            "month": month,
-            "complaints": ordinary_complaints if index == 0 else 0,
-            "responded": ordinary_complaints if index == 0 else 0,
-            "response_rate": 1.0 if index == 0 else None,
-            "finalized": ordinary_complaints if index == 0 else 0,
-            "finalized_rate": 1.0 if index == 0 else None,
-            "consumer_resolved": 0,
-            "satisfaction_count": ordinary_complaints if index == 0 else 0,
-            "average_satisfaction": 4.0 if index == 0 else None,
-        }
-        for index, month in enumerate(MONTHS)
-    ]
-    return {
-        "artifact": "v2_consumer_gov_conduct_evidence",
-        "source": {"months": MONTHS},
-        "entities": [
-            {
-                "entity_id": "ordinary-a",
-                "totals": {
-                    "complaints": ordinary_complaints,
-                    "responded": ordinary_complaints,
-                    "response_rate": 1.0,
-                    "finalized": ordinary_complaints,
-                    "finalized_rate": 1.0,
-                    "satisfaction_count": ordinary_complaints,
-                    "average_satisfaction": 4.0,
-                },
-                "monthly": monthly,
-                "film": {
-                    "history_state": "observed",
-                    "months_observed": 12,
-                    "months_with_complaints": 1,
-                    "conduct_signal": "diagnostic_only",
-                    "satisfaction_trend": {},
-                },
-            }
-        ],
-    }
-
-
 def test_market_relationship_conduct_is_regime_agnostic_and_multi_carrier():
     entries = {month: {} for month in MONTHS}
     entries[MONTHS[0]] = {
@@ -196,38 +153,6 @@ def test_market_relationship_conduct_is_regime_agnostic_and_multi_carrier():
     assert brand_y["market_identity_conduct_summary"]["complaints"] == 3
 
 
-def test_canonical_ordinary_conduct_overrides_narrow_relationship_reresolution():
-    entries = {month: {} for month in MONTHS}
-    entries[MONTHS[0]] = {
-        "distributor": _entry("Marca X", "33333333000133", 3),
-        # Simulate a provider label the narrow relationship resolver does not recover.
-        # The closed ordinary Conduct artifact has already resolved the legal entity.
-        "sandbox": _entry("SEGURADORA SANDBOX B S.A.", "22222222000122", 7),
-    }
-
-    payload = build_market_relationship_conduct_evidence(
-        _lifecycle(),
-        _identity(),
-        entry_loader=lambda month: entries[month],
-        consumer_conduct=_canonical_conduct(44),
-    )
-
-    brand = next(row for row in payload["brands"] if row["brand_id"] == "brand:marca-x")
-    bearers = {row["entity_id"]: row for row in brand["risk_bearers"]}
-
-    assert bearers["ordinary-a"]["conduct_summary"]["complaints"] == 44
-    assert bearers["ordinary-a"]["conduct_source"] == (
-        "canonical_consumer_gov_conduct_evidence"
-    )
-    assert bearers["sandbox-b"]["conduct_summary"]["complaints"] == 7
-    assert bearers["sandbox-b"]["conduct_source"] == "relationship_direct_fallback"
-    assert payload["policy"][
-        "ordinary_risk_bearer_conduct_must_match_canonical_conduct_artifact"
-    ]
-    assert payload["summary"]["canonical_risk_bearers"] == 1
-    assert payload["summary"]["resolved_risk_bearer_complaints"] == 51
-
-
 def test_legacy_projection_is_only_a_compatibility_view_of_generic_model():
     entries = {month: {} for month in MONTHS}
     entries[MONTHS[0]] = {
@@ -251,3 +176,124 @@ def test_legacy_projection_is_only_a_compatibility_view_of_generic_model():
     assert legacy["brands"] == []
     assert len(legacy["carriers"]) == 1
     assert legacy["carriers"][0]["entity_id"] == "sandbox-b"
+
+
+
+def _canonical_conduct_fixture(complaints=44, *, pre_ordinary=0):
+    monthly = [
+        {
+            "month": month,
+            "complaints": complaints if idx == 0 else 0,
+            "responded": complaints if idx == 0 else 0,
+            "finalized": complaints if idx == 0 else 0,
+            "satisfaction_count": complaints if idx == 0 else 0,
+            "average_satisfaction": 4.0 if idx == 0 else None,
+        }
+        for idx, month in enumerate(MONTHS)
+    ]
+    return {
+        "artifact": "v2_consumer_gov_conduct_evidence",
+        "source": {"months": MONTHS},
+        "entities": [
+            {
+                "entity_id": "ordinary-a",
+                "totals": {
+                    "complaints": complaints,
+                    "responded": complaints,
+                    "response_rate": 1.0 if complaints else None,
+                    "finalized": complaints,
+                    "finalized_rate": 1.0 if complaints else None,
+                    "satisfaction_count": complaints,
+                    "average_satisfaction": 4.0 if complaints else None,
+                },
+                "monthly": monthly,
+                "film": {
+                    "history_state": "observed",
+                    "months_observed": 12,
+                    "months_with_complaints": 1 if complaints else 0,
+                },
+                "pre_ordinary_history": {
+                    "totals": {"complaints": pre_ordinary},
+                } if pre_ordinary else None,
+            },
+        ],
+    }
+
+
+def test_canonical_risk_bearer_parity_without_distributor_transfer():
+    entries = {month: {} for month in MONTHS}
+    entries[MONTHS[0]] = {
+        "distributor": _entry("Marca X", "33333333000133", 3),
+        "sandbox": _entry("SEGURADORA SANDBOX B S.A.", "22222222000122", 7),
+    }
+    canon = _canonical_conduct_fixture(44)
+    result = build_market_relationship_conduct_evidence(
+        _lifecycle(),
+        _identity(),
+        entry_loader=lambda month: entries[month],
+        consumer_conduct=canon,
+    )
+
+    brand = next(row for row in result["brands"] if row["brand_id"] == "brand:marca-x")
+    bearers = {row["entity_id"]: row for row in brand["risk_bearers"]}
+    ordinary = bearers["ordinary-a"]
+    sandbox = bearers["sandbox-b"]
+
+    assert brand["market_identity_conduct_summary"]["complaints"] == 3
+    assert ordinary["conduct_summary"]["complaints"] == 44
+    assert ordinary["conduct_summary"]["monthly"] == canon["entities"][0]["monthly"]
+    assert ordinary["conduct_source"] == "canonical_consumer_gov_conduct_evidence"
+    assert sandbox["conduct_summary"]["complaints"] == 7
+    assert sandbox["conduct_source"] == "relationship_direct_fallback"
+    assert result["summary"]["canonical_risk_bearers"] == 1
+    assert result["summary"]["resolved_risk_bearer_complaints"] == 51
+    assert result["scoring"] == "forbidden_in_this_artifact"
+    assert result["ranking"] == "forbidden_in_this_artifact"
+    assert result["policy"]["ordinary_risk_bearer_conduct_must_match_canonical_conduct_artifact"]
+
+    other_brand = next(row for row in result["brands"] if row["brand_id"] == "brand:marca-y")
+    assert other_brand["risk_bearers"][0]["conduct_summary"]["complaints"] == 44
+    assert ordinary["conduct_summary"] is not other_brand["risk_bearers"][0]["conduct_summary"]
+
+
+def test_canonical_conduct_preserves_post_graduation_scope_not_historical_sum():
+    entries = {month: {} for month in MONTHS}
+    entries[MONTHS[0]] = {
+        "ordinary": _entry("SEGURADORA ORDINARIA A S.A.", "11111111000111", 180),
+    }
+    canon = _canonical_conduct_fixture(44, pre_ordinary=136)
+    result = build_market_relationship_conduct_evidence(
+        _lifecycle(),
+        _identity(),
+        entry_loader=lambda month: entries[month],
+        consumer_conduct=canon,
+    )
+    ordinary = next(row for row in result["risk_bearers"] if row["entity_id"] == "ordinary-a")
+    assert ordinary["conduct_summary"]["complaints"] == 44
+    assert ordinary["conduct_source"] == "canonical_consumer_gov_conduct_evidence"
+
+
+def test_canonical_conduct_window_mismatch_fails_closed():
+    canon = _canonical_conduct_fixture()
+    canon["source"]["months"] = MONTHS[:-1]
+    import pytest
+
+    with pytest.raises(ValueError, match="window differs"):
+        build_market_relationship_conduct_evidence(
+            _lifecycle(), _identity(),
+            entry_loader=lambda _: {},
+            consumer_conduct=canon,
+        )
+
+
+def test_duplicate_canonical_carrier_fails_closed():
+    canon = _canonical_conduct_fixture()
+    canon["entities"].append(dict(canon["entities"][0]))
+    import pytest
+
+    with pytest.raises(ValueError, match="duplicate canonical"):
+        build_market_relationship_conduct_evidence(
+            _lifecycle(), _identity(),
+            entry_loader=lambda _: {},
+            consumer_conduct=canon,
+        )

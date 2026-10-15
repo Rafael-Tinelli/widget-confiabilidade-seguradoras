@@ -61,6 +61,28 @@ def test_conduct_chain_is_topologically_ordered():
     assert position["conduct_portfolio"] < position["conduct_closure"]
 
 
+def test_public_profiles_declares_consumer_conduct_as_direct_dependency():
+    mapping = stage_map(STAGES)
+    public_profiles = mapping["public_profiles"]
+
+    assert "consumer_conduct" in public_profiles.dependencies
+    assert (
+        "data/derived/v2/consumer_gov_conduct_evidence.json"
+        in mapping["consumer_conduct"].outputs
+    )
+
+
+def test_relationship_conduct_stage_declares_lifecycle_and_both_outputs():
+    mapping = stage_map(STAGES)
+    stage = mapping["sandbox_brand_conduct"]
+
+    assert "lifecycle" in stage.dependencies
+    assert stage.outputs == (
+        "data/derived/v2/market_relationship_conduct_evidence.json",
+        "data/derived/v2/sandbox_brand_conduct_evidence.json",
+    )
+
+
 def test_public_package_depends_on_closed_cross_pillar_chain():
     required = ancestors("distribution_manifest")
 

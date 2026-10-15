@@ -6,6 +6,7 @@ import pytest
 
 from api.v2.build_conduct_source_snapshot import (
     CONSUMER_MANIFEST_VERSION,
+    CONSUMER_SOURCE_URL,
     ConductSourceSnapshotError,
     _cache_consumer_manifest,
     _cache_matches_current_inputs,
@@ -144,3 +145,10 @@ def test_receita_cache_reuse_requires_current_schema_universe_and_provider_hashe
         encoding="utf-8",
     )
     assert not _cache_matches_current_inputs(path, "a" * 64, "b" * 64)
+
+
+def test_consumer_gate4_source_url_is_direct_official_publication_page() -> None:
+    assert CONSUMER_SOURCE_URL == (
+        "https://www.consumidor.gov.br/pages/dadosabertos/externo/"
+    )
+    assert "dados.mj.gov.br" not in CONSUMER_SOURCE_URL

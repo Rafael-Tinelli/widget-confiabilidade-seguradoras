@@ -209,6 +209,35 @@ Isso prova simultaneamente que:
 
 Quando `V2_MARKET_SENSOR_AUTOMATION_ENABLED == true`, o workflow `V2 Relationship Review Queue` deixa de ser o escritor automático da issue singleton. O workflow evergreen passa a ser o proprietário porque renderiza o superset de relações + market candidates. O workflow relacional antigo permanece disponível manualmente para diagnóstico.
 
+## 7.1. Lifecycle regulatório do Sandbox
+
+A descoberta regulatória preserva identidade e histórico separadamente do estado
+corrente. Uma entidade conhecida não é removida apenas porque deixou de aparecer na
+fotografia atual do Sandbox.
+
+Invariantes:
+
+```text
+absence_from_current_sandbox != delete_identity
+sandbox_history_is_append_only = true
+current_regulatory_state != regulatory_history
+stale_source_must_not_override_conflicting_fresh_source
+```
+
+O ledger persistente do Sandbox é transportado no cache validado do Gate 4 e registra,
+por CNPJ exato, a última fotografia confiável e eventos como entrada observada,
+alterações de status/prazo/modalidades/prorrogação e saída da fonte corrente.
+
+Quando uma entidade deixa a fotografia corrente do Sandbox e o mesmo CNPJ aparece na
+fonte corrente de entidades licenciadas como seguradora, a transição é materializada
+como candidata determinística `sandbox_graduated_to_ordinary_license`, preservando a
+participação Sandbox no histórico. Ausência sem essa evidência não é rotulada
+automaticamente como encerramento ou descontinuação.
+
+Se a fonte Sandbox estiver `stale` e conflitar com evidência licenciada `fresh`, o
+Gate 4 falha fechado: um snapshot antigo não pode mais prevalecer silenciosamente na
+classificação regulatória corrente.
+
 ## 8. Threshold da busca desconhecida
 
 Contrato atual:

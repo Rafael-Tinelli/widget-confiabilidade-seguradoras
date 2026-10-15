@@ -9,6 +9,11 @@ from api.sources.susep_financial_evidence import (
     LIQUIDITY_FORMULA_CMPIDS,
     OPERATING_FORMULA_CMPIDS,
 )
+from api.v2.regulatory_temporal_scope import (
+    filter_period_mapping_for_ordinary_scope,
+    filter_period_set_for_ordinary_scope,
+    sandbox_graduation_boundary,
+)
 
 FINANCIAL_EVIDENCE_VERSION = "2.0-draft-evidence-profile-4"
 CORE_HISTORY_MONTHS = 12
@@ -332,6 +337,85 @@ def _operations_profile(
     }
 
 
+def _ordinary_scoped_source_entity(
+    entity: dict[str, Any],
+    source_entity: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    boundary = sandbox_graduation_boundary(entity)
+    if boundary is None:
+        return source_entity, None
+
+    scoped = deepcopy(source_entity)
+    original_capital = dict(source_entity.get("capital_history") or {})
+    original_balance_periods = {
+        int(period) for period in source_entity.get("balance_periods") or set()
+    }
+    original_balance_values = dict(source_entity.get("balance_values") or {})
+    original_operations = {
+        int(period)
+        for period in source_entity.get("insurance_operation_periods") or set()
+    }
+    original_nonzero = {
+        int(period) for period in source_entity.get("nonzero_premium_periods") or set()
+    }
+    original_capital_duplicates = dict(
+        source_entity.get("duplicate_capital_rows_by_period") or {}
+    )
+    original_balance_duplicates = dict(
+        source_entity.get("duplicate_balance_cmpid_rows_by_period") or {}
+    )
+
+    scoped["capital_history"] = filter_period_mapping_for_ordinary_scope(
+        entity, original_capital
+    )
+    scoped["balance_periods"] = filter_period_set_for_ordinary_scope(
+        entity, original_balance_periods
+    )
+    scoped["balance_values"] = filter_period_mapping_for_ordinary_scope(
+        entity, original_balance_values
+    )
+    scoped["insurance_operation_periods"] = filter_period_set_for_ordinary_scope(
+        entity, original_operations
+    )
+    scoped["nonzero_premium_periods"] = filter_period_set_for_ordinary_scope(
+        entity, original_nonzero
+    )
+    scoped["duplicate_capital_rows_by_period"] = filter_period_mapping_for_ordinary_scope(
+        entity, original_capital_duplicates
+    )
+    scoped["duplicate_balance_cmpid_rows_by_period"] = (
+        filter_period_mapping_for_ordinary_scope(
+            entity, original_balance_duplicates
+        )
+    )
+    scoped["duplicate_capital_rows"] = sum(
+        int(value)
+        for value in scoped["duplicate_capital_rows_by_period"].values()
+    )
+    scoped["duplicate_balance_cmpid_rows"] = sum(
+        int(value)
+        for value in scoped["duplicate_balance_cmpid_rows_by_period"].values()
+    )
+
+    first_full = int(boundary["first_full_ordinary_period"])
+    temporal = {
+        "policy": boundary["policy"],
+        "basis": boundary["basis"],
+        "basis_timestamp": boundary["basis_timestamp"],
+        "transition_period": boundary["transition_period"],
+        "first_full_ordinary_period": first_full,
+        "pre_ordinary_evidence_preserved_but_excluded_from_current_assessment": True,
+        "excluded_period_counts": {
+            "capital": sum(int(period) < first_full for period in original_capital),
+            "balance": sum(period < first_full for period in original_balance_periods),
+            "insurance_operations": sum(
+                period < first_full for period in original_operations
+            ),
+        },
+    }
+    return scoped, temporal
+
+
 def derive_financial_evidence_profile(
     entity: dict[str, Any],
     source_entity: dict[str, Any],
@@ -347,6 +431,10 @@ def derive_financial_evidence_profile(
             "core_financial_evidence_ready": False,
             "reason_codes": ["outside_regulatory_insurer_universe"],
         }
+
+    source_entity, regulatory_temporal_scope = _ordinary_scoped_source_entity(
+        entity, source_entity
+    )
 
     capital = _capital_profile(source_entity, reference_periods.get("capital"))
     balance = _balance_profile(source_entity, reference_periods.get("balance"))
@@ -392,6 +480,7 @@ def derive_financial_evidence_profile(
         "capital": capital,
         "balance": balance,
         "operations": operations,
+        "regulatory_temporal_scope": regulatory_temporal_scope,
         "reason_codes": list(dict.fromkeys(reasons)),
         "methodology_note": (
             "This is an evidence-completeness profile, not a financial score. PLA/CMR uses "

@@ -1,11 +1,12 @@
 from api.v2.gate4_pipeline import stage_map, topological_order
 
 
-def test_market_relationship_conduct_waits_for_canonical_consumer_conduct():
-    stage = stage_map()["sandbox_brand_conduct"]
-
+def test_market_relationship_conduct_requires_canonical_consumer_conduct():
+    stages = stage_map()
+    stage = stages["sandbox_brand_conduct"]
     assert set(stage.dependencies) == {
         "lifecycle",
+        "eligibility",
         "conduct_source_snapshot",
         "consumer_conduct",
     }

@@ -9,6 +9,7 @@ from api.sources.ses import extract_ses_master_and_financials
 from api.sources.susep_licensed import fetch_licensed_entities
 from api.sources.susep_sandbox import fetch_sandbox_participants
 from api.sources.susep_special_regimes import fetch_special_regime_records
+from api.utils.identifiers import normalize_cnpj_v2
 from api.v2.classification import (
     apply_licensed_classification,
     apply_sandbox_classification,
@@ -17,6 +18,7 @@ from api.v2.classification import (
 )
 from api.v2.identity import build_canonical_entities
 from api.v2.sandbox_identity import materialize_unmatched_sandbox_identities
+from api.v2.sandbox_lifecycle_history import SandboxLifecycleHistoryError
 from api.v2.sandbox_semantics import normalize_sandbox_entity_semantics
 from api.v2.ses_activity_evidence import enrich_entities_with_ses_activity_evidence
 
@@ -25,6 +27,70 @@ DEFAULT_OUTPUT = Path("data/derived/v2/entity_classification_inventory.json")
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _attach_sandbox_history(
+    entities: list[dict[str, Any]],
+    sandbox_history: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    if sandbox_history is None:
+        return entities
+    if sandbox_history.get("artifact") != "v2_sandbox_regulatory_history":
+        raise SandboxLifecycleHistoryError("unexpected Sandbox lifecycle artifact")
+
+    records = list(sandbox_history.get("records") or [])
+    by_cnpj: dict[str, dict[str, Any]] = {}
+    for raw in records:
+        record = dict(raw)
+        cnpj = normalize_cnpj_v2(record.get("cnpj"))
+        if not cnpj:
+            raise SandboxLifecycleHistoryError("Sandbox history record without CNPJ")
+        by_cnpj[cnpj] = record
+
+    output = [dict(item) for item in entities]
+    represented: set[str] = set()
+    for entity in output:
+        cnpj = normalize_cnpj_v2(entity.get("cnpj"))
+        if not cnpj or cnpj not in by_cnpj:
+            continue
+        evidence = dict(entity.get("evidence") or {})
+        evidence["sandbox_history"] = by_cnpj[cnpj]
+        entity["evidence"] = evidence
+        represented.add(cnpj)
+
+    for cnpj in sorted(set(by_cnpj) - represented):
+        record = by_cnpj[cnpj]
+        last_snapshot = dict(record.get("last_snapshot") or {})
+        output.append(
+            {
+                "entity_id": f"cnpj:{cnpj}",
+                "fip_code": None,
+                "cnpj": cnpj,
+                "legal_entity_id": f"cnpj:{cnpj}",
+                "legal_name": (
+                    record.get("legal_name")
+                    or last_snapshot.get("legal_name")
+                    or cnpj
+                ),
+                "entity_type": "sandbox_participant",
+                "regulatory_regime": "sandbox",
+                "regulatory_status": "sandbox_history_only",
+                "activities": {
+                    "insurance": False,
+                    "pension": False,
+                    "capitalization": False,
+                    "reinsurance": False,
+                },
+                "evidence": {
+                    "ses_present": False,
+                    "identity_origin": "susep_sandbox_history",
+                    "identity_cnpj_source": "susep_sandbox_history",
+                    "sandbox_history": record,
+                },
+            }
+        )
+
+    return sorted(output, key=lambda item: item["entity_id"])
 
 
 def _mark_unclassified_source_evidence(
@@ -54,6 +120,8 @@ def build_classification_inventory(
     licensed_records: list[dict[str, Any]],
     special_records: list[dict[str, Any]] | None = None,
     sandbox_records: list[dict[str, Any]] | None = None,
+    *,
+    sandbox_history: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     base_entities = build_canonical_entities(ses_companies)
     classified = apply_licensed_classification(base_entities, licensed_records)
@@ -67,6 +135,7 @@ def build_classification_inventory(
         unresolved_sandbox,
     )
     classified = normalize_sandbox_entity_semantics(classified)
+    classified = _attach_sandbox_history(classified, sandbox_history)
     classified = enrich_entities_with_ses_activity_evidence(classified)
     classified = _mark_unclassified_source_evidence(classified)
 
@@ -88,6 +157,13 @@ def build_classification_inventory(
     summary["sandbox_records_resolved"] = sandbox_resolved
     summary["sandbox_matched_existing_by_exact_cnpj"] = sandbox_resolved - sandbox_added
     summary["entities_added_from_sandbox_source"] = sandbox_added
+    summary["sandbox_history_records"] = len(
+        (sandbox_history or {}).get("records") or []
+    )
+    summary["sandbox_history_only_entities"] = sum(
+        (item.get("evidence") or {}).get("identity_origin") == "susep_sandbox_history"
+        for item in classified
+    )
     summary.pop("sandbox_applied_by_exact_cnpj", None)
 
     return {

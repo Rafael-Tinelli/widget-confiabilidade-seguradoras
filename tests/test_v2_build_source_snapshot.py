@@ -11,6 +11,7 @@ import pytest
 from api.sources.receita_cnpj import RECEITA_CNPJ_OPEN_DATA_URL
 from api.v2.build_source_snapshot import (
     SourceSnapshotError,
+    _assert_no_stale_sandbox_override,
     _materialize_compatible_receita_cache,
     _receita_snapshot,
     load_ses_master_companies,
@@ -23,7 +24,8 @@ from api.v2.refresh_receita_lifecycle import (
     regulatory_target_universe_hash,
     write_snapshot_atomic,
 )
-from api.v2.source_cache import CachedSource
+from api.v2.source_cache import AcquisitionResult, CachedSource
+from api.v2.source_snapshot import SourceObservation
 
 
 def _write_lista(path: Path) -> None:
@@ -132,6 +134,134 @@ def _context() -> BuildContext:
         workflow_run_attempt=1,
     )
 
+
+
+def test_stale_sandbox_cannot_override_fresh_current_license(tmp_path: Path):
+    licensed_path = tmp_path / "licensed.json"
+    sandbox_path = tmp_path / "sandbox.json"
+    licensed_path.write_text(
+        json.dumps(
+            {
+                "records": [
+                    {
+                        "fip_code": "001988",
+                        "cnpj": "47006254000180",
+                        "legal_name": "LTI SEGUROS S.A.",
+                        "entity_type": "insurer",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    sandbox_path.write_text(
+        json.dumps(
+            {
+                "records": [
+                    {
+                        "cnpj": "47006254000180",
+                        "legal_name": "LTI Seguros S.A.",
+                        "regulatory_status": "temporary_authorized",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    context = _context()
+    licensed = AcquisitionResult(
+        observation=SourceObservation(
+            source_id="susep_licensed_entities",
+            source_url="https://www2.susep.gov.br/licensed",
+            snapshot_path=licensed_path,
+            fetched_at="2026-09-21T15:57:08Z",
+            current_fetch_succeeded=True,
+        ),
+        used_cache=False,
+    )
+    sandbox = AcquisitionResult(
+        observation=SourceObservation(
+            source_id="susep_sandbox",
+            source_url="https://www.gov.br/susep/sandbox",
+            snapshot_path=sandbox_path,
+            fetched_at="2026-09-15T02:26:32Z",
+            current_fetch_succeeded=False,
+            state_reason="SandboxSourceError: returned too few records: 0",
+        ),
+        used_cache=True,
+    )
+
+    with pytest.raises(SourceSnapshotError, match="stale Sandbox snapshot overlaps"):
+        _assert_no_stale_sandbox_override(
+            licensed=licensed,
+            sandbox=sandbox,
+            licensed_path=licensed_path,
+            sandbox_path=sandbox_path,
+            context=context,
+        )
+
+
+def test_stale_sandbox_without_active_overlap_does_not_block(tmp_path: Path):
+    licensed_path = tmp_path / "licensed.json"
+    sandbox_path = tmp_path / "sandbox.json"
+    licensed_path.write_text(
+        json.dumps(
+            {
+                "records": [
+                    {
+                        "fip_code": "001988",
+                        "cnpj": "47006254000180",
+                        "legal_name": "LTI SEGUROS S.A.",
+                        "entity_type": "insurer",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    sandbox_path.write_text(
+        json.dumps(
+            {
+                "records": [
+                    {
+                        "cnpj": "39768897000133",
+                        "legal_name": "COOVER SEGURADORA S.A.",
+                        "regulatory_status": "sandbox_authorization_cancelled",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    context = _context()
+    licensed = AcquisitionResult(
+        observation=SourceObservation(
+            source_id="susep_licensed_entities",
+            source_url="https://www2.susep.gov.br/licensed",
+            snapshot_path=licensed_path,
+            fetched_at="2026-09-21T15:57:08Z",
+            current_fetch_succeeded=True,
+        ),
+        used_cache=False,
+    )
+    sandbox = AcquisitionResult(
+        observation=SourceObservation(
+            source_id="susep_sandbox",
+            source_url="https://www.gov.br/susep/sandbox",
+            snapshot_path=sandbox_path,
+            fetched_at="2026-09-15T02:26:32Z",
+            current_fetch_succeeded=False,
+        ),
+        used_cache=True,
+    )
+
+    _assert_no_stale_sandbox_override(
+        licensed=licensed,
+        sandbox=sandbox,
+        licensed_path=licensed_path,
+        sandbox_path=sandbox_path,
+        context=context,
+    )
 
 def test_gate4_ses_master_is_derived_only_from_materialized_files(tmp_path: Path):
     lista = tmp_path / "LISTAEMPRESAS.csv"

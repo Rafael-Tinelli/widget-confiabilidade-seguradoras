@@ -225,6 +225,37 @@ def apply_market_relationship_semantics(
         for bearer in row.get("risk_bearers") or []:
             bearer_summary = bearer.get("conduct_summary") or {}
             name = bearer.get("name") or "a entidade que assume o risco"
+            sandbox_history = dict(bearer.get("sandbox_history") or {})
+            graduated_from_sandbox = (
+                sandbox_history.get("current_outcome")
+                == "graduated_to_ordinary_license"
+            )
+            carrier_plain_language = (
+                (
+                    f"Estes números são do Consumer.gov contra {name}, no recorte "
+                    "canônico de meses elegíveis ao regime ordinário. O histórico anterior "
+                    "à graduação é preservado separadamente e não entra nessa contagem; "
+                    "também não são reclamações da distribuidora."
+                )
+                if (
+                    graduated_from_sandbox
+                    and bearer.get("conduct_source")
+                    == "canonical_consumer_gov_conduct_evidence"
+                )
+                else (
+                    f"Estes números são do Consumer.gov contra {name}. A entidade possui "
+                    "histórico no Sandbox e hoje aparece como seguradora ordinária; esta série "
+                    "é contexto do sujeito legal e pode incluir observações anteriores à "
+                    "graduação. Ela não deve ser lida como pressão exclusiva do regime "
+                    "ordinário nem como reclamações da distribuidora."
+                )
+                if graduated_from_sandbox
+                else (
+                    f"Estes números são do Consumer.gov contra {name}. Eles são "
+                    "contexto da entidade que assume o risco e não são reclamações "
+                    "da distribuidora nem reclamações exclusivas desta marca/produto."
+                )
+            )
             risk_bearers.append(
                 {
                     "public_role_label": "Entidade que assume o risco",
@@ -236,19 +267,19 @@ def apply_market_relationship_semantics(
                     "regulatory_regime": bearer.get("regulatory_regime"),
                     "regulatory_status": bearer.get("regulatory_status"),
                     "regulatory_class": bearer.get("regulatory_class"),
+                    "regulatory_history": {
+                        "sandbox": sandbox_history or None,
+                    },
                     "relationship_status": bearer.get("relationship_status"),
                     "product_scope": bearer.get("product_scope"),
                     "effective_from": bearer.get("effective_from"),
                     "effective_to": bearer.get("effective_to"),
                     "evidence": bearer.get("evidence") or {},
+                    "conduct_source": bearer.get("conduct_source"),
                     "conduct_context": _conduct_context(
                         bearer_summary,
                         source_role="risk_bearer_legal_subject",
-                        plain_language=(
-                            f"Estes números são do Consumer.gov contra {name}. Eles são "
-                            "contexto da entidade que assume o risco e não são reclamações "
-                            "da distribuidora nem reclamações exclusivas desta marca/produto."
-                        ),
+                        plain_language=carrier_plain_language,
                     ),
                 }
             )

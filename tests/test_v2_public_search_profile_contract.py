@@ -1,4 +1,5 @@
 from api.v2.build_public_search_profile_contract import (
+    apply_pre_ordinary_conduct_context,
     build_public_search_profile_contract,
 )
 
@@ -480,3 +481,171 @@ def test_search_index_contains_entities_and_brands_without_fuzzy_identity_decisi
         row for row in payload["search_index"] if row["profile_id"] == "brand:teste"
     )
     assert "teste seguros" in brand_entry["search_text"]
+
+
+def test_graduated_sandbox_insurer_keeps_history_but_current_status_is_ordinary():
+    lti = _base_entity(
+        "fip:001988",
+        cnpj="47006254000180",
+        legal_name="LTI SEGUROS S.A.",
+    )
+    lti["evidence"] = {
+        "sandbox_history": {
+            "cnpj": "47006254000180",
+            "legal_name": "LTI Seguros S.A.",
+            "editions": ["2ª edição do Sandbox"],
+            "first_seen": "2023-01-20T00:00:00Z",
+            "last_seen_in_current_sandbox": "2026-09-15T02:26:32Z",
+            "current_sandbox_present": False,
+            "current_outcome": "graduated_to_ordinary_license",
+            "last_snapshot": {
+                "regulatory_status": "temporary_authorized",
+                "authorization_end": "2026-03-20",
+                "authorization_extended": True,
+            },
+            "ordinary_license": {
+                "fip_code": "001988",
+                "legal_name": "LTI SEGUROS S.A.",
+                "entity_type": "insurer",
+            },
+            "events": [
+                {
+                    "event_type": "sandbox_graduated_to_ordinary_license",
+                    "observed_at": "2026-09-21T16:20:00Z",
+                    "previous_value": "temporary_authorized",
+                    "observed_value": "active_licensed",
+                    "fip_code": "001988",
+                }
+            ],
+        }
+    }
+
+    payload = build_public_search_profile_contract(
+        _lifecycle([lti]),
+        _explorer([_explorer_row("fip:001988", legal_name="LTI SEGUROS S.A.")]),
+        _empty_sandbox(),
+        {"relationships": []},
+    )
+    profile = _profiles(payload)["entity:fip:001988"]
+
+    assert profile["regulatory"]["regime"] == "ordinary"
+    assert profile["regulatory"]["status"] == "active_licensed"
+    assert profile["regulatory"]["label"] == "Seguradora"
+    assert profile["lifecycle"]["is_historical"] is False
+    assert profile["regulatory_history"]["sandbox"]["participated"] is True
+    assert profile["regulatory_history"]["sandbox"]["current_outcome"] == (
+        "graduated_to_ordinary_license"
+    )
+    assert "Antes da autorização ordinária atual" in profile["public_summary"]["quick_answer"]
+
+
+def test_historical_sandbox_profile_stays_searchable_without_claiming_discontinuation():
+    former = _base_entity(
+        "cnpj:39768897000133",
+        cnpj="39768897000133",
+        legal_name="COOVER SEGURADORA S.A.",
+        entity_type="sandbox_participant",
+        regime="sandbox",
+        status="sandbox_history_only",
+    )
+    former["query_context"] = {
+        "entity_state": "historical_sandbox_participant",
+        "filter_bucket": "historical",
+    }
+    former["evidence"] = {
+        "sandbox_history": {
+            "cnpj": "39768897000133",
+            "legal_name": "COOVER SEGURADORA S.A.",
+            "editions": ["1ª edição do Sandbox"],
+            "first_seen": "2021-03-01T00:00:00Z",
+            "last_seen_in_current_sandbox": "2026-09-15T18:44:00Z",
+            "current_sandbox_present": False,
+            "current_outcome": "not_present_in_current_sandbox",
+            "last_snapshot": {
+                "regulatory_status": "sandbox_authorization_cancelled",
+            },
+            "ordinary_license": None,
+            "events": [],
+        }
+    }
+
+    payload = build_public_search_profile_contract(
+        _lifecycle([former]),
+        _explorer([]),
+        _empty_sandbox(),
+        {"relationships": []},
+    )
+    profile = _profiles(payload)["entity:cnpj:39768897000133"]
+
+    assert profile["lifecycle"]["is_historical"] is True
+    assert profile["regulatory"]["filter_bucket"] == "historical"
+    assert profile["regulatory"]["label"] == "Participação histórica no Sandbox regulatório"
+    assert profile["regulatory_history"]["sandbox"]["participated"] is True
+    assert "descontinuação" in profile["public_summary"]["quick_answer"]
+    assert any(
+        row["profile_id"] == "entity:cnpj:39768897000133"
+        for row in payload["search_index"]
+    )
+
+
+def test_graduated_insurer_exposes_pre_ordinary_conduct_without_pressure_effect():
+    lti = _base_entity(
+        "fip:001988",
+        cnpj="47006254000180",
+        legal_name="LTI SEGUROS S.A.",
+    )
+    lti["evidence"] = {
+        "sandbox_history": {
+            "current_outcome": "graduated_to_ordinary_license",
+            "events": [
+                {
+                    "event_type": "sandbox_graduated_to_ordinary_license",
+                    "observed_at": "2026-09-21T16:20:00Z",
+                    "fip_code": "001988",
+                }
+            ],
+        }
+    }
+    payload = build_public_search_profile_contract(
+        _lifecycle([lti]),
+        _explorer([_explorer_row("fip:001988", legal_name="LTI SEGUROS S.A.")]),
+        _empty_sandbox(),
+        {"relationships": []},
+    )
+    conduct = {
+        "artifact": "v2_consumer_gov_conduct_evidence",
+        "entities": [
+            {
+                "entity_id": "fip:001988",
+                "pre_ordinary_history": {
+                    "role": "same_legal_entity_historical_pre_ordinary_conduct",
+                    "boundary": {
+                        "transition_period": 202609,
+                        "first_full_ordinary_period": 202610,
+                    },
+                    "totals": {
+                        "complaints": 1329,
+                        "responded": 1286,
+                        "response_rate": 0.9676,
+                        "finalized": 1329,
+                        "finalized_rate": 1.0,
+                        "satisfaction_count": 619,
+                        "average_satisfaction": 2.6446,
+                    },
+                    "film": {"months_observed": 12, "months_with_complaints": 12},
+                },
+            }
+        ],
+    }
+
+    payload = apply_pre_ordinary_conduct_context(payload, conduct)
+    profile = _profiles(payload)["entity:fip:001988"]
+    history = profile["historical_conduct_context"]
+
+    assert history["metrics"]["complaints"]["value"] == 1329
+    assert history["metrics"]["responded"]["value"] == 1286
+    assert history["metrics"]["satisfaction_count"]["value"] == 619
+    assert history["ordinary_pressure_effect"] == "none"
+    assert history["ordinary_market_baseline_effect"] == "none"
+    assert history["boundary"]["first_full_ordinary_period"] == 202610
+    assert payload["publication_policy"]["pre_ordinary_conduct_enters_ordinary_pressure"] is False

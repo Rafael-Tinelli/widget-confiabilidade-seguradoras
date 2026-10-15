@@ -242,7 +242,9 @@ Situação operacional das fontes:
 
 - SusepCon permanece histórico/congelado enquanto não houver retomada pública consumível;
 - BDR/SUSEP existe como obrigação de envio regulatório, mas não é integrado ao pipeline sem base pública adequada;
-- Consumer.gov pode usar `validated_cache_fallback` quando a fonte corrente estiver indisponível;
+- a fonte corrente canônica de Consumer.gov é a área oficial direta de Dados Abertos em `www.consumidor.gov.br/pages/dadosabertos/externo/`;
+- o CKAN legado em `dados.mj.gov.br` não é dependência corrente do Gate 4 e permanece apenas como sinal de recuperação/forense no source watch;
+- Consumer.gov pode usar `validated_cache_fallback` quando a fonte oficial direta estiver indisponível ou não puder ser validada;
 - fallback validado e explicitamente `stale` não é, por si só, falha metodológica;
 - o workflow `V2 Complaint Source Watch` monitora recuperação de fontes de forma independente da geração/publicação.
 

@@ -96,6 +96,18 @@ jobs:
             "sandbox_brand_conduct_evidence.json" \
             "data/derived/v2/sandbox_brand_conduct_evidence.json"
 
+          restore_artifact \
+            "V2 Sandbox Brand Conduct Evidence" \
+            "v2-sandbox-brand-conduct" \
+            "market_relationship_conduct_evidence.json" \
+            "data/derived/v2/market_relationship_conduct_evidence.json"
+
+          restore_artifact \
+            "V2 Consumer.gov Conduct Evidence" \
+            "v2-consumer-gov-conduct" \
+            "consumer_gov_conduct_evidence.json" \
+            "data/derived/v2/consumer_gov_conduct_evidence.json"
+
       - name: Lint public search/profile contract
         run: |
           set -euo pipefail

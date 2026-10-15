@@ -119,12 +119,24 @@ def _derive_query_context(entities: list[dict[str, Any]]) -> list[dict[str, Any]
                 "lifecycle_evidence": "receita_cnpj",
             }
         elif entity_type == "sandbox_participant":
-            entity["query_context"] = {
-                "entity_state": "sandbox_experimental_participant",
-                "filter_bucket": "sandbox",
-                "guidance_code": "explain_sandbox_scope_and_limits",
-                "score_behavior": "never_compare_with_ordinary_insurers",
-            }
+            sandbox_history = (
+                (entity.get("evidence") or {}).get("sandbox_history") or {}
+            )
+            if sandbox_history and sandbox_history.get("current_sandbox_present") is False:
+                entity["query_context"] = {
+                    "entity_state": "historical_sandbox_participant",
+                    "filter_bucket": "historical",
+                    "guidance_code": "explain_historical_sandbox_participation",
+                    "score_behavior": "do_not_score_historical_entity",
+                    "sandbox_outcome": sandbox_history.get("current_outcome"),
+                }
+            else:
+                entity["query_context"] = {
+                    "entity_state": "sandbox_experimental_participant",
+                    "filter_bucket": "sandbox",
+                    "guidance_code": "explain_sandbox_scope_and_limits",
+                    "score_behavior": "never_compare_with_ordinary_insurers",
+                }
         elif is_insurance_cooperative(entity):
             entity["query_context"] = {
                 "entity_state": "insurance_cooperative",

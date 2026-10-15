@@ -62,11 +62,14 @@ def _apply_canonical_risk_bearer_conduct(
             "market relationship Conduct window differs from canonical Consumer.gov Conduct"
         )
 
-    canonical_by_id = {
-        str(row.get("entity_id") or ""): _canonical_conduct_summary(row)
-        for row in consumer_conduct.get("entities") or []
-        if row.get("entity_id")
-    }
+    canonical_by_id = {}
+    for row in consumer_conduct.get("entities") or []:
+        entity_id = str(row.get("entity_id") or "")
+        if not entity_id:
+            raise ValueError("canonical Consumer.gov Conduct row without entity_id")
+        if entity_id in canonical_by_id:
+            raise ValueError(f"duplicate canonical Consumer.gov Conduct entity_id: {entity_id}")
+        canonical_by_id[entity_id] = _canonical_conduct_summary(row)
 
     output = deepcopy(payload)
     overridden_ids: set[str] = set()
@@ -264,9 +267,7 @@ def build_from_files() -> tuple[dict[str, Any], dict[str, Any]]:
     identity = json.loads(IDENTITY_PATH.read_text(encoding="utf-8"))
     consumer_conduct = json.loads(CONSUMER_CONDUCT_PATH.read_text(encoding="utf-8"))
     payload = build_market_relationship_conduct_evidence(
-        lifecycle,
-        identity,
-        consumer_conduct=consumer_conduct,
+        lifecycle, identity, consumer_conduct=consumer_conduct
     )
     legacy = build_legacy_sandbox_projection(payload)
     return payload, legacy

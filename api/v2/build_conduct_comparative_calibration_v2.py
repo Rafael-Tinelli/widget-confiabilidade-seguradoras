@@ -30,7 +30,7 @@ from api.v2.conduct_monthly_pressure import (
 CONDUCT_PATH = Path("data/derived/v2/consumer_gov_conduct_evidence.json")
 RECONCILIATION_PATH = Path("data/derived/v2/conduct_coverage_reconciliation.json")
 OUTPUT_PATH = Path("data/derived/v2/conduct_comparative_calibration_v2.json")
-VERSION = "2.0-draft-conduct-comparative-calibration-5"
+VERSION = "2.0-draft-conduct-comparative-calibration-6"
 CANDIDATE_STATE = "direct_one_to_one_candidate"
 ALIGNED_POLICY = "sum_monthly_expected_then_observed_divided_by_expected"
 
@@ -319,8 +319,31 @@ def _raw_entity(
     earned_complete_months = 0
     complaints_total = 0
     monthly_raw: list[dict[str, Any]] = []
+    eligible_periods: list[int] = []
 
     for month, period in zip(months, periods, strict=True):
+        conduct_month = conduct_months[month]
+        ordinary_eligible = bool(
+            conduct_month.get("ordinary_comparison_eligible", True)
+        )
+        if not ordinary_eligible:
+            monthly_raw.append(
+                {
+                    "month": month,
+                    "period": period,
+                    "complaints": 0,
+                    "premium_direct": 0.0,
+                    "premium_direct_missing_rows": 0,
+                    "premium_earned_diagnostic": None,
+                    "premium_earned_missing_rows": 0,
+                    "premium_earned_diagnostic_complete": False,
+                    "ordinary_comparison_eligible": False,
+                    "regulatory_scope": conduct_month.get("regulatory_scope"),
+                }
+            )
+            continue
+
+        eligible_periods.append(period)
         ses_month = _ses_month(ses_entity, period)
         direct_missing = _nonnegative_int(
             ses_month.get("insurance_premium_direct_missing_rows") or 0,
@@ -345,7 +368,7 @@ def _raw_entity(
         )
         earned = earned_value if earned_missing == 0 else None
         complaints = _nonnegative_int(
-            conduct_months[month].get("complaints") or 0,
+            conduct_month.get("complaints") or 0,
             field="complaints",
         )
         premium_direct += direct
@@ -363,6 +386,8 @@ def _raw_entity(
                 "premium_earned_diagnostic": earned,
                 "premium_earned_missing_rows": earned_missing,
                 "premium_earned_diagnostic_complete": earned_missing == 0,
+                "ordinary_comparison_eligible": True,
+                "regulatory_scope": conduct_month.get("regulatory_scope"),
             }
         )
 
@@ -379,12 +404,15 @@ def _raw_entity(
         "complaints_12m": complaints_total,
         "premium_direct_12m": premium_direct,
         "premium_earned_12m_diagnostic": (
-            earned_sum if earned_complete_months == len(months) else None
+            earned_sum if earned_complete_months == len(eligible_periods) else None
         ),
         "premium_earned_complete_months": earned_complete_months,
-        "premium_earned_diagnostic_complete": earned_complete_months == len(months),
+        "premium_earned_diagnostic_complete": (
+            bool(eligible_periods) and earned_complete_months == len(eligible_periods)
+        ),
+        "ordinary_comparison_months": len(eligible_periods),
         "monthly_raw": monthly_raw,
-        "branch_totals": _branch_totals(ses_entity, periods),
+        "branch_totals": _branch_totals(ses_entity, eligible_periods),
         "satisfaction": _satisfaction_diagnostics(conduct_entity),
     }
 
@@ -437,6 +465,18 @@ def _aligned_entity(
         direct = float(item["premium_direct"])
         complaints = int(item["complaints"])
         market_complaints, market_premium = baselines[month]
+        if not bool(item.get("ordinary_comparison_eligible", True)):
+            monthly.append(
+                {
+                    **item,
+                    "state": "not_comparable_pre_ordinary_regulatory_scope",
+                    "reason_code": "pre_graduation_or_transition_month",
+                    "expected_complaints": None,
+                    "pressure_ratio": None,
+                }
+            )
+            ratios.append(None)
+            continue
         if direct <= 0 or market_premium <= 0:
             monthly.append(
                 {
@@ -496,6 +536,7 @@ def _aligned_entity(
             "entity_id", "fip_code", "cnpj", "legal_name", "display_name",
             "complaints_12m", "premium_direct_12m", "premium_earned_12m_diagnostic",
             "premium_earned_complete_months", "premium_earned_diagnostic_complete",
+            "ordinary_comparison_months",
         )},
         "pressure_12m": pressure,
         "monthly": monthly,
@@ -621,6 +662,10 @@ def build_calibration_v2(
             "periods": periods,
             "series_policy": "no_cross_source_stitching",
             "period_policy": "chronological_consecutive_months",
+            "regulatory_temporal_policy": (
+                "pre-graduation and transition-month observations are excluded from "
+                "ordinary pressure; only full post-graduation months are comparable"
+            ),
         },
         "population": {
             "reconciliation_entities": len(reconciliation.get("entities") or []),

@@ -225,3 +225,80 @@ def test_partial_download_never_replaces_existing_raw_cache(
 
     assert destination.read_bytes() == b"previous-valid-cache"
     assert not destination.with_suffix(destination.suffix + ".tmp").exists()
+
+
+def test_direct_consumer_source_lists_only_explicit_basecompleta(
+    monkeypatch,
+) -> None:
+    base = build.consumer_gov_direct.Publication(
+        code="20260800000010944",
+        title="Base Completa Consumidor.gov.br - Junho_2026",
+        filename="basecompleta2026-06.zip",
+        published_at="2026-08-23",
+        month="2026-06",
+        discovery_method="test",
+    )
+    generic = build.consumer_gov_direct.Publication(
+        code="20260800000010945",
+        title="Dados - Julho de 2026",
+        filename="dados_2026-07.zip",
+        published_at="2026-08-24",
+        month="2026-07",
+        discovery_method="test",
+    )
+    finalizadas = build.consumer_gov_direct.Publication(
+        code="20260800000010946",
+        title="Reclamações finalizadas em Julho de 2026",
+        filename="finalizadas_2026-07.zip",
+        published_at="2026-08-24",
+        month="2026-07",
+        discovery_method="test",
+    )
+    monkeypatch.setattr(
+        build.consumer_gov_direct,
+        "discover_publications",
+        lambda _wanted: [generic, finalizadas, base],
+    )
+
+    resources = build._list_basecompleta_resources()
+
+    assert list(resources) == ["2026-06"]
+    assert resources["2026-06"].url == base.download_url
+    assert resources["2026-06"].publication == base
+
+
+def test_direct_resource_download_uses_schema_validating_client(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    publication = build.consumer_gov_direct.Publication(
+        code="20260800000010944",
+        title="Base Completa Consumidor.gov.br - Junho_2026",
+        filename="basecompleta2026-06.zip",
+        published_at="2026-08-23",
+        month="2026-06",
+        discovery_method="test",
+    )
+    resource = build.ResourceInfo(
+        month="2026-06",
+        name=publication.title,
+        url=publication.download_url,
+        format="ZIP",
+        publication=publication,
+    )
+    destination = tmp_path / "basecompleta_2026-06.csv"
+    calls = []
+
+    def fake_download(selected, out_path, month):
+        calls.append((selected, out_path, month))
+        out_path.write_text("validated", encoding="utf-8")
+
+    monkeypatch.setattr(
+        build.consumer_gov_direct,
+        "download_publication",
+        fake_download,
+    )
+
+    build._download_resource(resource, destination)
+
+    assert calls == [(publication, destination, "2026-06")]

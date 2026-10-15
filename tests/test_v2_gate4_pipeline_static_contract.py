@@ -86,8 +86,13 @@ def test_late_publication_stages_are_wired_to_real_contract_builders():
     assert sandbox.commands == (
         (sys.executable, "-m", "api.v2.build_sandbox_brand_conduct_evidence"),
     )
-    assert sandbox.dependencies == ("eligibility", "conduct_source_snapshot")
+    assert sandbox.dependencies == (
+        "lifecycle",
+        "eligibility",
+        "conduct_source_snapshot",
+    )
     assert sandbox.outputs == (
+        "data/derived/v2/market_relationship_conduct_evidence.json",
         "data/derived/v2/sandbox_brand_conduct_evidence.json",
     )
 

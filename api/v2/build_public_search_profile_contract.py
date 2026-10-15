@@ -10,6 +10,7 @@ from typing import Any
 LIFECYCLE_PATH = Path("data/derived/v2/entity_lifecycle_relationship_inventory.json")
 EXPLORER_PATH = Path("data/derived/v2/public/insurer_explorer.json")
 SANDBOX_CONDUCT_PATH = Path("data/derived/v2/sandbox_brand_conduct_evidence.json")
+CONDUCT_EVIDENCE_PATH = Path("data/derived/v2/consumer_gov_conduct_evidence.json")
 CONDUCT_RELATIONSHIPS_PATH = Path(
     "data/reference/v2/conduct_subject_relationships.json"
 )
@@ -85,6 +86,8 @@ def _regulatory_label(entity: dict[str, Any]) -> str:
         return "Entidade histórica incorporada"
     if state == "historical_closed_entity":
         return "Entidade jurídica histórica"
+    if state == "historical_sandbox_participant":
+        return "Participação histórica no Sandbox regulatório"
     if entity_type == "sandbox_participant" or regime == "sandbox":
         return "Participante do Sandbox regulatório"
     if regime == "special":
@@ -130,6 +133,20 @@ def _entity_intro(entity: dict[str, Any], by_id: dict[str, dict[str, Any]]) -> s
             f"{name} aparece como pessoa jurídica histórica/baixada no cadastro jurídico "
             "consultado e não deve ser confundida com uma seguradora atual."
         )
+    if state == "historical_sandbox_participant":
+        history = (entity.get("evidence") or {}).get("sandbox_history") or {}
+        if history.get("current_outcome") == "sandbox_authorization_cancelled":
+            return (
+                f"{name} participou do Sandbox regulatório da SUSEP e permanece "
+                "pesquisável como registro histórico. A autorização temporária consta "
+                "como cancelada nas evidências preservadas pela ferramenta."
+            )
+        return (
+            f"{name} participou do Sandbox regulatório da SUSEP e permanece "
+            "pesquisável como registro histórico. A empresa não aparece na fotografia "
+            "corrente do Sandbox usada pela ferramenta; essa ausência, sozinha, não é "
+            "tratada como prova de encerramento ou descontinuação."
+        )
     if entity_type == "sandbox_participant" or regime == "sandbox":
         return (
             f"{name} aparece no cadastro público consultado como participante do Sandbox "
@@ -162,6 +179,15 @@ def _entity_intro(entity: dict[str, Any], by_id: dict[str, dict[str, Any]]) -> s
             "seguradora considerada pelo comparador ordinário."
         )
     if entity_type == "insurer":
+        sandbox_history = (entity.get("evidence") or {}).get("sandbox_history") or {}
+        if sandbox_history.get("current_outcome") == "graduated_to_ordinary_license":
+            return (
+                f"{name} é identificada atualmente como seguradora no cadastro "
+                "regulatório consultado. Antes da autorização ordinária atual, "
+                "participou do Sandbox regulatório da SUSEP; esse histórico é "
+                "preservado sem confundir o regime experimental anterior com a "
+                "situação regulatória corrente."
+            )
         return (
             f"{name} é identificada como seguradora no cadastro regulatório consultado. "
             "Cada sinal só é apresentado quando sua evidência sustenta a afirmação."
@@ -666,6 +692,60 @@ def _sandbox_metrics(totals: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def apply_pre_ordinary_conduct_context(
+    payload: dict[str, Any],
+    conduct: dict[str, Any],
+) -> dict[str, Any]:
+    if conduct.get("artifact") != "v2_consumer_gov_conduct_evidence":
+        raise PublicSearchProfileContractError(
+            "unexpected Consumer.gov Conduct artifact for historical context"
+        )
+
+    by_entity = {
+        str(row.get("entity_id") or ""): row
+        for row in conduct.get("entities") or []
+        if row.get("entity_id")
+    }
+    attached = 0
+    for profile in payload.get("profiles") or []:
+        if profile.get("profile_kind") != "entity":
+            continue
+        entity_id = str((profile.get("identity") or {}).get("entity_id") or "")
+        row = by_entity.get(entity_id)
+        history = (row or {}).get("pre_ordinary_history")
+        if not isinstance(history, dict):
+            continue
+
+        totals = dict(history.get("totals") or {})
+        profile["historical_conduct_context"] = {
+            "availability": "available",
+            "regulatory_scope": "pre_ordinary_sandbox_history",
+            "role": history.get("role"),
+            "ordinary_pressure_effect": "none",
+            "ordinary_market_baseline_effect": "none",
+            "boundary": dict(history.get("boundary") or {}),
+            "metrics": _sandbox_metrics(totals),
+            "trajectory_context": _sandbox_film(history.get("film")),
+            "plain_language": (
+                "Estes números pertencem à mesma pessoa jurídica, mas foram observados "
+                "antes do primeiro mês completo sob a licença ordinária. Permanecem "
+                "visíveis como histórico e não entram na pressão de reclamações nem no "
+                "baseline das seguradoras ordinárias."
+            ),
+        }
+        attached += 1
+
+    population = dict(payload.get("population") or {})
+    population["profiles_with_pre_ordinary_conduct_history"] = attached
+    payload["population"] = population
+
+    policy = dict(payload.get("publication_policy") or {})
+    policy["pre_ordinary_conduct_history_is_preserved"] = True
+    policy["pre_ordinary_conduct_enters_ordinary_pressure"] = False
+    payload["publication_policy"] = policy
+    return payload
+
+
 def _brand_subject_metrics(totals: dict[str, Any]) -> dict[str, Any]:
     return {
         "complaints": _metric(
@@ -943,6 +1023,39 @@ def _brand_profile(
     }
 
 
+def _public_sandbox_history(entity: dict[str, Any]) -> dict[str, Any] | None:
+    history = (entity.get("evidence") or {}).get("sandbox_history")
+    if not isinstance(history, dict):
+        return None
+    events = []
+    for raw in history.get("events") or []:
+        event = dict(raw)
+        events.append(
+            {
+                "event_type": event.get("event_type"),
+                "observed_at": event.get("observed_at"),
+                "previous_value": event.get("previous_value"),
+                "observed_value": event.get("observed_value"),
+                "fip_code": event.get("fip_code"),
+            }
+        )
+    return {
+        "participated": True,
+        "editions": list(history.get("editions") or []),
+        "first_seen": history.get("first_seen"),
+        "last_seen_in_current_sandbox": history.get("last_seen_in_current_sandbox"),
+        "current_sandbox_present": history.get("current_sandbox_present"),
+        "current_outcome": history.get("current_outcome"),
+        "last_snapshot": dict(history.get("last_snapshot") or {}),
+        "ordinary_license": (
+            dict(history.get("ordinary_license") or {})
+            if history.get("ordinary_license")
+            else None
+        ),
+        "events": events,
+    }
+
+
 def _entity_profile(
     entity: dict[str, Any],
     *,
@@ -990,6 +1103,9 @@ def _entity_profile(
             "successor_chain": [
                 f"entity:{value}" for value in context.get("successor_chain") or []
             ],
+        },
+        "regulatory_history": {
+            "sandbox": _public_sandbox_history(entity),
         },
         "public_summary": {
             "headline": _regulatory_label(entity),
@@ -1336,13 +1452,18 @@ def build_from_files(
     lifecycle_path: Path = LIFECYCLE_PATH,
     explorer_path: Path = EXPLORER_PATH,
     sandbox_conduct_path: Path = SANDBOX_CONDUCT_PATH,
+    conduct_path: Path = CONDUCT_EVIDENCE_PATH,
     conduct_relationships_path: Path = CONDUCT_RELATIONSHIPS_PATH,
 ) -> dict[str, Any]:
-    return build_public_search_profile_contract(
+    payload = build_public_search_profile_contract(
         json.loads(lifecycle_path.read_text(encoding="utf-8")),
         json.loads(explorer_path.read_text(encoding="utf-8")),
         json.loads(sandbox_conduct_path.read_text(encoding="utf-8")),
         json.loads(conduct_relationships_path.read_text(encoding="utf-8")),
+    )
+    return apply_pre_ordinary_conduct_context(
+        payload,
+        json.loads(conduct_path.read_text(encoding="utf-8")),
     )
 
 
