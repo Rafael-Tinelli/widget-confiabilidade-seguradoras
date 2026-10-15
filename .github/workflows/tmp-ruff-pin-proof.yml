@@ -40,7 +40,7 @@ jobs:
               lines = Path(workflow).read_text(encoding="utf-8").splitlines()
               starts = [
                   idx for idx, line in enumerate(lines)
-                  if line.strip() == r"ruff check \"
+                  if line.strip() == "ruff check " + chr(92)
               ]
               if len(starts) != 1:
                   raise SystemExit(f"{workflow}: expected exactly one ruff check")
