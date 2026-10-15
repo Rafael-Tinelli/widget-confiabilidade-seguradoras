@@ -90,6 +90,7 @@ def test_late_publication_stages_are_wired_to_real_contract_builders():
         "lifecycle",
         "eligibility",
         "conduct_source_snapshot",
+        "consumer_conduct",
     )
     assert sandbox.outputs == (
         "data/derived/v2/market_relationship_conduct_evidence.json",
