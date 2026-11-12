@@ -191,12 +191,13 @@ def _is_valid_monthly_root(
         return False
     if "lines_kept" in meta and meta["lines_kept"] != count_sum:
         return False
-    if "lines_total" in meta and (
-        not isinstance(meta["lines_total"], int)
-        or meta["lines_total"] < count_sum
-    ):
-        return False
-    return True
+    return not (
+        "lines_total" in meta
+        and (
+            not isinstance(meta["lines_total"], int)
+            or meta["lines_total"] < count_sum
+        )
+    )
 
 
 def _is_valid_aggregate_root(root: dict[str, Any]) -> bool:

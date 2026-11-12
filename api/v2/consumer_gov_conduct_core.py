@@ -8,8 +8,8 @@ from typing import Any
 from api import build_consumidor_gov as consumer_gov_build
 from api.sources.consumer_gov_direct import validate_month_csv
 from api.utils.name_cleaner import normalize_name_key
-from api.v2.consumer_gov_window import ConsumerGovWindowError, load_active_window
 from api.v2 import consumer_gov_conduct
+from api.v2.consumer_gov_window import ConsumerGovWindowError, load_active_window
 
 CORE_SOURCE_ROLE = "legacy_basecompleta_monthly_aggregate"
 TAXONOMY_ROLE = "optional_basecompleta_raw_enrichment"

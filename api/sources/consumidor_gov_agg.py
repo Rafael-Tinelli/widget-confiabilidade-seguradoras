@@ -65,8 +65,8 @@ def extract_consumidor_gov_aggregated(
 
     try:
         root = _read_json_any(path)
-    except Exception as e:
-        return {"status": "invalid", "error": f"falha ao ler {path}: {e}"}, {}
+    except (OSError, UnicodeError, ValueError, TypeError) as exc:
+        return {"status": "invalid", "error": f"falha ao ler {path}: {exc}"}, {}
 
     if not isinstance(root, dict):
         return {"status": "invalid", "error": f"arquivo {path} não é dict"}, {}

@@ -102,6 +102,20 @@ def _validate_versioned_materialization(
     *,
     repo_root: Path,
 ) -> tuple[dict[str, Any], str, str, list[str]]:
+    # Verify repository provenance before semantic reconciliation so a
+    # changed versioned file retains its explicit Git HEAD failure reason.
+    pinned_aggregate = consumer_gov_build.DERIVED_DIR / "consumidor_gov_agg.json.gz"
+    try:
+        embedded = _read_gzip_json(pinned_aggregate)
+    except (OSError, UnicodeError, ValueError, ConductSourceSnapshotError):
+        embedded = {}
+    monthly = (embedded.get("meta") or {}).get("months") or []
+    if isinstance(monthly, list) and len(monthly) == 12:
+        paths = [pinned_aggregate] + [
+            consumer_gov_build.MONTHLY_DIR / f"consumidor_gov_{month}.json.gz"
+            for month in monthly
+        ]
+        _require_versioned_pristine(paths, repo_root)
     try:
         materialized = _consumer_manifest_payload()
     except (OSError, ValueError, ConductSourceSnapshotError) as exc:
