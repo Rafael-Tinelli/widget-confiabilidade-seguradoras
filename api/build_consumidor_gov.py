@@ -837,226 +837,170 @@ def _remove_invalid_cache(path: Path) -> None:
 
 
 def main() -> int:
-    print("\n--- BUILD CONSUMIDOR.GOV (BASE COMPLETA -> AGG) ---")
+    """Build an all-or-nothing Base Completa candidate without altering V2."""
+    from api.v2.consumer_gov_window import (
+        WINDOW_MANIFEST,
+        ConsumerGovWindowError,
+        load_active_window,
+    )
+
+    print("\n--- BUILD CONSUMIDOR.GOV (BASE COMPLETA -> VERIFIED WINDOW) ---")
     RAW_DIR.mkdir(parents=True, exist_ok=True)
     MONTHLY_DIR.mkdir(parents=True, exist_ok=True)
     DERIVED_DIR.mkdir(parents=True, exist_ok=True)
 
-    aggregate_path = DERIVED_DIR / "consumidor_gov_agg.json.gz"
-    existing_aggregate = _load_valid_aggregate(aggregate_path)
+    legacy_aggregate_path = DERIVED_DIR / "consumidor_gov_agg.json.gz"
+    legacy_aggregate = _load_valid_aggregate(legacy_aggregate_path)
+    active = None
+    try:
+        active = load_active_window(
+            DERIVED_DIR, MONTHLY_DIR, required=MONTHS_BACK
+        )
+    except ConsumerGovWindowError as exc:
+        if (DERIVED_DIR / WINDOW_MANIFEST).exists():
+            print(f"CG FAIL: existing active window manifest invalid: {exc}")
+            return 1
+
+    previous = active.aggregate if active else legacy_aggregate
+
+    def unavailable(reason: str) -> int:
+        preserved = _preserve_existing_aggregate(previous, reason)
+        if preserved is not None:
+            return preserved
+        print(f"CG FAIL: {reason}; no validated previous aggregate")
+        return 1
+
+    if MONTHS_BACK <= 0 or MONTHS_BACK > 24:
+        return unavailable(f"invalid CG_MONTHS_BACK={MONTHS_BACK}")
 
     try:
         resources_by_month = _list_basecompleta_resources()
     except (requests.RequestException, RuntimeError, ValueError) as exc:
-        preserved = _preserve_existing_aggregate(
-            existing_aggregate,
-            f"fonte oficial Consumer.gov indisponível: {exc}",
-        )
-        if preserved is not None:
-            return preserved
-        print(f"CG FAIL: fonte oficial Consumer.gov indisponível e nenhum agregado válido existe: {exc}")
-        return 1
+        return unavailable(f"official Base Completa unavailable: {exc}")
 
     if not resources_by_month:
-        preserved = _preserve_existing_aggregate(
-            existing_aggregate,
-            "nenhum recurso 'Base Completa' foi encontrado",
-        )
-        if preserved is not None:
-            return preserved
-        print("CG FAIL: nenhum recurso 'Base Completa' encontrado e sem cache válido.")
-        return 1
+        return unavailable("no explicit Base Completa publications found")
 
-    available_months = sorted(resources_by_month)
-    latest_month = available_months[-1]
-    if FORCE_MONTH:
-        if FORCE_MONTH not in resources_by_month:
-            preserved = _preserve_existing_aggregate(
-                existing_aggregate,
-                f"CG_FORCE_MONTH={FORCE_MONTH} não existe no dataset",
-            )
-            if preserved is not None:
-                return preserved
-            print(
-                f"CG FAIL: CG_FORCE_MONTH={FORCE_MONTH} não existe. "
-                f"Disponíveis: {available_months[-6:]}"
-            )
-            return 1
-        latest_month = FORCE_MONTH
+    latest = FORCE_MONTH or max(resources_by_month)
+    if latest not in resources_by_month:
+        return unavailable(f"requested month {latest} missing from official catalog")
 
-    anchor = _month_to_date(latest_month)
-    target_months = [
-        month
-        for i in range(MONTHS_BACK)
-        if (month := _ym(_add_months(anchor, -i))) in resources_by_month
-    ]
-    target_months = sorted(target_months, reverse=True)
-
-    if not target_months:
-        preserved = _preserve_existing_aggregate(
-            existing_aggregate,
-            "nenhum mês processável após aplicar a janela",
-        )
-        if preserved is not None:
-            return preserved
-        print("CG FAIL: nenhum mês processável e sem agregado válido.")
-        return 1
-
-    print(f"CG: mês mais recente disponível: {latest_month}")
-    print(f"CG: meses a processar (até {MONTHS_BACK}): {target_months}")
-
-    monthly_roots: list[dict[str, Any]] = []
-    invalid_months: list[dict[str, Any]] = []
-
-    for month in target_months:
-        resource = resources_by_month[month]
-        monthly_path = MONTHLY_DIR / f"consumidor_gov_{month}.json.gz"
-        cached_monthly = _load_valid_monthly(monthly_path, month)
-
-        if cached_monthly is not None and not FORCE_DOWNLOAD:
-            print(f"CG: {month} já possui cache mensal válido; reutilizando.")
-            monthly_roots.append(cached_monthly)
-            continue
-
-        if monthly_path.exists() and cached_monthly is None:
-            _remove_invalid_cache(monthly_path)
-
-        raw_csv = RAW_DIR / f"basecompleta_{month}.csv"
-        raw_is_usable = raw_csv.exists() and raw_csv.stat().st_size >= CG_MIN_MONTH_BYTES
-
-        if FORCE_DOWNLOAD or not raw_is_usable:
-            print(f"CG: baixando {month}: {resource.name}")
-            try:
-                _download_resource(resource, raw_csv)
-            except (OSError, RuntimeError, requests.RequestException) as exc:
-                if cached_monthly is not None:
-                    print(f"CG WARN: download falhou; usando cache mensal de {month}: {exc}")
-                    monthly_roots.append(cached_monthly)
-                    continue
-                invalid_months.append(
-                    {"month": month, "reason": "download_failed", "error": str(exc)}
-                )
-                print(f"CG WARN: {month} indisponível: {exc}")
-                continue
-
-        size = raw_csv.stat().st_size if raw_csv.exists() else 0
-        if size < CG_MIN_MONTH_BYTES:
-            print(
-                f"CG WARN: {month} dump inválido "
-                f"(bytes={size} < {CG_MIN_MONTH_BYTES}); descartando."
-            )
-            _remove_invalid_cache(raw_csv)
-            if cached_monthly is not None:
-                monthly_roots.append(cached_monthly)
-                continue
-            invalid_months.append(
-                {
-                    "month": month,
-                    "reason": "bytes_below_threshold",
-                    "bytes": size,
-                }
-            )
-            continue
-
-        try:
-            root = _aggregate_basecompleta(
-                raw_csv,
-                month=month,
-                resource_url=resource.url,
-            )
-        except (OSError, UnicodeError, ValueError, RuntimeError, csv.Error) as exc:
-            if cached_monthly is not None:
-                print(f"CG WARN: agregação falhou; usando cache mensal de {month}: {exc}")
-                monthly_roots.append(cached_monthly)
-                continue
-            invalid_months.append(
-                {"month": month, "reason": "aggregation_failed", "error": str(exc)}
-            )
-            print(f"CG WARN: falha ao agregar {month}: {exc}")
-            continue
-
-        if not _is_valid_monthly_root(root, month):
-            companies = _root_company_count(root)
-            lines_kept = int((root.get("meta") or {}).get("lines_kept") or 0)
-            if cached_monthly is not None:
-                print(f"CG WARN: agregado mensal vazio; usando cache mensal de {month}.")
-                monthly_roots.append(cached_monthly)
-                continue
-            invalid_months.append(
-                {
-                    "month": month,
-                    "reason": "zero_companies_or_kept",
-                    "companies": companies,
-                    "kept": lines_kept,
-                }
-            )
-            print(
-                f"CG WARN: {month} agregado inválido "
-                f"(companies={companies}, kept={lines_kept})."
-            )
-            continue
-
-        _atomic_write_json_gz(root, monthly_path)
-        monthly_roots.append(root)
-        meta = root.get("meta") or {}
-        print(
-            f"CG: OK {month} -> {monthly_path.as_posix()} "
-            f"(linhas={meta.get('lines_total')}, kept={meta.get('lines_kept')}, "
-            f"empresas={meta.get('companies')})"
-        )
-
-    # Se parte da janela falhou e já há agregado bom, não publica uma regressão parcial.
-    if invalid_months and existing_aggregate:
-        preserved = _preserve_existing_aggregate(
-            existing_aggregate,
-            f"meses incompletos: {invalid_months}",
-        )
-        if preserved is not None:
-            return preserved
-
-    aggregate = _merge_months(monthly_roots, invalid_months)
-    if not _is_valid_aggregate_root(aggregate):
-        preserved = _preserve_existing_aggregate(
-            existing_aggregate,
-            "novo agregado ficou vazio ou inválido",
-        )
-        if preserved is not None:
-            return preserved
-        print("CG FAIL: nenhum mês válido produziu um agregado utilizável.")
-        return 1
-
-    # Guard rail contra perda abrupta de cobertura por mudança ou falha silenciosa da fonte.
-    if existing_aggregate:
-        old_count = _root_company_count(existing_aggregate)
-        new_count = _root_company_count(aggregate)
-        min_allowed = int(old_count * (1.0 - CG_MAX_COMPANY_DROP_PCT))
-        if old_count > 0 and new_count < min_allowed:
-            preserved = _preserve_existing_aggregate(
-                existing_aggregate,
-                f"queda anormal de empresas: atual={new_count}, anterior={old_count}, "
-                f"mínimo={min_allowed}",
-            )
-            if preserved is not None:
-                return preserved
-
-        old_months = set((existing_aggregate.get("meta") or {}).get("months") or [])
-        new_months = set((aggregate.get("meta") or {}).get("months") or [])
-        if old_months and len(new_months) < min(len(old_months), MONTHS_BACK):
-            preserved = _preserve_existing_aggregate(
-                existing_aggregate,
-                f"cobertura mensal encolheu: atual={sorted(new_months)}, "
-                f"anterior={sorted(old_months)}",
-            )
-            if preserved is not None:
-                return preserved
-
-    _atomic_write_json_gz(aggregate, aggregate_path)
-    print(
-        f"CG: OK agregado multi-mês -> {aggregate_path.as_posix()} "
-        f"(empresas={_root_company_count(aggregate)}, "
-        f"status={(aggregate.get('meta') or {}).get('status')})"
+    anchor = _month_to_date(latest)
+    required_months = sorted(
+        _ym(_add_months(anchor, -index))
+        for index in range(MONTHS_BACK)
     )
-    print("CG: CNPJ não confiável na fonte; matching permanece por nome contra SUSEP.")
+    missing_publications = [
+        month for month in required_months if month not in resources_by_month
+    ]
+    if missing_publications:
+        return unavailable(
+            f"incomplete official Base Completa window: missing={missing_publications}"
+        )
+
+    print(f"CG: required complete window: {required_months}")
+    active_roots = {
+        month: root for month, _, root in active.months
+    } if active else {}
+    roots: dict[str, dict[str, Any]] = {}
+    errors: list[dict[str, Any]] = []
+
+    # Temp files do not touch the previously selected raw or monthly objects.
+    with tempfile.TemporaryDirectory(
+        prefix=".consumer-gov-build-", dir=str(RAW_DIR)
+    ) as staging:
+        for month in required_months:
+            if month in active_roots and not FORCE_DOWNLOAD:
+                roots[month] = active_roots[month]
+                continue
+
+            resource = resources_by_month[month]
+            legacy_raw = RAW_DIR / f"basecompleta_{month}.csv"
+            candidate_raw = legacy_raw
+
+            try:
+                # A new download is staged, not promoted into the old raw path.
+                if FORCE_DOWNLOAD or (
+                    not legacy_raw.is_file()
+                    or legacy_raw.stat().st_size < CG_MIN_MONTH_BYTES
+                ):
+                    candidate_raw = Path(staging) / f"basecompleta_{month}.csv"
+                    _download_resource(resource, candidate_raw)
+
+                try:
+                    validation = consumer_gov_direct.validate_month_csv(
+                        candidate_raw, month, min_bytes=CG_MIN_MONTH_BYTES
+                    )
+                except consumer_gov_direct.ConsumerGovRawError:
+                    if candidate_raw != legacy_raw:
+                        raise
+                    # The existing unverified file cannot be adopted;
+                    # retry through the same staged official acquisition.
+                    candidate_raw = Path(staging) / f"basecompleta_{month}.csv"
+                    _download_resource(resource, candidate_raw)
+                    validation = consumer_gov_direct.validate_month_csv(
+                        candidate_raw, month, min_bytes=CG_MIN_MONTH_BYTES
+                    )
+
+                root = _aggregate_basecompleta(
+                    candidate_raw, month=month, resource_url=resource.url
+                )
+                meta = root["meta"]
+                meta.update(
+                    {
+                        "source_file": f"basecompleta_{month}.csv",
+                        "source_family": "base_completa",
+                        "reference_event": "abertura",
+                        "schema_version": validation.schema_version,
+                        "source_sha256": validation.sha256,
+                        "source_rows": validation.rows,
+                    }
+                )
+                if not _is_valid_monthly_root(root, month):
+                    raise ValueError(f"{month}: invalid monthly counter conservation")
+                roots[month] = root
+            except (
+                OSError, RuntimeError, ValueError, UnicodeError, csv.Error,
+                requests.RequestException,
+            ) as exc:
+                errors.append({"month": month, "reason": type(exc).__name__, "error": str(exc)})
+                print(f"CG WARN: rejected month {month}: {exc}")
+
+    if errors or len(roots) != MONTHS_BACK:
+        return unavailable(f"candidate window failed closed: {errors}")
+
+    try:
+        ordered = [roots[month] for month in required_months]
+        aggregate = _merge_months(ordered)
+        if not _is_valid_aggregate_root(aggregate):
+            raise ValueError("candidate aggregate is empty or invalid")
+        if (aggregate.get("meta") or {}).get("months") != required_months:
+            raise ValueError("candidate aggregate reference months diverged")
+
+        if previous is not None:
+            old_count = _root_company_count(previous)
+            new_count = _root_company_count(aggregate)
+            min_allowed = int(old_count * (1.0 - CG_MAX_COMPANY_DROP_PCT))
+            if old_count > 0 and new_count < min_allowed:
+                raise ValueError(
+                    f"unexpected provider coverage drop: {old_count} -> {new_count}"
+                )
+
+        # No derived or V2 object is selected until the candidate passes
+        # per-month and per-provider checks and the single manifest is swapped.
+        manifest = _publish_validated_window(ordered, aggregate)
+    except (
+        OSError, RuntimeError, ValueError, ConsumerGovWindowError
+    ) as exc:
+        return unavailable(f"candidate publication rejected: {exc}")
+
+    print(
+        f"CG: complete Base Completa window activated via manifest "
+        f"({manifest['selected_months'][0]}.."
+        f"{manifest['selected_months'][-1]}, "
+        f"companies={_root_company_count(aggregate)})"
+    )
+    print("CG: no cross-family stitching, ranking, scoring or CNPJ inference.")
     return 0
 
 
