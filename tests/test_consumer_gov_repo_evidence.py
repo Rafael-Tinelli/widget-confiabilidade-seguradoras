@@ -107,3 +107,26 @@ def test_repo_v1_v2_and_identity_read_exact_same_versioned_evidence() -> None:
     ):
         assert path.resolve() == active_path.resolve()
         assert _canonical_entry_payload(root) == _canonical_entry_payload(selected)
+
+
+def test_reconstructed_supplier_keys_and_display_names_match_pinned_aggregate() -> None:
+    active = load_active_window(DERIVED, MONTHLY)
+    reconstructed = build._merge_months(
+        [root for _, _, root in active.months]
+    )
+    pinned_entries = build._entries_from_root(active.aggregate)
+    recomputed_entries = build._entries_from_root(reconstructed)
+    assert set(pinned_entries) == set(recomputed_entries)
+    discrepancies = []
+    for key in sorted(pinned_entries):
+        pinned = pinned_entries[key]
+        computed = recomputed_entries[key]
+        for field in ("name", "display_name", "cnpj"):
+            if (pinned.get(field) or "") != (computed.get(field) or ""):
+                discrepancies.append(
+                    (key, field, pinned.get(field), computed.get(field))
+                )
+    assert not discrepancies, (
+        f"Persisted supplier labels differ from monthly recomposition: "
+        f"count={len(discrepancies)}; first={discrepancies[:6]}"
+    )
