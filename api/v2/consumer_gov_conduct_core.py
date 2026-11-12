@@ -8,6 +8,7 @@ from typing import Any
 from api import build_consumidor_gov as consumer_gov_build
 from api.sources.consumer_gov_direct import validate_month_csv
 from api.utils.name_cleaner import normalize_name_key
+from api.v2.consumer_gov_window import ConsumerGovWindowError, load_active_window
 from api.v2 import consumer_gov_conduct
 
 CORE_SOURCE_ROLE = "legacy_basecompleta_monthly_aggregate"
@@ -70,20 +71,19 @@ def load_monthly_entries(
     *,
     monthly_dir: Path = consumer_gov_build.MONTHLY_DIR,
 ) -> tuple[dict[str, Any], dict[str, Any], Path]:
-    path = monthly_dir / f"consumidor_gov_{month}.json.gz"
-    root = consumer_gov_build._load_valid_monthly(path, month)
-    if root is None:
+    try:
+        active = load_active_window(monthly_dir.parent, monthly_dir)
+    except ConsumerGovWindowError as exc:
         raise RuntimeError(
-            "consumer_gov_core_source_unavailable: valid preserved monthly aggregate "
-            f"is required for {month}: {path}"
-        )
-    entries = consumer_gov_build._entries_from_root(root)
-    if not entries:
-        raise RuntimeError(
-            "consumer_gov_core_source_invalid: monthly aggregate has no provider entries "
-            f"for {month}: {path}"
-        )
-    return root, entries, path
+            f"consumer_gov_core_source_invalid: {exc}"
+        ) from exc
+    for declared, path, root in active.months:
+        if declared == month:
+            entries = consumer_gov_build._entries_from_root(root)
+            return root, entries, path
+    raise RuntimeError(
+        f"consumer_gov_core_source_unavailable: month {month} is not in selected window"
+    )
 
 
 def aggregate_entry_to_month(
