@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import csv
 import gzip
+import hashlib
 import json
 import os
 import re
+import tempfile
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
@@ -626,6 +628,183 @@ def _merge_months(
         "by_cnpj_key_raw": {},
         "by_cnpj_key": {},
     }
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _write_immutable_gzip(payload: dict[str, Any], destination: Path) -> str:
+    """Store one immutable object; never replace an active generation in place."""
+    data = json.dumps(
+        payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+    compressed = gzip.compress(data, mtime=0)
+    digest = hashlib.sha256(compressed).hexdigest()
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if destination.is_file():
+        if _sha256(destination) != digest:
+            raise RuntimeError(f"immutable Consumer.gov object has changed: {destination}")
+        return digest
+    with tempfile.NamedTemporaryFile(
+        delete=False, suffix=".tmp", dir=str(destination.parent)
+    ) as handle:
+        temporary = Path(handle.name)
+    try:
+        temporary.write_bytes(compressed)
+        if _sha256(temporary) != digest:
+            raise RuntimeError("Consumer.gov object changed during staging")
+        temporary.replace(destination)
+    finally:
+        temporary.unlink(missing_ok=True)
+    return digest
+
+
+def _publish_validated_window(
+    roots: list[dict[str, Any]],
+    aggregate: dict[str, Any],
+) -> dict[str, Any]:
+    """Activate all months and aggregate with ONE manifest replacement.
+
+    Monthly and aggregate objects are immutable; existing V2 materialization
+    and the previously versioned baseline are never overwritten here.
+    """
+    from api.v2.consumer_gov_window import (
+        SOURCE_FAMILY,
+        WINDOW_MANIFEST,
+        WINDOW_MANIFEST_VERSION,
+        ConsumerGovWindowError,
+        load_active_window,
+    )
+
+    declared = list((aggregate.get("meta") or {}).get("months") or [])
+    by_month = {
+        str((root.get("meta") or {}).get("month") or ""): root
+        for root in roots
+    }
+    if (
+        len(declared) != MONTHS_BACK
+        or len(by_month) != MONTHS_BACK
+        or sorted(by_month) != declared
+        or not _is_valid_aggregate_root(aggregate)
+        or any(
+            not _is_valid_monthly_root(by_month[month], month)
+            for month in declared
+        )
+    ):
+        raise ValueError("candidate Consumer.gov window is incomplete or invalid")
+
+    # Reconcile per provider before writing even immutable candidate objects.
+    def provider_counts(root: dict[str, Any]) -> dict[str, int]:
+        return {
+            str(key): int((entry.get("statistics") or {}).get("complaintsCount") or 0)
+            for key, entry in _entries_from_root(root).items()
+        }
+
+    total_by_provider: dict[str, int] = {}
+    for month in declared:
+        for key, count in provider_counts(by_month[month]).items():
+            total_by_provider[key] = total_by_provider.get(key, 0) + count
+    if total_by_provider != provider_counts(aggregate):
+        raise ValueError("candidate monthly/aggregate provider counts disagree")
+
+    manifest_path = DERIVED_DIR / WINDOW_MANIFEST
+    if manifest_path.exists():
+        try:
+            prior = load_active_window(
+                DERIVED_DIR, MONTHLY_DIR, required=MONTHS_BACK
+            )
+        except ConsumerGovWindowError as exc:
+            raise ValueError(f"existing active manifest is invalid: {exc}") from exc
+        previous_source_hashes = [
+            str((root.get("meta") or {}).get("source_sha256") or "")
+            for _, _, root in prior.months
+        ]
+        candidate_source_hashes = [
+            str((by_month[month].get("meta") or {}).get("source_sha256") or "")
+            for month in declared
+        ]
+        if (
+            [month for month, _, _ in prior.months] == declared
+            and previous_source_hashes == candidate_source_hashes
+            and all(candidate_source_hashes)
+        ):
+            return json.loads(manifest_path.read_text(encoding="utf-8"))
+
+    monthly_records = []
+    for month in declared:
+        root = by_month[month]
+        data = json.dumps(
+            root, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+        digest = hashlib.sha256(gzip.compress(data, mtime=0)).hexdigest()
+        object_path = (
+            MONTHLY_DIR / "objects" / f"consumidor_gov_{month}-{digest}.json.gz"
+        )
+        if _write_immutable_gzip(root, object_path) != digest:
+            raise RuntimeError(f"{month}: monthly object digest changed")
+        monthly_records.append(
+            {
+                "month": month,
+                "sha256": digest,
+                "path": object_path.relative_to(DERIVED_DIR).as_posix(),
+                "source_sha256": str(
+                    (root.get("meta") or {}).get("source_sha256") or ""
+                ),
+                "rows": int((root.get("meta") or {}).get("lines_total") or 0),
+                "complaints": int(
+                    (root.get("meta") or {}).get("lines_kept")
+                    or sum(provider_counts(root).values())
+                ),
+            }
+        )
+
+    data = json.dumps(
+        aggregate, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+    agg_sha = hashlib.sha256(gzip.compress(data, mtime=0)).hexdigest()
+    aggregate_path = DERIVED_DIR / "objects" / f"{agg_sha}.json.gz"
+    if _write_immutable_gzip(aggregate, aggregate_path) != agg_sha:
+        raise RuntimeError("candidate aggregate object digest changed")
+
+    manifest = {
+        "artifact": "consumer_gov_validated_window",
+        "version": WINDOW_MANIFEST_VERSION,
+        "state": "complete",
+        "source_family": SOURCE_FAMILY,
+        "reference_event": "abertura",
+        "selected_months": declared,
+        "aggregate": {
+            "path": aggregate_path.relative_to(DERIVED_DIR).as_posix(),
+            "sha256": agg_sha,
+        },
+        "months": monthly_records,
+        "validated_at": _utc_now(),
+    }
+
+    # Validate the entire candidate while the active manifest is untouched:
+    # the final replace is the only moment the new selection becomes visible.
+    with tempfile.NamedTemporaryFile(
+        delete=False, suffix=".candidate", dir=str(DERIVED_DIR)
+    ) as handle:
+        temporary = Path(handle.name)
+    try:
+        temporary.write_text(
+            json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        # Every immutable object has already been checked by its SHA-256.
+        temporary.replace(manifest_path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+    # Post-activation self-check. The previously active data is not modified.
+    load_active_window(DERIVED_DIR, MONTHLY_DIR, required=MONTHS_BACK)
+    return manifest
 
 
 def _preserve_existing_aggregate(
