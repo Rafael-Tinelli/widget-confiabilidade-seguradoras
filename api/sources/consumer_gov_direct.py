@@ -814,8 +814,13 @@ def _materialize_download(downloaded: Path, destination: Path) -> None:
     with downloaded.open("rb") as handle:
         signature = handle.read(4)
     destination.parent.mkdir(parents=True, exist_ok=True)
-    tmp_csv = destination.with_suffix(destination.suffix + ".tmp")
-    tmp_csv.unlink(missing_ok=True)
+    with tempfile.NamedTemporaryFile(
+        delete=False,
+        prefix=f".{destination.name}.",
+        suffix=".tmp",
+        dir=str(destination.parent),
+    ) as temporary:
+        tmp_csv = Path(temporary.name)
 
     try:
         if signature.startswith(b"PK\x03\x04"):
@@ -882,6 +887,14 @@ def download_publication(
     ) as tmp:
         tmp_path = Path(tmp.name)
 
+    with tempfile.NamedTemporaryFile(
+        delete=False,
+        prefix=f".{destination.name}.",
+        suffix=".incoming",
+        dir=str(destination.parent),
+    ) as staged:
+        staged_path = Path(staged.name)
+
     try:
         try:
             with http.get(
@@ -902,13 +915,15 @@ def download_publication(
                 f"{month} from {publication.download_url}: {exc}"
             ) from exc
 
-        _materialize_download(tmp_path, destination)
-        return validate_month_csv(destination, month)
-    except ConsumerGovRawError:
-        destination.unlink(missing_ok=True)
-        raise
+        # A downloaded file must pass full validation *before* it may
+        # replace a previously validated local copy.
+        _materialize_download(tmp_path, staged_path)
+        validation = validate_month_csv(staged_path, month)
+        staged_path.replace(destination)
+        return validation
     finally:
         tmp_path.unlink(missing_ok=True)
+        staged_path.unlink(missing_ok=True)
 
 
 def _load_manifest(path: Path = MANIFEST_PATH) -> dict[str, Any]:
@@ -916,12 +931,16 @@ def _load_manifest(path: Path = MANIFEST_PATH) -> dict[str, Any]:
         return {"schema_version": 1, "months": {}}
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, ValueError):
-        return {"schema_version": 1, "months": {}}
+    except (OSError, UnicodeError, ValueError) as exc:
+        raise ConsumerGovArchiveInvalid(
+            f"existing cache manifest is unreadable: {path}"
+        ) from exc
     if not isinstance(payload, dict) or not isinstance(
         payload.get("months"), dict
     ):
-        return {"schema_version": 1, "months": {}}
+        raise ConsumerGovArchiveInvalid(
+            f"existing cache manifest has invalid structure: {path}"
+        )
     return payload
 
 
@@ -935,21 +954,41 @@ def _save_manifest(payload: dict[str, Any], path: Path = MANIFEST_PATH) -> None:
     tmp.replace(path)
 
 
+def _manifest_content_matches(
+    path: Path,
+    month: str,
+    entry: dict[str, Any] | None,
+) -> bool:
+    """Verify cached bytes, never trusting size alone or a manifest flag."""
+    if not isinstance(entry, dict) or entry.get("validation") != "passed":
+        return False
+    if entry.get("month") != month:
+        return False
+    expected = str(entry.get("sha256") or "").lower()
+    if not re.fullmatch(r"[0-9a-f]{64}", expected):
+        return False
+    try:
+        if int(entry.get("bytes") or -1) != path.stat().st_size:
+            return False
+        digest = hashlib.sha256()
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(4 * 1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest() == expected
+    except (OSError, TypeError, ValueError):
+        return False
+
+
 def _manifest_cache_hit(
     path: Path,
     month: str,
     entry: dict[str, Any] | None,
 ) -> bool:
-    if not entry or entry.get("validation") != "passed":
-        return False
-    if entry.get("schema_version") != SCHEMA_VERSION:
-        return False
-    if entry.get("month") != month or not path.exists():
-        return False
-    try:
-        return int(entry.get("bytes") or -1) == path.stat().st_size
-    except (OSError, TypeError, ValueError):
-        return False
+    return (
+        isinstance(entry, dict)
+        and entry.get("schema_version") == SCHEMA_VERSION
+        and _manifest_content_matches(path, month, entry)
+    )
 
 
 def ensure_months(
@@ -981,11 +1020,21 @@ def ensure_months(
             }
             continue
 
+        # A mismatched validated manifest is evidence of corruption or an
+        # unrecorded revision. Never silently adopt the same bytes as a
+        # newly trusted legacy cache, even if its CSV schema is plausible.
+        if isinstance(entry, dict) and entry.get("validation") == "passed":
+            if not _manifest_content_matches(path, month, entry):
+                missing.append(month)
+                continue
+
         if path.exists() and path.stat().st_size >= MIN_MONTH_BYTES:
             try:
                 validation = validate_month_csv(path, month)
             except ConsumerGovRawError:
-                path.unlink(missing_ok=True)
+                # Preserve the old object for diagnosis; a fresh download
+                # is staged and validated before any promotion.
+                pass
             else:
                 entry = {
                     **asdict(validation),
