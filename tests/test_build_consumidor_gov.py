@@ -309,3 +309,33 @@ def test_direct_resource_download_uses_schema_validating_client(
     build._download_resource(resource, destination)
 
     assert calls == [(publication, destination, "2026-06")]
+
+
+def test_legacy_http_declared_length_mismatch_preserves_original(
+    monkeypatch, tmp_path: Path
+) -> None:
+    destination = tmp_path / "base.csv"
+    destination.write_bytes(b"valid-previous-cache")
+
+    class ShortResponse:
+        headers = {"Content-Length": "100"}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def raise_for_status(self):
+            return None
+
+        def iter_content(self, chunk_size):
+            assert chunk_size > 0
+            yield b"short"
+
+    monkeypatch.setattr(
+        build.HTTP, "get", lambda *args, **kwargs: ShortResponse()
+    )
+    with pytest.raises(RuntimeError, match="incomplete"):
+        build._download("https://example.test/data.csv", destination)
+    assert destination.read_bytes() == b"valid-previous-cache"

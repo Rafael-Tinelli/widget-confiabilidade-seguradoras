@@ -291,3 +291,73 @@ def test_repeat_valid_cache_hash_matches_manifest_and_does_not_discover(
     )
     assert result[MONTH]["acquisition"] == "cache_manifest"
     assert path.read_bytes() == original
+
+
+def test_http_declared_length_mismatch_preserves_prior_valid_csv(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(direct, "MIN_MONTH_BYTES", 1)
+    destination = tmp_path / f"basecompleta_{MONTH}.csv"
+    prior = _csv_bytes()
+    destination.write_bytes(prior)
+    payload = _zip_bytes(_csv_bytes("Empresa Beta"))
+    response = _Response([payload])
+    response.headers = {"Content-Length": str(len(payload) + 20)}
+
+    with pytest.raises(direct.ConsumerGovDownloadFailed, match="incomplete HTTP"):
+        direct.download_publication(
+            _publication(), destination, MONTH, session=_Session(response)
+        )
+    assert destination.read_bytes() == prior
+    assert sorted(p.name for p in tmp_path.iterdir()) == [destination.name]
+
+
+def test_ambiguous_zip_members_are_rejected_before_activation(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(direct, "MIN_MONTH_BYTES", 1)
+    destination = tmp_path / f"basecompleta_{MONTH}.csv"
+    prior = _csv_bytes()
+    destination.write_bytes(prior)
+    archive_data = io.BytesIO()
+    with zipfile.ZipFile(archive_data, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("basecompleta2026-03.csv", _csv_bytes("Empresa Beta"))
+        archive.writestr("other.csv", _csv_bytes("Empresa Gama"))
+
+    with pytest.raises(direct.ConsumerGovArchiveInvalid, match="exactly one"):
+        direct.download_publication(
+            _publication(), destination, MONTH,
+            session=_Session(_Response([archive_data.getvalue()])),
+        )
+    assert destination.read_bytes() == prior
+
+
+def test_severe_revision_row_loss_fails_closed_even_when_csv_is_valid(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(direct, "MIN_MONTH_BYTES", 1)
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    path = raw / f"basecompleta_{MONTH}.csv"
+    header, body = _csv_bytes().split(b"\n", 1)
+    full = header + b"\n" + body * 10
+    path.write_bytes(full)
+    manifest = raw / "manifest.json"
+    direct.ensure_months([MONTH], raw_dir=raw, manifest_path=manifest)
+    manifest_before = manifest.read_bytes()
+
+    # Keep the size but corrupt the original cache so a fresh download
+    # becomes necessary. The source then returns a valid but tiny revision.
+    path.write_bytes(full.replace(b"Empresa Alfa", b"Empresa Beta"))
+    monkeypatch.setattr(direct, "discover_publications", lambda _: [_publication()])
+
+    def truncated_official(_publication_arg, destination, month):
+        destination.write_bytes(_csv_bytes("Empresa Gama"))
+        return direct.validate_month_csv(destination, month)
+
+    monkeypatch.setattr(direct, "download_publication", truncated_official)
+    with pytest.raises(direct.ConsumerGovArchiveInvalid, match="row-count regression"):
+        direct.ensure_months([MONTH], raw_dir=raw, manifest_path=manifest)
+
+    assert manifest.read_bytes() == manifest_before
+    assert sorted(json.loads(manifest.read_text())["months"]) == [MONTH]
