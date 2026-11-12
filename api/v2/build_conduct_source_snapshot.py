@@ -4,6 +4,7 @@ import gzip
 import hashlib
 import json
 import shutil
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -28,6 +29,7 @@ from api.v2.conduct_receita_cache_fallback import materialize_additions_only_cac
 from api.v2.consumer_gov_receita_resolution import (
     DEFAULT_RECEITA_IDENTITY_SNAPSHOT,
 )
+from api.v2.consumer_gov_window import ConsumerGovWindowError, load_active_window
 from api.v2.generation import BuildContext
 from api.v2.source_cache import (
     CachedSource,
@@ -76,33 +78,29 @@ def _read_gzip_json(path: Path) -> dict[str, Any]:
 
 
 def _valid_monthly_files() -> list[tuple[str, Path, dict[str, Any]]]:
-    valid: dict[str, tuple[Path, dict[str, Any]]] = {}
-    for path in sorted(
-        consumer_gov_build.MONTHLY_DIR.glob("consumidor_gov_20??-??.json.gz")
-    ):
-        try:
-            payload = _read_gzip_json(path)
-        except (OSError, UnicodeError, ValueError, ConductSourceSnapshotError):
-            continue
-        meta = payload.get("meta") if isinstance(payload.get("meta"), dict) else {}
-        month = str(meta.get("month") or meta.get("ym") or "").strip()
-        entries = consumer_gov_build._entries_from_root(payload)
-        if not month or not entries or meta.get("invalid") is True:
-            continue
-        valid[month] = (path, payload)
-    selected = sorted(valid)[-12:]
-    if len(selected) != 12:
+    try:
+        return load_active_window(
+            consumer_gov_build.DERIVED_DIR,
+            consumer_gov_build.MONTHLY_DIR,
+        ).months
+    except ConsumerGovWindowError as exc:
         raise ConductSourceSnapshotError(
-            f"expected 12 valid Consumer.gov monthly snapshots, got {len(selected)}"
-        )
-    return [(month, *valid[month]) for month in selected]
+            f"Consumer.gov monthly window mismatch: {exc}"
+        ) from exc
 
 
 def _consumer_manifest_payload() -> dict[str, Any]:
-    aggregate = consumer_gov_build.DERIVED_DIR / "consumidor_gov_agg.json.gz"
-    if consumer_gov_build._load_valid_aggregate(aggregate) is None:
-        raise ConductSourceSnapshotError("valid Consumer.gov aggregate is unavailable")
-    monthly = _valid_monthly_files()
+    try:
+        active = load_active_window(
+            consumer_gov_build.DERIVED_DIR,
+            consumer_gov_build.MONTHLY_DIR,
+        )
+    except ConsumerGovWindowError as exc:
+        raise ConductSourceSnapshotError(
+            f"Consumer.gov monthly window mismatch: {exc}"
+        ) from exc
+    aggregate = active.aggregate_path
+    monthly = active.months
     return {
         "artifact": "v2_consumer_gov_core_source_manifest",
         "version": CONSUMER_MANIFEST_VERSION,
@@ -229,13 +227,112 @@ def _validate_consumer_manifest(path: Path) -> dict[str, Any]:
     return payload
 
 
+def _restore_active_window_from_v2_cache(payload: dict[str, Any]) -> None:
+    """Align the active selector with the hash-validated V2 fallback.
+
+    Without this step a newer sidecar could remain selected after the V2
+    cache restores older monthly/aggregate files. Identity and Conduct
+    could then consume different snapshots in the same generation.
+    """
+    from api.v2.consumer_gov_window import (
+        SOURCE_FAMILY,
+        WINDOW_MANIFEST,
+        WINDOW_MANIFEST_VERSION,
+    )
+
+    derived = consumer_gov_build.DERIVED_DIR
+    monthly_dir = consumer_gov_build.MONTHLY_DIR
+    sidecar = derived / WINDOW_MANIFEST
+    if not sidecar.exists():
+        # The original Git-pinned baseline has no sidecar and is verified by
+        # the established bootstrap and V2 cached-hash contracts.
+        return
+
+    def restore_object(source_row: dict[str, Any], destination: Path) -> str:
+        source = Path(str(source_row.get("path") or ""))
+        expected = str(source_row.get("sha256") or "")
+        if len(expected) != 64 or _sha256(source) != expected:
+            raise ConductSourceSnapshotError("invalid V2 Consumer.gov cache object")
+        if not destination.is_file() or _sha256(destination) != expected:
+            _atomic_copy(source, destination)
+        if _sha256(destination) != expected:
+            raise ConductSourceSnapshotError(
+                f"V2 Consumer.gov restoration hash mismatch: {destination}"
+            )
+        return expected
+
+    aggregate_row = payload.get("aggregate") or {}
+    aggregate_sha = str(aggregate_row.get("sha256") or "")
+    aggregate_path = derived / "objects" / f"{aggregate_sha}.json.gz"
+    restore_object(aggregate_row, aggregate_path)
+
+    monthly_records = []
+    for row in payload.get("months") or []:
+        month = str(row.get("month") or "")
+        digest = str(row.get("sha256") or "")
+        target = monthly_dir / "objects" / f"consumidor_gov_{month}-{digest}.json.gz"
+        restore_object(row, target)
+        monthly_records.append({
+            "month": month,
+            "path": target.relative_to(derived).as_posix(),
+            "sha256": digest,
+        })
+
+    manifest = {
+        "artifact": "consumer_gov_validated_window",
+        "version": WINDOW_MANIFEST_VERSION,
+        "state": "complete",
+        "source_family": SOURCE_FAMILY,
+        "reference_event": "abertura",
+        "selected_months": [row["month"] for row in monthly_records],
+        "aggregate": {
+            "path": aggregate_path.relative_to(derived).as_posix(),
+            "sha256": aggregate_sha,
+        },
+        "months": monthly_records,
+        "validated_at": str(payload.get("fetched_at") or ""),
+    }
+    derived.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(
+        delete=False, prefix=".consumer-gov-restore-", suffix=".tmp",
+        dir=str(derived),
+    ) as handle:
+        pending = Path(handle.name)
+    try:
+        pending.write_text(
+            json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        # A complete, coherent fallback must be proven before the pointer
+        # can switch. A malformed backup never supersedes the active window.
+        try:
+            load_active_window(
+                derived, monthly_dir, manifest_path=pending
+            )
+        except ConsumerGovWindowError as exc:
+            raise ConductSourceSnapshotError(
+                f"V2 Consumer.gov restored window is inconsistent: {exc}"
+            ) from exc
+        pending.replace(sidecar)
+    finally:
+        pending.unlink(missing_ok=True)
+
+
 def _materialize_consumer_manifest(payload: dict[str, Any]) -> None:
+    # Preflight the entire cached V2 window before touching legacy paths.
+    # If it is inconsistent, the last verified active snapshot is preserved.
+    _restore_active_window_from_v2_cache(payload)
+
     aggregate = payload.get("aggregate") or {}
     targets = [aggregate, *(payload.get("months") or [])]
     for item in targets:
         source = Path(str(item.get("path") or ""))
         destination = Path(str(item.get("materialized_path") or ""))
         expected = str(item.get("sha256") or "")
+        if _sha256(source) != expected:
+            raise ConductSourceSnapshotError(
+                f"Consumer.gov V2 source hash changed before restore: {source}"
+            )
         _atomic_copy(source, destination)
         if _sha256(destination) != expected:
             destination.unlink(missing_ok=True)
@@ -263,7 +360,7 @@ def _consumer_observation(*, cache_dir: Path) -> SourceObservation:
             raise ConductSourceSnapshotError(
                 "Consumer.gov returned no explicit Base Completa resources"
             )
-        result = consumer_gov_build.main()
+        result = consumer_gov_build.main(require_current=True)
         if result != 0:
             raise ConductSourceSnapshotError(f"Consumer.gov builder returned {result}")
         materialized = _consumer_manifest_payload()

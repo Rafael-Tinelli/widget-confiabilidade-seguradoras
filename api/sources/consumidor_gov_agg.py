@@ -6,6 +6,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from api.v2.consumer_gov_window import ConsumerGovWindowError, load_active_window
+
 
 def _read_json_any(path: Path) -> dict[str, Any]:
     """
@@ -43,15 +45,20 @@ def extract_consumidor_gov_aggregated(
         d / "consumidor_gov.json",
     ]
 
-    path = next((p for p in candidates if p.exists()), None)
+    if (d / "consumidor_gov_window_manifest.json").exists():
+        try:
+            path = load_active_window(d, d / "monthly").aggregate_path
+        except ConsumerGovWindowError as exc:
+            # A declared active window is authoritative. Returning an empty
+            # reputation payload would make the V1 consumer silently publish
+            # zero evidence instead of rejecting an inconsistent generation.
+            raise ConsumerGovWindowError(
+                f"active Consumer.gov window is invalid: {exc}"
+            ) from exc
+    else:
+        path = next((p for p in candidates if p.exists()), None)
 
-    # Fallback: tenta usar o monthly mais recente
-    if not path:
-        monthly_dir = d / "monthly"
-        monthly_candidates = sorted(monthly_dir.glob("consumidor_gov_20??-??.json.gz"))
-        if monthly_candidates:
-            path = monthly_candidates[-1]  # último por ordem lexical = mês mais recente
-
+    # A lone monthly file is never a substitute for a complete aggregate.
     if not path:
         meta = {
             "status": "missing",
@@ -63,8 +70,8 @@ def extract_consumidor_gov_aggregated(
 
     try:
         root = _read_json_any(path)
-    except Exception as e:
-        return {"status": "invalid", "error": f"falha ao ler {path}: {e}"}, {}
+    except (OSError, UnicodeError, ValueError, TypeError) as exc:
+        return {"status": "invalid", "error": f"falha ao ler {path}: {exc}"}, {}
 
     if not isinstance(root, dict):
         return {"status": "invalid", "error": f"arquivo {path} não é dict"}, {}

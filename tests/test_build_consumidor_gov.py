@@ -141,25 +141,32 @@ def test_invalid_monthly_marker_is_ignored_and_rebuilt(
     def fake_download(_url: str, out_path: Path) -> None:
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_text(
-            "Segmento de Mercado;Nome Fantasia;Situação;Respondida;"
-            "Avaliação Reclamação;Nota do Consumidor\n"
-            "Seguros, Capitalização e Previdência;Seguradora Teste;"
-            "Finalizada;S;Resolvida;5\n",
+            "Nome Fantasia;Segmento de Mercado;Respondida;Situação;"
+            "Avaliação Reclamação;Nota do Consumidor;Tempo Resposta;"
+            "Procurou Empresa;Área;Assunto;Grupo Problema;Problema;"
+            "Como Comprou Contratou;Ano Abertura;Mês Abertura\n"
+            "Seguradora Teste;Seguros, Capitalização e Previdência;S;"
+            "Finalizada avaliada;Resolvida;5;2;S;Serviços Financeiros;"
+            "Seguro;Contrato;Cobertura;Internet;2026;6\n",
             encoding="utf-8",
         )
 
     monkeypatch.setattr(build, "_download", fake_download)
 
     assert build.main() == 0
-    rebuilt = _read_gz(monthly_path)
+
+    from api.v2.consumer_gov_window import load_active_window
+
+    window = load_active_window(derived, monthly, required=1)
+    rebuilt = window.months[0][2]
     assert rebuilt["meta"].get("invalid") is not True
     assert rebuilt["meta"]["companies"] == 1
-
-    aggregate_path = derived / "consumidor_gov_agg.json.gz"
-    aggregate = _read_gz(aggregate_path)
-    assert aggregate["meta"]["companies"] == 1
-    assert aggregate["meta"]["status"] == "ok"
-    assert (raw / f"basecompleta_{month}.csv").exists()
+    assert window.aggregate["meta"]["companies"] == 1
+    assert window.aggregate["meta"]["status"] == "ok"
+    assert (derived / "consumidor_gov_window_manifest.json").is_file()
+    # The invalid legacy file was never promoted or overwritten.
+    assert _read_gz(monthly_path)["meta"]["invalid"] is True
+    assert not (raw / f"basecompleta_{month}.csv").exists()
 
 
 def test_all_invalid_months_do_not_overwrite_valid_aggregate(
@@ -302,3 +309,53 @@ def test_direct_resource_download_uses_schema_validating_client(
     build._download_resource(resource, destination)
 
     assert calls == [(publication, destination, "2026-06")]
+
+
+def test_legacy_http_declared_length_mismatch_preserves_original(
+    monkeypatch, tmp_path: Path
+) -> None:
+    destination = tmp_path / "base.csv"
+    destination.write_bytes(b"valid-previous-cache")
+
+    class ShortResponse:
+        def __init__(self):
+            self.headers = {"Content-Length": "100"}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def raise_for_status(self):
+            return None
+
+        def iter_content(self, chunk_size):
+            assert chunk_size > 0
+            yield b"short"
+
+    monkeypatch.setattr(
+        build.HTTP, "get", lambda *args, **kwargs: ShortResponse()
+    )
+    with pytest.raises(RuntimeError, match="incomplete"):
+        build._download("https://example.test/data.csv", destination)
+    assert destination.read_bytes() == b"valid-previous-cache"
+
+
+def test_gate4_strict_mode_reports_stale_reuse_as_failure(
+    monkeypatch, tmp_path: Path
+) -> None:
+    _, derived, _ = _configure_paths(monkeypatch, tmp_path)
+    aggregate_path = derived / "consumidor_gov_agg.json.gz"
+    _write_gz(aggregate_path, _aggregate())
+    before = aggregate_path.read_bytes()
+
+    def offline():
+        raise RuntimeError("source unavailable")
+
+    monkeypatch.setattr(build, "_list_basecompleta_resources", offline)
+    assert build.main(require_current=True) == 1
+    assert aggregate_path.read_bytes() == before
+    # Legacy compatibility retains its existing contract.
+    assert build.main() == 0
+    assert aggregate_path.read_bytes() == before
