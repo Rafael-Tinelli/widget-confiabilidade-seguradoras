@@ -28,6 +28,7 @@ from api.v2.conduct_receita_cache_fallback import materialize_additions_only_cac
 from api.v2.consumer_gov_receita_resolution import (
     DEFAULT_RECEITA_IDENTITY_SNAPSHOT,
 )
+from api.v2.consumer_gov_window import ConsumerGovWindowError, load_active_window
 from api.v2.generation import BuildContext
 from api.v2.source_cache import (
     CachedSource,
@@ -76,33 +77,29 @@ def _read_gzip_json(path: Path) -> dict[str, Any]:
 
 
 def _valid_monthly_files() -> list[tuple[str, Path, dict[str, Any]]]:
-    valid: dict[str, tuple[Path, dict[str, Any]]] = {}
-    for path in sorted(
-        consumer_gov_build.MONTHLY_DIR.glob("consumidor_gov_20??-??.json.gz")
-    ):
-        try:
-            payload = _read_gzip_json(path)
-        except (OSError, UnicodeError, ValueError, ConductSourceSnapshotError):
-            continue
-        meta = payload.get("meta") if isinstance(payload.get("meta"), dict) else {}
-        month = str(meta.get("month") or meta.get("ym") or "").strip()
-        entries = consumer_gov_build._entries_from_root(payload)
-        if not month or not entries or meta.get("invalid") is True:
-            continue
-        valid[month] = (path, payload)
-    selected = sorted(valid)[-12:]
-    if len(selected) != 12:
+    try:
+        return load_active_window(
+            consumer_gov_build.DERIVED_DIR,
+            consumer_gov_build.MONTHLY_DIR,
+        ).months
+    except ConsumerGovWindowError as exc:
         raise ConductSourceSnapshotError(
-            f"expected 12 valid Consumer.gov monthly snapshots, got {len(selected)}"
-        )
-    return [(month, *valid[month]) for month in selected]
+            f"Consumer.gov monthly window mismatch: {exc}"
+        ) from exc
 
 
 def _consumer_manifest_payload() -> dict[str, Any]:
-    aggregate = consumer_gov_build.DERIVED_DIR / "consumidor_gov_agg.json.gz"
-    if consumer_gov_build._load_valid_aggregate(aggregate) is None:
-        raise ConductSourceSnapshotError("valid Consumer.gov aggregate is unavailable")
-    monthly = _valid_monthly_files()
+    try:
+        active = load_active_window(
+            consumer_gov_build.DERIVED_DIR,
+            consumer_gov_build.MONTHLY_DIR,
+        )
+    except ConsumerGovWindowError as exc:
+        raise ConductSourceSnapshotError(
+            f"Consumer.gov monthly window mismatch: {exc}"
+        ) from exc
+    aggregate = active.aggregate_path
+    monthly = active.months
     return {
         "artifact": "v2_consumer_gov_core_source_manifest",
         "version": CONSUMER_MANIFEST_VERSION,
