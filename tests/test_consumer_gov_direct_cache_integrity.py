@@ -135,10 +135,15 @@ def test_tampered_cache_is_replaced_only_after_successful_revalidation(
     )
 
     assert result[MONTH]["acquisition"] == "download"
-    assert path.read_bytes() == original
+    selected = result[MONTH]["path"]
+    assert selected.read_bytes() == original
+    assert selected.parent.name == "objects"
+    # The tampered legacy object is not promoted or silently rewritten.
+    assert path.read_bytes() != original
     entry = json.loads(manifest.read_text(encoding="utf-8"))["months"][MONTH]
     assert entry["sha256"] == hashlib.sha256(original).hexdigest()
-    assert direct._manifest_cache_hit(path, MONTH, entry)
+    assert entry["source_family"] == "base_completa"
+    assert direct._manifest_cache_hit(selected, MONTH, entry)
 
 
 def test_network_interruption_never_deletes_prior_destination(
