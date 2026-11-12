@@ -319,20 +319,26 @@ def _restore_active_window_from_v2_cache(payload: dict[str, Any]) -> None:
 
 
 def _materialize_consumer_manifest(payload: dict[str, Any]) -> None:
+    # Preflight the entire cached V2 window before touching legacy paths.
+    # If it is inconsistent, the last verified active snapshot is preserved.
+    _restore_active_window_from_v2_cache(payload)
+
     aggregate = payload.get("aggregate") or {}
     targets = [aggregate, *(payload.get("months") or [])]
     for item in targets:
         source = Path(str(item.get("path") or ""))
         destination = Path(str(item.get("materialized_path") or ""))
         expected = str(item.get("sha256") or "")
+        if _sha256(source) != expected:
+            raise ConductSourceSnapshotError(
+                f"Consumer.gov V2 source hash changed before restore: {source}"
+            )
         _atomic_copy(source, destination)
         if _sha256(destination) != expected:
             destination.unlink(missing_ok=True)
             raise ConductSourceSnapshotError(
                 f"Consumer.gov materialization hash mismatch: {destination}"
             )
-
-    _restore_active_window_from_v2_cache(payload)
 
 
 def _restore_consumer_cache(cache_manifest: Path) -> dict[str, Any] | None:
