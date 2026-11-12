@@ -1,7 +1,8 @@
 # Ranking de Seguradoras Sanida — Pipeline de Dados e Metodologia v2
 
-> **Status operacional:** v2 ativa em produção, com frontend R5.3, geração semanal, publicação automática HostGator e descoberta evergreen observacional habilitadas.  
+> **Arquitetura operacional:** v2 com frontend R5.3, duas janelas semanais de geração, publicação automática HostGator e descoberta evergreen, condicionadas às variáveis de ativação dos respectivos workflows.  
 > **Branch canônico:** `main`.  
+> **Consumidor.gov:** aquisição observacional de `finalizadas` separada da Conduta e da publicação; adquirir um ZIP não atualiza o pacote público.  
 > **Ranking geral:** bloqueado por contrato (`general_ranking_allowed = false`, `ranking_eligible = 0`).  
 > **Score geral:** proibido (`general_score_allowed = false`).  
 > **Frontend:** PHP/HTML/CSS/JS consome contratos públicos prontos; **não recalcula metodologia**.  
@@ -10,7 +11,7 @@
 
 Este README é o **contrato operacional corrente do projeto**. Documentos de auditoria e fechamento anteriores continuam válidos como fotografias históricas, mas não devem prevalecer sobre este README nem sobre os closeouts das Fases C e D quando a pergunta for sobre o runtime atual.
 
-Estado consolidado em 07/09/2026 (BRT):
+Arquitetura e calendários revisados em 12/11/2026 (BRT). As ativações abaixo foram registradas nos closeouts de produção; não substituem a conferência das variáveis, dos runs e do manifesto efetivamente servido (§13.1):
 
 ```text
 MAIN_BRANCH                              main
@@ -18,7 +19,7 @@ PRODUCTION_FRONTEND_R5_3                PASS
 V2_PRODUCTION_AUTOMATION_ENABLED        true
 V2_HOSTGATOR_DEPLOY_ENABLED             true
 V2_MARKET_SENSOR_AUTOMATION_ENABLED     true
-WEEKLY_FULL_GENERATION                  ACTIVE
+FULL_GENERATION_WINDOWS                MON_09:17_UTC / THU_06:17_UTC
 AUTO_HOSTGATOR_PUBLICATION              ACTIVE
 MARKET_SENSORS                          ACTIVE
 WIDGET_UNKNOWN_QUERY_TELEMETRY          ACTIVE
@@ -26,6 +27,8 @@ SQLITE_PRIVATE                          ACTIVE
 EVERGREEN_SNAPSHOT                      PINNED_SSH_READONLY
 GSC                                     OPTIONAL_NOT_CONFIGURED
 COMPLAINT_SOURCE_WATCH                  ACTIVE
+FINALIZADAS_OBSERVER                    DAYS_10_16_11:27_UTC
+FINALIZADAS_CONDUCT_INTEGRATION          NOT_ENABLED
 HOSTGATOR_CRON                          NONE
 GENERAL_SCORE_ALLOWED                   false
 GENERAL_RANKING_ALLOWED                 false
@@ -36,11 +39,12 @@ RANKING_ELIGIBLE                        0
 
 Para o estado atual de produção, ler primeiro:
 
-- `docs/phase-c-production-automation-closeout.md` — geração semanal e publicação automática;
+- `docs/phase-c-production-automation-closeout.md` — fechamento da geração/publicação; calendário corrente no §10;
 - `docs/phase-d-evergreen-closeout.md` — sensores, telemetria, SQLite e snapshot SSH;
 - `docs/post-cutover-repository-housekeeping.md` — limpeza pós-cutover e autoridade documental atual;
 - `docs/production-frontend-cutover.md` — cutover do frontend R5.3;
 - `ranking-seguradoras/deployment/production-cutover/INSTALLACAO-HOSTGATOR.md` — instalação e rollback.
+- [Aquisição observacional de finalizadas](docs/finalizadas-observational.md) — fonte JSON, layouts, armazenamento, revisões e limites de reutilização.
 
 Contratos metodológicos e técnicos centrais:
 
@@ -189,7 +193,7 @@ FONTES OFICIAIS / PÚBLICAS
     ├── SUSEP — regimes especiais
     ├── SUSEP — Sandbox
     ├── Receita Federal — lifecycle/CNPJ
-    └── Consumer.gov / fallback validado quando necessário
+    └── Consumer.gov Base Completa / último core validado quando necessário
     │
     ▼
 COLETA + CACHE + VALIDAÇÃO
@@ -224,6 +228,8 @@ PHP + CSS + JS R5.3
 
 O pacote público é produzido pelo backend. O frontend apenas o consome.
 
+O observador de `finalizadas` tem fluxo separado: JSON oficial → download → validação/agregado experimental → artefato Actions. Não há ligação desse artefato ao Gate 4 ou ao HostGator.
+
 ---
 
 # 5. Fontes de reclamações e Conduta
@@ -240,15 +246,43 @@ zero_complaints_is_not_automatic_favorability = true
 
 Situação operacional das fontes:
 
-- SusepCon permanece histórico/congelado enquanto não houver retomada pública consumível;
+- SusepCon/BDR não substituem a fonte de Conduta sem retomada pública consumível e contrato próprio; alterações na página monitorada são sinais para investigação, não prova de uma nova base utilizável;
 - BDR/SUSEP existe como obrigação de envio regulatório, mas não é integrado ao pipeline sem base pública adequada;
 - a fonte corrente canônica de Consumer.gov é a área oficial direta de Dados Abertos em `www.consumidor.gov.br/pages/dadosabertos/externo/`;
 - o CKAN legado em `dados.mj.gov.br` não é dependência corrente do Gate 4 e permanece apenas como sinal de recuperação/forense no source watch;
+- a aquisição produtiva exige publicações explicitamente identificadas como Base Completa; o arquivo `finalizadas_YYYY-MM.zip` não é um substituto automaticamente autorizado;
 - Consumer.gov pode usar `validated_cache_fallback` quando a fonte oficial direta estiver indisponível ou não puder ser validada;
 - fallback validado e explicitamente `stale` não é, por si só, falha metodológica;
+- esse fallback preserva a evidência anterior e sua data; não comprova atualização efetiva da janela;
 - o workflow `V2 Complaint Source Watch` monitora recuperação de fontes de forma independente da geração/publicação.
 
 Nenhuma fonte nova deve ser costurada com outra apenas para preencher ausência.
+
+## 5.1. Leitura, cache e janela de Base Completa
+
+A infraestrutura da PR #52 escolhe o encoding antes de emitir linhas, verifica SHA-256 do cache bruto, valida temporários antes de promover arquivos e seleciona uma janela completa por manifesto/objetos imutáveis. Os leitores compartilham `api/v2/consumer_gov_window.py`, sem descobrir a janela ativa por um `glob` de meses avulsos. O fallback V2 restaura a seleção e os objetos verificados.
+
+O legado versionado conserva 2025-07 a 2026-06 como janela declarada. Os testes de paridade em `tests/test_consumer_gov_repo_evidence.py` comparam agregados e mensais preservados; não certificam um CSV oficial ausente. O contrato de **novas** aquisições Base Completa exige competência por abertura. Essa exigência do código não comprova qual foi o evento temporal dos registros históricos já agregados.
+
+O fechamento de Conduta conserva prêmio direto de seguros como exposição operacional, alinhamento mensal e de população, critérios de comparabilidade e satisfação apenas contextual. Não autoriza score geral, remediação inferida ou transferência de reclamações entre marca e seguradora. Ver [contrato de Conduta](docs/conduct-methodology-closure.md).
+
+## 5.2. Observador de finalizadas
+
+O workflow `.github/workflows/v2-finalizadas-observational.yml` consulta o [JSON oficial de publicações](https://www.consumidor.gov.br/pages/publicacao/externo/publicacoes.json?indicadorTipoPublicacao=2), identifica códigos divulgados e baixa os dois meses mais recentes conhecidos. Não usa HTML, Selenium, cookies do navegador ou IDs adivinhados.
+
+O parser reconhece dois layouts de 19 colunas: português com `S/N` e `snake_case` com `Sim/Não`; valida a competência por **data de finalização**. Ausência de resolução em reclamação avaliada é preservada e sinalizada para revisão, sem imputação.
+
+| Camada | Uso atual |
+|---|---|
+| `.github/finalizadas-publications.json` | URL/hash fixados de outubro/2026; não contém o corpus. |
+| `runner.temp/finalizadas-observational` | ZIPs, agregados experimentais, validações e manifesto temporários. |
+| Artefato `finalizadas-observational-<run>-a<attempt>` | Evidência experimental com retenção de 30 dias; pode conter saídas parciais de run falho. |
+| Manifesto do último sucesso em `main` | Recuperado por tentativa para comparar revisões; **não evita novo download/processamento** e pode estar indisponível. |
+| Conduta / pacote público / HostGator | Não consomem essas saídas. Integração não habilitada. |
+
+Agenda: dias **10 e 16**, **11h27 UTC / 08h27 Brasília**. O horário é uma janela de observação, não garantia de publicação mensal pelo órgão. `workflow_dispatch` também está disponível; qualquer execução continua experimental.
+
+As próximas etapas são tornar a retenção/reutilização verificável e demonstrar equivalência histórica de população/competência antes de propor integração. Data, tamanho ou código inalterado não provam que o conteúdo remoto permaneceu igual. Detalhes e provas de setembro/outubro: [documentação do observador](docs/finalizadas-observational.md).
 
 ---
 
@@ -401,11 +435,11 @@ Cadência permanente:
 
 ```text
 V2 Production Generation Schedule
-cron: 17 9 * * 1
-segunda-feira 09:17 UTC
+cron: 17 9 * * 1   — segunda-feira 09:17 UTC / 06:17 Brasília
+cron: 17 6 * * 4   — quinta-feira 06:17 UTC / 03:17 Brasília
 ```
 
-A materialização do evento `schedule` no GitHub Actions é best-effort; o requisito operacional é atualização semanal, não SLA de minuto exato.
+A materialização do evento `schedule` no GitHub Actions é best-effort. As duas janelas dão nova oportunidade de aquisição na semana; sucesso do job não prova que todas as fontes estejam atualizadas.
 
 Cadeia:
 
@@ -426,7 +460,7 @@ Guardrails de segurança:
 
 ```text
 SUSEP TLS verification                 REQUIRED
-BaseCompleta hard wall-clock deadline  900s
+SUSEP BaseCompleta wall-clock deadline 900s
 validated cache fallback               PRESERVED
 no cross-source stitching              PRESERVED
 StrictHostKeyChecking                   yes
@@ -443,6 +477,8 @@ Workflows principais:
 .github/workflows/v2-gate4-full-generation-proof.yml
 .github/workflows/v2-hostgator-publication.yml
 ```
+
+A publicação automática também aceita a conclusão bem-sucedida de `V2 Gate 4 Full Generation Proof` em `main`, se `V2_HOSTGATOR_DEPLOY_ENABLED == true`. Portanto, disparar esse workflow não é um ensaio isolado. O observador de `finalizadas` não integra a lista de gatilhos de publicação. O limite de 900s acima é da fonte SUSEP; não é um prazo geral para Consumer.gov ou Receita.
 
 ---
 
@@ -607,6 +643,15 @@ O HostGator não é scheduler da v2. Não criar cron para geração/publicação
 
 A publicação usa geração inteira e troca atômica entre `current` e `previous`; o rollback não deve ser removido durante limpezas de repositório ou deploy.
 
+## 13.1. Como conferir os dados efetivamente publicados
+
+1. Consulte o [manifesto público](https://sanida.com.br/ranking-seguradoras/data/v2/public/distribution_manifest.json) e registre `build_id`, `source_head_sha` e `package_sha256`.
+2. Localize o run de Full Generation e o artefato **exatos** dessa geração; confira `source_lineage.json` e `conduct_source_lineage.json`, incluindo `state`, `freshness_method`, `fetched_at` e a janela de dados.
+3. Confira período e disponibilidade no perfil/contrato público correspondente. A data do run ou do deploy não substitui o período de referência da fonte.
+4. Para uma cópia local do pacote, `python -m api.v2.install_public_generation verify <diretorio-do-pacote>` verifica hashes e conjunto de arquivos sem instalar. Validação de bytes não substitui reconciliação semântica.
+
+Um artefato do observador, uma CI verde ou a existência do ZIP oficial não demonstram que setembro/outubro já entraram na Conduta. Se o artefato da geração expirou, declare a limitação e use a evidência preservada da geração; não suponha atualização.
+
 ---
 
 # 14. Workflows operacionais
@@ -633,6 +678,8 @@ update-susep-sandbox.yml
 Não restaurar schedules antigos.
 
 Workflows experimentais/diagnósticos preservados não são autoridade de produção apenas por existirem no repositório.
+
+O `Finalizadas Observational Acquisition` é recorrente, mas **experimental**: apenas `contents: read`/`actions: read`, saídas em `runner.temp`, sem chamada de Receita, Gate 4 ou deploy. Seu artefato de 30 dias não é cache persistente de produção.
 
 ---
 
