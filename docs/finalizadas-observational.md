@@ -8,11 +8,14 @@ os arquivos de identidade SUSEP ou o pacote público.
 
 Workflow: `.github/workflows/v2-finalizadas-observational.yml`.
 
-Em cada execução, baixa diretamente os ZIPs oficiais cadastrados no JSON
-`.github/finalizadas-publications.json`; valida ZIP/CRC/schema de 19 campos,
-competência pela **data de finalização**, enums e contagens; conserva
-manifestações de hash, agregados `status=experimental` e os ZIPs originais em
-artefato de Actions, com retenção de 30 dias. Não publica no HostGator.
+Em cada execução, consulta a lista JSON oficial de publicações e baixa
+diretamente os ZIPs dos dois meses mais recentes, identificando os códigos
+sem adivinhá-los. O cadastro local fixa a URL e o SHA-256 de outubro/2026
+como evidência adicional. A rotina verifica ZIP/CRC e tamanho anunciado,
+reconhece explicitamente **dois esquemas oficiais de 19 colunas** e confere
+a competência pela **data de finalização** e os contadores por fornecedor.
+Gera somente `status=experimental`; o resultado e os ZIPs ficam no artefato
+isolado do GitHub Actions (30 dias), nunca no HostGator.
 
 A execução agendada ocorre nos dias 8, 15, 22 e 29 de cada mês. Também é
 possível usar `workflow_dispatch`, inclusive informando um catálogo JSON
@@ -30,9 +33,24 @@ A resposta observada em 12/11 tinha 682 publicações e 62 ZIPs
 `finalizadas`, com cobertura completa de 2025-01 a 2026-10.
 
 A próxima competência será descoberta automaticamente assim que publicada
-nesse JSON. A disponibilidade *sem cookies e a partir do runner* precisa ser
-verificada numa execução isolada real. Se o catálogo não responder ou mudar
-o formato, o job falha sem tocar no programa ativo.
+nesse JSON. O catálogo foi lido **sem cookies no runner** na prova de
+12/11/2026; a execução também baixou e processou setembro e outubro:
+https://github.com/Rafael-Tinelli/widget-confiabilidade-seguradoras/actions/runs/43311498623
+
+Foram observados dois contratos reais:
+- **Setembro/2026:** colunas em português com acentos, datas ISO `YYYY-MM-DD`,
+  `Respondida=S/N`; 358.865 registros, 14.116 do segmento. Há **uma**
+  avaliação com nota mas sem campo de resolução: registrada como
+  `resolution_unknown=1`, `requires_manual_review`, sem imputação.
+- **Outubro/2026:** colunas `snake_case`, datas `DD/MM/YYYY`,
+  `respondida=Sim/Não`; 414.538 registros, 40.501 do segmento,
+  `validated_experimental` sem anomalia de resolução.
+
+O endpoint apresentou também uma falha **504 transitória** em execução
+separada; com cabeçalhos XHR, cache-buster e retentativas, a prova posterior
+passou. A disponibilidade contínua **não está garantida**: se o serviço
+não responder, o job falha fechado, sem sobrescrever a evidência anterior
+nem alterar Conduta ou publicação.
 
 O input opcional `feed_url` permite informar apenas a **mesma rota oficial**
 com `indicadorTipoPublicacao=2`, e não aceita domínios, hosts ou URLs
