@@ -27,13 +27,17 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 12
     env:
-      EXPERIMENT_DIR: ${{ runner.temp }}/finalizadas-observational
-      PREVIOUS_DIR: ${{ runner.temp }}/finalizadas-previous
       GH_TOKEN: ${{ github.token }}
       OFFICIAL_FEED: ${{ inputs.feed_url || vars.CG_FINALIZADAS_CATALOG_JSON_URL || '' }}
     steps:
       - name: Checkout exact workflow source
         uses: actions/checkout@v4
+
+      - name: Set temporary isolated paths
+        shell: bash
+        run: |
+          printf 'EXPERIMENT_DIR=%s/finalizadas-observational\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+          printf 'PREVIOUS_DIR=%s/finalizadas-previous\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
 
       - name: Setup Python
         uses: actions/setup-python@v5
