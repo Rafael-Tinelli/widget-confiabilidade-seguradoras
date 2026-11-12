@@ -797,7 +797,14 @@ def _publish_validated_window(
             json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
         )
-        # Every immutable object has already been checked by its SHA-256.
+        # Check the candidate selection and provider reconciliation before
+        # touching the previously active manifest.
+        load_active_window(
+            DERIVED_DIR,
+            MONTHLY_DIR,
+            required=MONTHS_BACK,
+            manifest_path=temporary,
+        )
         temporary.replace(manifest_path)
     finally:
         temporary.unlink(missing_ok=True)
