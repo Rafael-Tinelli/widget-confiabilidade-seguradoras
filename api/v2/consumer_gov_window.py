@@ -115,9 +115,10 @@ def load_active_window(
     monthly_dir: Path,
     *,
     required: int = 12,
+    manifest_path: Path | None = None,
 ) -> ActiveConsumerWindow:
     """Verify the selected aggregate and monthly objects before returning rows."""
-    sidecar = derived_dir / WINDOW_MANIFEST
+    sidecar = manifest_path if manifest_path is not None else derived_dir / WINDOW_MANIFEST
     manifest: dict[str, Any] | None = None
     provenance = "pinned_legacy_embedded_months"
 
