@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import copy
 import json
 from pathlib import Path
 
@@ -11,7 +10,6 @@ from api.v2.consumer_gov_window import (
     ConsumerGovWindowError,
     load_active_window,
 )
-
 
 MONTHS = ["2026-01", "2026-02", "2026-03"]
 
