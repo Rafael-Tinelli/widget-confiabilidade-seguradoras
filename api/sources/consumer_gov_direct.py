@@ -1023,10 +1023,13 @@ def ensure_months(
         # A mismatched validated manifest is evidence of corruption or an
         # unrecorded revision. Never silently adopt the same bytes as a
         # newly trusted legacy cache, even if its CSV schema is plausible.
-        if isinstance(entry, dict) and entry.get("validation") == "passed":
-            if not _manifest_content_matches(path, month, entry):
-                missing.append(month)
-                continue
+        if (
+            isinstance(entry, dict)
+            and entry.get("validation") == "passed"
+            and not _manifest_content_matches(path, month, entry)
+        ):
+            missing.append(month)
+            continue
 
         if path.exists() and path.stat().st_size >= MIN_MONTH_BYTES:
             try:
