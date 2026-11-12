@@ -148,25 +148,76 @@ def _root_company_count(root: dict[str, Any]) -> int:
 
 
 def _is_valid_monthly_root(
-    root: dict[str, Any],
-    expected_month: str | None = None,
+    root: dict[str, Any], expected_month: str | None = None
 ) -> bool:
+    """Check preserved counters, not just the presence of provider names."""
     meta = root.get("meta") if isinstance(root.get("meta"), dict) else {}
-    if meta.get("invalid") is True or str(meta.get("status") or "").lower() == "invalid":
+    if meta.get("invalid") is True or meta.get("status") not in (None, "ok"):
         return False
-
     month = str(meta.get("month") or meta.get("ym") or "")
-    if expected_month and month and month != expected_month:
+    if not month or (expected_month is not None and month != expected_month):
+        return False
+    entries = _entries_from_root(root)
+    if not entries:
         return False
 
-    return _root_company_count(root) > 0 and bool(_entries_from_root(root))
+    count_sum = 0
+    for entry in entries.values():
+        if not isinstance(entry, dict):
+            return False
+        stats = entry.get("statistics")
+        if not isinstance(stats, dict):
+            return False
+        count = stats.get("complaintsCount", stats.get("total_claims"))
+        if isinstance(count, bool) or not isinstance(count, int) or count <= 0:
+            return False
+        for key in (
+            "respondedCount", "resolvedCount", "finalizedCount",
+            "satisfactionCount",
+        ):
+            value = stats.get(key)
+            if value is not None and (
+                isinstance(value, bool)
+                or not isinstance(value, int)
+                or value < 0
+                or value > count
+            ):
+                return False
+        count_sum += count
+
+    if "companies" in meta and meta["companies"] != len(entries):
+        return False
+    if "lines_kept" in meta and meta["lines_kept"] != count_sum:
+        return False
+    if "lines_total" in meta and (
+        not isinstance(meta["lines_total"], int)
+        or meta["lines_total"] < count_sum
+    ):
+        return False
+    return True
 
 
 def _is_valid_aggregate_root(root: dict[str, Any]) -> bool:
     meta = root.get("meta") if isinstance(root.get("meta"), dict) else {}
-    if meta.get("invalid") is True or str(meta.get("status") or "").lower() == "invalid":
+    if meta.get("invalid") is True or meta.get("status") != "ok":
         return False
-    return _root_company_count(root) > 0 and bool(_entries_from_root(root))
+    if meta.get("invalid_months"):
+        return False
+    entries = _entries_from_root(root)
+    if not entries:
+        return False
+    if meta.get("companies") not in (None, len(entries)):
+        return False
+    for entry in entries.values():
+        if not isinstance(entry, dict):
+            return False
+        stats = entry.get("statistics")
+        if not isinstance(stats, dict):
+            return False
+        count = stats.get("complaintsCount", stats.get("total_claims"))
+        if isinstance(count, bool) or not isinstance(count, int) or count <= 0:
+            return False
+    return True
 
 
 def _load_valid_monthly(path: Path, expected_month: str) -> dict[str, Any] | None:
@@ -484,16 +535,19 @@ def _merge_months(
     monthly: list[dict[str, Any]],
     invalid_months: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
+    if invalid_months:
+        raise ValueError(f"refusing to merge incomplete monthly window: {invalid_months}")
     merged: dict[str, dict[str, Any]] = {}
     months: list[str] = []
 
     for root in monthly:
         if not _is_valid_monthly_root(root):
-            continue
+            raise ValueError("refusing invalid monthly evidence")
         meta = root.get("meta") or {}
         month = str(meta.get("month") or meta.get("ym") or "")
-        if month:
-            months.append(month)
+        if not month or month in months:
+            raise ValueError(f"missing or duplicated month: {month}")
+        months.append(month)
 
         for key, entry in _entries_from_root(root).items():
             if not isinstance(entry, dict):
@@ -542,16 +596,18 @@ def _merge_months(
         count = int(stats.get("satisfactionCount") or 0)
         stats["averageScore"] = round(score_sum / count, 4) if count > 0 else 0.0
 
-    invalid_months = invalid_months or []
-    status = "partial" if invalid_months else "ok"
+    if len(months) != len(monthly):
+        raise ValueError("monthly window lost a declared month")
     meta = {
-        "status": status,
+        "status": "ok",
         "dataset": CG_DATASET_ID,
         "months": sorted(set(months)),
         "generated_at": _utc_now(),
         "filter_segment": TARGET_SEGMENT,
         "companies": len(merged),
-        "invalid_months": invalid_months,
+        "invalid_months": [],
+        "source_family": "base_completa",
+        "reference_event": "abertura",
         "semantics": {
             "source_role": "reputation",
             "primary_key": "name_key",
