@@ -302,5 +302,9 @@ def test_corrupt_v2_restore_never_switches_newer_active_manifest(
     }
     with pytest.raises(ConductSourceSnapshotError, match="inconsistent"):
         _materialize_consumer_manifest(payload)
+    # A failed fallback preflight must leave both the active selector and
+    # traditional materialized paths untouched.
     assert sidecar.read_bytes() == before
+    assert not (derived / "consumidor_gov_agg.json.gz").exists()
+    assert not (monthly / "consumidor_gov_2026-01.json.gz").exists()
     assert len(load_active_window(derived, monthly).months) == 12
