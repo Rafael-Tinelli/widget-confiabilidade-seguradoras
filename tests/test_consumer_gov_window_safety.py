@@ -38,7 +38,7 @@ def _write_csv(
     *,
     columns: list[str] | None = None,
 ) -> None:
-    fields = columns or list(_valid_row())
+    fields = columns or list(rows[0])
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8-sig", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=fields, delimiter=";")
