@@ -17,7 +17,7 @@ a competência pela **data de finalização** e os contadores por fornecedor.
 Gera somente `status=experimental`; o resultado e os ZIPs ficam no artefato
 isolado do GitHub Actions (30 dias), nunca no HostGator.
 
-A execução agendada ocorre nos dias 8, 15, 22 e 29 de cada mês. Também é
+A execução agendada ocorre nos dias 10 e 16 de cada mês, às 11h27 UTC (08h27 em Brasília). Também é
 possível usar `workflow_dispatch`, inclusive informando um catálogo JSON
 estruturado remoto **em domínio oficial consumidor.gov.br** via `feed_url`.
 
