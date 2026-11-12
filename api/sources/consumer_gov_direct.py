@@ -5,6 +5,7 @@ import gzip
 import hashlib
 import html as html_lib
 import json
+import math
 import os
 import re
 import shutil
@@ -38,7 +39,7 @@ READ_TIMEOUT = float(os.getenv("CG_READ_TIMEOUT", "120"))
 DOWNLOAD_TIMEOUT = float(os.getenv("CG_DOWNLOAD_READ_TIMEOUT", "300"))
 HEADLESS_TIMEOUT = int(os.getenv("CG_HEADLESS_TIMEOUT", "120"))
 HEADLESS_MAX_PAGES = int(os.getenv("CG_HEADLESS_MAX_PAGES", "100"))
-SCHEMA_VERSION = "consumer-gov-monthly-conduct-core-v1-2026-08"
+SCHEMA_VERSION = "consumer-gov-monthly-conduct-core-v2-2026-11"
 
 REQUIRED_FIELDS: dict[str, tuple[str, ...]] = {
     "provider": ("Nome Fantasia", "Empresa", "Fornecedor"),
@@ -659,7 +660,15 @@ def _select_publication(
     publications: list[Publication],
     month: str,
 ) -> Publication:
-    candidates = [item for item in publications if item.month == month]
+    # Never select finalizadas or an ambiguous "Dados" publication as the
+    # Base Completa source, even if it shares the same reference month.
+    candidates = [
+        item for item in publications
+        if item.month == month and (
+            "basecompleta" in _norm(f"{item.title} {item.filename or ''}").replace(" ", "")
+            or "base completa" in _norm(f"{item.title} {item.filename or ''}")
+        )
+    ]
     if not candidates:
         raise ConsumerGovPublicationNotFound(
             f"no official monthly publication resolved for {month}"
@@ -702,6 +711,8 @@ def _detect_csv_format(path: Path) -> tuple[str, str, tuple[str, ...]]:
 
 def _resolve_schema(columns: tuple[str, ...]) -> dict[str, str]:
     normalized = {_norm(column): column for column in columns}
+    if len(normalized) != len(columns) or not all(normalized):
+        raise ConsumerGovSchemaMismatch("duplicate or empty normalized CSV headers")
     field_map: dict[str, str] = {}
     missing: list[str] = []
     for semantic, aliases in REQUIRED_FIELDS.items():
@@ -742,8 +753,6 @@ def _month_from_row(
         "Data Abertura",
         "Data da Reclamação",
         "Data Reclamacao",
-        "Data Finalização",
-        "Data Finalizacao",
     ):
         key = normalized_keys.get(_norm(alias))
         value = row.get(key, "") if key else ""
@@ -777,24 +786,73 @@ def validate_month_csv(path: Path, month: str) -> ValidationResult:
 
     try:
         with path.open("r", encoding=encoding, newline="") as handle:
-            reader = csv.DictReader(handle, delimiter=delimiter)
+            reader = csv.DictReader(handle, delimiter=delimiter, strict=True)
+            if reader.fieldnames is None:
+                raise ConsumerGovSchemaMismatch("CSV has no header")
             for row in reader:
                 rows += 1
+                if None in row or any(value is None for value in row.values()):
+                    raise ConsumerGovSchemaMismatch(
+                        f"CSV row {rows} has extra or missing columns"
+                    )
+                for semantic in ("provider", "segment", "responded", "situation"):
+                    if not str(row.get(field_map[semantic]) or "").strip():
+                        raise ConsumerGovSchemaMismatch(
+                            f"CSV row {rows} has empty {semantic}"
+                        )
+                answered = _norm(str(row[field_map["responded"]]))
+                if answered not in {"s", "n"}:
+                    raise ConsumerGovSchemaMismatch(
+                        f"CSV row {rows} has unknown Respondida value: {answered!r}"
+                    )
+                contact = _norm(str(row[field_map["contacted_company"]]))
+                if contact and contact not in {"s", "n"}:
+                    raise ConsumerGovSchemaMismatch(
+                        f"CSV row {rows} has unknown Procurou Empresa value: {contact!r}"
+                    )
+                evaluation = _norm(str(row[field_map["evaluation"]]))
+                if evaluation and evaluation not in {
+                    "resolvida", "não resolvida", "nao resolvida",
+                    "não avaliada", "nao avaliada",
+                }:
+                    raise ConsumerGovSchemaMismatch(
+                        f"CSV row {rows} has unknown Avaliação Reclamação: {evaluation!r}"
+                    )
+                for semantic, minimum, maximum in (
+                    ("score", 1.0, 5.0),
+                    ("response_time", 0.0, None),
+                ):
+                    value = str(row.get(field_map[semantic]) or "").strip()
+                    if not value:
+                        continue
+                    try:
+                        number = float(value.replace(",", "."))
+                    except ValueError as exc:
+                        raise ConsumerGovSchemaMismatch(
+                            f"CSV row {rows} has invalid {semantic}: {value!r}"
+                        ) from exc
+                    if not math.isfinite(number) or number < minimum or (
+                        maximum is not None and number > maximum
+                    ):
+                        raise ConsumerGovSchemaMismatch(
+                            f"CSV row {rows} has out-of-range {semantic}: {value!r}"
+                        )
                 row_month = _month_from_row(row, normalized_keys)
                 if row_month is None:
-                    continue
+                    raise ConsumerGovMonthMismatch(
+                        f"CSV row {rows} lacks a valid opening-date reference"
+                    )
                 observed += 1
-                if row_month == month:
-                    matched += 1
+                if row_month != month:
+                    raise ConsumerGovMonthMismatch(
+                        f"CSV row {rows}: opening month {row_month} != {month}"
+                    )
+                matched += 1
     except (OSError, UnicodeError, csv.Error) as exc:
         raise ConsumerGovSchemaMismatch(f"CSV read failed: {exc}") from exc
 
-    if rows <= 0:
-        raise ConsumerGovArchiveInvalid("CSV has no data rows")
-    if observed > 0 and matched / observed < 0.995:
-        raise ConsumerGovMonthMismatch(
-            f"{month}: only {matched}/{observed} dated rows belong to expected month"
-        )
+    if rows <= 0 or observed != rows or matched != rows:
+        raise ConsumerGovArchiveInvalid("CSV is empty or contains undated rows")
 
     return ValidationResult(
         month=month,
