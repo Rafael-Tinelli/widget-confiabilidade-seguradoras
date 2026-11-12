@@ -16,6 +16,7 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 from .sources import consumer_gov_direct
+from .sources.consumer_gov_csv import detect_csv_encoding
 from .utils.name_cleaner import normalize_name_key
 
 CG_DATASET_ID = os.getenv("CG_DATASET_ID", "reclamacoes-do-consumidor-gov-br")
@@ -350,28 +351,19 @@ def _download_resource(resource: ResourceInfo, out_path: Path) -> None:
 
 
 def _iter_rows(csv_path: Path) -> Iterable[dict[str, str]]:
-    """Itera o CSV com autodetecção simples de encoding e delimitador."""
-    encodings = ["utf-8", "utf-8-sig", "latin1"]
-    last_error: UnicodeDecodeError | None = None
-
-    for encoding in encodings:
-        try:
-            with open(csv_path, "r", encoding=encoding, newline="") as file:
-                first_line = file.readline()
-                delimiter = ";" if ";" in first_line else ","
-                file.seek(0)
-                reader = csv.DictReader(file, delimiter=delimiter)
-                for row in reader:
-                    yield {
-                        str(key): (value if value is not None else "")
-                        for key, value in row.items()
-                        if key is not None
-                    }
-            return
-        except UnicodeDecodeError as exc:
-            last_error = exc
-
-    raise RuntimeError(f"Falha ao ler CSV (encoding). Último erro: {last_error}")
+    """Itera o CSV sem reiniciar a leitura após emitir registros."""
+    encoding = detect_csv_encoding(csv_path)
+    with csv_path.open("r", encoding=encoding, newline="") as file:
+        first_line = file.readline()
+        delimiter = ";" if ";" in first_line else ","
+        file.seek(0)
+        reader = csv.DictReader(file, delimiter=delimiter)
+        for row in reader:
+            yield {
+                str(key): (value if value is not None else "")
+                for key, value in row.items()
+                if key is not None
+            }
 
 
 def _aggregate_basecompleta(
