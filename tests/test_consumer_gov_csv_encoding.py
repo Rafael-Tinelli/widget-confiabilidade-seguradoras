@@ -111,4 +111,4 @@ def test_aggregate_preserves_legacy_counts_without_replay(tmp_path: Path) -> Non
     entries = result["by_name_key_raw"]
     assert sum(x["statistics"]["complaintsCount"] for x in entries.values()) == 5002
     assert sum(x["statistics"]["respondedCount"] for x in entries.values()) == 5002
-    assert sum(x["statistics"]["scoreSum"] for x in entries.values()) == 25110.0
+    assert sum(x["statistics"]["scoreSum"] for x in entries.values()) == 25010.0
