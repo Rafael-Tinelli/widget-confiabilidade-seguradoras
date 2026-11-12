@@ -10,6 +10,7 @@ from typing import Any
 
 from api.utils.identifiers import normalize_cnpj_v2
 from api.utils.name_cleaner import get_name_tokens, normalize_name_key
+from api.v2.consumer_gov_window import ConsumerGovWindowError, load_active_window
 
 ELIGIBILITY_PATH = Path("data/derived/v2/entity_eligibility_inventory.json")
 MONTHLY_DIR = Path("data/derived/consumidor_gov/monthly")
@@ -82,19 +83,14 @@ def _valid_monthly_snapshot(path: Path) -> tuple[str, dict[str, Any]] | None:
 
 
 def _load_latest_months() -> list[tuple[str, Path, dict[str, Any]]]:
-    valid: dict[str, tuple[Path, dict[str, Any]]] = {}
-    for path in sorted(MONTHLY_DIR.glob("consumidor_gov_20??-??.json.gz")):
-        item = _valid_monthly_snapshot(path)
-        if item is None:
-            continue
-        month, root = item
-        valid[month] = (path, root)
-    selected = sorted(valid)[-MONTHS_BACK:]
-    if len(selected) < MONTHS_BACK:
+    try:
+        return load_active_window(
+            MONTHLY_DIR.parent, MONTHLY_DIR, required=MONTHS_BACK
+        ).months
+    except ConsumerGovWindowError as exc:
         raise RuntimeError(
-            f"expected at least {MONTHS_BACK} valid monthly snapshots, got {len(selected)}"
-        )
-    return [(month, valid[month][0], valid[month][1]) for month in selected]
+            f"Consumer.gov monthly window mismatch: {exc}"
+        ) from exc
 
 
 def _core_name(name: str) -> str:
