@@ -21,6 +21,8 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
+from .consumer_gov_csv import detect_csv_encoding
+
 CONSUMER_GOV_PAGE = os.getenv(
     "CG_DIRECT_PAGE",
     "https://www.consumidor.gov.br/pages/dadosabertos/externo/",
@@ -681,23 +683,22 @@ def _detect_csv_format(path: Path) -> tuple[str, str, tuple[str, ...]]:
     if sample.lstrip().lower().startswith((b"<!doctype html", b"<html")):
         raise ConsumerGovArchiveInvalid("downloaded payload is HTML, not data")
 
-    last_error: Exception | None = None
-    for encoding in ("utf-8-sig", "utf-8", "latin1", "cp1252"):
-        try:
-            text = sample.decode(encoding)
-        except UnicodeDecodeError as exc:
-            last_error = exc
-            continue
-        lines = text.splitlines()
-        first_line = lines[0] if lines else ""
-        delimiter = ";" if first_line.count(";") >= first_line.count(",") else ","
-        columns = tuple(part.strip() for part in first_line.split(delimiter))
-        if len(columns) >= 5:
-            return encoding, delimiter, columns
-    raise ConsumerGovSchemaMismatch(
-        f"could not decode CSV header: {last_error}"
-    )
-
+    # A sample can be UTF-8 while later bytes are not. Use the same
+    # full-file decision as the streaming legacy aggregator.
+    encoding = detect_csv_encoding(path)
+    try:
+        header = sample.splitlines()[0].decode(encoding)
+    except (IndexError, UnicodeError) as exc:
+        raise ConsumerGovSchemaMismatch(
+            f"could not decode CSV header: {exc}"
+        ) from exc
+    delimiter = ";" if header.count(";") >= header.count(",") else ","
+    columns = tuple(part.strip() for part in header.split(delimiter))
+    if len(columns) < 5:
+        raise ConsumerGovSchemaMismatch(
+            f"could not decode CSV header: {columns}"
+        )
+    return encoding, delimiter, columns
 
 def _resolve_schema(columns: tuple[str, ...]) -> dict[str, str]:
     normalized = {_norm(column): column for column in columns}
