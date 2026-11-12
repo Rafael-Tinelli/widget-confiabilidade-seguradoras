@@ -28,7 +28,7 @@ jobs:
     timeout-minutes: 12
     env:
       GH_TOKEN: ${{ github.token }}
-      OFFICIAL_FEED: ${{ inputs.feed_url || vars.CG_FINALIZADAS_CATALOG_JSON_URL || '' }}
+      OFFICIAL_FEED: ${{ inputs.feed_url || 'https://www.consumidor.gov.br/pages/publicacao/externo/publicacoes.json?indicadorTipoPublicacao=2' }}
     steps:
       - name: Checkout exact workflow source
         uses: actions/checkout@v4
