@@ -159,3 +159,153 @@ def test_block_writing_under_production_data(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     with pytest.raises(obs.ObservationalError, match="protegida"):
         obs._safe_output(Path("data/derived/consumidor_gov/monthly"))
+
+
+
+class _OfficialResponse:
+    def __init__(self, records, *, type_="application/json;charset=ISO-8859-1",
+                 redirect=False):
+        self._raw = json.dumps(records, ensure_ascii=False).encode("iso-8859-1")
+        self.headers = {"Content-Type": type_}
+        self.encoding = "iso-8859-1"
+        self.is_redirect = redirect
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return False
+
+    def raise_for_status(self):
+        return None
+
+    def iter_content(self, chunk_size=65536):
+        for start in range(0, len(self._raw), chunk_size):
+            yield self._raw[start:start + chunk_size]
+
+
+class _OfficialSession:
+    def __init__(self, records, **response_options):
+        self.records = records
+        self.options = response_options
+        self.calls = []
+
+    def get(self, url, **kwargs):
+        self.calls.append((url, kwargs))
+        return _OfficialResponse(self.records, **self.options)
+
+
+def _official(month, code, *, deleted=False, size=15_692_004):
+    return {
+        "nomeArquivo": f"finalizadas_{month}.zip",
+        "codigo": code,
+        "tamanhoArquivo": size,
+        "indicadorExclusaoLogica": deleted,
+        "dataPublicacao": "06/11/2026 às 15:13",
+        "dataAlteracao": "06/11/2026 às 15:13",
+        "titulo": "Dados - Outubro/2026",
+        "texto": "Arquivo em formato CSV com dados de todas as reclamações finalizadas.",
+    }
+
+
+def test_official_iso_json_auto_discovers_month_and_merges_pinned_sha(tmp_path):
+    source = tmp_path / "catalog.json"
+    known_hash = "963489d07299c5f762476ca9f6cef21edb55337ac9cb1caa7809a68efd7fcdc1"
+    source.write_text(json.dumps({"publications": [
+        {"month": "2026-10", "url": URL, "expected_sha256": known_hash}
+    ]}), encoding="utf-8")
+    new_code = "20261200000011199"
+    session = _OfficialSession([
+        {"nomeArquivo": "usuarios_consolidados.csv", "codigo": "20261100000011109"},
+        _official("2026-10", "20261100000011098"),
+        _official("2026-11", new_code),
+        _official("2026-08", "20260900000010980", deleted=True),
+    ])
+    selected = obs.read_catalog(
+        source, feed_url=obs.OFFICIAL_CATALOG_URL, http=session
+    )
+    assert [x["month"] for x in selected] == ["2026-10", "2026-11"]
+    assert selected[0]["expected_sha256"] == known_hash
+    assert selected[0]["announced_bytes"] == 15_692_004
+    assert selected[1]["url"] == (
+        f"https://www.consumidor.gov.br/pages/publicacao/externo/{new_code}/download"
+    )
+    assert selected[1]["discovery"] == "official_publicacoes_json"
+    assert len(session.calls) == 1
+    assert session.calls[0][0] == obs.OFFICIAL_CATALOG_URL
+    assert session.calls[0][1]["allow_redirects"] is False
+
+
+def test_official_feed_conflicting_codes_fail_closed(tmp_path):
+    catalog = tmp_path / "catalog.json"
+    catalog.write_text('{"publications":[]}', encoding="utf-8")
+    session = _OfficialSession([
+        _official("2026-10", "20261100000011098"),
+        _official("2026-10", "20261100000011999"),
+    ])
+    with pytest.raises(obs.ObservationalError, match="Mais de uma publicação"):
+        obs.read_catalog(catalog, feed_url=obs.OFFICIAL_CATALOG_URL, http=session)
+
+
+@pytest.mark.parametrize("url", [
+    "https://example.com/pages/publicacao/externo/publicacoes.json?indicadorTipoPublicacao=2",
+    "https://www.consumidor.gov.br/pages/dadosabertos/externo/",
+    "https://www.consumidor.gov.br/pages/publicacao/externo/publicacoes.json?indicadorTipoPublicacao=1",
+    "https://www.consumidor.gov.br/pages/publicacao/externo/publicacoes.json?indicadorTipoPublicacao=2&other=1",
+])
+def test_official_feed_must_be_exact_public_json_route(url):
+    with pytest.raises(obs.ObservationalError):
+        obs._checked_feed_url(url)
+
+
+def test_official_non_json_response_and_redirect_rejected(tmp_path):
+    catalog = tmp_path / "catalog.json"
+    catalog.write_text('{"publications":[]}', encoding="utf-8")
+    records = [_official("2026-10", "20261100000011098")]
+    for session in (
+        _OfficialSession(records, type_="text/html"),
+        _OfficialSession(records, redirect=True),
+    ):
+        with pytest.raises(obs.ObservationalError):
+            obs.read_catalog(catalog, feed_url=obs.OFFICIAL_CATALOG_URL,
+                             http=session)
+
+
+def test_official_publication_same_month_as_pinned_different_code_rejected(tmp_path):
+    catalog = tmp_path / "catalog.json"
+    catalog.write_text(json.dumps({"publications": [
+        {"month": "2026-10", "url": URL}
+    ]}), encoding="utf-8")
+    session = _OfficialSession([_official("2026-10", "20261100000011999")])
+    with pytest.raises(obs.ObservationalError, match="diverge"):
+        obs.read_catalog(catalog, feed_url=obs.OFFICIAL_CATALOG_URL, http=session)
+
+
+def test_official_revision_signaled_for_metadata_size_mismatch(tmp_path, monkeypatch):
+    monkeypatch.setattr(obs, "MIN_CSV_BYTES", 0)
+    source = _zip(tmp_path / "source.zip", [_row()])
+    source_hash = obs.sha256(source)
+    catalog = tmp_path / "catalog.json"
+    catalog.write_text(json.dumps({"publications": [
+        {"month": "2026-10", "url": URL}
+    ]}), encoding="utf-8")
+
+    def download(_url, dest, http=None):
+        shutil.copyfile(source, dest)
+        return source_hash
+
+    def catalog_reader(_path, feed_url=None):
+        return [{
+            "month": "2026-10", "url": URL, "expected_sha256": "",
+            "publication_code": "20261100000011098",
+            "announced_bytes": 15000000,
+            "discovery": "official_publicacoes_json",
+        }]
+
+    monkeypatch.setattr(obs, "download_direct", download)
+    monkeypatch.setattr(obs, "read_catalog", catalog_reader)
+    output = tmp_path / "isolated"
+    assert obs.main(["--catalog", str(catalog), "--output-dir", str(output)]) == 0
+    manifest = json.loads((output / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["revisions"] == ["2026-10"]
+    assert manifest["months"]["2026-10"]["status"] == "requires_manual_review"
