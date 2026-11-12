@@ -892,18 +892,17 @@ def _materialize_download(downloaded: Path, destination: Path) -> None:
                         for name in archive.namelist()
                         if name.lower().endswith(".csv")
                     ]
-                    if not candidates:
-                        raise ConsumerGovArchiveInvalid("ZIP contains no CSV")
-                    candidates.sort(
-                        key=lambda name: (
-                            "basecompleta" in _norm(name),
-                            "base completa" in _norm(name),
-                            archive.getinfo(name).file_size,
-                        ),
-                        reverse=True,
-                    )
+                    if len(candidates) != 1:
+                        raise ConsumerGovArchiveInvalid(
+                            f"ZIP requires exactly one CSV, found {len(candidates)}"
+                        )
+                    selected = archive.getinfo(candidates[0])
+                    if selected.file_size > 1_000_000_000:
+                        raise ConsumerGovArchiveInvalid(
+                            "CSV ZIP member exceeds safe monthly size cap"
+                        )
                     with (
-                        archive.open(candidates[0]) as source,
+                        archive.open(selected) as source,
                         tmp_csv.open("wb") as target,
                     ):
                         shutil.copyfileobj(source, target)
@@ -965,12 +964,30 @@ def download_publication(
                 allow_redirects=True,
             ) as response:
                 response.raise_for_status()
+                declared = getattr(response, "headers", {}).get("Content-Length")
+                try:
+                    expected_bytes = int(declared) if declared is not None else None
+                except (TypeError, ValueError) as exc:
+                    raise ConsumerGovDownloadFailed(
+                        f"{month}: malformed Content-Length"
+                    ) from exc
+                if expected_bytes is not None and expected_bytes <= 0:
+                    raise ConsumerGovDownloadFailed(
+                        f"{month}: invalid Content-Length"
+                    )
+                received = 0
                 with tmp_path.open("wb") as handle:
                     for chunk in response.iter_content(
                         chunk_size=4 * 1024 * 1024
                     ):
                         if chunk:
+                            received += len(chunk)
                             handle.write(chunk)
+                if expected_bytes is not None and received != expected_bytes:
+                    raise ConsumerGovDownloadFailed(
+                        f"{month}: incomplete HTTP response "
+                        f"({received}/{expected_bytes} bytes)"
+                    )
         except requests.RequestException as exc:
             raise ConsumerGovDownloadFailed(
                 f"{month} from {publication.download_url}: {exc}"
@@ -1213,6 +1230,17 @@ def ensure_months(
                     raise ConsumerGovArchiveInvalid(
                         f"{month}: staged CSV hash changed after validation"
                     )
+                earlier = month_manifest.get(month)
+                if isinstance(earlier, dict) and earlier.get("validation") == "passed":
+                    prior_rows = earlier.get("rows")
+                    if (
+                        isinstance(prior_rows, int) and prior_rows > 0
+                        and validated.rows * 100 < prior_rows * 80
+                    ):
+                        raise ConsumerGovArchiveInvalid(
+                            f"{month}: severe row-count regression "
+                            f"({validated.rows}/{prior_rows}); manual review required"
+                        )
                 object_path = _store_immutable_raw_object(
                     staged_path, target_dir, validated.sha256
                 )

@@ -377,10 +377,23 @@ def _download(url: str, out_path: Path) -> None:
             timeout=(CG_CONNECT_TIMEOUT, CG_DOWNLOAD_READ_TIMEOUT),
         ) as response:
             response.raise_for_status()
+            declared = getattr(response, "headers", {}).get("Content-Length")
+            try:
+                expected_bytes = int(declared) if declared is not None else None
+            except (TypeError, ValueError) as exc:
+                raise RuntimeError("invalid Consumer.gov Content-Length") from exc
+            if expected_bytes is not None and expected_bytes <= 0:
+                raise RuntimeError("invalid Consumer.gov Content-Length")
+            received = 0
             with open(tmp_path, "wb") as file:
                 for chunk in response.iter_content(chunk_size=4 * 1024 * 1024):
                     if chunk:
+                        received += len(chunk)
                         file.write(chunk)
+            if expected_bytes is not None and received != expected_bytes:
+                raise RuntimeError(
+                    f"incomplete Consumer.gov download ({received}/{expected_bytes} bytes)"
+                )
 
         if not tmp_path.exists() or tmp_path.stat().st_size == 0:
             raise RuntimeError(f"download vazio: {url}")
@@ -947,6 +960,20 @@ def main() -> int:
                     candidate_raw, month=month, resource_url=resource.url
                 )
                 meta = root["meta"]
+                if meta.get("lines_total") != validation.rows:
+                    raise ValueError(
+                        f"{month}: parsed rows diverge from source validation"
+                    )
+                prior_root = active_roots.get(month)
+                if prior_root is not None:
+                    prior_total = (prior_root.get("meta") or {}).get("lines_total")
+                    if (
+                        isinstance(prior_total, int) and prior_total > 0
+                        and validation.rows * 100 < prior_total * 80
+                    ):
+                        raise ValueError(
+                            f"{month}: severe source-row regression; manual review required"
+                        )
                 meta.update(
                     {
                         "source_file": f"basecompleta_{month}.csv",
