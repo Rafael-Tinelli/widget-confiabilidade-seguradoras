@@ -1057,7 +1057,7 @@ def _manifest_month_path(
     """Resolve only declared content-addressed objects or the legacy flat path."""
     if isinstance(entry, dict) and entry.get("object_path"):
         relative = str(entry["object_path"])
-        if not re.fullmatch(r"objects/[0-9a-f]{64}\\.csv", relative):
+        if not re.fullmatch(r"objects/[0-9a-f]{64}\.csv", relative):
             raise ConsumerGovArchiveInvalid(
                 f"unsafe or invalid raw cache object path: {relative!r}"
             )
