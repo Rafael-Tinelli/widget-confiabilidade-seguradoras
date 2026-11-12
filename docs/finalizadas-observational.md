@@ -11,8 +11,9 @@ Workflow: `.github/workflows/v2-finalizadas-observational.yml`.
 Em cada execução, consulta a lista JSON oficial de publicações e baixa
 diretamente os ZIPs dos dois meses mais recentes, identificando os códigos
 sem adivinhá-los. O cadastro local fixa a URL e o SHA-256 de outubro/2026
-como evidência adicional. A rotina verifica ZIP/CRC e tamanho anunciado,
-reconhece explicitamente **dois esquemas oficiais de 19 colunas** e confere
+como evidência adicional. A rotina verifica ZIP/CRC e limites de tamanho;
+divergência do tamanho anunciado é sinalizada para revisão. Reconhece
+explicitamente **dois esquemas oficiais de 19 colunas** e confere
 a competência pela **data de finalização** e os contadores por fornecedor.
 Gera somente `status=experimental`; o resultado e os ZIPs ficam no artefato
 isolado do GitHub Actions (30 dias), nunca no HostGator.
@@ -32,8 +33,8 @@ manifesto anterior. Não interpreta HTML e não presume os próximos códigos.
 A resposta observada em 12/11 tinha 682 publicações e 62 ZIPs
 `finalizadas`, com cobertura completa de 2025-01 a 2026-10.
 
-A próxima competência será descoberta automaticamente assim que publicada
-nesse JSON. O catálogo foi lido **sem cookies no runner** na prova de
+A próxima competência pode ser descoberta em uma execução posterior à sua publicação
+nesse JSON, desde que o serviço responda e o formato seja reconhecido. O catálogo foi lido **sem cookies no runner** na prova de
 12/11/2026; a execução também baixou e processou setembro e outubro:
 https://github.com/Rafael-Tinelli/widget-confiabilidade-seguradoras/actions/runs/43311498623
 
@@ -49,8 +50,10 @@ Foram observados dois contratos reais:
 O endpoint apresentou também uma falha **504 transitória** em execução
 separada; com cabeçalhos XHR, cache-buster e retentativas, a prova posterior
 passou. A disponibilidade contínua **não está garantida**: se o serviço
-não responder, o job falha fechado, sem sobrescrever a evidência anterior
-nem alterar Conduta ou publicação.
+não responder, o job falha sem alterar Conduta ou publicação. Artefatos
+de runs anteriores são separados; sua preservação depende da retenção.
+Como o upload usa `if: always()`, um run falho pode deixar artefato parcial:
+a presença do artefato não comprova validação completa.
 
 O input opcional `feed_url` permite informar apenas a **mesma rota oficial**
 com `indicadorTipoPublicacao=2`, e não aceita domínios, hosts ou URLs
@@ -60,10 +63,14 @@ histórica adicional.
 ## Limitações metodológicas e segurança
 
 - Agregado **não deve ser usado como prova de equivalência** com Base Completa:
-  aqui a competência é **finalização**, não abertura.
+  aqui a competência é **finalização**. O contrato atual de novas aquisições
+  Base Completa exige abertura, mas isso não demonstra o critério temporal
+  dos registros históricos já agregados. Essa equivalência permanece pendente.
 - Não vincula identidades SUSEP nem altera score; não faz merge de famílias.
 - Rejeita downloads fora do host/caminho oficial, redirecionamentos, respostas
-  não ZIP, arquivos truncados, colunas inesperadas, mês errado ou inconsistências.
+  não ZIP, ZIPs truncados, colunas inesperadas, mês errado e inconsistências
+  verificadas pelo parser. CRC/hash não comprovam, sozinhos, completude da
+  população publicada em um CSV bem formado.
 - Hash diferente do catálogo ou do manifesto anterior é uma **revisão observada**,
   explicitamente marcada `requires_manual_review`. Nunca é aprovada para uso
   operacional automaticamente.
@@ -73,3 +80,27 @@ histórica adicional.
   proveniência, será necessário repositório de evidências separado.
 - Não usar esta rotina para executar Full Generation, nem agendá-la com eventos
   `workflow_run` que disparem produção.
+
+## Reutilização e retenção: comportamento efetivo
+
+O workflow procura o último run bem-sucedido de `main` entre os 20 listados
+e tenta baixar seu artefato completo. Desse conteúdo, o processador utiliza
+apenas o `manifest.json` para comparar hashes, códigos e URLs. Não recupera
+ZIP/agregado como cache reutilizável: `main()` chama download e agregação
+novamente para cada um dos dois meses selecionados, mesmo com hash anterior.
+
+O manifesto novo contém somente os meses processados nessa execução. Datas
+de publicação/alteração são registradas; não são prova de conteúdo inalterado.
+Sem o artefato anterior, a execução pode prosseguir sem baseline de revisão;
+o hash fixado no catálogo protege apenas outubro/2026.
+
+Assim, mantendo o código atual e outubro entre os dois meses selecionados,
+a execução de 16/11/2026 voltará a baixar e processar outubro. O custo também
+inclui o download do artefato anterior quando encontrado. Não existe, neste
+workflow, cache persistente do corpus nem integração desses agregados à Conduta.
+
+Uma futura reutilização deve verificar bytes/hash dos objetos restaurados,
+versão do parser e estado de revisão, preservar a última evidência válida
+e distinguir reuso local de revalidação remota. Sem checksum/validador remoto
+confiável, só um novo download permite conferir igualdade byte a byte; uma
+política que o adie precisa explicitar esse intervalo de revalidação.
