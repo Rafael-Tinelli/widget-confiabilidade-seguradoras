@@ -3,6 +3,9 @@ name: Finalizadas Observational Acquisition
 # Independent, no Gate 4, no Receita, no production write. Schedule is only
 # activated after explicit merge. No public package is generated.
 on:
+  # One-time proof, isolated branch only; removed after execution.
+  push:
+    branches: ["feature/finalizadas-observational-acquisition"]
   workflow_dispatch:
     inputs:
       feed_url:
