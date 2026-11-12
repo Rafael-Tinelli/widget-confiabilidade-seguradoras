@@ -1049,24 +1049,93 @@ def _manifest_cache_hit(
     )
 
 
+def _manifest_month_path(
+    target_dir: Path,
+    month: str,
+    entry: dict[str, Any] | None,
+) -> Path:
+    """Resolve only declared content-addressed objects or the legacy flat path."""
+    if isinstance(entry, dict) and entry.get("object_path"):
+        relative = str(entry["object_path"])
+        if not re.fullmatch(r"objects/[0-9a-f]{64}\\.csv", relative):
+            raise ConsumerGovArchiveInvalid(
+                f"unsafe or invalid raw cache object path: {relative!r}"
+            )
+        return target_dir / relative
+    return target_dir / f"basecompleta_{month}.csv"
+
+
+def _store_immutable_raw_object(
+    source: Path,
+    target_dir: Path,
+    expected_sha: str,
+) -> Path:
+    if not re.fullmatch(r"[0-9a-f]{64}", expected_sha):
+        raise ConsumerGovArchiveInvalid("invalid raw cache object SHA-256")
+    objects = target_dir / "objects"
+    objects.mkdir(parents=True, exist_ok=True)
+    destination = objects / f"{expected_sha}.csv"
+    if destination.is_file() and _file_sha256(destination) == expected_sha:
+        return destination
+    with tempfile.NamedTemporaryFile(
+        delete=False, dir=str(objects), suffix=".tmp"
+    ) as temporary:
+        staged = Path(temporary.name)
+    try:
+        shutil.copyfile(source, staged)
+        if _file_sha256(staged) != expected_sha:
+            raise ConsumerGovArchiveInvalid(
+                "raw cache bytes changed while being staged"
+            )
+        staged.replace(destination)
+    finally:
+        staged.unlink(missing_ok=True)
+    return destination
+
+
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(4 * 1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def ensure_months(
     months: list[str],
     *,
     raw_dir: Path | None = None,
     manifest_path: Path | None = None,
 ) -> dict[str, dict[str, Any]]:
+    """Activate an entire Base Completa selection with one manifest swap.
+
+    New raw objects are immutable and named by content hash. A failed
+    acquisition leaves the old manifest and its selected objects unchanged.
+    Unreferenced staged objects never contribute to the selected window.
+    """
     target_dir = raw_dir or RAW_DIR
     target_manifest = manifest_path or (
         MANIFEST_PATH if target_dir == RAW_DIR else target_dir / "manifest.json"
     )
+    if not months or len(set(months)) != len(months):
+        raise ConsumerGovMonthMismatch("monthly selection is empty or duplicated")
+    target_dir.mkdir(parents=True, exist_ok=True)
     manifest = _load_manifest(target_manifest)
     month_manifest = manifest.setdefault("months", {})
     result: dict[str, dict[str, Any]] = {}
-    missing: list[str] = []
+    pending: list[str] = []
 
+    # Build a candidate in memory, without modifying active manifest entries.
+    candidate_entries: dict[str, dict[str, Any]] = {}
     for month in months:
-        path = target_dir / f"basecompleta_{month}.csv"
         entry = month_manifest.get(month)
+        if isinstance(entry, dict) and entry.get("source_family") not in (
+            None, "base_completa"
+        ):
+            raise ConsumerGovSchemaMismatch(
+                f"{month}: non-Base Completa cache family is forbidden"
+            )
+        path = _manifest_month_path(target_dir, month, entry)
         if _manifest_cache_hit(path, month, entry):
             result[month] = {
                 "path": path,
@@ -1078,84 +1147,101 @@ def ensure_months(
             }
             continue
 
-        # A mismatched validated manifest is evidence of corruption or an
-        # unrecorded revision. Never silently adopt the same bytes as a
-        # newly trusted legacy cache, even if its CSV schema is plausible.
-        if (
-            isinstance(entry, dict)
-            and entry.get("validation") == "passed"
-            and not _manifest_content_matches(path, month, entry)
-        ):
-            missing.append(month)
-            continue
+        if isinstance(entry, dict) and entry.get("validation") == "passed":
+            if not _manifest_content_matches(path, month, entry):
+                pending.append(month)
+                continue
 
+        # Legacy raw cache without a signed manifest must be validated fully
+        # before it receives a new SHA-256 identity.
         if path.exists() and path.stat().st_size >= MIN_MONTH_BYTES:
             try:
                 validation = validate_month_csv(path, month)
             except ConsumerGovRawError:
-                # Preserve the old object for diagnosis; a fresh download
-                # is staged and validated before any promotion.
                 pass
             else:
-                entry = {
+                next_entry = {
                     **asdict(validation),
                     "columns": list(validation.columns),
                     "month": month,
+                    "source_family": "base_completa",
+                    "reference_event": "abertura",
                     "source": "existing_cache",
-                    "source_url": None,
+                    "source_url": entry.get("source_url") if isinstance(entry, dict) else None,
                     "filename": path.name,
                     "discovery_method": "legacy_cache_validated",
                     "downloaded_at": None,
                     "validated_at": _utc_now(),
                     "validation": "passed",
                 }
-                month_manifest[month] = entry
+                if isinstance(entry, dict) and entry.get("object_path"):
+                    next_entry["object_path"] = entry["object_path"]
+                candidate_entries[month] = next_entry
                 result[month] = {
                     "path": path,
-                    "resource_url": None,
+                    "resource_url": next_entry["source_url"],
                     "resource_name": path.name,
                     "bytes": path.stat().st_size,
                     "acquisition": "cache_schema_validated",
                     "discovery_method": "legacy_cache_validated",
                 }
                 continue
-        missing.append(month)
+        pending.append(month)
 
-    if not missing:
-        manifest["updated_at"] = _utc_now()
-        _save_manifest(manifest, target_manifest)
-        return result
+    if pending:
+        publications = discover_publications(set(pending))
+        with tempfile.TemporaryDirectory(
+            prefix=".consumer-gov-window-", dir=str(target_dir)
+        ) as staging:
+            staged_entries: dict[str, dict[str, Any]] = {}
+            staged_results: dict[str, dict[str, Any]] = {}
+            for month in pending:
+                publication = _select_publication(publications, month)
+                staged_path = Path(staging) / f"basecompleta_{month}.csv"
+                validated = download_publication(
+                    publication, staged_path, month
+                )
+                # The download validator returns a digest for the staging
+                # bytes; verify it before creating any referenced object.
+                if _file_sha256(staged_path) != validated.sha256:
+                    raise ConsumerGovArchiveInvalid(
+                        f"{month}: staged CSV hash changed after validation"
+                    )
+                object_path = _store_immutable_raw_object(
+                    staged_path, target_dir, validated.sha256
+                )
+                staged_entries[month] = {
+                    **asdict(validated),
+                    "columns": list(validated.columns),
+                    "month": month,
+                    "source_family": "base_completa",
+                    "reference_event": "abertura",
+                    "object_path": object_path.relative_to(target_dir).as_posix(),
+                    "source": "consumidor.gov.br",
+                    "source_url": publication.download_url,
+                    "publication_code": publication.code,
+                    "publication_title": publication.title,
+                    "filename": publication.filename,
+                    "published_at": publication.published_at,
+                    "discovery_method": publication.discovery_method,
+                    "downloaded_at": _utc_now(),
+                    "validated_at": _utc_now(),
+                    "validation": "passed",
+                }
+                staged_results[month] = {
+                    "path": object_path,
+                    "resource_url": publication.download_url,
+                    "resource_name": publication.filename or publication.title,
+                    "bytes": object_path.stat().st_size,
+                    "acquisition": "download",
+                    "discovery_method": publication.discovery_method,
+                }
+            candidate_entries.update(staged_entries)
+            result.update(staged_results)
 
-    publications = discover_publications(set(missing))
-    for month in missing:
-        publication = _select_publication(publications, month)
-        path = target_dir / f"basecompleta_{month}.csv"
-        validation = download_publication(publication, path, month)
-        entry = {
-            **asdict(validation),
-            "columns": list(validation.columns),
-            "month": month,
-            "source": "consumidor.gov.br",
-            "source_url": publication.download_url,
-            "publication_code": publication.code,
-            "publication_title": publication.title,
-            "filename": publication.filename,
-            "published_at": publication.published_at,
-            "discovery_method": publication.discovery_method,
-            "downloaded_at": _utc_now(),
-            "validated_at": _utc_now(),
-            "validation": "passed",
-        }
-        month_manifest[month] = entry
-        result[month] = {
-            "path": path,
-            "resource_url": publication.download_url,
-            "resource_name": publication.filename or publication.title,
-            "bytes": path.stat().st_size,
-            "acquisition": "download",
-            "discovery_method": publication.discovery_method,
-        }
-
+    # All requested months are now hash-validated. A single manifest replace
+    # is the selection/activation boundary. An interrupted batch is not live.
+    month_manifest.update(candidate_entries)
     manifest["updated_at"] = _utc_now()
     _save_manifest(manifest, target_manifest)
     return result
