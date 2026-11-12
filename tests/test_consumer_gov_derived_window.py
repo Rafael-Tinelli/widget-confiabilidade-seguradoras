@@ -204,3 +204,14 @@ def test_aggregate_modified_without_hash_update_fails_closed(tmp_path, monkeypat
     aggregate_path.write_bytes(b"broken previous aggregate")
     with pytest.raises(ConsumerGovWindowError, match="digest mismatch"):
         load_active_window(derived, monthly, required=3)
+
+
+def test_versioned_real_baseline_has_complete_consistent_provider_window() -> None:
+    """Protect the pinned Consumer.gov production bootstrap from regressions."""
+    derived = Path("data/derived/consumidor_gov")
+    monthly = derived / "monthly"
+    assert (derived / "consumidor_gov_agg.json.gz").is_file()
+    active = load_active_window(derived, monthly)
+    assert active.provenance == "pinned_legacy_embedded_months"
+    assert len(active.months) == 12
+    assert all(path.is_file() for _, path, _ in active.months)
