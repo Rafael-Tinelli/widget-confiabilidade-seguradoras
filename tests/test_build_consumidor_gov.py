@@ -340,3 +340,22 @@ def test_legacy_http_declared_length_mismatch_preserves_original(
     with pytest.raises(RuntimeError, match="incomplete"):
         build._download("https://example.test/data.csv", destination)
     assert destination.read_bytes() == b"valid-previous-cache"
+
+
+def test_gate4_strict_mode_reports_stale_reuse_as_failure(
+    monkeypatch, tmp_path: Path
+) -> None:
+    _, derived, _ = _configure_paths(monkeypatch, tmp_path)
+    aggregate_path = derived / "consumidor_gov_agg.json.gz"
+    _write_gz(aggregate_path, _aggregate())
+    before = aggregate_path.read_bytes()
+
+    def offline():
+        raise RuntimeError("source unavailable")
+
+    monkeypatch.setattr(build, "_list_basecompleta_resources", offline)
+    assert build.main(require_current=True) == 1
+    assert aggregate_path.read_bytes() == before
+    # Legacy compatibility retains its existing contract.
+    assert build.main() == 0
+    assert aggregate_path.read_bytes() == before

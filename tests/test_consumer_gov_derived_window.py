@@ -215,3 +215,25 @@ def test_versioned_real_baseline_has_complete_consistent_provider_window() -> No
     assert active.provenance == "pinned_legacy_embedded_months"
     assert len(active.months) == 12
     assert all(path.is_file() for _, path, _ in active.months)
+
+
+def test_same_source_hash_with_changed_derived_counters_requires_review(
+    tmp_path, monkeypatch
+) -> None:
+    derived, monthly = _configure(monkeypatch, tmp_path)
+    _publish([_root(month) for month in MONTHS])
+    manifest = derived / "consumidor_gov_window_manifest.json"
+    before = manifest.read_bytes()
+
+    roots = [_root(month) for month in MONTHS]
+    row = roots[0]["by_name_key_raw"]["empresa a"]["statistics"]
+    row["complaintsCount"] = 2
+    roots[0]["meta"]["lines_kept"] = 3
+    roots[0]["meta"]["lines_total"] = 3
+    aggregate = build._merge_months(roots)
+
+    # The source SHA-256 has deliberately NOT changed.
+    with pytest.raises(ValueError, match="derived semantics drift"):
+        build._publish_validated_window(roots, aggregate)
+    assert manifest.read_bytes() == before
+    assert len(load_active_window(derived, monthly, required=3).months) == 3
