@@ -21,7 +21,7 @@ import zipfile
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 import requests
 from requests.adapters import HTTPAdapter
@@ -40,6 +40,13 @@ MIN_CSV_BYTES = 20_000_000
 MAX_CSV_BYTES = 900 * 1024 * 1024
 DOWNLOAD_PATH = re.compile(r"/pages/publicacao/externo/\d{10,24}/download\Z")
 MONTH_PATTERN = re.compile(r"20\d{2}-(0[1-9]|1[0-2])\Z")
+OFFICIAL_CATALOG_URL = (
+    "https://www.consumidor.gov.br/pages/publicacao/externo/"
+    "publicacoes.json?indicadorTipoPublicacao=2"
+)
+OFFICIAL_CATALOG_PATH = "/pages/publicacao/externo/publicacoes.json"
+FINALIZADAS_NAME = re.compile(r"finalizadas_(20\\d{2}-(?:0[1-9]|1[0-2]))\\.zip\\Z")
+MAX_CATALOG_BYTES = 2_000_000
 
 
 class ObservationalError(RuntimeError):
@@ -82,13 +89,18 @@ def official_url(url: str) -> str:
 
 
 def _checked_feed_url(url: str) -> str:
+    """Apenas o endpoint JSON oficial identificado no tráfego do portal."""
     parsed = urlparse(url)
-    if (parsed.scheme != "https"
-            or parsed.hostname != "www.consumidor.gov.br"
-            or parsed.port not in (None, 443)
-            or parsed.username or parsed.password
-            or parsed.fragment):
-        raise ObservationalError("Catálogo remoto deve ser HTTPS oficial")
+    query = parse_qs(parsed.query, keep_blank_values=True)
+    if (
+        parsed.scheme != "https"
+        or parsed.hostname != "www.consumidor.gov.br"
+        or parsed.port not in (None, 443)
+        or parsed.username or parsed.password or parsed.fragment
+        or parsed.path != OFFICIAL_CATALOG_PATH
+        or query != {"indicadorTipoPublicacao": ["2"]}
+    ):
+        raise ObservationalError("Feed deve ser o JSON oficial de publicações (tipo 2)")
     return url
 
 
@@ -103,40 +115,115 @@ def _session() -> requests.Session:
     return http
 
 
+def _official_publications(payload: object) -> list[dict]:
+    """Converte a LISTA JSON oficial, sem parsing de HTML ou suposição de IDs."""
+    if not isinstance(payload, list):
+        raise ObservationalError("Feed oficial não retornou uma lista JSON")
+    publications: list[dict] = []
+    for item in payload:
+        if not isinstance(item, dict):
+            raise ObservationalError("Publicação oficial não é um objeto")
+        filename = item.get("nomeArquivo")
+        if not isinstance(filename, str):
+            continue
+        match = FINALIZADAS_NAME.fullmatch(filename)
+        if not match:
+            continue
+        if item.get("indicadorExclusaoLogica") is not False:
+            continue
+        code = str(item.get("codigo") or "")
+        if not re.fullmatch(r"\d{10,24}", code):
+            raise ObservationalError(f"Código inválido para {filename}")
+        size = item.get("tamanhoArquivo")
+        if type(size) is not int or not 1024 <= size <= MAX_ZIP_BYTES:
+            raise ObservationalError(f"Tamanho anunciado inválido para {filename}")
+        url = official_url(
+            f"https://www.consumidor.gov.br/pages/publicacao/externo/{code}/download"
+        )
+        publications.append({
+            "month": match.group(1), "url": url, "expected_sha256": "",
+            "published_at": str(item.get("dataPublicacao") or ""),
+            "modified_at": str(item.get("dataAlteracao") or ""),
+            "publication_code": code, "announced_bytes": size,
+            "discovery": "official_publicacoes_json",
+        })
+    if not publications:
+        raise ObservationalError("Feed oficial não contém arquivos finalizadas")
+    return publications
+
+
+def _fetch_official_feed(url: str, http: requests.Session) -> list[dict]:
+    # A consulta não usa cookies enviados pelo usuário ou cabeçalhos de navegador.
+    with http.get(
+        _checked_feed_url(url), timeout=(12, 45), stream=True,
+        allow_redirects=False,
+    ) as response:
+        if response.is_redirect:
+            raise ObservationalError("Redirect proibido no catálogo oficial")
+        response.raise_for_status()
+        if "application/json" not in response.headers.get("Content-Type", "").lower():
+            raise ObservationalError("Feed oficial não retornou Content-Type JSON")
+        chunks: list[bytes] = []
+        consumed = 0
+        for chunk in response.iter_content(chunk_size=64 * 1024):
+            consumed += len(chunk)
+            if consumed > MAX_CATALOG_BYTES:
+                raise ObservationalError("JSON oficial excedeu limite de bytes")
+            chunks.append(chunk)
+        if not consumed:
+            raise ObservationalError("Feed oficial vazio")
+        encoding = response.encoding or "utf-8"
+        try:
+            payload = json.loads(b"".join(chunks).decode(encoding))
+        except (LookupError, UnicodeError, ValueError) as exc:
+            raise ObservationalError("Feed oficial não contém JSON válido") from exc
+    return _official_publications(payload)
+
+
 def read_catalog(path: Path, feed_url: str | None = None,
                  http: requests.Session | None = None) -> list[dict]:
+    """Mescla catálogo local fixado e descobertas oficiais; conflito falha fechado."""
     data = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(data, dict) or not isinstance(data.get("publications"), list):
         raise ObservationalError("Catálogo local inválido")
-    publications = list(data["publications"])
-    if feed_url:
-        url = _checked_feed_url(feed_url)
-        with (http or _session()).get(url, timeout=(10, 20)) as response:
-            response.raise_for_status()
-            if len(response.content) > 2_000_000:
-                raise ObservationalError("Catálogo JSON remoto excessivo")
-            feed = response.json()
-        if not isinstance(feed, dict) or not isinstance(feed.get("publications"), list):
-            raise ObservationalError("Catálogo remoto não segue contrato JSON")
-        publications += feed["publications"]
 
-    selected: dict[str, dict] = {}
-    for item in publications:
+    known: dict[str, dict] = {}
+    for item in data["publications"]:
         if not isinstance(item, dict):
-            raise ObservationalError("Entrada de catálogo não é objeto")
+            raise ObservationalError("Entrada local não é objeto")
         month = item.get("month")
         if not isinstance(month, str) or not MONTH_PATTERN.fullmatch(month):
-            raise ObservationalError("Competência inválida no catálogo")
+            raise ObservationalError("Competência inválida no catálogo local")
         url = official_url(str(item.get("url") or ""))
-        known = str(item.get("expected_sha256") or "").lower()
-        if known and not re.fullmatch(r"[0-9a-f]{64}", known):
-            raise ObservationalError("SHA-256 esperado inválido no catálogo")
-        entry = {"month": month, "url": url, "expected_sha256": known}
-        if month in selected and selected[month] != entry:
-            raise ObservationalError(f"Publicações conflitantes para {month}")
-        selected[month] = entry
-    return [selected[m] for m in sorted(selected)]
+        checksum = str(item.get("expected_sha256") or "").lower()
+        if checksum and not re.fullmatch(r"[0-9a-f]{64}", checksum):
+            raise ObservationalError("SHA-256 esperado inválido no catálogo local")
+        candidate = {"month": month, "url": url, "expected_sha256": checksum,
+                     "discovery": "pinned_official_url"}
+        if month in known and known[month] != candidate:
+            raise ObservationalError(f"Mesma competência local com URLs diferentes: {month}")
+        known[month] = candidate
 
+    discovered: dict[str, dict] = {}
+    if feed_url:
+        for entry in _fetch_official_feed(feed_url, http or _session()):
+            month = entry["month"]
+            if month in discovered and discovered[month]["url"] != entry["url"]:
+                raise ObservationalError(f"Mais de uma publicação oficial para {month}")
+            discovered[month] = entry
+        for month, entry in discovered.items():
+            pinned = known.get(month)
+            if pinned and pinned["url"] != entry["url"]:
+                raise ObservationalError(
+                    f"Publicação oficial diverge da origem fixada para {month}"
+                )
+            if pinned:
+                entry["expected_sha256"] = pinned["expected_sha256"]
+            known[month] = entry
+
+    if not known:
+        raise ObservationalError("Nenhuma publicação oficial conhecida")
+    return [known[m] for m in sorted(known)]
 
 def download_direct(url: str, destination: Path,
                     http: requests.Session | None = None) -> str:
@@ -385,8 +472,21 @@ def main(argv: list[str] | None = None) -> int:
         prior = previous.get(month, {})
         previous_hash = prior.get("zip_sha256") if isinstance(prior, dict) else None
         known_hash = item["expected_sha256"]
-        is_revision = bool((known_hash and known_hash != download_digest) or
-                           (previous_hash and previous_hash != download_digest))
+        previous_code = prior.get("publication_code") if isinstance(prior, dict) else None
+        previous_url = prior.get("source_url") if isinstance(prior, dict) else None
+        announced = item.get("announced_bytes")
+        is_revision = bool(
+            (known_hash and known_hash != download_digest)
+            or (previous_hash and previous_hash != download_digest)
+            or (previous_code and previous_code != item.get("publication_code"))
+            or (previous_url and previous_url != url)
+            or (announced and announced != evidence["zip_bytes"])
+        )
+        evidence["publication_code"] = item.get("publication_code")
+        evidence["published_at"] = item.get("published_at")
+        evidence["modified_at"] = item.get("modified_at")
+        evidence["announced_bytes"] = announced
+        evidence["discovery"] = item.get("discovery")
         evidence["revision"] = is_revision
         evidence["observed_at"] = utcnow()
         if is_revision:
