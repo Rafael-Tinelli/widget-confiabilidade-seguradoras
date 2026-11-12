@@ -1,0 +1,33 @@
+name: Consumer.gov Official CSV Isolated Proof
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "api/probes/consumer_gov_official_csv_probe.py"
+      - ".github/workflows/v2-consumer-gov-official-csv-isolated-proof.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: consumer-gov-csv-probe-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  official-csv-isolated-proof:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+          fetch-depth: 1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install declared production dependencies
+        run: python -m pip install --disable-pip-version-check -r requirements.txt
+      - name: Probe one official CSV without credentials, caches, deploy or Gate4
+        run: /usr/bin/time -v python -m api.probes.consumer_gov_official_csv_probe
