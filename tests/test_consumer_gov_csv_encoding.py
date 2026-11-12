@@ -32,7 +32,7 @@ def test_utf8_bom_header_is_not_a_different_field(tmp_path: Path) -> None:
     path = tmp_path / "bom.csv"
     path.write_bytes(
         b"\xef\xbb\xbfNome Fantasia;Valor\n"
-        + "Órbita;São Paulo\n".encode("utf-8")
+        + "Órbita;São Paulo\n".encode()
     )
     assert detect_csv_encoding(path) == "utf-8-sig"
     assert _rows(path) == [{"Nome Fantasia": "Órbita", "Valor": "São Paulo"}]
