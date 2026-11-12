@@ -99,9 +99,11 @@ def test_repo_v1_v2_and_identity_read_exact_same_versioned_evidence() -> None:
     assert _canonical_entry_payload(v1_payload) == _canonical_entry_payload(active.aggregate)
     identity_selection = _load_latest_months()
     assert [m for m, _, _ in identity_selection] == MONTHS
-    assert {m: p for m, p, _ in identity_selection} == frozen_paths
+    assert {m: p.resolve() for m, p, _ in identity_selection} == {
+        m: p.resolve() for m, p in frozen_paths.items()
+    }
     for (month, path, root), (_, active_path, selected) in zip(
         identity_selection, active.months, strict=True
     ):
-        assert path == active_path
+        assert path.resolve() == active_path.resolve()
         assert _canonical_entry_payload(root) == _canonical_entry_payload(selected)
