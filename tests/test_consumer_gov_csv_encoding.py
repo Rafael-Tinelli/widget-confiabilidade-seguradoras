@@ -112,3 +112,17 @@ def test_aggregate_preserves_legacy_counts_without_replay(tmp_path: Path) -> Non
     assert sum(x["statistics"]["complaintsCount"] for x in entries.values()) == 5002
     assert sum(x["statistics"]["respondedCount"] for x in entries.values()) == 5002
     assert sum(x["statistics"]["scoreSum"] for x in entries.values()) == 25010.0
+
+
+def test_late_decoding_error_after_multiple_chunks(tmp_path: Path) -> None:
+    path = tmp_path / "multi_chunk.csv"
+    path.write_bytes(
+        b"Nome Fantasia;Valor\n"
+        + b"Empresa;A\n" * 150000
+        + "Última;B\n".encode("latin1")
+    )
+    assert detect_csv_encoding(path) == "latin1"
+    counts = {"Empresa": 0, "Última": 0}
+    for row in build._iter_rows(path):
+        counts[row["Nome Fantasia"]] += 1
+    assert counts == {"Empresa": 150000, "Última": 1}
