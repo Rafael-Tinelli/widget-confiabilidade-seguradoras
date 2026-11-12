@@ -318,7 +318,8 @@ def test_legacy_http_declared_length_mismatch_preserves_original(
     destination.write_bytes(b"valid-previous-cache")
 
     class ShortResponse:
-        headers = {"Content-Length": "100"}
+        def __init__(self):
+            self.headers = {"Content-Length": "100"}
 
         def __enter__(self):
             return self
