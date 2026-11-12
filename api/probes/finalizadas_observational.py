@@ -34,6 +34,13 @@ COLUMNS = (
     "procurou_empresa", "respondida", "situacao", "avaliacao_reclamacao",
     "nota_do_consumidor",
 )
+LEGACY_COLUMNS = (
+    "Região", "UF", "Cidade", "Sexo", "Faixa Etária", "Data Finalização",
+    "Tempo Resposta", "Nome Fantasia", "Segmento de Mercado", "Área",
+    "Assunto", "Grupo Problema", "Problema", "Como Comprou Contratou",
+    "Procurou Empresa", "Respondida", "Situação", "Avaliação Reclamação",
+    "Nota do Consumidor",
+)
 TARGET = "Seguros, Capitalização e Previdência"
 MAX_ZIP_BYTES = 120 * 1024 * 1024
 MIN_CSV_BYTES = 20_000_000
@@ -298,7 +305,7 @@ def aggregate_zip(source: Path, month: str, url: str) -> tuple[dict, dict]:
         names: dict[str, dict] = {}
         displays: dict[str, Counter] = defaultdict(Counter)
         total = segment_rows = replied = evaluated = resolved = 0
-        unresolved = 0
+        unresolved = unknown_resolution = 0
         csv_digest = hashlib.sha256()
         # Hash CSV feito independentemente dos registros com stream descompactado.
         with archive.open(member) as raw:
@@ -307,16 +314,24 @@ def aggregate_zip(source: Path, month: str, url: str) -> tuple[dict, dict]:
         with (archive.open(member) as raw,
               io.TextIOWrapper(raw, encoding="utf-8-sig", newline="") as text):
             reader = csv.DictReader(text, delimiter=";", strict=True)
-            if reader.fieldnames != list(COLUMNS):
-                raise ObservationalError("Schema finalizadas diferente dos 19 campos")
+            if reader.fieldnames == list(COLUMNS):
+                schema = "canonical_snake_19"
+                incoming = COLUMNS
+            elif reader.fieldnames == list(LEGACY_COLUMNS):
+                schema = "legacy_portuguese_19"
+                incoming = LEGACY_COLUMNS
+            else:
+                raise ObservationalError("Schema finalizadas não corresponde aos dois formatos oficiais conhecidos")
             for row in reader:
                 total += 1
                 if (None in row or len(row) != len(COLUMNS)
                         or any(v is None for v in row.values())):
                     raise ObservationalError(f"Linha {total} com estrutura inválida")
+                row = {field: row[incoming[i]] for i, field in enumerate(COLUMNS)}
+                raw_date = row["data_finalizacao"].strip()
+                date_format = "%Y-%m-%d" if re.fullmatch(r"20\d{2}-\d{2}-\d{2}", raw_date) else "%d/%m/%Y"
                 try:
-                    date = datetime.strptime(row["data_finalizacao"].strip(),
-                                             "%d/%m/%Y").replace(tzinfo=timezone.utc)
+                    date = datetime.strptime(raw_date, date_format).replace(tzinfo=timezone.utc)
                 except ValueError as exc:
                     raise ObservationalError(f"Data inválida na linha {total}") from exc
                 if date.strftime("%Y-%m") != month:
@@ -329,13 +344,18 @@ def aggregate_zip(source: Path, month: str, url: str) -> tuple[dict, dict]:
                 evaluation = row["avaliacao_reclamacao"].strip()
                 score_raw = row["nota_do_consumidor"].strip()
                 if (state not in ("Finalizada avaliada", "Finalizada não avaliada")
-                        or reply not in ("Sim", "Não")
+                        or reply not in ("Sim", "Não", "S", "N")
                         or evaluation not in ("Não Avaliada", "Resolvida",
-                                              "Não Resolvida")):
+                                              "Não Resolvida", "")):
                     raise ObservationalError(f"Enum inválido na linha {total}")
                 is_evaluated = state == "Finalizada avaliada"
-                if is_evaluated != (evaluation != "Não Avaliada"):
+                if ((is_evaluated and evaluation == "Não Avaliada")
+                        or (not is_evaluated and evaluation != "Não Avaliada")):
                     raise ObservationalError(f"Avaliação inconsistente na linha {total}")
+                if is_evaluated and evaluation == "":
+                    # Fonte oficial traz nota sem resposta sobre resolução:
+                    # registrar a ausência; nunca imputar 'resolvida'.
+                    unknown_resolution += 1
                 score = 0.0
                 if is_evaluated:
                     try:
@@ -363,7 +383,7 @@ def aggregate_zip(source: Path, month: str, url: str) -> tuple[dict, dict]:
                 stats["total_claims"] += 1
                 stats["finalizedCount"] += 1
                 stats["finalized_claims"] += 1
-                if reply == "Sim":
+                if reply in ("Sim", "S"):
                     replied += 1
                     stats["respondedCount"] += 1
                     stats["responded_claims"] += 1
@@ -377,7 +397,7 @@ def aggregate_zip(source: Path, month: str, url: str) -> tuple[dict, dict]:
                     stats["scoreSum"] += score
                     stats["satisfactionCount"] += 1
 
-    if total < 1 or segment_rows < 1 or (evaluated != resolved + unresolved):
+    if total < 1 or segment_rows < 1 or (evaluated != resolved + unresolved + unknown_resolution):
         raise ObservationalError("Contagens de origem insuficientes ou contraditórias")
     if segment_rows != sum(v["statistics"]["complaintsCount"] for v in names.values()):
         raise ObservationalError("Reconciliacão do segmento por fornecedor falhou")
@@ -395,6 +415,7 @@ def aggregate_zip(source: Path, month: str, url: str) -> tuple[dict, dict]:
         "zip_bytes": source.stat().st_size, "csv_bytes": member.file_size,
         "filter_segment": TARGET, "lines_total": total, "lines_kept": segment_rows,
         "companies": len(names),
+        "source_schema": schema, "resolution_unknown_count": unknown_resolution,
         "unmapped_identity_status": "raw_provider_names_only_no_susep_matching",
         "consumidor_gov_base_completa_equivalence": "not_demonstrated",
         "methodology_note": "Competência por finalização, não por abertura.",
@@ -403,10 +424,12 @@ def aggregate_zip(source: Path, month: str, url: str) -> tuple[dict, dict]:
                  "by_cnpj_key_raw": {}}
     evidence = {"month": month, "rows_total": total, "rows_segment": segment_rows,
                 "providers": len(names), "responded": replied, "evaluated": evaluated,
+                "source_schema": schema, "resolution_unknown": unknown_resolution,
                 "resolved": resolved, "unresolved": unresolved, "unassessed": segment_rows - evaluated,
                 "zip_sha256": zip_digest, "csv_sha256": csv_digest.hexdigest(),
                 "zip_bytes": source.stat().st_size, "csv_bytes": member.file_size,
-                "source_url": url, "status": "validated_experimental",
+                "source_url": url,
+                "status": ("requires_manual_review" if unknown_resolution else "validated_experimental"),
                 "reference_event": "finalizacao"}
     return aggregate, evidence
 
@@ -458,7 +481,8 @@ def main(argv: list[str] | None = None) -> int:
         previous = root.get("months", {}) if isinstance(root, dict) else {}
     manifest = {"schema": "finalizadas-observational-1",
                 "status": "experimental_no_publication",
-                "generated_at": utcnow(), "months": {}, "revisions": []}
+                "generated_at": utcnow(), "months": {}, "revisions": [],
+                "quality_alerts": []}
     client = _session()
     for item in publications[-args.latest_months:]:
         month, url = item["month"], item["url"]
@@ -489,6 +513,8 @@ def main(argv: list[str] | None = None) -> int:
         evidence["discovery"] = item.get("discovery")
         evidence["revision"] = is_revision
         evidence["observed_at"] = utcnow()
+        if evidence.get("resolution_unknown"):
+            manifest["quality_alerts"].append(month)
         if is_revision:
             manifest["revisions"].append(month)
             evidence["status"] = "requires_manual_review"
