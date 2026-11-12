@@ -32,6 +32,11 @@ jobs:
           python -m pip install -r requirements-dev.txt
           python -m pip install -r requirements.txt
 
+      - name: Diagnose Ruff import ordering (stage 2 temporary)
+        if: github.event_name == 'pull_request'
+        run: |
+          ruff check --select I --diff tests/test_consumer_gov_direct_cache_integrity.py || true
+
       - name: Determine changed Python files
         id: changed-python
         env:
