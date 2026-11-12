@@ -37,6 +37,7 @@ COLUMNS = (
 )
 TARGET = "Seguros, Capitalização e Previdência"
 MAX_ZIP_BYTES = 120 * 1024 * 1024
+MIN_CSV_BYTES = 20_000_000
 MAX_CSV_BYTES = 900 * 1024 * 1024
 DOWNLOAD_PATH = re.compile(r"/pages/publicacao/externo/\d{10,24}/download\Z")
 MONTH_PATTERN = re.compile(r"20\d{2}-(0[1-9]|1[0-2])\Z")
@@ -206,7 +207,7 @@ def aggregate_zip(source: Path, month: str, url: str) -> tuple[dict, dict]:
             raise ObservationalError("ZIP deve conter um único CSV do mês declarado")
         member = members[0]
         if (member.flag_bits & 1 or member.file_size > MAX_CSV_BYTES
-                or member.file_size < 20_000_000 or archive.testzip() is not None):
+                or member.file_size < MIN_CSV_BYTES or archive.testzip() is not None):
             raise ObservationalError("ZIP criptografado, corrompido ou fora dos limites")
         names: dict[str, dict] = {}
         displays: dict[str, Counter] = defaultdict(Counter)
