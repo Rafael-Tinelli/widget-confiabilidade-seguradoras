@@ -1,5 +1,3 @@
-"""Failure-injection tests for Consumer.gov direct raw cache integrity."""
-
 from __future__ import annotations
 
 import hashlib
