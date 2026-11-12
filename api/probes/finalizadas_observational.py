@@ -162,8 +162,14 @@ def _official_publications(payload: object) -> list[dict]:
 def _fetch_official_feed(url: str, http: requests.Session) -> list[dict]:
     # A consulta não usa cookies enviados pelo usuário ou cabeçalhos de navegador.
     with http.get(
-        _checked_feed_url(url), timeout=(12, 45), stream=True,
+        _checked_feed_url(url), timeout=(12, 50), stream=True,
         allow_redirects=False,
+        params={"_": int(datetime.now(timezone.utc).timestamp() * 1000)},
+        headers={
+            "Accept": "application/json, text/javascript, */*; q=0.01",
+            "X-Requested-With": "XMLHttpRequest",
+            "Referer": "https://www.consumidor.gov.br/pages/dadosabertos/externo/",
+        },
     ) as response:
         if response.is_redirect:
             raise ObservationalError("Redirect proibido no catálogo oficial")
