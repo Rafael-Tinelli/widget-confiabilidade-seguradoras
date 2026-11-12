@@ -344,7 +344,7 @@ def aggregate_zip(source: Path, month: str, url: str) -> tuple[dict, dict]:
                 evaluation = row["avaliacao_reclamacao"].strip()
                 score_raw = row["nota_do_consumidor"].strip()
                 if (state not in ("Finalizada avaliada", "Finalizada não avaliada")
-                        or reply not in ("Sim", "Não", "S", "N")
+                        or reply not in (("Sim", "Não") if schema == "canonical_snake_19" else ("S", "N"))
                         or evaluation not in ("Não Avaliada", "Resolvida",
                                               "Não Resolvida", "")):
                     raise ObservationalError(f"Enum inválido na linha {total}")
