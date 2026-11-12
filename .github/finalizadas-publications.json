@@ -1,0 +1,12 @@
+{
+  "schema": "finalizadas-observational-catalog-1",
+  "source_family": "finalizadas",
+  "reference_event": "finalizacao",
+  "publications": [
+    {
+      "month": "2026-10",
+      "url": "https://www.consumidor.gov.br/pages/publicacao/externo/20261100000011098/download",
+      "expected_sha256": "963489d07299c5f762476ca9f6cef21edb55337ac9cb1caa7809a68efd7fcdc1"
+    }
+  ]
+}
