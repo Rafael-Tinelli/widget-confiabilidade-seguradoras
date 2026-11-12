@@ -309,3 +309,63 @@ def test_official_revision_signaled_for_metadata_size_mismatch(tmp_path, monkeyp
     manifest = json.loads((output / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["revisions"] == ["2026-10"]
     assert manifest["months"]["2026-10"]["status"] == "requires_manual_review"
+
+
+
+def test_september_2026_legacy_schema_iso_date_and_unreported_resolution(tmp_path, monkeypatch):
+    """Reproduz os dois esquemas oficiais, preservando a ausência de resolução."""
+    monkeypatch.setattr(obs, "MIN_CSV_BYTES", 0)
+    rows = [
+        _row(data_finalizacao="2026-09-09", respondida="S",
+             avaliacao_reclamacao="", nota_do_consumidor="1"),
+        _row(data_finalizacao="2026-09-14", respondida="N",
+             situacao="Finalizada não avaliada", avaliacao_reclamacao="Não Avaliada",
+             nota_do_consumidor=""),
+    ]
+    translated = [
+        {legacy: row[canonical] for canonical, legacy in zip(
+            obs.COLUMNS, obs.LEGACY_COLUMNS, strict=True
+        )}
+        for row in rows
+    ]
+    src = _zip(
+        tmp_path / "september.zip", translated,
+        columns=list(obs.LEGACY_COLUMNS),
+        member="finalizadas_2026-09.csv",
+    )
+    aggregate, evidence = obs.aggregate_zip(src, "2026-09", URL)
+    assert evidence["source_schema"] == "legacy_portuguese_19"
+    assert evidence["rows_segment"] == 2
+    assert evidence["responded"] == 1
+    assert evidence["evaluated"] == 1
+    assert evidence["resolved"] == 0
+    assert evidence["unresolved"] == 0
+    assert evidence["resolution_unknown"] == 1
+    assert evidence["status"] == "requires_manual_review"
+    counts = aggregate["by_name_key_raw"]["alfa seguros"]["statistics"]
+    assert counts["complaintsCount"] == 2
+    assert counts["satisfactionCount"] == 1
+    assert counts["scoreSum"] == 1
+    assert counts["resolvedCount"] == 0
+    assert aggregate["meta"]["resolution_unknown_count"] == 1
+
+
+def test_only_evaluated_legacy_rows_can_lack_resolution(tmp_path, monkeypatch):
+    monkeypatch.setattr(obs, "MIN_CSV_BYTES", 0)
+    row = _row(
+        data_finalizacao="2026-09-09", respondida="N",
+        situacao="Finalizada não avaliada", avaliacao_reclamacao="",
+        nota_do_consumidor="",
+    )
+    translated = {
+        legacy: row[canonical] for canonical, legacy in zip(
+            obs.COLUMNS, obs.LEGACY_COLUMNS, strict=True
+        )
+    }
+    src = _zip(
+        tmp_path / "september.zip", [translated],
+        columns=list(obs.LEGACY_COLUMNS),
+        member="finalizadas_2026-09.csv",
+    )
+    with pytest.raises(obs.ObservationalError, match="Avaliação inconsistente"):
+        obs.aggregate_zip(src, "2026-09", URL)
