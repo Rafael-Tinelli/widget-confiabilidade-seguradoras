@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Aquisição e agregação OBSERVACIONAL dos ZIPs mensais finalizadas.
 
 Isolado de data/raw, data/derived, Gate 4, Receita e publicação. O catálogo
@@ -218,78 +217,78 @@ def aggregate_zip(source: Path, month: str, url: str) -> tuple[dict, dict]:
         with archive.open(member) as raw:
             for chunk in iter(lambda: raw.read(1 << 20), b""):
                 csv_digest.update(chunk)
-        with archive.open(member) as raw:
-            with io.TextIOWrapper(raw, encoding="utf-8-sig", newline="") as text:
-                reader = csv.DictReader(text, delimiter=";", strict=True)
-                if reader.fieldnames != list(COLUMNS):
-                    raise ObservationalError("Schema finalizadas diferente dos 19 campos")
-                for row in reader:
-                    total += 1
-                    if (None in row or len(row) != len(COLUMNS)
-                            or any(v is None for v in row.values())):
-                        raise ObservationalError(f"Linha {total} com estrutura inválida")
+        with (archive.open(member) as raw,
+              io.TextIOWrapper(raw, encoding="utf-8-sig", newline="") as text):
+            reader = csv.DictReader(text, delimiter=";", strict=True)
+            if reader.fieldnames != list(COLUMNS):
+                raise ObservationalError("Schema finalizadas diferente dos 19 campos")
+            for row in reader:
+                total += 1
+                if (None in row or len(row) != len(COLUMNS)
+                        or any(v is None for v in row.values())):
+                    raise ObservationalError(f"Linha {total} com estrutura inválida")
+                try:
+                    date = datetime.strptime(row["data_finalizacao"].strip(),
+                                             "%d/%m/%Y").replace(tzinfo=timezone.utc)
+                except ValueError as exc:
+                    raise ObservationalError(f"Data inválida na linha {total}") from exc
+                if date.strftime("%Y-%m") != month:
+                    raise ObservationalError(f"Competência inesperada na linha {total}")
+                if simple_norm(row["segmento_de_mercado"]) != simple_norm(TARGET):
+                    continue
+                segment_rows += 1
+                state = row["situacao"].strip()
+                reply = row["respondida"].strip()
+                evaluation = row["avaliacao_reclamacao"].strip()
+                score_raw = row["nota_do_consumidor"].strip()
+                if (state not in ("Finalizada avaliada", "Finalizada não avaliada")
+                        or reply not in ("Sim", "Não")
+                        or evaluation not in ("Não Avaliada", "Resolvida",
+                                              "Não Resolvida")):
+                    raise ObservationalError(f"Enum inválido na linha {total}")
+                is_evaluated = state == "Finalizada avaliada"
+                if is_evaluated != (evaluation != "Não Avaliada"):
+                    raise ObservationalError(f"Avaliação inconsistente na linha {total}")
+                score = 0.0
+                if is_evaluated:
                     try:
-                        date = datetime.strptime(row["data_finalizacao"].strip(),
-                                                 "%d/%m/%Y")
+                        score = float(score_raw.replace(",", "."))
                     except ValueError as exc:
-                        raise ObservationalError(f"Data inválida na linha {total}") from exc
-                    if date.strftime("%Y-%m") != month:
-                        raise ObservationalError(f"Competência inesperada na linha {total}")
-                    if simple_norm(row["segmento_de_mercado"]) != simple_norm(TARGET):
-                        continue
-                    segment_rows += 1
-                    state = row["situacao"].strip()
-                    reply = row["respondida"].strip()
-                    evaluation = row["avaliacao_reclamacao"].strip()
-                    score_raw = row["nota_do_consumidor"].strip()
-                    if (state not in ("Finalizada avaliada", "Finalizada não avaliada")
-                            or reply not in ("Sim", "Não")
-                            or evaluation not in ("Não Avaliada", "Resolvida",
-                                                  "Não Resolvida")):
-                        raise ObservationalError(f"Enum inválido na linha {total}")
-                    is_evaluated = state == "Finalizada avaliada"
-                    if is_evaluated != (evaluation != "Não Avaliada"):
-                        raise ObservationalError(f"Avaliação inconsistente na linha {total}")
-                    score = 0.0
-                    if is_evaluated:
-                        try:
-                            score = float(score_raw.replace(",", "."))
-                        except ValueError as exc:
-                            raise ObservationalError(f"Nota inválida na linha {total}") from exc
-                        if not math.isfinite(score) or score not in (1, 2, 3, 4, 5):
-                            raise ObservationalError(f"Nota fora do domínio na linha {total}")
-                        evaluated += 1
-                    elif score_raw:
-                        raise ObservationalError(f"Nota não avaliada na linha {total}")
-                    name = row["nome_fantasia"].strip()
-                    key = normalize_name(name)
-                    if not key:
-                        raise ObservationalError(f"Nome vazio na linha {total}")
-                    if key not in names:
-                        names[key] = {"name": name, "display_name": name,
-                                      "cnpj": "", "statistics": empty_stats()}
-                    displays[key][name] += 1
-                    current_display = names[key]["display_name"]
-                    if displays[key][name] > displays[key][current_display]:
-                        names[key]["name"] = names[key]["display_name"] = name
-                    stats = names[key]["statistics"]
-                    stats["complaintsCount"] += 1
-                    stats["total_claims"] += 1
-                    stats["finalizedCount"] += 1
-                    stats["finalized_claims"] += 1
-                    if reply == "Sim":
-                        replied += 1
-                        stats["respondedCount"] += 1
-                        stats["responded_claims"] += 1
-                    if evaluation == "Resolvida":
-                        resolved += 1
-                        stats["resolvedCount"] += 1
-                        stats["resolved_claims"] += 1
-                    if evaluation == "Não Resolvida":
-                        unresolved += 1
-                    if score > 0:
-                        stats["scoreSum"] += score
-                        stats["satisfactionCount"] += 1
+                        raise ObservationalError(f"Nota inválida na linha {total}") from exc
+                    if not math.isfinite(score) or score not in (1, 2, 3, 4, 5):
+                        raise ObservationalError(f"Nota fora do domínio na linha {total}")
+                    evaluated += 1
+                elif score_raw:
+                    raise ObservationalError(f"Nota não avaliada na linha {total}")
+                name = row["nome_fantasia"].strip()
+                key = normalize_name(name)
+                if not key:
+                    raise ObservationalError(f"Nome vazio na linha {total}")
+                if key not in names:
+                    names[key] = {"name": name, "display_name": name,
+                                  "cnpj": "", "statistics": empty_stats()}
+                displays[key][name] += 1
+                current_display = names[key]["display_name"]
+                if displays[key][name] > displays[key][current_display]:
+                    names[key]["name"] = names[key]["display_name"] = name
+                stats = names[key]["statistics"]
+                stats["complaintsCount"] += 1
+                stats["total_claims"] += 1
+                stats["finalizedCount"] += 1
+                stats["finalized_claims"] += 1
+                if reply == "Sim":
+                    replied += 1
+                    stats["respondedCount"] += 1
+                    stats["responded_claims"] += 1
+                if evaluation == "Resolvida":
+                    resolved += 1
+                    stats["resolvedCount"] += 1
+                    stats["resolved_claims"] += 1
+                if evaluation == "Não Resolvida":
+                    unresolved += 1
+                if score > 0:
+                    stats["scoreSum"] += score
+                    stats["satisfactionCount"] += 1
 
     if total < 1 or segment_rows < 1 or (evaluated != resolved + unresolved):
         raise ObservationalError("Contagens de origem insuficientes ou contraditórias")
