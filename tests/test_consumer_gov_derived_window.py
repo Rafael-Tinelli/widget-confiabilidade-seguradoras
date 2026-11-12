@@ -237,3 +237,17 @@ def test_same_source_hash_with_changed_derived_counters_requires_review(
         build._publish_validated_window(roots, aggregate)
     assert manifest.read_bytes() == before
     assert len(load_active_window(derived, monthly, required=3).months) == 3
+
+
+def test_v1_aggregator_rejects_corrupted_active_window_instead_of_empty_scores(
+    tmp_path, monkeypatch
+) -> None:
+    from api.sources.consumidor_gov_agg import extract_consumidor_gov_aggregated
+
+    derived, _ = _configure(monkeypatch, tmp_path)
+    _publish([_root(month) for month in MONTHS])
+    manifest = derived / "consumidor_gov_window_manifest.json"
+    manifest.write_text('{"state":"partial"}', encoding="utf-8")
+
+    with pytest.raises(ConsumerGovWindowError, match="active"):
+        extract_consumidor_gov_aggregated(derived)

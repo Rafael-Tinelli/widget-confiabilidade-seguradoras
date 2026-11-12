@@ -49,7 +49,12 @@ def extract_consumidor_gov_aggregated(
         try:
             path = load_active_window(d, d / "monthly").aggregate_path
         except ConsumerGovWindowError as exc:
-            return {"status": "invalid", "error": str(exc)}, {}
+            # A declared active window is authoritative. Returning an empty
+            # reputation payload would make the V1 consumer silently publish
+            # zero evidence instead of rejecting an inconsistent generation.
+            raise ConsumerGovWindowError(
+                f"active Consumer.gov window is invalid: {exc}"
+            ) from exc
     else:
         path = next((p for p in candidates if p.exists()), None)
 
