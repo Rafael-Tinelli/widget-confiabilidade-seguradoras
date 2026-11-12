@@ -45,7 +45,7 @@ OFFICIAL_CATALOG_URL = (
     "publicacoes.json?indicadorTipoPublicacao=2"
 )
 OFFICIAL_CATALOG_PATH = "/pages/publicacao/externo/publicacoes.json"
-FINALIZADAS_NAME = re.compile(r"finalizadas_(20\\d{2}-(?:0[1-9]|1[0-2]))\\.zip\\Z")
+FINALIZADAS_NAME = re.compile(r"finalizadas_(20\d{2}-(?:0[1-9]|1[0-2]))\.zip\Z")
 MAX_CATALOG_BYTES = 2_000_000
 
 
