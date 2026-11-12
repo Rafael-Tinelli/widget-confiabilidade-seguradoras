@@ -747,6 +747,21 @@ def _publish_validated_window(
             and previous_source_hashes == candidate_source_hashes
             and all(candidate_source_hashes)
         ):
+            # Equal source bytes must not silently bless different derived
+            # counters, names or satisfaction semantics after a code change.
+            for month, _, previous_root in prior.months:
+                if _entries_from_root(previous_root) != _entries_from_root(
+                    by_month[month]
+                ):
+                    raise ValueError(
+                        f"{month}: derived semantics drift with unchanged source SHA; "
+                        "manual review required"
+                    )
+            if _entries_from_root(prior.aggregate) != _entries_from_root(aggregate):
+                raise ValueError(
+                    "aggregate semantics drift with unchanged source SHA; "
+                    "manual review required"
+                )
             return json.loads(manifest_path.read_text(encoding="utf-8"))
 
     monthly_records = []
@@ -850,8 +865,13 @@ def _remove_invalid_cache(path: Path) -> None:
         print(f"CG WARN: não consegui remover cache inválido {path}: {exc}")
 
 
-def main() -> int:
-    """Build an all-or-nothing Base Completa candidate without altering V2."""
+def main(*, require_current: bool = False) -> int:
+    """Build the candidate; optionally signal stale reuse as an error.
+
+    Legacy callers can preserve an existing valid aggregate with return 0.
+    Gate 4 requires explicit nonzero status on failed current validation so
+    its source lineage enters the verified stale-cache fallback path.
+    """
     from api.v2.consumer_gov_window import (
         WINDOW_MANIFEST,
         ConsumerGovWindowError,
@@ -880,7 +900,7 @@ def main() -> int:
     def unavailable(reason: str) -> int:
         preserved = _preserve_existing_aggregate(previous, reason)
         if preserved is not None:
-            return preserved
+            return 1 if require_current else preserved
         print(f"CG FAIL: {reason}; no validated previous aggregate")
         return 1
 
