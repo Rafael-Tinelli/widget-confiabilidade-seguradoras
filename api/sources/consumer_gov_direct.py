@@ -1147,10 +1147,13 @@ def ensure_months(
             }
             continue
 
-        if isinstance(entry, dict) and entry.get("validation") == "passed":
-            if not _manifest_content_matches(path, month, entry):
-                pending.append(month)
-                continue
+        if (
+            isinstance(entry, dict)
+            and entry.get("validation") == "passed"
+            and not _manifest_content_matches(path, month, entry)
+        ):
+            pending.append(month)
+            continue
 
         # Legacy raw cache without a signed manifest must be validated fully
         # before it receives a new SHA-256 identity.
