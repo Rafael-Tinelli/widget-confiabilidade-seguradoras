@@ -10,9 +10,9 @@ on:
         type: string
         required: false
   schedule:
-    # Monthly publication may be revised or delayed. Run brief checks four
-    # times/month without triggering the expensive national generation.
-    - cron: "27 11 8,15,22,29 * *"
+    # Check shortly after the usual monthly publication, with a second pass
+    # for delayed releases; no national generation is triggered.
+    - cron: "27 11 10,16 * *"
 
 permissions:
   contents: read
