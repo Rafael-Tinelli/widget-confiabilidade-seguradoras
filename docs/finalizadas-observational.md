@@ -18,23 +18,26 @@ A execução agendada ocorre nos dias 8, 15, 22 e 29 de cada mês. Também é
 possível usar `workflow_dispatch`, inclusive informando um catálogo JSON
 estruturado remoto **em domínio oficial consumidor.gov.br** via `feed_url`.
 
-**Limite importante:** a URL de download inclui um código de publicação não
-previsível. A publicação de 2026-10 foi confirmada e cadastrada. Até que um
-endpoint oficial estável de catálogo JSON seja identificado, o cadastro da URL
-da competência seguinte é um passo manual; nenhuma URL é inventada.
-A rotina não depende de Selenium, HTML, scraping ou do portal antigo
-`dados.mj.gov.br`.
+**Descoberta oficial automática:** o endpoint estruturado foi confirmado em
+12/11/2026: `https://www.consumidor.gov.br/pages/publicacao/externo/publicacoes.json?indicadorTipoPublicacao=2`.
+Ele entrega uma lista JSON oficial com `nomeArquivo`, `codigo`,
+`tamanhoArquivo`, `dataPublicacao` e `dataAlteracao`. A rotina filtra
+**somente** `finalizadas_YYYY-MM.zip` não excluídos, constrói o download
+direto com o código fornecido e compara os identificadores e hashes com o
+manifesto anterior. Não interpreta HTML e não presume os próximos códigos.
 
-Exemplo de nova entrada em `.github/finalizadas-publications.json`:
+A resposta observada em 12/11 tinha 682 publicações e 62 ZIPs
+`finalizadas`, com cobertura completa de 2025-01 a 2026-10.
 
-```json
-{"month": "2026-11", "url": "https://www.consumidor.gov.br/pages/publicacao/externo/CODIGO_OFICIAL/download"}
-```
+A próxima competência será descoberta automaticamente assim que publicada
+nesse JSON. A disponibilidade *sem cookies e a partir do runner* precisa ser
+verificada numa execução isolada real. Se o catálogo não responder ou mudar
+o formato, o job falha sem tocar no programa ativo.
 
-Substituir `CODIGO_OFICIAL` pelo código numérico real após confirmação no
-portal; a rotina rejeita qualquer valor fictício. Para descoberta automática,
-é necessário configurar `CG_FINALIZADAS_CATALOG_JSON_URL` com um endpoint
-oficial JSON, verificável, cujo contrato seja `{"publications":[{"month":"YYYY-MM","url":"..."}]}`.
+O input opcional `feed_url` permite informar apenas a **mesma rota oficial**
+com `indicadorTipoPublicacao=2`, e não aceita domínios, hosts ou URLs
+genéricas. O catálogo local fixa o SHA-256 de outubro como evidência
+histórica adicional.
 
 ## Limitações metodológicas e segurança
 
