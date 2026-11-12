@@ -765,11 +765,14 @@ def _month_from_row(
     return None
 
 
-def validate_month_csv(path: Path, month: str) -> ValidationResult:
+def validate_month_csv(
+    path: Path, month: str, *, min_bytes: int | None = None
+) -> ValidationResult:
     size = path.stat().st_size if path.exists() else 0
-    if size < MIN_MONTH_BYTES:
+    threshold = MIN_MONTH_BYTES if min_bytes is None else min_bytes
+    if size < threshold:
         raise ConsumerGovArchiveInvalid(
-            f"{path.name} has {size} bytes, below minimum {MIN_MONTH_BYTES}"
+            f"{path.name} has {size} bytes, below minimum {threshold}"
         )
 
     encoding, delimiter, columns = _detect_csv_format(path)
