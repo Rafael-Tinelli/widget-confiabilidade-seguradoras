@@ -83,16 +83,39 @@ histórica adicional.
 
 ## Reutilização e retenção: comportamento efetivo
 
-O workflow procura o último run bem-sucedido de `main` entre os 20 listados
-e tenta baixar seu artefato completo. Desse conteúdo, o processador utiliza
-apenas o `manifest.json` para comparar hashes, códigos e URLs. Não recupera
-ZIP/agregado como cache reutilizável: `main()` chama download e agregação
-novamente para cada um dos dois meses selecionados, mesmo com hash anterior.
+Na correção de recuperação da PR #56, o workflow consulta até 100 runs
+bem-sucedidos de `main`, na ordem do retorno da API oficial do GitHub.
+Prioriza um **artefato compacto do histórico** (manifesto e proveniência
+atrelada a run/attempt/commit, com SHA-256 recomputado). Caso não esteja
+disponível, procura o pacote completo legado e confere os hashes do ZIP/CSV,
+o CRC e os documentos de validação antes de aceitar a referência. Se o run
+mais recente não tiver artefato íntegro, examina os anteriores.
 
-O manifesto novo contém somente os meses processados nessa execução. Datas
-de publicação/alteração são registradas; não são prova de conteúdo inalterado.
-Sem o artefato anterior, a execução pode prosseguir sem baseline de revisão;
-o hash fixado no catálogo protege apenas outubro/2026.
+- **Primeira execução sem sucessos anteriores:** `baseline_state=bootstrap`,
+  registrado explicitamente; não há evidência de revisão histórica.
+- **Referência mais antiga por falta do último artefato:** estado
+  `restored_with_gap`. Os meses observados ficam marcados
+  `requires_manual_review`, mesmo que tenham o mesmo hash da referência
+  recuperada. O alerta persiste na execução seguinte.
+- **Há sucessos anteriores, mas nenhum histórico recuperável:** o job
+  **falha fechado**. Não inventa nova baseline, não publica e não
+  sobrescreve a referência anterior.
+- **Restaurado sem lacunas:** `baseline_state=restored`. Pendências
+  anteriores são preservadas no manifesto independentemente de estarem
+  entre os dois meses processados.
+
+O manifesto compacto acompanha a execução com **90 dias de retenção** e
+ocupa apenas alguns KB; o artefato completo, com ZIPs, continua com
+**30 dias**. Os dois são apenas evidências observacionais. A nova retenção
+reduz o risco de perda entre calendários, mas não fornece armazenamento
+permanente: se todos os artefatos expirarem, a recuperação será bloqueada.
+O estado compacto só é enviado após uma execução válida e bem-sucedida;
+artefatos parciais de falhas continuam inaptos a estabelecer baseline.
+
+O workflow não utiliza os ZIPs recuperados como cache de processamento:
+`main()` continua baixando e agregando os dois meses selecionados. Reuso
+de dados é uma etapa separada, não implementada aqui. Metadados de
+publicação não são certificados de conteúdo idêntico.
 
 Assim, mantendo o código atual e outubro entre os dois meses selecionados,
 a execução de 16/11/2026 voltará a baixar e processar outubro. O custo também
@@ -107,10 +130,9 @@ política que o adie precisa explicitar esse intervalo de revalidação.
 
 ## Limitações verificadas na auditoria de 12–13/11/2026
 
-- O alerta de revisão não é persistente: para um mês sem hash fixado, o hash
-  alterado pode virar baseline e a execução seguinte voltar a
-  `validated_experimental`, sem aprovação manual. Isso não publica dados,
-  mas impede tratar esse estado como aprovação duradoura.
+- **Achado histórico A02 corrigido na PR #56 (sujeito a CI e merge):** a
+  revisão pendente conserva o estado `requires_manual_review` em sucessivas
+  observações. Falta eventual aprovação manual explícita, fora do escopo da PR.
 - Uma publicação fixada localmente permanece candidata se desaparecer do
   feed ou for marcada como excluída nele. Duplicatas com o mesmo código e
   metadados divergentes não são rejeitadas; prevalece a última entrada.
@@ -118,9 +140,9 @@ política que o adie precisa explicitar esse intervalo de revalidação.
   pode passar pelos controles estruturais. SHA-256 identifica os bytes
   adquiridos; não comprova que a origem forneceu a população completa.
 - As provas de setembro/outubro ocorreram na branch experimental. A busca
-  automática de baseline filtra `main`; esses runs não serão recuperados por
-  esse filtro. Artefatos parciais e ausência de baseline precisam permanecer
-  distintos de evidência completa e previamente validada.
+  automática continua filtrando `main` e não as promove por conveniência.
+  Artefatos parciais não são tratados como histórico válido. Sem sucessos
+  anteriores em `main`, a execução é identificada como bootstrap.
 
 Essas limitações exigem testes específicos antes de implementar reutilização
 ou qualquer integração à Conduta. O isolamento produtivo permanece obrigatório.
