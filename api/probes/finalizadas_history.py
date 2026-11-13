@@ -165,14 +165,12 @@ def _gh_download(run_id: int, name: str, repo: str, target: Path) -> None:
     )
 
 
-def restore(repository: str, output: Path, *, branch: str = "main") -> dict:
+def restore(repository: str, output: Path) -> dict:
     if not REPO.fullmatch(repository):
         raise HistoryError("Invalid repository identifier")
-    if not re.fullmatch(r"[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*", branch):
-        raise HistoryError("Invalid source branch")
     endpoint = (
         f"repos/{repository}/actions/workflows/{WORKFLOW}/runs"
-        f"?branch={branch}&status=success&per_page=100"
+        "?branch=main&status=success&per_page=100"
     )
     runs = _gh_json(endpoint).get("workflow_runs")
     if not isinstance(runs, list):
@@ -187,7 +185,7 @@ def restore(repository: str, output: Path, *, branch: str = "main") -> dict:
             raise HistoryError("History recovery time budget exhausted")
         if (not isinstance(run, dict) or run.get("conclusion") != "success"
                 or run.get("status") != "completed"
-                or run.get("head_branch") != branch):
+                or run.get("head_branch") != "main"):
             continue
         run_id = run.get("id")
         attempt = run.get("run_attempt")
@@ -259,7 +257,6 @@ def main() -> int:
     r = commands.add_parser("restore")
     r.add_argument("--repository", required=True)
     r.add_argument("--output-dir", type=Path, required=True)
-    r.add_argument("--source-branch", default="main")
     s = commands.add_parser("seal")
     s.add_argument("--manifest", type=Path, required=True)
     s.add_argument("--output-dir", type=Path, required=True)
@@ -268,8 +265,7 @@ def main() -> int:
     s.add_argument("--head-sha", required=True)
     args = parser.parse_args()
     if args.command == "restore":
-        print(json.dumps(restore(args.repository, args.output_dir,
-                                 branch=args.source_branch)))
+        print(json.dumps(restore(args.repository, args.output_dir)))
     else:
         seal(args.manifest, args.output_dir, args.run_id,
              args.attempt, args.head_sha)
