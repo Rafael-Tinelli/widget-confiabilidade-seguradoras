@@ -47,6 +47,14 @@ Foram observados dois contratos reais:
   `respondida=Sim/Não`; 414.538 registros, 40.501 do segmento,
   `validated_experimental` sem anomalia de resolução.
 
+O catálogo oficial utiliza as retentativas HTTP já existentes e, quando
+elas se esgotam por falha transitória (como HTTP 504), faz **uma rodada
+adicional** após 10 segundos. Não altera URL, domínio ou contrato do JSON;
+a segunda rodada executa uma nova consulta oficial com verificação completa.
+Se o serviço continuar indisponível, o job falha **sem usar catálogo histórico
+como se fosse atual**. Respostas HTML, redirecionamentos e conflitos de
+metadados não são aceitos nem reprocessados por essa recuperação.
+
 O endpoint apresentou também uma falha **504 transitória** em execução
 separada; com cabeçalhos XHR, cache-buster e retentativas, a prova posterior
 passou. A disponibilidade contínua **não está garantida**: se o serviço
