@@ -68,7 +68,8 @@ def validate_manifest(path: Path) -> dict:
             raise HistoryError(f"Missing/invalid source SHA: {month}")
         if (state["status"] == "requires_manual_review"
                 and month not in manifest["revisions"]
-                and month not in manifest["quality_alerts"]):
+                and month not in manifest["quality_alerts"]
+                and state.get("history_gap") is not True):
             raise HistoryError(f"Unrecorded manual review: {month}")
     for field in ("revisions", "quality_alerts"):
         values = manifest[field]
