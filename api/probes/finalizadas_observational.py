@@ -137,6 +137,10 @@ def _official_publications(payload: object) -> list[dict]:
         if not match:
             continue
         if item.get("indicadorExclusaoLogica") is not False:
+            publications.append({
+                "month": match.group(1), "withdrawn": True,
+                "discovery": "official_publicacoes_json",
+            })
             continue
         code = str(item.get("codigo") or "")
         if not re.fullmatch(r"\d{10,24}", code):
@@ -221,18 +225,36 @@ def read_catalog(path: Path, feed_url: str | None = None,
     if feed_url:
         for entry in _fetch_official_feed(feed_url, http or _session()):
             month = entry["month"]
-            if month in discovered and discovered[month]["url"] != entry["url"]:
-                raise ObservationalError(f"Mais de uma publicação oficial para {month}")
+            if month in discovered and discovered[month] != entry:
+                if discovered[month].get("url") != entry.get("url"):
+                    raise ObservationalError(
+                        f"Mais de uma publicação oficial para {month}"
+                    )
+                raise ObservationalError(
+                    f"Metadados oficiais conflitantes para a mesma competência: {month}"
+                )
             discovered[month] = entry
         for month, entry in discovered.items():
             pinned = known.get(month)
+            if entry.get("withdrawn"):
+                if not pinned:
+                    continue
+                known[month] = {
+                    **(pinned or {"month": month, "expected_sha256": ""}),
+                    "catalog_status": "withdrawn",
+                    "discovery": "official_publicacoes_json",
+                }
+                continue
             if pinned and pinned["url"] != entry["url"]:
                 raise ObservationalError(
                     f"Publicação oficial diverge da origem fixada para {month}"
                 )
             if pinned:
                 entry["expected_sha256"] = pinned["expected_sha256"]
+            entry["catalog_status"] = "listed"
             known[month] = entry
+        for month in known.keys() - discovered.keys():
+            known[month]["catalog_status"] = "absent_from_feed"
 
     if not known:
         raise ObservationalError("Nenhuma publicação oficial conhecida")
@@ -473,6 +495,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--feed-url", default=None)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--previous-manifest", type=Path, default=None)
+    parser.add_argument("--recovery-report", type=Path, default=None)
     parser.add_argument("--latest-months", type=int, default=2)
     args = parser.parse_args(argv)
     if args.latest_months < 1 or args.latest_months > 12:
@@ -481,17 +504,70 @@ def main(argv: list[str] | None = None) -> int:
     publications = read_catalog(args.catalog, feed_url=args.feed_url)
     if not publications:
         raise ObservationalError("Nenhuma publicação oficial conhecida")
+    recovery_status = None
+    if args.recovery_report:
+        recovery = json.loads(args.recovery_report.read_text(encoding="utf-8"))
+        recovery_status = recovery.get("status") if isinstance(recovery, dict) else None
+        if recovery_status not in ("bootstrap", "restored", "restored_with_gap"):
+            raise ObservationalError("Relatório de recuperação inválido")
+        if (recovery_status == "bootstrap") == bool(args.previous_manifest):
+            raise ObservationalError("Manifesto e recuperação não correspondem")
+        if args.previous_manifest:
+            from api.probes.finalizadas_history import digest
+            if recovery.get("manifest_sha256") != digest(args.previous_manifest):
+                raise ObservationalError("Hash do manifesto restaurado divergente")
     previous: dict = {}
-    if args.previous_manifest and args.previous_manifest.exists():
+    previous_quality_alerts: set[str] = set()
+    if args.previous_manifest:
+        if not args.previous_manifest.is_file():
+            raise ObservationalError("Manifesto anterior informado está indisponível")
         root = json.loads(args.previous_manifest.read_text(encoding="utf-8"))
-        previous = root.get("months", {}) if isinstance(root, dict) else {}
+        if (not isinstance(root, dict)
+                or root.get("schema") != "finalizadas-observational-1"
+                or not isinstance(root.get("months"), dict)):
+            raise ObservationalError("Manifesto anterior inválido ou incompatível")
+        previous = root["months"]
+        quality_alerts = root.get("quality_alerts", [])
+        if (not isinstance(quality_alerts, list)
+                or any(not isinstance(m, str) or m not in previous
+                       for m in quality_alerts)):
+            raise ObservationalError("Alertas históricos de qualidade inválidos")
+        previous_quality_alerts = set(quality_alerts)
+        for month, prior in previous.items():
+            if (not isinstance(month, str) or not MONTH_PATTERN.fullmatch(month)
+                    or not isinstance(prior, dict)
+                    or (prior.get("zip_sha256") is not None
+                        and not re.fullmatch(
+                            r"[0-9a-f]{64}", str(prior["zip_sha256"])
+                        ))):
+                raise ObservationalError("Histórico de revisão anterior inválido")
     manifest = {"schema": "finalizadas-observational-1",
                 "status": "experimental_no_publication",
-                "generated_at": utcnow(), "months": {}, "revisions": [],
-                "quality_alerts": []}
+                "generated_at": utcnow(),
+                "baseline_state": recovery_status or (
+                    "restored" if args.previous_manifest else "unavailable"
+                ),
+                "months": {m: dict(p) for m, p in previous.items()},
+                "revisions": [], "quality_alerts": []}
+    if recovery_status == "restored_with_gap":
+        # The missing successful run may have touched ANY inherited month,
+        # including months outside the current two-month reprocessing window.
+        for state in manifest["months"].values():
+            state["status"] = "requires_manual_review"
+            state["history_gap"] = True
     client = _session()
     for item in publications[-args.latest_months:]:
-        month, url = item["month"], item["url"]
+        month = item["month"]
+        if item.get("catalog_status") in ("withdrawn", "absent_from_feed"):
+            prior = dict(previous.get(month, {}))
+            prior["month"] = month
+            prior["catalog_status"] = item["catalog_status"]
+            prior["status"] = "requires_manual_review"
+            prior["revision"] = True
+            manifest["months"][month] = prior
+            manifest["revisions"].append(month)
+            continue
+        url = item["url"]
         month_dir = destination / month
         month_dir.mkdir(parents=True, exist_ok=True)
         zip_path = month_dir / f"finalizadas_{month}.zip"
@@ -505,28 +581,63 @@ def main(argv: list[str] | None = None) -> int:
         previous_code = prior.get("publication_code") if isinstance(prior, dict) else None
         previous_url = prior.get("source_url") if isinstance(prior, dict) else None
         announced = item.get("announced_bytes")
+        # A revisão pendente permanece pendente mesmo se os mesmos bytes
+        # forem observados novamente; observar não equivale a aprovar.
+        prior_pending = prior.get("status") == "requires_manual_review"
+        history_gap = bool(prior.get("history_gap")
+                           or recovery_status == "restored_with_gap")
+        # A source revision and a pending manual review are not synonyms:
+        # e.g. the official September data has an unknown resolution but
+        # no ZIP revision. Missing history is a third, distinct reason.
+        metadata_changed = any(
+            prior.get(field) not in (None, "")
+            and item.get(field) not in (None, "")
+            and prior[field] != item[field]
+            for field in ("published_at", "modified_at", "announced_bytes")
+        )
         is_revision = bool(
-            (known_hash and known_hash != download_digest)
+            prior.get("revision")
+            or (known_hash and known_hash != download_digest)
             or (previous_hash and previous_hash != download_digest)
             or (previous_code and previous_code != item.get("publication_code"))
             or (previous_url and previous_url != url)
             or (announced and announced != evidence["zip_bytes"])
+            or metadata_changed
         )
+        requires_review = bool(prior_pending or history_gap or is_revision
+                               or evidence.get("resolution_unknown"))
+        if prior_pending or is_revision:
+            origin = prior.get("review_origin_sha256")
+            if origin or (is_revision and previous_hash):
+                evidence["review_origin_sha256"] = origin or previous_hash
         evidence["publication_code"] = item.get("publication_code")
         evidence["published_at"] = item.get("published_at")
         evidence["modified_at"] = item.get("modified_at")
         evidence["announced_bytes"] = announced
         evidence["discovery"] = item.get("discovery")
+        evidence["catalog_status"] = item.get("catalog_status", "pinned_only")
         evidence["revision"] = is_revision
+        evidence["history_gap"] = history_gap
         evidence["observed_at"] = utcnow()
         if evidence.get("resolution_unknown"):
             manifest["quality_alerts"].append(month)
         if is_revision:
             manifest["revisions"].append(month)
+        if requires_review:
             evidence["status"] = "requires_manual_review"
         _write_json(month_dir / "agregado-experimental.json", aggregate)
         _write_json(month_dir / "validacao.json", evidence)
         manifest["months"][month] = evidence
+    manifest["revisions"] = sorted(set(manifest["revisions"]) | {
+        month for month, state in manifest["months"].items()
+        if state.get("revision") is True
+    })
+    manifest["quality_alerts"] = sorted(
+        set(manifest["quality_alerts"]) | previous_quality_alerts | {
+            month for month, state in manifest["months"].items()
+            if state.get("resolution_unknown")
+        }
+    )
     _write_json(destination / "manifest.json", manifest)
     print(json.dumps({"status": manifest["status"], "months": sorted(manifest["months"]),
                       "revisions": manifest["revisions"], "output_dir": str(destination)},

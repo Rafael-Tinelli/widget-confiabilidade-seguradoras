@@ -48,22 +48,13 @@ jobs:
       - name: Dependencies
         run: python -m pip install -r requirements.txt
 
-      - name: Restore previous observed manifest (best effort, never fail job)
+      - name: Restore complete revision history (fail closed on loss)
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p "$PREVIOUS_DIR"
-          previous=$(gh run list --workflow v2-finalizadas-observational.yml \
-            --branch main --limit 20 --json databaseId,conclusion \
-            --jq '[.[] | select(.conclusion == "success")][0].databaseId // empty' || true)
-          if [[ "$previous" =~ ^[0-9]+$ ]]; then
-            if gh run download "$previous" --repo "$GITHUB_REPOSITORY" \
-              --pattern 'finalizadas-observational-*' --dir "$PREVIOUS_DIR"; then
-              find "$PREVIOUS_DIR" -name manifest.json -type f -print | head -n 2
-            else
-              echo "Previous artifact unavailable; proceeding without revision baseline."
-            fi
-          fi
+          python -m api.probes.finalizadas_history restore \
+            --repository "$GITHUB_REPOSITORY" \
+            --output-dir "$PREVIOUS_DIR"
 
       - name: Observe only official direct HTTP ZIP publications
         shell: bash
@@ -73,13 +64,24 @@ jobs:
           if [[ -n "$OFFICIAL_FEED" ]]; then
             extra+=(--feed-url "$OFFICIAL_FEED")
           fi
-          previous=$(find "$PREVIOUS_DIR" -name manifest.json -type f -print -quit)
-          if [[ -n "$previous" ]]; then
-            extra+=(--previous-manifest "$previous")
+          extra+=(--recovery-report "$PREVIOUS_DIR/recovery.json")
+          if [[ -f "$PREVIOUS_DIR/manifest.json" ]]; then
+            extra+=(--previous-manifest "$PREVIOUS_DIR/manifest.json")
           fi
           python -m api.probes.finalizadas_observational \
             --catalog .github/finalizadas-publications.json \
             --output-dir "$EXPERIMENT_DIR" --latest-months 2 "${extra[@]}"
+
+      - name: Seal compact revision history
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m api.probes.finalizadas_history seal \
+            --manifest "$EXPERIMENT_DIR/manifest.json" \
+            --output-dir "$RUNNER_TEMP/finalizadas-state" \
+            --run-id "$GITHUB_RUN_ID" \
+            --attempt "$GITHUB_RUN_ATTEMPT" \
+            --head-sha "$GITHUB_SHA"
 
       - name: Preserve isolated evidence only (30-day retention)
         if: always()
@@ -89,3 +91,12 @@ jobs:
           path: ${{ runner.temp }}/finalizadas-observational/
           retention-days: 30
           if-no-files-found: warn
+
+      - name: Preserve compact revision state (90-day retention)
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: finalizadas-observational-state-${{ github.run_id }}-a${{ github.run_attempt }}
+          path: ${{ runner.temp }}/finalizadas-state/
+          retention-days: 90
+          if-no-files-found: error
