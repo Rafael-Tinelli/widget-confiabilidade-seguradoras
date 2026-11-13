@@ -527,7 +527,12 @@ def main(argv: list[str] | None = None) -> int:
                 or not isinstance(root.get("months"), dict)):
             raise ObservationalError("Manifesto anterior inválido ou incompatível")
         previous = root["months"]
-        previous_quality_alerts = set(root.get("quality_alerts", []))
+        quality_alerts = root.get("quality_alerts", [])
+        if (not isinstance(quality_alerts, list)
+                or any(not isinstance(m, str) or m not in previous
+                       for m in quality_alerts)):
+            raise ObservationalError("Alertas históricos de qualidade inválidos")
+        previous_quality_alerts = set(quality_alerts)
         for month, prior in previous.items():
             if (not isinstance(month, str) or not MONTH_PATTERN.fullmatch(month)
                     or not isinstance(prior, dict)
