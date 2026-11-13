@@ -128,9 +128,10 @@ def test_previous_hash_difference_is_recorded_not_published(tmp_path, monkeypatc
         {"month": "2026-10", "url": URL}
     ]}), encoding="utf-8")
     previous = tmp_path / "previous.json"
-    previous.write_text(json.dumps({"months": {
-        "2026-10": {"zip_sha256": "a" * 64}
-    }}), encoding="utf-8")
+    previous.write_text(json.dumps({
+        "schema": "finalizadas-observational-1",
+        "months": {"2026-10": {"zip_sha256": "a" * 64}},
+    }), encoding="utf-8")
 
     def download(_url, dest, http=None):
         shutil.copyfile(source, dest)
@@ -369,3 +370,90 @@ def test_only_evaluated_legacy_rows_can_lack_resolution(tmp_path, monkeypatch):
     )
     with pytest.raises(obs.ObservationalError, match="Avaliação inconsistente"):
         obs.aggregate_zip(src, "2026-09", URL)
+
+
+def test_review_remains_pending_on_second_identical_observation(tmp_path, monkeypatch):
+    """A revisão não pode aprovar a si mesma na execução seguinte."""
+    monkeypatch.setattr(obs, "MIN_CSV_BYTES", 0)
+    archive = _zip(tmp_path / "candidate.zip", [_row()])
+    digest = obs.sha256(archive)
+    catalog = tmp_path / "catalog.json"
+    catalog.write_text(json.dumps({"publications": [
+        {"month": "2026-10", "url": URL}
+    ]}), encoding="utf-8")
+    previous = tmp_path / "before.json"
+    previous.write_text(json.dumps({
+        "schema": "finalizadas-observational-1",
+        "months": {"2026-10": {"zip_sha256": "a" * 64}},
+    }), encoding="utf-8")
+
+    def download(_url, dest, http=None):
+        shutil.copyfile(archive, dest)
+        return digest
+
+    monkeypatch.setattr(obs, "download_direct", download)
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    assert obs.main(["--catalog", str(catalog), "--output-dir", str(first),
+                     "--previous-manifest", str(previous)]) == 0
+    assert obs.main(["--catalog", str(catalog), "--output-dir", str(second),
+                     "--previous-manifest", str(first / "manifest.json")]) == 0
+    state = json.loads((second / "manifest.json").read_text(encoding="utf-8"))
+    assert state["months"]["2026-10"]["status"] == "requires_manual_review"
+    assert state["months"]["2026-10"]["review_origin_sha256"] == "a" * 64
+    assert state["revisions"] == ["2026-10"]
+
+
+def test_catalog_same_code_conflicting_metadata_rejected(tmp_path):
+    catalog = tmp_path / "catalog.json"
+    catalog.write_text('{"publications":[]}', encoding="utf-8")
+    first = _official("2026-10", "20261100000011098", size=15_692_004)
+    second = _official("2026-10", "20261100000011098", size=15_692_005)
+    with pytest.raises(obs.ObservationalError, match="Metadados oficiais conflitantes"):
+        obs.read_catalog(
+            catalog, feed_url=obs.OFFICIAL_CATALOG_URL,
+            http=_OfficialSession([first, second])
+        )
+
+
+def test_pinned_month_withdrawn_is_not_downloaded(tmp_path, monkeypatch):
+    catalog = tmp_path / "catalog.json"
+    catalog.write_text(json.dumps({"publications": [
+        {"month": "2026-10", "url": URL}
+    ]}), encoding="utf-8")
+    monkeypatch.setattr(obs, "download_direct", lambda *a, **k:
+                        pytest.fail("Withdrawn month must never be downloaded"))
+    monkeypatch.setattr(obs, "_fetch_official_feed", lambda *a, **k: [
+        {"month": "2026-10", "withdrawn": True}
+    ])
+    output = tmp_path / "out"
+    assert obs.main(["--catalog", str(catalog),
+                     "--feed-url", obs.OFFICIAL_CATALOG_URL,
+                     "--output-dir", str(output)]) == 0
+    state = json.loads((output / "manifest.json").read_text(encoding="utf-8"))
+    assert state["months"]["2026-10"]["catalog_status"] == "withdrawn"
+    assert state["months"]["2026-10"]["status"] == "requires_manual_review"
+
+
+def test_pinned_month_absent_from_partial_feed_is_not_accepted(tmp_path, monkeypatch):
+    catalog = tmp_path / "catalog.json"
+    catalog.write_text(json.dumps({"publications": [
+        {"month": "2026-10", "url": URL}
+    ]}), encoding="utf-8")
+    monkeypatch.setattr(obs, "_fetch_official_feed", lambda *a, **k: [
+        {"month": "2026-09", "url": URL, "expected_sha256": ""}
+    ])
+    selection = obs.read_catalog(catalog, feed_url=obs.OFFICIAL_CATALOG_URL)
+    assert selection[-1]["catalog_status"] == "absent_from_feed"
+
+
+def test_invalid_previous_manifest_fails_closed(tmp_path, monkeypatch):
+    catalog = tmp_path / "catalog.json"
+    catalog.write_text(json.dumps({"publications": [
+        {"month": "2026-10", "url": URL}
+    ]}), encoding="utf-8")
+    previous = tmp_path / "bad.json"
+    previous.write_text('{"months":{"2026-10":{"zip_sha256":"bad"}}}', encoding="utf-8")
+    with pytest.raises(obs.ObservationalError, match="inválido"):
+        obs.main(["--catalog", str(catalog), "--output-dir", str(tmp_path / "out"),
+                  "--previous-manifest", str(previous)])
