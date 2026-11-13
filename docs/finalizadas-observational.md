@@ -94,9 +94,10 @@ mais recente não tiver artefato íntegro, examina os anteriores.
 - **Primeira execução sem sucessos anteriores:** `baseline_state=bootstrap`,
   registrado explicitamente; não há evidência de revisão histórica.
 - **Referência mais antiga por falta do último artefato:** estado
-  `restored_with_gap`. Os meses observados ficam marcados
-  `requires_manual_review`, mesmo que tenham o mesmo hash da referência
-  recuperada. O alerta persiste na execução seguinte.
+  `restored_with_gap`. **Todos os meses herdados**, mesmo fora da janela
+  atual, ficam pendentes de revisão (`requires_manual_review`) porque o run
+  perdido poderia tê-los alterado. O alerta persiste na execução seguinte,
+  sem afirmar que o ZIP foi revisado.
 - **Há sucessos anteriores, mas nenhum histórico recuperável:** o job
   **falha fechado**. Não inventa nova baseline, não publica e não
   sobrescreve a referência anterior.
@@ -130,12 +131,16 @@ política que o adie precisa explicitar esse intervalo de revalidação.
 
 ## Limitações verificadas na auditoria de 12–13/11/2026
 
-- **Achado histórico A02 corrigido na PR #56 (sujeito a CI e merge):** a
-  revisão pendente conserva o estado `requires_manual_review` em sucessivas
-  observações. Falta eventual aprovação manual explícita, fora do escopo da PR.
-- Uma publicação fixada localmente permanece candidata se desaparecer do
-  feed ou for marcada como excluída nele. Duplicatas com o mesmo código e
-  metadados divergentes não são rejeitadas; prevalece a última entrada.
+- **Achado histórico A02 corrigido na PR #56 (sujeito a CI e merge):**
+  pendências de revisão de fonte permanecem sinalizadas em sucessivas
+  observações. Alertas de qualidade (como resolução não informada) não
+  são classificados como revisões do ZIP; alterações apenas nos metadados
+  oficiais também exigem revisão. Falta aprovação manual explícita, fora
+  do escopo da PR.
+- **Achado histórico A04 corrigido na PR #56 (sujeito a CI e merge):**
+  uma publicação fixada ausente ou excluída do feed fica sinalizada,
+  sem download. Entradas oficiais da mesma competência com metadados
+  conflitantes falham fechado, mesmo com código idêntico.
 - Um CSV interrompido entre registros completos, ainda acima do limite mínimo,
   pode passar pelos controles estruturais. SHA-256 identifica os bytes
   adquiridos; não comprova que a origem forneceu a população completa.
