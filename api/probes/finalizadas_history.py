@@ -13,6 +13,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import time
 import zipfile
 from pathlib import Path
 
@@ -174,9 +175,14 @@ def restore(repository: str, output: Path) -> dict:
     runs = _gh_json(endpoint).get("workflow_runs")
     if not isinstance(runs, list):
         raise HistoryError("Invalid workflow-run listing")
+    # Bounded search: do not spend the entire observational job recovering
+    # artifacts, even when GitHub is slow or many historical runs exist.
+    deadline = time.monotonic() + 240
     failures: list[int] = []
     output.mkdir(parents=True, exist_ok=True)
     for run in runs:
+        if time.monotonic() >= deadline:
+            raise HistoryError("History recovery time budget exhausted")
         if (not isinstance(run, dict) or run.get("conclusion") != "success"
                 or run.get("status") != "completed"
                 or run.get("head_branch") != "main"):
@@ -199,9 +205,14 @@ def restore(repository: str, output: Path) -> dict:
             (f"finalizadas-observational-{run_id}-a{attempt}", False),
         )
         for name, state_only in expected:
+            if time.monotonic() >= deadline:
+                raise HistoryError("History recovery time budget exhausted")
+            max_bytes = 2 * 1024 * 1024 if state_only else 150 * 1024 * 1024
             matches = [
                 a for a in artifacts if isinstance(a, dict)
                 and a.get("name") == name and a.get("expired") is False
+                and type(a.get("size_in_bytes")) is int
+                and 0 < a["size_in_bytes"] <= max_bytes
             ]
             if len(matches) != 1:
                 continue
