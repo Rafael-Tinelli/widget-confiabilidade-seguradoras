@@ -510,8 +510,10 @@ def main(argv: list[str] | None = None) -> int:
         for month, prior in previous.items():
             if (not isinstance(month, str) or not MONTH_PATTERN.fullmatch(month)
                     or not isinstance(prior, dict)
-                    or not re.fullmatch(r"[0-9a-f]{64}",
-                                        str(prior.get("zip_sha256") or ""))):
+                    or (prior.get("zip_sha256") is not None
+                        and not re.fullmatch(
+                            r"[0-9a-f]{64}", str(prior["zip_sha256"])
+                        ))):
                 raise ObservationalError("Histórico de revisão anterior inválido")
     manifest = {"schema": "finalizadas-observational-1",
                 "status": "experimental_no_publication",
