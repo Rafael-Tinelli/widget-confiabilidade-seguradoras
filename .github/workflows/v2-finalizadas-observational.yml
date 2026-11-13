@@ -105,7 +105,7 @@ jobs:
           retention-days: 90
           if-no-files-found: error
 
-  # TEMPORARY REHEARSAL: executes on the PR branch only, read-only;
+  # TEMPORARY REHEARSAL: second runner proves recovery of previous compact state.
   # does not call the official feed, Gate 4, Receita, or the deployment.
   recovery-proof:
     if: github.event_name == 'pull_request' && github.head_ref == 'hardening/finalizadas-review-history'
