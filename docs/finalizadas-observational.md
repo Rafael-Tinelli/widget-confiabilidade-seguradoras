@@ -104,3 +104,23 @@ versão do parser e estado de revisão, preservar a última evidência válida
 e distinguir reuso local de revalidação remota. Sem checksum/validador remoto
 confiável, só um novo download permite conferir igualdade byte a byte; uma
 política que o adie precisa explicitar esse intervalo de revalidação.
+
+## Limitações verificadas na auditoria de 12–13/11/2026
+
+- O alerta de revisão não é persistente: para um mês sem hash fixado, o hash
+  alterado pode virar baseline e a execução seguinte voltar a
+  `validated_experimental`, sem aprovação manual. Isso não publica dados,
+  mas impede tratar esse estado como aprovação duradoura.
+- Uma publicação fixada localmente permanece candidata se desaparecer do
+  feed ou for marcada como excluída nele. Duplicatas com o mesmo código e
+  metadados divergentes não são rejeitadas; prevalece a última entrada.
+- Um CSV interrompido entre registros completos, ainda acima do limite mínimo,
+  pode passar pelos controles estruturais. SHA-256 identifica os bytes
+  adquiridos; não comprova que a origem forneceu a população completa.
+- As provas de setembro/outubro ocorreram na branch experimental. A busca
+  automática de baseline filtra `main`; esses runs não serão recuperados por
+  esse filtro. Artefatos parciais e ausência de baseline precisam permanecer
+  distintos de evidência completa e previamente validada.
+
+Essas limitações exigem testes específicos antes de implementar reutilização
+ou qualquer integração à Conduta. O isolamento produtivo permanece obrigatório.
