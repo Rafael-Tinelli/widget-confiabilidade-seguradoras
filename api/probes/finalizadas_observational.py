@@ -517,6 +517,7 @@ def main(argv: list[str] | None = None) -> int:
             if recovery.get("manifest_sha256") != digest(args.previous_manifest):
                 raise ObservationalError("Hash do manifesto restaurado divergente")
     previous: dict = {}
+    previous_quality_alerts: set[str] = set()
     if args.previous_manifest:
         if not args.previous_manifest.is_file():
             raise ObservationalError("Manifesto anterior informado está indisponível")
@@ -526,6 +527,7 @@ def main(argv: list[str] | None = None) -> int:
                 or not isinstance(root.get("months"), dict)):
             raise ObservationalError("Manifesto anterior inválido ou incompatível")
         previous = root["months"]
+        previous_quality_alerts = set(root.get("quality_alerts", []))
         for month, prior in previous.items():
             if (not isinstance(month, str) or not MONTH_PATTERN.fullmatch(month)
                     or not isinstance(prior, dict)
@@ -542,6 +544,12 @@ def main(argv: list[str] | None = None) -> int:
                 ),
                 "months": {m: dict(p) for m, p in previous.items()},
                 "revisions": [], "quality_alerts": []}
+    if recovery_status == "restored_with_gap":
+        # The missing successful run may have touched ANY inherited month,
+        # including months outside the current two-month reprocessing window.
+        for state in manifest["months"].values():
+            state["status"] = "requires_manual_review"
+            state["history_gap"] = True
     client = _session()
     for item in publications[-args.latest_months:]:
         month = item["month"]
@@ -571,21 +579,32 @@ def main(argv: list[str] | None = None) -> int:
         # A revisão pendente permanece pendente mesmo se os mesmos bytes
         # forem observados novamente; observar não equivale a aprovar.
         prior_pending = prior.get("status") == "requires_manual_review"
-        history_gap = recovery_status == "restored_with_gap"
+        history_gap = bool(prior.get("history_gap")
+                           or recovery_status == "restored_with_gap")
+        # A source revision and a pending manual review are not synonyms:
+        # e.g. the official September data has an unknown resolution but
+        # no ZIP revision. Missing history is a third, distinct reason.
+        metadata_changed = any(
+            prior.get(field) not in (None, "")
+            and item.get(field) not in (None, "")
+            and prior[field] != item[field]
+            for field in ("published_at", "modified_at", "announced_bytes")
+        )
         is_revision = bool(
-            prior_pending or history_gap
+            prior.get("revision")
             or (known_hash and known_hash != download_digest)
             or (previous_hash and previous_hash != download_digest)
             or (previous_code and previous_code != item.get("publication_code"))
             or (previous_url and previous_url != url)
             or (announced and announced != evidence["zip_bytes"])
+            or metadata_changed
         )
-        if prior_pending:
-            evidence["review_origin_sha256"] = prior.get(
-                "review_origin_sha256", prior.get("zip_sha256")
-            )
-        elif is_revision and previous_hash:
-            evidence["review_origin_sha256"] = previous_hash
+        requires_review = bool(prior_pending or history_gap or is_revision
+                               or evidence.get("resolution_unknown"))
+        if prior_pending or is_revision:
+            origin = prior.get("review_origin_sha256")
+            if origin or (is_revision and previous_hash):
+                evidence["review_origin_sha256"] = origin or previous_hash
         evidence["publication_code"] = item.get("publication_code")
         evidence["published_at"] = item.get("published_at")
         evidence["modified_at"] = item.get("modified_at")
@@ -599,18 +618,21 @@ def main(argv: list[str] | None = None) -> int:
             manifest["quality_alerts"].append(month)
         if is_revision:
             manifest["revisions"].append(month)
+        if requires_review:
             evidence["status"] = "requires_manual_review"
         _write_json(month_dir / "agregado-experimental.json", aggregate)
         _write_json(month_dir / "validacao.json", evidence)
         manifest["months"][month] = evidence
     manifest["revisions"] = sorted(set(manifest["revisions"]) | {
         month for month, state in manifest["months"].items()
-        if state.get("status") == "requires_manual_review"
+        if state.get("revision") is True
     })
-    manifest["quality_alerts"] = sorted(set(manifest["quality_alerts"]) | {
-        month for month, state in manifest["months"].items()
-        if state.get("resolution_unknown")
-    })
+    manifest["quality_alerts"] = sorted(
+        set(manifest["quality_alerts"]) | previous_quality_alerts | {
+            month for month, state in manifest["months"].items()
+            if state.get("resolution_unknown")
+        }
+    )
     _write_json(destination / "manifest.json", manifest)
     print(json.dumps({"status": manifest["status"], "months": sorted(manifest["months"]),
                       "revisions": manifest["revisions"], "output_dir": str(destination)},
