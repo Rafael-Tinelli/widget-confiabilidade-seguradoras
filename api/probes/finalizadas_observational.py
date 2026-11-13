@@ -16,6 +16,7 @@ import math
 import os
 import re
 import tempfile
+import time
 import unicodedata
 import zipfile
 from collections import Counter, defaultdict
@@ -54,6 +55,7 @@ OFFICIAL_CATALOG_URL = (
 OFFICIAL_CATALOG_PATH = "/pages/publicacao/externo/publicacoes.json"
 FINALIZADAS_NAME = re.compile(r"finalizadas_(20\d{2}-(?:0[1-9]|1[0-2]))\.zip\Z")
 MAX_CATALOG_BYTES = 2_000_000
+CATALOG_RETRY_PAUSE_SECONDS = 10  # One extra round after adapter-level retries.
 
 
 class ObservationalError(RuntimeError):
@@ -163,7 +165,7 @@ def _official_publications(payload: object) -> list[dict]:
     return publications
 
 
-def _fetch_official_feed(url: str, http: requests.Session) -> list[dict]:
+def _fetch_official_feed_once(url: str, http: requests.Session) -> list[dict]:
     # A consulta não usa cookies enviados pelo usuário ou cabeçalhos de navegador.
     with http.get(
         _checked_feed_url(url), timeout=(12, 50), stream=True,
@@ -195,6 +197,42 @@ def _fetch_official_feed(url: str, http: requests.Session) -> list[dict]:
         except (LookupError, UnicodeError, ValueError) as exc:
             raise ObservationalError("Feed oficial não contém JSON válido") from exc
     return _official_publications(payload)
+
+
+def _fetch_official_feed(url: str, http: requests.Session) -> list[dict]:
+    """One bounded recovery round for transient failures; never use stale JSON."""
+    _checked_feed_url(url)
+    for attempt in range(2):
+        try:
+            return _fetch_official_feed_once(url, http)
+        except (requests.exceptions.RetryError, requests.exceptions.Timeout,
+                requests.exceptions.ConnectionError) as exc:
+            if attempt:
+                raise ObservationalError(
+                    f"Catálogo oficial indisponível após nova tentativa: {exc}"
+                ) from exc
+            print(
+                f"CATALOG_TRANSIENT_RETRY: {type(exc).__name__}; "
+                f"nova tentativa em {CATALOG_RETRY_PAUSE_SECONDS}s",
+                file=__import__("sys").stderr,
+            )
+            time.sleep(CATALOG_RETRY_PAUSE_SECONDS)
+        except requests.exceptions.HTTPError as exc:
+            # Without the session adapter (e.g. injected HTTP client), only
+            # retry a direct HTTP 504. Other HTTP statuses fail immediately.
+            if exc.response is None or exc.response.status_code != 504:
+                raise
+            if attempt:
+                raise ObservationalError(
+                    f"Catálogo oficial persistiu em HTTP 504: {exc}"
+                ) from exc
+            print(
+                f"CATALOG_TRANSIENT_RETRY: HTTP 504; "
+                f"nova tentativa em {CATALOG_RETRY_PAUSE_SECONDS}s",
+                file=__import__("sys").stderr,
+            )
+            time.sleep(CATALOG_RETRY_PAUSE_SECONDS)
+    raise AssertionError("unreachable")
 
 
 def read_catalog(path: Path, feed_url: str | None = None,
