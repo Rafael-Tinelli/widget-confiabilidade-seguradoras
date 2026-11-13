@@ -3,6 +3,9 @@ name: Finalizadas Observational Acquisition
 # Independent, no Gate 4, no Receita, no production write. Schedule is only
 # activated after explicit merge. No public package is generated.
 on:
+  # TEMPORARY BRANCH-ONLY PROOF: remove before merge.
+  pull_request:
+    types: [synchronize]
   workflow_dispatch:
     inputs:
       feed_url:
@@ -24,6 +27,7 @@ concurrency:
 
 jobs:
   observe:
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-24.04
     timeout-minutes: 12
     env:
@@ -99,4 +103,102 @@ jobs:
           name: finalizadas-observational-state-${{ github.run_id }}-a${{ github.run_attempt }}
           path: ${{ runner.temp }}/finalizadas-state/
           retention-days: 90
+          if-no-files-found: error
+
+  # TEMPORARY REHEARSAL: executes on the PR branch only, read-only;
+  # does not call the official feed, Gate 4, Receita, or the deployment.
+  recovery-proof:
+    if: github.event_name == 'pull_request' && github.head_ref == 'hardening/finalizadas-review-history'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout branch version
+        uses: actions/checkout@v4
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Restore history using real GitHub Actions API
+        id: recovery
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m api.probes.finalizadas_history restore \
+            --repository "$GITHUB_REPOSITORY" \
+            --source-branch "$GITHUB_HEAD_REF" \
+            --output-dir "$RUNNER_TEMP/recovered" \
+            | tee "$RUNNER_TEMP/recovery-stdout.json"
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          obj = json.loads((Path(os.environ["RUNNER_TEMP"]) /
+                            "recovery-stdout.json").read_text())
+          status = obj["status"]
+          assert status in ("bootstrap", "restored", "restored_with_gap"), obj
+          print("RECOVERY_PROOF_STATUS=" + status)
+          print("RECOVERY_PROOF_SOURCE_RUN=" + str(obj.get("source_run_id", "")))
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
+              out.write("status=" + status + "\n")
+          PY
+      - name: Seed from previous REAL experimental artifact if no branch history
+        if: steps.recovery.outputs.status == 'bootstrap'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/real-legacy"
+          gh run download 43311498623 --repo "$GITHUB_REPOSITORY" \
+            --name finalizadas-observational-43311498623-a1 \
+            --dir "$RUNNER_TEMP/real-legacy"
+          python - <<'PY'
+          import json
+          import os
+          import subprocess
+          from pathlib import Path
+          from api.probes.finalizadas_history import validate_artifact
+          repo = os.environ["GITHUB_REPOSITORY"]
+          info = json.loads(subprocess.check_output([
+              "gh", "api", f"repos/{repo}/actions/runs/43311498623"
+          ], text=True))
+          assert info["conclusion"] == "success"
+          root = Path(os.environ["RUNNER_TEMP"]) / "real-legacy"
+          value = validate_artifact(root, info, state_only=False)
+          assert sorted(value["months"]) == ["2026-09", "2026-10"]
+          assert value["months"]["2026-09"]["rows_segment"] == 14116
+          assert value["months"]["2026-10"]["rows_segment"] == 40501
+          print("REAL_LEGACY_ARTIFACT_VERIFIED=PASS")
+          PY
+      - name: Seal a minimal branch-only artifact (no original ZIP upload)
+        shell: bash
+        env:
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          source="$RUNNER_TEMP/recovered/manifest.json"
+          if [[ "${{ steps.recovery.outputs.status }}" == "bootstrap" ]]; then
+            source="$RUNNER_TEMP/real-legacy/manifest.json"
+          fi
+          python -m api.probes.finalizadas_history seal \
+            --manifest "$source" \
+            --output-dir "$RUNNER_TEMP/proof-state" \
+            --run-id "$GITHUB_RUN_ID" \
+            --attempt "$GITHUB_RUN_ATTEMPT" \
+            --head-sha "$PR_HEAD_SHA"
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          from api.probes.finalizadas_history import validate_manifest
+          root = Path(os.environ["RUNNER_TEMP"]) / "proof-state"
+          manifest = validate_manifest(root / "manifest.json")
+          assert sorted(manifest["months"]) == ["2026-09", "2026-10"]
+          print("BRANCH_RESEAL_VERIFIED=PASS")
+          PY
+      - name: Preserve minimal proof state only
+        uses: actions/upload-artifact@v4
+        with:
+          name: finalizadas-observational-state-${{ github.run_id }}-a${{ github.run_attempt }}
+          path: ${{ runner.temp }}/proof-state/
+          retention-days: 2
           if-no-files-found: error
