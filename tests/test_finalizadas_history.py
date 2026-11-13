@@ -232,3 +232,67 @@ def test_history_gap_keeps_new_observation_pending(tmp_path, monkeypatch):
     assert current["baseline_state"] == "restored_with_gap"
     assert current["months"]["2026-10"]["status"] == "requires_manual_review"
     assert current["months"]["2026-10"]["history_gap"] is True
+
+
+def test_history_gap_quarantines_all_inherited_months(tmp_path, monkeypatch):
+    """O run desaparecido poderia ter alterado também um mês fora da janela."""
+    monkeypatch.setattr(obs, "MIN_CSV_BYTES", 0)
+    url = "https://www.consumidor.gov.br/pages/publicacao/externo/20261100000011098/download"
+    row = dict.fromkeys(obs.COLUMNS, "")
+    row.update({
+        "data_finalizacao": "14/10/2026",
+        "segmento_de_mercado": obs.TARGET, "nome_fantasia": "Alfa",
+        "situacao": "Finalizada avaliada", "avaliacao_reclamacao": "Resolvida",
+        "respondida": "Sim", "nota_do_consumidor": "5",
+    })
+    source = tmp_path / "source.zip"
+    buf = io.StringIO(newline="")
+    writer = csv.DictWriter(buf, fieldnames=obs.COLUMNS, delimiter=";")
+    writer.writeheader()
+    writer.writerow(row)
+    with zipfile.ZipFile(source, "w") as zipped:
+        zipped.writestr("finalizadas_2026-10.csv", buf.getvalue().encode("utf-8-sig"))
+    sha = history.digest(source)
+    baseline = _manifest()
+    baseline["months"]["2026-10"]["zip_sha256"] = sha
+    baseline["months"]["2026-09"] = {
+        "month": "2026-09", "zip_sha256": "e" * 64,
+        "status": "validated_experimental",
+    }
+    previous = tmp_path / "previous.json"
+    previous.write_text(json.dumps(baseline), encoding="utf-8")
+    report = tmp_path / "recovery.json"
+    report.write_text(json.dumps({
+        "status": "restored_with_gap",
+        "manifest_sha256": history.digest(previous),
+    }), encoding="utf-8")
+    catalog = tmp_path / "catalog.json"
+    catalog.write_text(json.dumps({"publications": [
+        {"month": "2026-10", "url": url}
+    ]}), encoding="utf-8")
+    monkeypatch.setattr(obs, "download_direct", lambda _url, dest, http=None:
+                        (shutil.copyfile(source, dest), sha)[1])
+    output = tmp_path / "output"
+    assert obs.main(["--catalog", str(catalog), "--output-dir", str(output),
+                     "--previous-manifest", str(previous),
+                     "--recovery-report", str(report)]) == 0
+    evidence = history.validate_manifest(output / "manifest.json")
+    assert evidence["revisions"] == []
+    assert evidence["quality_alerts"] == []
+    assert evidence["baseline_state"] == "restored_with_gap"
+    for month in ("2026-09", "2026-10"):
+        state = evidence["months"][month]
+        assert state["status"] == "requires_manual_review"
+        assert state["history_gap"] is True
+        assert state.get("revision") is not True
+
+    # The next successful run cannot quietly discharge the missing-history alert.
+    next_run = tmp_path / "next"
+    assert obs.main(["--catalog", str(catalog), "--output-dir", str(next_run),
+                     "--previous-manifest", str(output / "manifest.json")]) == 0
+    following = history.validate_manifest(next_run / "manifest.json")
+    assert all(following["months"][month]["status"] == "requires_manual_review"
+               for month in ("2026-09", "2026-10"))
+    assert all(following["months"][month]["history_gap"] is True
+               for month in ("2026-09", "2026-10"))
+    assert following["revisions"] == []
