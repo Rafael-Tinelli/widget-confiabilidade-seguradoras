@@ -59,7 +59,7 @@ def _fake_api(monkeypatch, runs, artifacts):
         for run_id, named in artifacts.items():
             if f"/runs/{run_id}/artifacts" in route:
                 return {"artifacts": [
-                    {"name": name, "expired": False}
+                    {"name": name, "expired": False, "size_in_bytes": 8192}
                     for name in named
                 ]}
         raise AssertionError(f"Unexpected API route: {route}")
