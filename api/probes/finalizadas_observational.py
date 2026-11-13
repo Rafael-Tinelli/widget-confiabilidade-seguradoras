@@ -495,6 +495,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--feed-url", default=None)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--previous-manifest", type=Path, default=None)
+    parser.add_argument("--recovery-report", type=Path, default=None)
     parser.add_argument("--latest-months", type=int, default=2)
     args = parser.parse_args(argv)
     if args.latest_months < 1 or args.latest_months > 12:
@@ -503,6 +504,18 @@ def main(argv: list[str] | None = None) -> int:
     publications = read_catalog(args.catalog, feed_url=args.feed_url)
     if not publications:
         raise ObservationalError("Nenhuma publicação oficial conhecida")
+    recovery_status = None
+    if args.recovery_report:
+        recovery = json.loads(args.recovery_report.read_text(encoding="utf-8"))
+        recovery_status = recovery.get("status") if isinstance(recovery, dict) else None
+        if recovery_status not in ("bootstrap", "restored", "restored_with_gap"):
+            raise ObservationalError("Relatório de recuperação inválido")
+        if (recovery_status == "bootstrap") == bool(args.previous_manifest):
+            raise ObservationalError("Manifesto e recuperação não correspondem")
+        if args.previous_manifest:
+            from api.probes.finalizadas_history import digest
+            if recovery.get("manifest_sha256") != digest(args.previous_manifest):
+                raise ObservationalError("Hash do manifesto restaurado divergente")
     previous: dict = {}
     if args.previous_manifest:
         if not args.previous_manifest.is_file():
@@ -524,7 +537,9 @@ def main(argv: list[str] | None = None) -> int:
     manifest = {"schema": "finalizadas-observational-1",
                 "status": "experimental_no_publication",
                 "generated_at": utcnow(),
-                "baseline_state": "restored" if args.previous_manifest else "unavailable",
+                "baseline_state": recovery_status or (
+                    "restored" if args.previous_manifest else "unavailable"
+                ),
                 "months": {m: dict(p) for m, p in previous.items()},
                 "revisions": [], "quality_alerts": []}
     client = _session()
@@ -556,8 +571,9 @@ def main(argv: list[str] | None = None) -> int:
         # A revisão pendente permanece pendente mesmo se os mesmos bytes
         # forem observados novamente; observar não equivale a aprovar.
         prior_pending = prior.get("status") == "requires_manual_review"
+        history_gap = recovery_status == "restored_with_gap"
         is_revision = bool(
-            prior_pending
+            prior_pending or history_gap
             or (known_hash and known_hash != download_digest)
             or (previous_hash and previous_hash != download_digest)
             or (previous_code and previous_code != item.get("publication_code"))
@@ -577,6 +593,7 @@ def main(argv: list[str] | None = None) -> int:
         evidence["discovery"] = item.get("discovery")
         evidence["catalog_status"] = item.get("catalog_status", "pinned_only")
         evidence["revision"] = is_revision
+        evidence["history_gap"] = history_gap
         evidence["observed_at"] = utcnow()
         if evidence.get("resolution_unknown"):
             manifest["quality_alerts"].append(month)
