@@ -1,11 +1,12 @@
 """The history recovery contract: no network, no Gate 4, no deployment."""
 from __future__ import annotations
 
+import csv
 import hashlib
+import io
 import json
 import shutil
 import zipfile
-from pathlib import Path
 
 import pytest
 
@@ -190,10 +191,6 @@ def test_recovery_report_hash_verified_before_observation(tmp_path, monkeypatch)
 
 
 def test_history_gap_keeps_new_observation_pending(tmp_path, monkeypatch):
-    import io
-    import csv
-    import zipfile
-
     monkeypatch.setattr(obs, "MIN_CSV_BYTES", 0)
     url = "https://www.consumidor.gov.br/pages/publicacao/externo/20261100000011098/download"
     row = dict.fromkeys(obs.COLUMNS, "")
