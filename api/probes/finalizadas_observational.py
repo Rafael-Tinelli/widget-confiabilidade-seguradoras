@@ -226,6 +226,10 @@ def read_catalog(path: Path, feed_url: str | None = None,
         for entry in _fetch_official_feed(feed_url, http or _session()):
             month = entry["month"]
             if month in discovered and discovered[month] != entry:
+                if discovered[month].get("url") != entry.get("url"):
+                    raise ObservationalError(
+                        f"Mais de uma publicação oficial para {month}"
+                    )
                 raise ObservationalError(
                     f"Metadados oficiais conflitantes para a mesma competência: {month}"
                 )
@@ -233,6 +237,8 @@ def read_catalog(path: Path, feed_url: str | None = None,
         for month, entry in discovered.items():
             pinned = known.get(month)
             if entry.get("withdrawn"):
+                if not pinned:
+                    continue
                 known[month] = {
                     **(pinned or {"month": month, "expected_sha256": ""}),
                     "catalog_status": "withdrawn",
