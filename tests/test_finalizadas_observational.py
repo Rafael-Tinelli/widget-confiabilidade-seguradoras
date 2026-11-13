@@ -9,6 +9,7 @@ import zipfile
 from pathlib import Path
 
 import pytest
+import requests
 
 from api.probes import finalizadas_observational as obs
 
@@ -530,3 +531,94 @@ def test_metadata_only_change_requires_manual_review(tmp_path, monkeypatch):
     assert state["revision"] is True
     assert state["status"] == "requires_manual_review"
     assert manifest["revisions"] == ["2026-10"]
+
+
+class _TransientOfficialSession(_OfficialSession):
+    def __init__(self, records, outcomes):
+        super().__init__(records)
+        self.outcomes = list(outcomes)
+
+    def get(self, url, **kwargs):
+        outcome = self.outcomes.pop(0)
+        if isinstance(outcome, Exception):
+            self.calls.append((url, kwargs))
+            raise outcome
+        return super().get(url, **kwargs)
+
+
+def test_official_feed_504_retry_then_fresh_json(tmp_path, monkeypatch):
+    """Only a successful NEW official GET unlocks publication discovery."""
+    catalog = tmp_path / "catalog.json"
+    catalog.write_text('{"publications":[]}', encoding="utf-8")
+    session = _TransientOfficialSession(
+        [_official("2026-10", "20261100000011098")],
+        [requests.exceptions.RetryError("too many 504 error responses"), "ok"],
+    )
+    sleeps = []
+    monkeypatch.setattr(obs.time, "sleep", sleeps.append)
+    discovered = obs.read_catalog(
+        catalog, feed_url=obs.OFFICIAL_CATALOG_URL, http=session,
+    )
+    assert [item["month"] for item in discovered] == ["2026-10"]
+    assert len(session.calls) == 2
+    assert sleeps == [obs.CATALOG_RETRY_PAUSE_SECONDS]
+    assert all(call[1]["allow_redirects"] is False for call in session.calls)
+
+
+def test_official_feed_504_exhaustion_does_not_use_pinned_stale_data(
+    tmp_path, monkeypatch,
+):
+    catalog = tmp_path / "catalog.json"
+    catalog.write_text(json.dumps({"publications": [
+        {"month": "2026-10", "url": URL},
+    ]}), encoding="utf-8")
+    session = _TransientOfficialSession(
+        [],
+        [requests.exceptions.RetryError("504"),
+         requests.exceptions.RetryError("504")],
+    )
+    sleeps = []
+    monkeypatch.setattr(obs.time, "sleep", sleeps.append)
+    with pytest.raises(obs.ObservationalError, match="indisponível"):
+        obs.read_catalog(
+            catalog, feed_url=obs.OFFICIAL_CATALOG_URL, http=session,
+        )
+    assert len(session.calls) == 2
+    assert sleeps == [obs.CATALOG_RETRY_PAUSE_SECONDS]
+
+
+@pytest.mark.parametrize("code,expected_calls", [(504, 2), (403, 1)])
+def test_direct_http_error_only_504_is_retried(
+    tmp_path, monkeypatch, code, expected_calls,
+):
+    catalog = tmp_path / "catalog.json"
+    catalog.write_text('{"publications":[]}', encoding="utf-8")
+    response = requests.Response()
+    response.status_code = code
+    session = _TransientOfficialSession(
+        [], [requests.exceptions.HTTPError(
+            f"HTTP {code}", response=response
+        ) for _ in range(expected_calls)],
+    )
+    monkeypatch.setattr(obs.time, "sleep", lambda _seconds: None)
+    with pytest.raises(
+        obs.ObservationalError if code == 504 else requests.exceptions.HTTPError
+    ):
+        obs.read_catalog(
+            catalog, feed_url=obs.OFFICIAL_CATALOG_URL, http=session,
+        )
+    assert len(session.calls) == expected_calls
+
+
+def test_invalid_official_json_is_not_retried(tmp_path, monkeypatch):
+    catalog = tmp_path / "catalog.json"
+    catalog.write_text('{"publications":[]}', encoding="utf-8")
+    session = _OfficialSession([_official("2026-10", "20261100000011098")],
+                               type_="text/html")
+    monkeypatch.setattr(obs.time, "sleep", lambda _seconds:
+                        pytest.fail("Non-JSON must fail immediately"))
+    with pytest.raises(obs.ObservationalError, match="Content-Type"):
+        obs.read_catalog(
+            catalog, feed_url=obs.OFFICIAL_CATALOG_URL, http=session,
+        )
+    assert len(session.calls) == 1
