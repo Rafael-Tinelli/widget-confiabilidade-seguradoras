@@ -457,3 +457,76 @@ def test_invalid_previous_manifest_fails_closed(tmp_path, monkeypatch):
     with pytest.raises(obs.ObservationalError, match="inválido"):
         obs.main(["--catalog", str(catalog), "--output-dir", str(tmp_path / "out"),
                   "--previous-manifest", str(previous)])
+
+
+def test_quality_alert_is_not_mislabeled_as_source_revision(tmp_path, monkeypatch):
+    """Setembro: resolução não informada exige revisão, não mudança de ZIP."""
+    monkeypatch.setattr(obs, "MIN_CSV_BYTES", 0)
+    row = _row(data_finalizacao="2026-09-09", respondida="S",
+               avaliacao_reclamacao="", nota_do_consumidor="1")
+    legacy = {older: row[canonical] for canonical, older in zip(
+        obs.COLUMNS, obs.LEGACY_COLUMNS, strict=True
+    )}
+    archive = _zip(tmp_path / "september.zip", [legacy],
+                   columns=list(obs.LEGACY_COLUMNS),
+                   member="finalizadas_2026-09.csv")
+    catalog = tmp_path / "catalog.json"
+    catalog.write_text(json.dumps({"publications": [
+        {"month": "2026-09", "url": URL}
+    ]}), encoding="utf-8")
+
+    def download(_url, target, http=None):
+        shutil.copyfile(archive, target)
+        return obs.sha256(archive)
+
+    monkeypatch.setattr(obs, "download_direct", download)
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    assert obs.main(["--catalog", str(catalog), "--output-dir", str(first)]) == 0
+    assert obs.main(["--catalog", str(catalog), "--output-dir", str(second),
+                     "--previous-manifest", str(first / "manifest.json")]) == 0
+    for folder in (first, second):
+        state = json.loads((folder / "manifest.json").read_text(encoding="utf-8"))
+        assert state["revisions"] == []
+        assert state["quality_alerts"] == ["2026-09"]
+        assert state["months"]["2026-09"]["revision"] is False
+        assert state["months"]["2026-09"]["status"] == "requires_manual_review"
+
+
+def test_metadata_only_change_requires_manual_review(tmp_path, monkeypatch):
+    monkeypatch.setattr(obs, "MIN_CSV_BYTES", 0)
+    archive = _zip(tmp_path / "october.zip", [_row()])
+    file_hash = obs.sha256(archive)
+    catalog = tmp_path / "catalog.json"
+    catalog.write_text(json.dumps({"publications": [
+        {"month": "2026-10", "url": URL}
+    ]}), encoding="utf-8")
+    previous = tmp_path / "previous.json"
+    previous.write_text(json.dumps({
+        "schema": "finalizadas-observational-1", "months": {
+            "2026-10": {"zip_sha256": file_hash,
+                        "status": "validated_experimental",
+                        "source_url": URL,
+                        "modified_at": "01/11/2026 às 14:00"}
+        }
+    }), encoding="utf-8")
+
+    def download(_url, target, http=None):
+        shutil.copyfile(archive, target)
+        return file_hash
+
+    monkeypatch.setattr(obs, "download_direct", download)
+    monkeypatch.setattr(obs, "read_catalog", lambda _path, feed_url=None: [
+        {"month": "2026-10", "url": URL, "expected_sha256": "",
+         "modified_at": "08/11/2026 às 14:00",
+         "publication_code": "20261100000011098",
+         "announced_bytes": archive.stat().st_size}
+    ])
+    output = tmp_path / "out"
+    assert obs.main(["--catalog", str(catalog), "--output-dir", str(output),
+                     "--previous-manifest", str(previous)]) == 0
+    manifest = json.loads((output / "manifest.json").read_text(encoding="utf-8"))
+    state = manifest["months"]["2026-10"]
+    assert state["revision"] is True
+    assert state["status"] == "requires_manual_review"
+    assert manifest["revisions"] == ["2026-10"]
