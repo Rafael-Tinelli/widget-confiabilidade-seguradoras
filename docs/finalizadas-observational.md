@@ -135,21 +135,44 @@ permanente: se todos os artefatos expirarem, a recuperação será bloqueada.
 O estado compacto só é enviado após uma execução válida e bem-sucedida;
 artefatos parciais de falhas continuam inaptos a estabelecer baseline.
 
-O workflow não utiliza os ZIPs recuperados como cache de processamento:
-`main()` continua baixando e agregando os dois meses selecionados. Reuso
-de dados é uma etapa separada, não implementada aqui. Metadados de
-publicação não são certificados de conteúdo idêntico.
+A PR de A06 introduz um **reuso local opcional**, nunca um certificado de
+que a publicação remota permanece idêntica. O workflow continua consultando
+o **JSON oficial atual**, mas, após recuperar o histórico autenticado,
+pode buscar o artefato completo da **mesma execução e tentativa**. Confere
+o SHA-256 do manifesto com a referência selada, os hashes recomputados do ZIP
+e dos dois derivados, a identidade de fonte/competência e a versão do parser.
 
-Assim, mantendo o código atual e outubro entre os dois meses selecionados,
-a execução de 16/11/2026 voltará a baixar e processar outubro. O custo também
-inclui o download do artefato anterior quando encontrado. Não existe, neste
-workflow, cache persistente do corpus nem integração desses agregados à Conduta.
+O reuso só é permitido quando todas as seguintes condições ocorrem:
 
-Uma futura reutilização deve verificar bytes/hash dos objetos restaurados,
-versão do parser e estado de revisão, preservar a última evidência válida
-e distinguir reuso local de revalidação remota. Sem checksum/validador remoto
-confiável, só um novo download permite conferir igualdade byte a byte; uma
-política que o adie precisa explicitar esse intervalo de revalidação.
+- Histórico restaurado **sem lacunas**; artefato completo íntegro e ainda
+  disponível; nada de fallback silencioso para outro run.
+- Catálogo oficial recém-consultado indica a mesma publicação, URL, código,
+  tamanho e datas de publicação/alteração. Retiradas, ausência ou revisão
+  de fonte bloqueiam o reuso.
+- Mesmo parser, hashes íntegros, nenhuma revisão pendente de fonte e
+  **menos de sete dias desde o último download real**. O intervalo nunca
+  é renovado apenas por reutilizar um ZIP.
+
+O manifesto diferencia `acquisition_mode=current_http_fetch` de
+`acquisition_mode=reused_local_verified`. Registra
+`source_fetched_at` (último download real) e `catalog_checked_at`
+(consulta atual ao catálogo), além de SHA-256 dos derivados. A falta do
+artefato, da assinatura/versionamento, a corrupção ou o vencimento do prazo
+exige download e reprocessamento da fonte oficial, mantendo os alertas.
+
+**Limite assumido:** sem checksum/ETag remoto independente, uma troca
+silenciosa de bytes sem alterar metadados pode ser identificada somente
+na próxima revalidação integral, no máximo sete dias depois do download
+anterior. Portanto, `reused_local_verified` nunca é chamado de
+`remote_unchanged` ou de aquisição atualizada. Indisponibilidade do
+catálogo continua fazendo o observador **falhar fechado**, mesmo havendo
+ZIP íntegro no histórico.
+
+Não se altera a retenção existente: histórico compacto por 90 dias,
+artefato completo por 30 dias. O reuso pode reduzir tráfego de origem e
+CPU dentro do intervalo autorizado, mas ainda recupera o artefato do
+GitHub e o republica para manter a prova entre runs; não é uma solução
+de armazenamento permanente nem integra dados à Conduta.
 
 ## Limitações verificadas na auditoria de 12–13/11/2026
 

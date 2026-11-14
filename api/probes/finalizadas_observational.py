@@ -57,6 +57,9 @@ OFFICIAL_CATALOG_PATH = "/pages/publicacao/externo/publicacoes.json"
 FINALIZADAS_NAME = re.compile(r"finalizadas_(20\d{2}-(?:0[1-9]|1[0-2]))\.zip\Z")
 MAX_CATALOG_BYTES = 2_000_000
 CATALOG_RETRY_PAUSE_SECONDS = 10  # One extra round after adapter-level retries.
+PARSER_CONTRACT_VERSION = "finalizadas-parser-2026-11-14-v1"
+REUSE_MAX_AGE_SECONDS = 7 * 24 * 3600
+
 
 
 class ObservationalError(RuntimeError):
@@ -483,7 +486,8 @@ def aggregate_zip(source: Path, month: str, url: str) -> tuple[dict, dict]:
         "zip_bytes": source.stat().st_size, "csv_bytes": member.file_size,
         "filter_segment": TARGET, "lines_total": total, "lines_kept": segment_rows,
         "companies": len(names),
-        "source_schema": schema, "resolution_unknown_count": unknown_resolution,
+        "source_schema": schema, "parser_version": PARSER_CONTRACT_VERSION,
+        "resolution_unknown_count": unknown_resolution,
         "unmapped_identity_status": "raw_provider_names_only_no_susep_matching",
         "consumidor_gov_base_completa_equivalence": "not_demonstrated",
         "methodology_note": "Competência por finalização, não por abertura.",
@@ -492,7 +496,8 @@ def aggregate_zip(source: Path, month: str, url: str) -> tuple[dict, dict]:
                  "by_cnpj_key_raw": {}}
     evidence = {"month": month, "rows_total": total, "rows_segment": segment_rows,
                 "providers": len(names), "responded": replied, "evaluated": evaluated,
-                "source_schema": schema, "resolution_unknown": unknown_resolution,
+                "source_schema": schema, "parser_version": PARSER_CONTRACT_VERSION,
+                "resolution_unknown": unknown_resolution,
                 "resolved": resolved, "unresolved": unresolved, "unassessed": segment_rows - evaluated,
                 "zip_sha256": zip_digest, "csv_sha256": csv_digest.hexdigest(),
                 "zip_bytes": source.stat().st_size, "csv_bytes": member.file_size,
@@ -523,6 +528,44 @@ def _safe_output(out: Path) -> Path:
     return destination
 
 
+def _can_reuse(previous: dict, item: dict) -> bool:
+    """Permit short-lived local reuse, NOT a claim of remote byte equality.
+
+    The catalog must be freshly obtained and identical in all relevant
+    source metadata. If remote bytes change silently, a new download is
+    required after the bounded seven-day revalidation interval.
+    """
+    if (not isinstance(previous, dict)
+            or previous.get("parser_version") != PARSER_CONTRACT_VERSION
+            or previous.get("revision") or previous.get("history_gap")
+            or item.get("catalog_status") != "listed"
+            or not isinstance(previous.get("source_fetched_at"), str)):
+        return False
+    for old_key, new_key in (
+        ("source_url", "url"),
+        ("publication_code", "publication_code"),
+        ("announced_bytes", "announced_bytes"),
+        ("published_at", "published_at"),
+        ("modified_at", "modified_at"),
+    ):
+        old, new = previous.get(old_key), item.get(new_key)
+        if old in (None, "") or new in (None, "") or old != new:
+            return False
+    pinned = item.get("expected_sha256")
+    if pinned and pinned != previous.get("zip_sha256"):
+        return False
+    try:
+        fetched = datetime.fromisoformat(
+            previous["source_fetched_at"].replace("Z", "+00:00")
+        )
+        if fetched.tzinfo is None:
+            return False
+        age = (datetime.now(timezone.utc) - fetched.astimezone(timezone.utc)).total_seconds()
+    except ValueError:
+        return False
+    return 0 <= age <= REUSE_MAX_AGE_SECONDS
+
+
 def _write_json(path: Path, content: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(prefix=".observational-", dir=path.parent)
@@ -544,6 +587,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--feed-url", default=None)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--previous-manifest", type=Path, default=None)
+    parser.add_argument("--reuse-dir", type=Path, default=None)
     parser.add_argument("--recovery-report", type=Path, default=None)
     parser.add_argument("--latest-months", type=int, default=2)
     args = parser.parse_args(argv)
@@ -627,6 +671,21 @@ def _produce_observation(args: argparse.Namespace, destination: Path) -> int:
         for state in manifest["months"].values():
             state["status"] = "requires_manual_review"
             state["history_gap"] = True
+    # Query and validate the current official catalog FIRST. A 504 or a
+    # changed publication must not trigger a needless full-artifact transfer.
+    if (args.reuse_dir and args.recovery_report and args.previous_manifest
+            and recovery_status == "restored"
+            and not args.reuse_dir.exists()
+            and os.environ.get("GITHUB_REPOSITORY")
+            and any(_can_reuse(previous.get(item["month"]), item)
+                    for item in publications[-args.latest_months:])):
+        from api.probes.finalizadas_reuse import try_prepare_cache
+        verified = try_prepare_cache(
+            os.environ["GITHUB_REPOSITORY"], args.recovery_report,
+            args.previous_manifest, args.reuse_dir,
+        )
+        print(json.dumps({"reuse_verified_months": verified,
+                          "state": "local_verified_only" if verified else "no_reuse"}))
     client = _session()
     for item in publications[-args.latest_months:]:
         month = item["month"]
@@ -643,11 +702,37 @@ def _produce_observation(args: argparse.Namespace, destination: Path) -> int:
         month_dir = destination / month
         month_dir.mkdir(parents=True, exist_ok=True)
         zip_path = month_dir / f"finalizadas_{month}.zip"
-        download_digest = download_direct(url, zip_path, http=client)
-        aggregate, evidence = aggregate_zip(zip_path, month, url)
+        prior = previous.get(month, {})
+        reused = False
+        if args.reuse_dir and _can_reuse(prior, item):
+            from api.probes.finalizadas_reuse import _verified_bundle
+            reuse_root = _safe_output(args.reuse_dir)
+            if _verified_bundle(reuse_root, month, prior):
+                cached = reuse_root / month
+                shutil.copyfile(cached / f"finalizadas_{month}.zip", zip_path)
+                aggregate = json.loads(
+                    (cached / "agregado-experimental.json").read_text(encoding="utf-8")
+                )
+                evidence = json.loads(
+                    (cached / "validacao.json").read_text(encoding="utf-8")
+                )
+                download_digest = sha256(zip_path)
+                if download_digest != prior["zip_sha256"]:
+                    raise ObservationalError("ZIP reutilizado não confere com hash da origem")
+                reused = True
+        if not reused:
+            download_digest = download_direct(url, zip_path, http=client)
+            aggregate, evidence = aggregate_zip(zip_path, month, url)
         if evidence["zip_sha256"] != download_digest:
             raise ObservationalError("Hash mudou entre aquisição e processamento")
-        prior = previous.get(month, {})
+        evidence["parser_version"] = PARSER_CONTRACT_VERSION
+        evidence["acquisition_mode"] = (
+            "reused_local_verified" if reused else "current_http_fetch"
+        )
+        evidence["source_fetched_at"] = (
+            prior["source_fetched_at"] if reused else utcnow()
+        )
+        evidence["catalog_checked_at"] = utcnow()
         previous_hash = prior.get("zip_sha256") if isinstance(prior, dict) else None
         known_hash = item["expected_sha256"]
         previous_code = prior.get("publication_code") if isinstance(prior, dict) else None
@@ -697,8 +782,14 @@ def _produce_observation(args: argparse.Namespace, destination: Path) -> int:
             manifest["revisions"].append(month)
         if requires_review:
             evidence["status"] = "requires_manual_review"
-        _write_json(month_dir / "agregado-experimental.json", aggregate)
-        _write_json(month_dir / "validacao.json", evidence)
+        aggregate_path = month_dir / "agregado-experimental.json"
+        validation_path = month_dir / "validacao.json"
+        _write_json(aggregate_path, aggregate)
+        _write_json(validation_path, evidence)
+        # Derivative digests live in the sealed manifest, outside the
+        # validation JSON, to avoid a self-referential hash.
+        evidence["aggregate_json_sha256"] = sha256(aggregate_path)
+        evidence["validation_json_sha256"] = sha256(validation_path)
         manifest["months"][month] = evidence
     manifest["revisions"] = sorted(set(manifest["revisions"]) | {
         month for month, state in manifest["months"].items()
