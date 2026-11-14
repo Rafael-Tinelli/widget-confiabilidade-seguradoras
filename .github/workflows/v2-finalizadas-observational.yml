@@ -57,18 +57,6 @@ jobs:
             --repository "$GITHUB_REPOSITORY" \
             --output-dir "$PREVIOUS_DIR"
 
-      - name: Verify reusable prior ZIPs (optional; never a freshness assertion)
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -f "$PREVIOUS_DIR/manifest.json" ]]; then
-            python -m api.probes.finalizadas_reuse \
-              --repository "$GITHUB_REPOSITORY" \
-              --recovery-report "$PREVIOUS_DIR/recovery.json" \
-              --previous-manifest "$PREVIOUS_DIR/manifest.json" \
-              --output-dir "$REUSE_DIR"
-          fi
-
       - name: Observe only official direct HTTP ZIP publications
         shell: bash
         run: |
