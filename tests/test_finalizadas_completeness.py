@@ -249,3 +249,37 @@ def test_a05_seal_rejects_hidden_calendar_warning(tmp_path):
     manifest["quality_alerts"] = ["2026-10"]
     obs._write_json(path, manifest)
     assert history.validate_manifest(path)["months"]
+
+
+def test_a05_actual_october_prefix_pattern_not_caught_by_calendar_alone():
+    """Real October artifact: first 100k of 414538 rows still span all 31 days.
+
+    This models the independently reproduced 100000-row CSV prefix with
+    34048809 uncompressed bytes and 3459970 compressed ZIP bytes.
+    These references are prior OBSERVATIONS, not an official row-total seal.
+    """
+    daily = {day: 3_225 for day in range(1, 32)}
+    daily[31] += 100_000 - sum(daily.values())
+    sampled = complete.observed_population("2026-10", daily, 100_000)
+    assert sampled["calendar"]["distinct_days"] == 31
+    assert sampled["warnings"] == []  # calendar coverage alone MISSES truncation
+    checked = complete.compare_publication(
+        sampled, zip_bytes=3_459_970,
+        zip_sha256="f744945bab339d291575a7a9ee6ead0ad21d2dcb6478a56821f5c843562aa3d3",
+        publication={
+            "url": URL, "publication_code": CODE,
+            "announced_bytes": 15_692_004,
+            "expected_sha256": "963489d07299c5f762476ca9f6cef21edb55337ac9cb1caa7809a68efd7fcdc1",
+        },
+        previous={
+            "source_url": URL, "publication_code": CODE,
+            "rows_total": 414_538,
+        },
+    )
+    assert checked["warnings"] == [
+        "published_zip_bytes_mismatch",
+        "pinned_observation_sha256_mismatch",
+        "previous_observation_rows_changed",
+    ]
+    assert checked["status"] == "not_demonstrated"
+    assert checked["official_monthly_rows"] is None
