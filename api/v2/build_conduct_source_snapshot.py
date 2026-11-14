@@ -13,6 +13,7 @@ import requests
 from api import build_consumidor_gov as consumer_gov_build
 from api.sources import consumer_gov_direct
 from api.sources.receita_cnpj import RECEITA_CNPJ_OPEN_DATA_URL
+from api.sources.receita_cnpj_telemetry import emit
 from api.v2.build_consumer_gov_identity_experiment import (
     OUTPUT_PATH as CONSUMER_IDENTITY_PATH,
 )
@@ -26,13 +27,12 @@ from api.v2.build_consumer_gov_receita_identity import (
     unresolved_provider_hash,
 )
 from api.v2.conduct_receita_cache_fallback import materialize_additions_only_cache
-from api.v2.receita_a09_provenance import try_write_compact_provenance
-from api.sources.receita_cnpj_telemetry import emit
 from api.v2.consumer_gov_receita_resolution import (
     DEFAULT_RECEITA_IDENTITY_SNAPSHOT,
 )
 from api.v2.consumer_gov_window import ConsumerGovWindowError, load_active_window
 from api.v2.generation import BuildContext
+from api.v2.receita_a09_provenance import try_write_compact_provenance
 from api.v2.source_cache import (
     CachedSource,
     SourceCacheError,
