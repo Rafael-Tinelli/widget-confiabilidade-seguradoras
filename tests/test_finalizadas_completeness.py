@@ -8,6 +8,8 @@ import shutil
 import zipfile
 from pathlib import Path
 
+import pytest
+
 from api.probes import finalizadas_completeness as complete
 from api.probes import finalizadas_history as history
 from api.probes import finalizadas_observational as obs
@@ -196,3 +198,54 @@ def test_a05_no_independent_row_total_even_when_size_and_hash_match():
     assert checks["warnings"] == ["calendar_coverage_gap_requires_review"]
     assert checks["status"] == "not_demonstrated"
     assert checks["official_monthly_rows"] is None
+
+
+def _a05_manifest_for_contract() -> dict:
+    return {
+        "schema": history.SCHEMA,
+        "status": "experimental_no_publication",
+        "months": {
+            "2026-10": {
+                "month": "2026-10", "status": "validated_experimental",
+                "zip_sha256": "a" * 64,
+                "parser_version": obs.PARSER_CONTRACT_VERSION,
+                "population_completeness": {
+                    "status": "not_demonstrated",
+                    "official_monthly_rows": None,
+                    "warnings": [],
+                },
+            },
+        },
+        "revisions": [], "quality_alerts": [],
+    }
+
+
+def test_a05_seal_rejects_artificial_population_certification(tmp_path):
+    manifest = _a05_manifest_for_contract()
+    path = tmp_path / "manifest.json"
+    obs._write_json(path, manifest)
+    assert history.validate_manifest(path)["months"]
+    manifest["months"]["2026-10"]["population_completeness"]["status"] = "complete"
+    obs._write_json(path, manifest)
+    with pytest.raises(history.HistoryError, match="A05 completeness claim"):
+        history.validate_manifest(path)
+    manifest["months"]["2026-10"]["population_completeness"]["status"] = "not_demonstrated"
+    manifest["months"]["2026-10"]["population_completeness"]["official_monthly_rows"] = 100
+    obs._write_json(path, manifest)
+    with pytest.raises(history.HistoryError, match="A05 completeness claim"):
+        history.validate_manifest(path)
+
+
+def test_a05_seal_rejects_hidden_calendar_warning(tmp_path):
+    manifest = _a05_manifest_for_contract()
+    manifest["months"]["2026-10"]["population_completeness"]["warnings"] = [
+        "calendar_coverage_gap_requires_review"
+    ]
+    path = tmp_path / "manifest.json"
+    obs._write_json(path, manifest)
+    with pytest.raises(history.HistoryError, match="Unrecorded A05 completeness"):
+        history.validate_manifest(path)
+    manifest["months"]["2026-10"]["status"] = "requires_manual_review"
+    manifest["quality_alerts"] = ["2026-10"]
+    obs._write_json(path, manifest)
+    assert history.validate_manifest(path)["months"]
