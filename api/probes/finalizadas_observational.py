@@ -29,6 +29,8 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
+from api.probes.finalizadas_completeness import compare_publication, observed_population
+
 COLUMNS = (
     "regiao", "uf", "cidade", "sexo", "faixa_etaria", "data_finalizacao",
     "tempo_resposta", "nome_fantasia", "segmento_de_mercado", "area",
@@ -57,7 +59,7 @@ OFFICIAL_CATALOG_PATH = "/pages/publicacao/externo/publicacoes.json"
 FINALIZADAS_NAME = re.compile(r"finalizadas_(20\d{2}-(?:0[1-9]|1[0-2]))\.zip\Z")
 MAX_CATALOG_BYTES = 2_000_000
 CATALOG_RETRY_PAUSE_SECONDS = 10  # One extra round after adapter-level retries.
-PARSER_CONTRACT_VERSION = "finalizadas-parser-2026-11-14-v1"
+PARSER_CONTRACT_VERSION = "finalizadas-parser-2026-11-14-v2-a05"
 REUSE_MAX_AGE_SECONDS = 7 * 24 * 3600
 
 
@@ -377,6 +379,7 @@ def aggregate_zip(source: Path, month: str, url: str) -> tuple[dict, dict]:
         displays: dict[str, Counter] = defaultdict(Counter)
         total = segment_rows = replied = evaluated = resolved = 0
         unresolved = unknown_resolution = 0
+        observed_dates: Counter[int] = Counter()
         csv_digest = hashlib.sha256()
         # Hash CSV feito independentemente dos registros com stream descompactado.
         with archive.open(member) as raw:
@@ -407,6 +410,7 @@ def aggregate_zip(source: Path, month: str, url: str) -> tuple[dict, dict]:
                     raise ObservationalError(f"Data inválida na linha {total}") from exc
                 if date.strftime("%Y-%m") != month:
                     raise ObservationalError(f"Competência inesperada na linha {total}")
+                observed_dates[date.day] += 1
                 if simple_norm(row["segmento_de_mercado"]) != simple_norm(TARGET):
                     continue
                 segment_rows += 1
@@ -478,6 +482,7 @@ def aggregate_zip(source: Path, month: str, url: str) -> tuple[dict, dict]:
         stats = item["statistics"]
         count = stats["satisfactionCount"]
         stats["averageScore"] = round(stats["scoreSum"] / count, 4) if count else 0.0
+    population = observed_population(month, dict(observed_dates), total)
     meta = {
         "status": "experimental", "publication_status": "isolated_not_for_publication",
         "source_family": "finalizadas", "reference_event": "finalizacao",
@@ -491,6 +496,7 @@ def aggregate_zip(source: Path, month: str, url: str) -> tuple[dict, dict]:
         "unmapped_identity_status": "raw_provider_names_only_no_susep_matching",
         "consumidor_gov_base_completa_equivalence": "not_demonstrated",
         "methodology_note": "Competência por finalização, não por abertura.",
+        "population_completeness_status": population["status"],
     }
     aggregate = {"meta": meta, "by_name_key_raw": dict(sorted(names.items())),
                  "by_cnpj_key_raw": {}}
@@ -501,8 +507,10 @@ def aggregate_zip(source: Path, month: str, url: str) -> tuple[dict, dict]:
                 "resolved": resolved, "unresolved": unresolved, "unassessed": segment_rows - evaluated,
                 "zip_sha256": zip_digest, "csv_sha256": csv_digest.hexdigest(),
                 "zip_bytes": source.stat().st_size, "csv_bytes": member.file_size,
-                "source_url": url,
-                "status": ("requires_manual_review" if unknown_resolution else "validated_experimental"),
+                "source_url": url, "population_completeness": population,
+                "status": ("requires_manual_review" if
+                           (unknown_resolution or population["warnings"])
+                           else "validated_experimental"),
                 "reference_event": "finalizacao"}
     return aggregate, evidence
 
@@ -733,6 +741,10 @@ def _produce_observation(args: argparse.Namespace, destination: Path) -> int:
             prior["source_fetched_at"] if reused else utcnow()
         )
         evidence["catalog_checked_at"] = utcnow()
+        evidence["population_completeness"] = compare_publication(
+            evidence["population_completeness"], zip_bytes=evidence["zip_bytes"],
+            zip_sha256=evidence["zip_sha256"], publication=item, previous=prior,
+        )
         previous_hash = prior.get("zip_sha256") if isinstance(prior, dict) else None
         known_hash = item["expected_sha256"]
         previous_code = prior.get("publication_code") if isinstance(prior, dict) else None
@@ -762,7 +774,8 @@ def _produce_observation(args: argparse.Namespace, destination: Path) -> int:
             or metadata_changed
         )
         requires_review = bool(prior_pending or history_gap or is_revision
-                               or evidence.get("resolution_unknown"))
+                               or evidence.get("resolution_unknown")
+                               or evidence["population_completeness"]["warnings"])
         if prior_pending or is_revision:
             origin = prior.get("review_origin_sha256")
             if origin or (is_revision and previous_hash):
@@ -776,7 +789,8 @@ def _produce_observation(args: argparse.Namespace, destination: Path) -> int:
         evidence["revision"] = is_revision
         evidence["history_gap"] = history_gap
         evidence["observed_at"] = utcnow()
-        if evidence.get("resolution_unknown"):
+        if (evidence.get("resolution_unknown")
+                or evidence["population_completeness"]["warnings"]):
             manifest["quality_alerts"].append(month)
         if is_revision:
             manifest["revisions"].append(month)
@@ -798,7 +812,9 @@ def _produce_observation(args: argparse.Namespace, destination: Path) -> int:
     manifest["quality_alerts"] = sorted(
         set(manifest["quality_alerts"]) | previous_quality_alerts | {
             month for month, state in manifest["months"].items()
-            if state.get("resolution_unknown")
+            if (state.get("resolution_unknown")
+                or (isinstance(state.get("population_completeness"), dict)
+                    and state["population_completeness"].get("warnings")))
         }
     )
     _write_json(destination / "manifest.json", manifest)
