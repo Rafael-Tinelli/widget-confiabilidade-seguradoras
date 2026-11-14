@@ -206,6 +206,12 @@ certificam** que todas as reclamações finalizadas foram exportadas.
   mas incompletos (por exemplo, contendo linhas de todos os dias) ainda
   podem escapar aos sinais heurísticos.
 
+O selamento do histórico valida a nova versão do contrato: rejeita
+um manifesto A05 que declare população `complete`/`certified`, informe
+um total oficial sem prova no contrato ou esconda avisos de completude.
+Manifestos anteriores ao A05 continuam recuperáveis para fins históricos,
+sem serem confundidos com dados validados pelo novo parser.
+
 As alterações do A05 incrementam `PARSER_CONTRACT_VERSION`: um derivado
 anterior à instrumentação não pode ser reutilizado pelo A06 como se já
 contivesse esses controles. O primeiro ciclo na nova versão fará download
