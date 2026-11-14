@@ -55,7 +55,7 @@ def build_compact_provenance(
         raise ValueError("Receita provenance snapshot/lineage digest mismatch")
     data = json.loads(snapshot.read_text(encoding="utf-8"))
     if not isinstance(data, dict):
-        raise ValueError("Receita provenance snapshot must be JSON object")
+        raise TypeError("Receita provenance snapshot must be JSON object")
     source = data.get("source") or {}
     cache_key = (data.get("meta") or {}).get("gate4_cache_key") or {}
     result.update({
