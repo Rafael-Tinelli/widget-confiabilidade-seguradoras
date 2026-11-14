@@ -15,6 +15,7 @@ import json
 import math
 import os
 import re
+import shutil
 import tempfile
 import time
 import unicodedata
@@ -302,6 +303,7 @@ def download_direct(url: str, destination: Path,
                     http: requests.Session | None = None) -> str:
     """Baixa em arquivo temporário, limita bytes e valida URL após redirect."""
     official_url(url)
+    destination = _safe_output(destination)
     client = http or _session()
     destination.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(prefix=".download-", suffix=".part",
@@ -501,14 +503,23 @@ def aggregate_zip(source: Path, month: str, url: str) -> tuple[dict, dict]:
 
 
 def _safe_output(out: Path) -> Path:
+    """Block production writes regardless of the caller's working directory.
+
+    Check both lexical and resolved paths: a symlink must not escape the
+    repository barrier, and a path inside the checkout must not point out.
+    """
+    lexical = out.absolute()
     destination = out.resolve()
-    root = Path.cwd().resolve()
-    protected = ("data/raw", "data/derived", "data/cache", "public",
-                 "site", "web", ".github")
-    for name in protected:
-        path = (root / name).resolve()
-        if destination == path or path in destination.parents:
+    checkout = Path(__file__).resolve().parents[2]
+    for candidate in (lexical, destination):
+        if candidate == checkout or checkout in candidate.parents:
             raise ObservationalError("Destino pertence à área de produção/protegida")
+        for root in (Path.cwd().resolve(), checkout):
+            for name in ("data/raw", "data/derived", "data/cache", "public",
+                         "site", "web", ".github"):
+                protected = root / name
+                if candidate == protected or protected in candidate.parents:
+                    raise ObservationalError("Destino pertence à área de produção/protegida")
     return destination
 
 
@@ -539,6 +550,29 @@ def main(argv: list[str] | None = None) -> int:
     if args.latest_months < 1 or args.latest_months > 12:
         raise ObservationalError("latest-months deve estar entre 1 e 12")
     destination = _safe_output(args.output_dir)
+    # Never overwrite the last accepted bundle. The entire candidate lives
+    # in a private sibling on the same filesystem until every month, JSON
+    # derivative, and manifest has been validated and written.
+    if destination.exists() or destination.is_symlink():
+        raise ObservationalError("Destino observacional já existe; sobrescrita proibida")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    staging = Path(tempfile.mkdtemp(prefix=".finalizadas-stage-", dir=destination.parent))
+    try:
+        result = _produce_observation(args, staging)
+        if destination.exists() or destination.is_symlink():
+            raise ObservationalError("Destino observacional apareceu durante a aquisição")
+        os.replace(staging, destination)
+        state = json.loads((destination / "manifest.json").read_text(encoding="utf-8"))
+        print(json.dumps({"status": state["status"], "months": sorted(state["months"]),
+                          "revisions": state["revisions"], "output_dir": str(destination)},
+                         ensure_ascii=False))
+        return result
+    finally:
+        if staging.exists():
+            shutil.rmtree(staging)
+
+
+def _produce_observation(args: argparse.Namespace, destination: Path) -> int:
     publications = read_catalog(args.catalog, feed_url=args.feed_url)
     if not publications:
         raise ObservationalError("Nenhuma publicação oficial conhecida")
@@ -677,9 +711,6 @@ def main(argv: list[str] | None = None) -> int:
         }
     )
     _write_json(destination / "manifest.json", manifest)
-    print(json.dumps({"status": manifest["status"], "months": sorted(manifest["months"]),
-                      "revisions": manifest["revisions"], "output_dir": str(destination)},
-                     ensure_ascii=False))
     return 0
 
 

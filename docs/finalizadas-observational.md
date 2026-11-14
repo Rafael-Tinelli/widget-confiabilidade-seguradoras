@@ -89,6 +89,20 @@ histórica adicional.
 - Não usar esta rotina para executar Full Generation, nem agendá-la com eventos
   `workflow_run` que disparem produção.
 
+## Integridade transacional do output (A07)
+
+A saída observacional é montada integralmente em um diretório temporário
+privado **irmão do destino final**, no mesmo sistema de arquivos. ZIPs, CSVs
+validados por streaming, agregados, validações e manifesto só são promovidos
+por renomeação atômica do diretório depois que todos os meses terminam sem
+erro. Na falha ou interrupção antes da promoção, não há um novo bundle aceito;
+o destino preexistente **nunca é sobrescrito**.
+
+A barreira de escrita é ancorada no caminho real do módulo/repositório e
+também rejeita atalhos de caminho por symlinks, independentemente do CWD.
+Esta barreira protege a execução do observador; não pretende ser um mecanismo
+de isolamento contra alteração concorrente maliciosa do filesystem.
+
 ## Reutilização e retenção: comportamento efetivo
 
 Na correção de recuperação da PR #56, o workflow consulta até 100 runs
