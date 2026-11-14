@@ -90,10 +90,10 @@ def _establishment(
     base: str, branch: str, digits: str, *,
     trade: str, head: str = "1",
 ) -> str:
-    return ";".join([
-        base, branch, digits, head, trade, "02", "20260110", "",
-        "", "", "20010101", "6511101", "6622300",
-    ])
+    return (
+        f"{base};{branch};{digits};{head};{trade};02;20260110"
+        ";;;;20010101;6511101;6622300"
+    )
 
 
 def test_a093_full_filtered_identity_parity_on_local_multi_partition_zip(
