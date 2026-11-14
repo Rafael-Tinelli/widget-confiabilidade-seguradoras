@@ -51,8 +51,9 @@ O workflow existente passa a incluir:
 - `data/derived/v2/receita_a09_events.jsonl`;
 - `data/derived/v2/receita_identity_provenance_a09.json`.
 
-A prova contém `reference_period`, `release_url`, fingerprint de
-metadados e método, `release_checked_at` (quando consulta oficial
+A prova contém `reference_period`, `release_url`, o fingerprint registrado
+pelo snapshot e o fingerprint parcial observado no catálogo, ambos
+explicitamente rotulados, além de `release_checked_at` (quando consulta oficial
 comprovadamente ocorreu), `last_remote_fetch_at` (data mantida no
 snapshot materializado), versão do contrato, hashes da população
 de CNPJs e de fornecedores, motivo de decisão e hash do snapshot.

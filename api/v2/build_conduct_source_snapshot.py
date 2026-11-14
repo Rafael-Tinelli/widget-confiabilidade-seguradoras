@@ -472,8 +472,12 @@ def _receita_observation(*, cache_dir: Path) -> SourceObservation:
     ):
         try:
             cache.materialize(DEFAULT_RECEITA_IDENTITY_SNAPSHOT)
-        except (OSError, ValueError, SourceCacheError):
-            emit("cache_integrity", cache_decision="invalid_integrity",
+        except SourceCacheError:
+            emit("cache_integrity", cache_decision="cache_validation_failed",
+                 state="materialization_failed")
+            DEFAULT_RECEITA_IDENTITY_SNAPSHOT.unlink(missing_ok=True)
+        except (OSError, ValueError):
+            emit("cache_integrity", cache_decision="cache_io_or_payload_error",
                  state="materialization_failed")
             DEFAULT_RECEITA_IDENTITY_SNAPSHOT.unlink(missing_ok=True)
 

@@ -41,6 +41,8 @@ def build_compact_provenance(
         "release_fingerprint": None,
         "release_fingerprint_method": None,
         "release_checked_at": None,
+        "observed_catalog_fingerprint": None,
+        "catalog_fingerprint_scope": None,
         "last_remote_fetch_at": None,
         "cache_contract_version": None,
         "cache_decision_reason": None,
@@ -97,6 +99,8 @@ def build_compact_provenance(
     result["marker_consistency"] = "matched" if consistent else "mismatch"
     if consistent:
         result["release_checked_at"] = observed.get("release_checked_at")
+        result["observed_catalog_fingerprint"] = observed.get("catalog_fingerprint")
+        result["catalog_fingerprint_scope"] = observed.get("catalog_fingerprint_scope")
         result["cache_decision_reason"] = observed.get("cache_decision")
     return result
 

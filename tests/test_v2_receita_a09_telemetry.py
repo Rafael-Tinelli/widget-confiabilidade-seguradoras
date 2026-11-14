@@ -227,6 +227,8 @@ def test_a09_provenance_matches_snapshot_and_rejects_false_current_period(
         "release_checked_at": "2026-11-14T12:00:00Z",
         "snapshot_reference_period": "2026-10",
         "snapshot_release_fingerprint": "b" * 64,
+        "catalog_fingerprint": "d" * 64,
+        "catalog_fingerprint_scope": "discovery_estabelecimentos_motivos",
         "cache_decision": "miss_period",
         "cache_contract_version": key["version"],
         "target_universe_hash": key["target_universe_hash"],
@@ -236,6 +238,7 @@ def test_a09_provenance_matches_snapshot_and_rejects_false_current_period(
     assert proof["marker_consistency"] == "matched"
     assert proof["snapshot_contract_consistency"] == "matched"
     assert proof["reference_period"] == "2026-10"
+    assert proof["observed_catalog_fingerprint"] == "d" * 64
     assert proof["cache_decision_reason"] == "miss_period"
     assert proof["release_checked_at"] == "2026-11-14T12:00:00Z"
     assert proof["last_remote_fetch_at"] == "2026-11-12T12:00:00Z"
