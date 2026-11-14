@@ -649,7 +649,10 @@ def _receita_snapshot(
             emit(
                 "cache_decision", phase="lifecycle",
                 reference_period=release.period,
-                cache_decision="miss_release_fingerprint",
+                cache_decision=(
+                    "miss_release_fingerprint"
+                    if cached_period == release.period else "miss_period"
+                ),
             )
         temp = destination.with_suffix(destination.suffix + ".incoming")
         if temp.exists():

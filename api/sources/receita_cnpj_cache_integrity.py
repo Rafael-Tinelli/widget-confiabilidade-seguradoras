@@ -58,10 +58,13 @@ def checked_release_fingerprint(
 
 def lifecycle_release_fingerprint(release: Any) -> str | None:
     """Only Motivos and every discovered Estabelecimentos partition matter."""
-    names = [release.reasons_file, *release.establishment_files]
-    return checked_release_fingerprint(
-        release.period, list(release.resource_metadata), names,
-    )
+    try:
+        names = [release.reasons_file, *release.establishment_files]
+        metadata = list(release.resource_metadata)
+        period = release.period
+    except (AttributeError, TypeError):
+        return None
+    return checked_release_fingerprint(period, metadata, names)
 
 
 def lifecycle_cache_current(payload: dict[str, Any], release: Any) -> bool:

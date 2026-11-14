@@ -106,6 +106,14 @@ def test_a092_missing_duplicate_or_extra_partition_rejects_comparison() -> None:
     assert checked_release_fingerprint("2026-10", data, [*required, required[0]]) is None
 
 
+def test_a092_absent_release_metadata_means_unverifiable_not_exception() -> None:
+    minimal_release = SimpleNamespace(period="2026-10")
+    assert lifecycle_release_fingerprint(minimal_release) is None
+    assert not lifecycle_cache_current(
+        {"source": {"reference_period": "2026-10"}}, minimal_release,
+    )
+
+
 def test_a092_lifecycle_cache_requires_period_url_fingerprint_and_method() -> None:
     release = _release()
     fingerprint = lifecycle_release_fingerprint(release)
