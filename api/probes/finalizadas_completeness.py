@@ -8,7 +8,6 @@ catalog. Never produce a 'complete' or 'certified' result from these checks.
 from __future__ import annotations
 
 import calendar
-from datetime import date
 
 # Plausibility signal, not an asserted publication requirement. The nationwide
 # file is substantial; sparse small test corpora must not be treated as complete.
