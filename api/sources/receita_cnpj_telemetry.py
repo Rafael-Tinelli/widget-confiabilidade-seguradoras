@@ -22,7 +22,7 @@ METADATA_KEYS = ("name", "size", "etag", "last_modified")
 SAFE_FIELDS = frozenset({
     "phase", "category", "file_index", "attempts", "retry_wait_s",
     "elapsed_s", "elapsed_download_s", "elapsed_parse_s",
-    "received_bytes", "expected_bytes", "rows_scanned", "rows_retained",
+    "received_bytes", "transferred_bytes_total", "expected_bytes", "rows_scanned", "rows_retained",
     "reference_period", "release_fingerprint", "fingerprint_method",
     "file_count", "company_partitions", "establishment_partitions",
     "cache_decision", "state", "target_count", "provider_count",

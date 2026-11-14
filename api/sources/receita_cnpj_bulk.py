@@ -275,6 +275,7 @@ def _download_zip(
     category, index = file_category(destination.name)
     started = time.perf_counter()
     retry_wait = 0.0
+    total_transferred = 0
 
     for attempt in range(retries):
         transferred = 0
@@ -290,6 +291,7 @@ def _download_zip(
                     for chunk in response.iter_content(chunk_size=8 * 1024 * 1024):
                         if chunk:
                             transferred += len(chunk)
+                            total_transferred += len(chunk)
                             handle.write(chunk)
             if not zipfile.is_zipfile(temp):
                 raise ReceitaOpenDataError(f"Downloaded file is not a valid ZIP: {url}")
@@ -298,7 +300,9 @@ def _download_zip(
                 "zip_download", category=category, file_index=index,
                 attempts=attempt + 1, retry_wait_s=round(retry_wait, 3),
                 elapsed_download_s=round(time.perf_counter() - started, 3),
-                received_bytes=transferred, zip_valid=True, state="success",
+                received_bytes=transferred,
+                transferred_bytes_total=total_transferred,
+                zip_valid=True, state="success",
             )
             return destination
         except (requests.RequestException, OSError, ReceitaOpenDataError) as exc:
@@ -313,7 +317,8 @@ def _download_zip(
         "zip_download", category=category, file_index=index,
         attempts=retries, retry_wait_s=round(retry_wait, 3),
         elapsed_download_s=round(time.perf_counter() - started, 3),
-        received_bytes=0, zip_valid=False, state="failure",
+        received_bytes=0, transferred_bytes_total=total_transferred,
+        zip_valid=False, state="failure",
     )
     raise ReceitaOpenDataError(
         f"Failed to download official Receita ZIP {url}: {last_error}"
