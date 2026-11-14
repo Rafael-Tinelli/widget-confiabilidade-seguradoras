@@ -3,11 +3,20 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+
+import requests
 from pathlib import Path
 from typing import Any
 
-from api.sources.receita_cnpj_bulk import discover_latest_release
-from api.sources.receita_cnpj_identity import build_filtered_identity_snapshot
+from api.sources.receita_cnpj_bulk import (
+    _configure_official_session,
+    discover_latest_release,
+)
+from api.sources.receita_cnpj_cache_integrity import (
+    checked_release_fingerprint,
+    identity_cache_current,
+)
+from api.sources.receita_cnpj_identity import _release_files, build_filtered_identity_snapshot
 from api.sources.receita_cnpj_telemetry import emit, release_fingerprint, utcnow
 from api.utils.identifiers import normalize_cnpj_v2
 from api.utils.name_cleaner import normalize_name_key
@@ -95,6 +104,19 @@ def _existing_cache_key(path: Path) -> dict[str, str] | None:
         ),
         "unresolved_provider_hash": str(value.get("unresolved_provider_hash") or ""),
     }
+
+
+def _official_identity_release_fingerprint(release: Any) -> str | None:
+    """Only PROPFIND; no official ZIP downloaded while validating cache."""
+    with requests.Session() as session:
+        _configure_official_session(session)
+        files = _release_files(session, release)
+    required = [
+        *files["companies"], *release.establishment_files,
+        files["cnaes"], files["legal_natures"],
+    ]
+    selected = [files["metadata"][name] for name in required]
+    return checked_release_fingerprint(release.period, selected, required)
 
 
 def _cache_decision(
@@ -210,16 +232,25 @@ def build_snapshot(
     )
     if not force and existing_key == expected_key:
         prior = json.loads(output.read_text(encoding="utf-8"))
-        _write_a09_marker(
-            output, release=release, decision=decision,
-            expected_key=expected_key, checked_at=checked_at,
-            snapshot=prior,
-        )
-        print(
-            "Receita Consumer.gov identity build skipped: stored snapshot cache key "
-            "matches current release, CNPJ target population and unresolved providers"
-        )
-        return None
+        current_fingerprint = _official_identity_release_fingerprint(release)
+        if identity_cache_current(prior, release, current_fingerprint):
+            _write_a09_marker(
+                output, release=release, decision=decision,
+                expected_key=expected_key, checked_at=checked_at,
+                snapshot=prior,
+            )
+            emit("cache_integrity", phase="identity", state="verified",
+                 reference_period=release.period)
+            print(
+                "Receita Consumer.gov identity build skipped: cache key and "
+                "official metadata fingerprint are unchanged"
+            )
+            return None
+        decision = "miss_release_fingerprint"
+        emit("cache_integrity", phase="identity", state="mismatch",
+             reference_period=release.period)
+        emit("cache_decision", phase="identity", cache_decision=decision,
+             reference_period=release.period)
 
     payload = build_filtered_identity_snapshot(
         entities,
