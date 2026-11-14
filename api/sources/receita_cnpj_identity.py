@@ -15,7 +15,6 @@ from urllib.parse import urljoin
 
 import requests
 
-from api.sources.receita_cnpj_telemetry import emit, release_fingerprint, utcnow
 from api.sources.receita_cnpj_bulk import (
     OFFICIAL_CNPJ_SHARE_URL,
     ReceitaOpenDataError,
@@ -26,6 +25,7 @@ from api.sources.receita_cnpj_bulk import (
     _propfind,
     discover_latest_release,
 )
+from api.sources.receita_cnpj_telemetry import emit, release_fingerprint, utcnow
 from api.utils.identifiers import normalize_cnpj_v2
 from api.utils.name_cleaner import normalize_name_key
 
