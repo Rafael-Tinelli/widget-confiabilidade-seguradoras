@@ -125,25 +125,25 @@ def _write_a09_marker(
 ) -> None:
     """Optional run-scoped metadata; never a replacement for source content."""
     marker = output.with_suffix(".a09.json")
-    fingerprint = release_fingerprint(
-        release.period, list(release.resource_metadata),
-    )
-    source = (snapshot or {}).get("source") or {}
-    payload = {
-        "schema": "receita-a09-1-observation-v1",
-        "observed_release_period": release.period,
-        "observed_release_url": release.release_url,
-        "release_checked_at": checked_at,
-        "catalog_fingerprint": fingerprint,
-        "catalog_fingerprint_scope": "discovery_estabelecimentos_motivos",
-        "snapshot_reference_period": source.get("reference_period"),
-        "snapshot_release_fingerprint": source.get("release_fingerprint"),
-        "cache_decision": decision,
-        "cache_contract_version": CACHE_KEY_VERSION,
-        "target_universe_hash": expected_key["target_universe_hash"],
-        "unresolved_provider_hash": expected_key["unresolved_provider_hash"],
-    }
     try:
+        fingerprint = release_fingerprint(
+            release.period, list(release.resource_metadata),
+        )
+        source = (snapshot or {}).get("source") or {}
+        payload = {
+            "schema": "receita-a09-1-observation-v1",
+            "observed_release_period": release.period,
+            "observed_release_url": release.release_url,
+            "release_checked_at": checked_at,
+            "catalog_fingerprint": fingerprint,
+            "catalog_fingerprint_scope": "discovery_estabelecimentos_motivos",
+            "snapshot_reference_period": source.get("reference_period"),
+            "snapshot_release_fingerprint": source.get("release_fingerprint"),
+            "cache_decision": decision,
+            "cache_contract_version": CACHE_KEY_VERSION,
+            "target_universe_hash": expected_key["target_universe_hash"],
+            "unresolved_provider_hash": expected_key["unresolved_provider_hash"],
+        }
         marker.parent.mkdir(parents=True, exist_ok=True)
         temp = marker.with_suffix(".a09.tmp")
         temp.write_text(
@@ -151,7 +151,7 @@ def _write_a09_marker(
             encoding="utf-8",
         )
         temp.replace(marker)
-    except OSError:
+    except (OSError, AttributeError, KeyError, TypeError, ValueError):
         emit("provenance_write", state="unavailable")
 
 
@@ -185,7 +185,10 @@ def build_snapshot(
     force: bool = False,
 ) -> dict[str, Any] | None:
     marker = output.with_suffix(".a09.json")
-    marker.unlink(missing_ok=True)
+    try:
+        marker.unlink(missing_ok=True)
+    except OSError:
+        emit("provenance_write", state="unavailable")
     entities, providers = _load_inputs()
     universe_hash = target_universe_hash(entities)
     provider_hash = unresolved_provider_hash(providers)

@@ -10,12 +10,16 @@ import json
 import os
 import platform
 import re
-import resource
 import shutil
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+try:
+    import resource
+except ImportError:  # Windows does not provide the POSIX resource module.
+    resource = None
 
 FILE_CATEGORY = re.compile(r"^(Empresas|Estabelecimentos)(\d+)\.zip$", re.IGNORECASE)
 METADATA_KEYS = ("name", "size", "etag", "last_modified")
@@ -73,7 +77,7 @@ def emit(event: str, **fields: Any) -> None:
                     value, (str, int, float, bool, type(None))
                 )}
         rss = None
-        if platform.system() == "Linux":
+        if platform.system() == "Linux" and resource is not None:
             rss = round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024, 2)
         free_mb = round(shutil.disk_usage(Path.cwd()).free / (1024 * 1024), 2)
         payload = {"event": event, "observed_at": utcnow(),

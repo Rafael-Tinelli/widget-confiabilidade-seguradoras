@@ -41,7 +41,9 @@ evento). São **amostras**, não estimativas de ocupação total da conta
 GitHub Actions nem de uso global do runner. O pico de disco pode ocorrer
 entre amostras. O campo `received_bytes` de `zip_download` é dos bytes
 do **GET final bem-sucedido**, não uma soma de bytes desperdiçados em
-tentativas anteriores. `transferred_bytes_total` soma os bytes de todas\nas tentativas, incluindo transferências parciais fracassadas.\n`retry_wait_s` contém a espera programada;
+tentativas anteriores. `transferred_bytes_total` soma os bytes de todas
+as tentativas, incluindo transferências parciais fracassadas.
+`retry_wait_s` contém a espera programada;
 `elapsed_download_s` inclui as tentativas.
 
 ## Evidência compacta no artefato Gate 4

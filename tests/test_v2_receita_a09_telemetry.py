@@ -259,3 +259,21 @@ def test_a09_provenance_matches_snapshot_and_rejects_false_current_period(
     )
     assert fingerprint_mismatch["marker_consistency"] == "mismatch"
     assert fingerprint_mismatch["release_checked_at"] is None
+
+
+def test_a09_optional_marker_errors_cannot_break_source_acquisition(tmp_path) -> None:
+    """A malformed metadata payload is a diagnostics failure, not source failure."""
+    output = tmp_path / "identity.json"
+    release = SimpleNamespace(
+        period="2026-10", release_url="https://official.example/2026-10/",
+        resource_metadata=None,
+    )
+    key = builder._cache_key(
+        reference_period="2026-10", universe_hash="a" * 64,
+        provider_hash="b" * 64,
+    )
+    builder._write_a09_marker(
+        output, release=release, decision="hit",
+        expected_key=key, checked_at="2026-11-14T12:00:00Z", snapshot=None,
+    )
+    assert not output.with_suffix(".a09.json").exists()
