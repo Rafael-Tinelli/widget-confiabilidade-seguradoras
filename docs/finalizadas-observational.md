@@ -212,6 +212,20 @@ um total oficial sem prova no contrato ou esconda avisos de completude.
 Manifestos anteriores ao A05 continuam recuperáveis para fins históricos,
 sem serem confundidos com dados validados pelo novo parser.
 
+**Reprodução com dados reais (14/11/2026):** no artefato do
+[run #43530557942](https://github.com/Rafael-Tinelli/widget-confiabilidade-seguradoras/actions/runs/43530557942),
+setembro tem 358.865 linhas distribuídas pelos 30 dias e outubro tem
+414.538 linhas distribuídas pelos 31 dias. Ao reconstruir somente as
+**100.000 primeiras linhas de outubro**, o CSV ficou com 34.048.809 bytes
+e o ZIP com 3.459.970 bytes, com CRC válido e datas dos **31 dias**.
+Assim, **a regra de calendário sozinha não detecta o truncamento**.
+Os controles de catálogo e histórico detectam o problema nesse caso:
+ZIP oficial anunciado com 15.692.004 bytes, hash local fixado divergente
+e observação prévia de 414.538 linhas. Essa observação histórica **não é
+uma certificação independente da população total**. Se o próprio
+servidor publicar pela primeira vez uma amostra parcial consistente e
+sem total independente, a incompletude poderá permanecer indetectável.
+
 As alterações do A05 incrementam `PARSER_CONTRACT_VERSION`: um derivado
 anterior à instrumentação não pode ser reutilizado pelo A06 como se já
 contivesse esses controles. O primeiro ciclo na nova versão fará download
