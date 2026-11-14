@@ -38,6 +38,7 @@ jobs:
         run: |
           printf 'EXPERIMENT_DIR=%s/finalizadas-observational\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
           printf 'PREVIOUS_DIR=%s/finalizadas-previous\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+          printf 'REUSE_DIR=%s/finalizadas-verified-reuse\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -56,6 +57,18 @@ jobs:
             --repository "$GITHUB_REPOSITORY" \
             --output-dir "$PREVIOUS_DIR"
 
+      - name: Verify reusable prior ZIPs (optional; never a freshness assertion)
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -f "$PREVIOUS_DIR/manifest.json" ]]; then
+            python -m api.probes.finalizadas_reuse \
+              --repository "$GITHUB_REPOSITORY" \
+              --recovery-report "$PREVIOUS_DIR/recovery.json" \
+              --previous-manifest "$PREVIOUS_DIR/manifest.json" \
+              --output-dir "$REUSE_DIR"
+          fi
+
       - name: Observe only official direct HTTP ZIP publications
         shell: bash
         run: |
@@ -65,6 +78,7 @@ jobs:
             extra+=(--feed-url "$OFFICIAL_FEED")
           fi
           extra+=(--recovery-report "$PREVIOUS_DIR/recovery.json")
+          extra+=(--reuse-dir "$REUSE_DIR")
           if [[ -f "$PREVIOUS_DIR/manifest.json" ]]; then
             extra+=(--previous-manifest "$PREVIOUS_DIR/manifest.json")
           fi
