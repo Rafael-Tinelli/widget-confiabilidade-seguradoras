@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import io
+import json
 import re
 import tempfile
 import time
@@ -20,13 +22,9 @@ from api.sources.receita_cnpj import normalize_receita_lifecycle_record
 from api.utils.identifiers import normalize_cnpj_v2
 
 OFFICIAL_CNPJ_HOST = "https://arquivos.receitafederal.gov.br"
-OFFICIAL_CNPJ_SHARE_TOKEN = "YggdBLfdninEJX9"
-OFFICIAL_CNPJ_SHARE_URL = (
-    f"{OFFICIAL_CNPJ_HOST}/index.php/s/{OFFICIAL_CNPJ_SHARE_TOKEN}"
-)
-OFFICIAL_CNPJ_DAV_ROOT = (
-    f"{OFFICIAL_CNPJ_HOST}/public.php/dav/files/{OFFICIAL_CNPJ_SHARE_TOKEN}/"
-)
+OFFICIAL_CNPJ_ROOT_URL = f"{OFFICIAL_CNPJ_HOST}/"
+OFFICIAL_CNPJ_DATASET_PATH = "Dados/Cadastros/CNPJ"
+PUBLIC_SHARE_RE = re.compile(r"/index\.php/s/([^/?#]+)")
 
 STATUS_CODE_TO_LABEL = {
     "01": "NULA",
@@ -39,6 +37,10 @@ STATUS_CODE_TO_LABEL = {
 
 ESTABLISHMENT_FILE_RE = re.compile(
     r"Estabelecimentos\d+\.zip$",
+    re.IGNORECASE,
+)
+COMPANY_FILE_RE = re.compile(
+    r"Empresas\d+\.zip$",
     re.IGNORECASE,
 )
 PERIOD_RE = re.compile(r"20\d{2}-\d{2}$")
@@ -80,7 +82,53 @@ def _today_utc() -> date:
 
 def _configure_official_session(session: requests.Session) -> None:
     session.headers.setdefault("User-Agent", "Sanida-CNPJ-Lifecycle/2.0")
-    session.auth = (OFFICIAL_CNPJ_SHARE_TOKEN, "")
+    # The current Nextcloud public-share DAV contract does not require Basic
+    # authentication when the share has no password. Sending the public token
+    # preemptively as a Basic-auth username can route the request through the
+    # authenticated/public-share compatibility path and has become unreliable
+    # on newer Nextcloud versions.
+    session.auth = None
+    session.cookies.clear()
+
+
+def _prepare_public_dav_request(session: requests.Session) -> None:
+    # Public-share DAV requests are intentionally stateless. Clearing cookies
+    # avoids recent Nextcloud strict-cookie regressions from contaminating
+    # subsequent PROPFIND/GET attempts in the same requests.Session.
+    session.auth = None
+    session.cookies.clear()
+
+
+def _discover_public_share(
+    session: requests.Session,
+) -> tuple[str, str]:
+    """Resolve the current official public share and its CNPJ DAV root."""
+    _prepare_public_dav_request(session)
+    try:
+        response = session.get(
+            OFFICIAL_CNPJ_ROOT_URL,
+            timeout=DEFAULT_TIMEOUT,
+            allow_redirects=True,
+        )
+        response.raise_for_status()
+    except requests.RequestException as exc:
+        raise ReceitaOpenDataError(
+            f"Failed to resolve current Receita public share: {exc}"
+        ) from exc
+
+    match = PUBLIC_SHARE_RE.search(str(response.url))
+    if not match:
+        raise ReceitaOpenDataError(
+            "Receita root did not redirect to a recognizable public share: "
+            f"{response.url}"
+        )
+    token = match.group(1)
+    share_url = f"{OFFICIAL_CNPJ_HOST}/index.php/s/{token}"
+    dav_root = (
+        f"{OFFICIAL_CNPJ_HOST}/public.php/dav/files/{token}/"
+        f"{OFFICIAL_CNPJ_DATASET_PATH}/"
+    )
+    return share_url, dav_root
 
 
 def _dav_resources(xml_payload: bytes) -> list[dict[str, Any]]:
@@ -152,6 +200,7 @@ def _propfind(
 
     for attempt in range(retries):
         try:
+            _prepare_public_dav_request(session)
             response = session.request(
                 "PROPFIND",
                 url,
@@ -193,7 +242,8 @@ def discover_latest_release(
     _configure_official_session(sess)
 
     try:
-        root_resources = _propfind(sess, OFFICIAL_CNPJ_DAV_ROOT)
+        share_url, dav_root = _discover_public_share(sess)
+        root_resources = _propfind(sess, dav_root)
         periods = sorted(
             (
                 item["name"]
@@ -208,7 +258,7 @@ def discover_latest_release(
             )
 
         for period in periods:
-            release_url = urljoin(OFFICIAL_CNPJ_DAV_ROOT, period + "/")
+            release_url = urljoin(dav_root, period + "/")
             resources = _propfind(sess, release_url)
             files = {
                 item["name"]: item
@@ -223,7 +273,16 @@ def discover_latest_release(
                 ),
                 key=_establishment_sort_key,
             )
-            if "Motivos.zip" not in files or not establishments:
+            companies = sorted(
+                (
+                    name
+                    for name in files
+                    if COMPANY_FILE_RE.fullmatch(name)
+                ),
+                key=_establishment_sort_key,
+            )
+            required = {"Motivos.zip", "Cnaes.zip", "Naturezas.zip"}
+            if not required.issubset(files) or not establishments or not companies:
                 continue
 
             expected_indexes = list(range(len(establishments)))
@@ -233,8 +292,20 @@ def discover_latest_release(
             ]
             if actual_indexes != expected_indexes:
                 continue
+            company_indexes = [
+                int(re.search(r"(\d+)", name).group(1))
+                for name in companies
+            ]
+            if company_indexes != list(range(len(companies))):
+                continue
 
-            metadata_names = {"Motivos.zip", *establishments}
+            metadata_names = {
+                "Motivos.zip",
+                "Cnaes.zip",
+                "Naturezas.zip",
+                *companies,
+                *establishments,
+            }
             metadata = tuple(
                 {
                     "name": item["name"],
@@ -246,7 +317,7 @@ def discover_latest_release(
                 if item["name"] in metadata_names
             )
             return ReceitaOpenDataRelease(
-                base_url=OFFICIAL_CNPJ_SHARE_URL,
+                base_url=share_url,
                 release_url=release_url,
                 period=period,
                 establishment_files=tuple(establishments),
@@ -259,6 +330,36 @@ def discover_latest_release(
     raise ReceitaOpenDataError(
         "No complete monthly Receita CNPJ release with Motivos and Estabelecimentos found"
     )
+
+
+def release_fingerprint(release: ReceitaOpenDataRelease) -> str:
+    """Fingerprint the complete monthly Receita byte set consumed by v2."""
+    rows: list[dict[str, Any]] = []
+    for item in release.resource_metadata:
+        name = str(item.get("name") or "").strip()
+        etag = str(item.get("etag") or "").strip()
+        size = item.get("size")
+        if not name or not etag or size is None:
+            raise ReceitaOpenDataError(
+                "Receita release metadata is incomplete for fingerprinting"
+            )
+        rows.append(
+            {
+                "period": release.period,
+                "filename": name,
+                "etag": etag,
+                "size": int(size),
+            }
+        )
+    if not rows:
+        raise ReceitaOpenDataError("Receita release metadata is empty")
+    encoded = json.dumps(
+        sorted(rows, key=lambda row: row["filename"]),
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def _download_zip(
@@ -274,6 +375,7 @@ def _download_zip(
 
     for attempt in range(retries):
         try:
+            _prepare_public_dav_request(session)
             with session.get(
                 url,
                 timeout=DEFAULT_TIMEOUT,
@@ -312,6 +414,13 @@ def _first_csv_member(archive: zipfile.ZipFile) -> str:
     return csv_like[0] if csv_like else members[0]
 
 
+def _sanitized_csv_reader(raw: Any) -> csv.reader:
+    """Read Receita CSV rows while tolerating isolated NUL padding bytes."""
+    text = io.TextIOWrapper(raw, encoding="latin1", newline="")
+    sanitized = (line.replace("\x00", "") for line in text)
+    return csv.reader(sanitized, delimiter=";", quotechar='"')
+
+
 def load_reason_map(zip_path: Path) -> dict[str, str]:
     """Load Receita's official motive-code dictionary from Motivos.zip."""
     if not zipfile.is_zipfile(zip_path):
@@ -319,8 +428,7 @@ def load_reason_map(zip_path: Path) -> dict[str, str]:
     with zipfile.ZipFile(zip_path) as archive:
         member = _first_csv_member(archive)
         with archive.open(member) as raw:
-            text = io.TextIOWrapper(raw, encoding="latin1", newline="")
-            reader = csv.reader(text, delimiter=";", quotechar='"')
+            reader = _sanitized_csv_reader(raw)
             out: dict[str, str] = {}
             for row in reader:
                 if len(row) < 2:
@@ -360,8 +468,7 @@ def extract_target_lifecycle_from_zip(
     with zipfile.ZipFile(zip_path) as archive:
         member = _first_csv_member(archive)
         with archive.open(member) as raw:
-            text = io.TextIOWrapper(raw, encoding="latin1", newline="")
-            reader = csv.reader(text, delimiter=";", quotechar='"')
+            reader = _sanitized_csv_reader(raw)
             for row in reader:
                 if len(row) < 8:
                     continue

@@ -501,7 +501,16 @@ def test_incompatible_receita_cache_triggers_fresh_refresh(tmp_path: Path, monke
 
     monkeypatch.setattr(
         "api.v2.build_source_snapshot.discover_latest_release",
-        lambda: SimpleNamespace(period="2026-08"),
+        lambda: SimpleNamespace(
+            period="2026-08",
+            resource_metadata=(
+                {
+                    "name": "Motivos.zip",
+                    "etag": '"test-etag"',
+                    "size": 1,
+                },
+            ),
+        ),
     )
 
     def fake_refresh(*, output, release, entities):
