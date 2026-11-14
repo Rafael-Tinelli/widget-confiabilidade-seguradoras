@@ -24,6 +24,7 @@ MONTH = re.compile(r"20\d{2}-(?:0[1-9]|1[0-2])\Z")
 SHA = re.compile(r"[0-9a-f]{64}\Z")
 REPO = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\Z")
 ALLOWED_STATUS = {"validated_experimental", "requires_manual_review"}
+A05_PARSER_CONTRACT = "finalizadas-parser-2026-11-14-v2-a05"
 
 
 class HistoryError(RuntimeError):
@@ -71,6 +72,22 @@ def validate_manifest(path: Path) -> dict:
                 and month not in manifest["quality_alerts"]
                 and state.get("history_gap") is not True):
             raise HistoryError(f"Unrecorded manual review: {month}")
+        # Historic v1 evidence remains recoverable. The new A05 parser
+        # contract cannot silently omit or upgrade its completeness status.
+        if state.get("parser_version") == A05_PARSER_CONTRACT:
+            population = state.get("population_completeness")
+            if (not isinstance(population, dict)
+                    or population.get("status") != "not_demonstrated"
+                    or population.get("official_monthly_rows") is not None
+                    or not isinstance(population.get("warnings"), list)
+                    or any(not isinstance(item, str)
+                           for item in population["warnings"])):
+                raise HistoryError(f"A05 completeness claim invalid: {month}")
+            if population["warnings"] and (
+                state["status"] != "requires_manual_review"
+                or month not in manifest["quality_alerts"]
+            ):
+                raise HistoryError(f"Unrecorded A05 completeness alert: {month}")
     for field in ("revisions", "quality_alerts"):
         values = manifest[field]
         if any(not isinstance(x, str) or x not in months for x in values):
