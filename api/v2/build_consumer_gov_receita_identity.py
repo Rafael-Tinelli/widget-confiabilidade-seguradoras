@@ -16,7 +16,10 @@ from api.sources.receita_cnpj_cache_integrity import (
     checked_release_fingerprint,
     identity_cache_current,
 )
-from api.sources.receita_cnpj_identity import _release_files, build_filtered_identity_snapshot
+from api.sources.receita_cnpj_identity import (
+    _release_files,
+    build_filtered_identity_snapshot,
+)
 from api.sources.receita_cnpj_telemetry import emit, release_fingerprint, utcnow
 from api.utils.identifiers import normalize_cnpj_v2
 from api.utils.name_cleaner import normalize_name_key
