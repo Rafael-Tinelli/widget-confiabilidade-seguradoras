@@ -174,6 +174,44 @@ CPU dentro do intervalo autorizado, mas ainda recupera o artefato do
 GitHub e o republica para manter a prova entre runs; não é uma solução
 de armazenamento permanente nem integra dados à Conduta.
 
+## A05 — completude populacional: evidência e limites
+
+O observador distingue **integridade estrutural** de **completude populacional**.
+Um ZIP válido, CRC íntegro, CSV com 19 colunas, SHA-256 calculado,
+`tamanhoArquivo` igual ao ZIP e cobertura de todos os dias do mês **não
+certificam** que todas as reclamações finalizadas foram exportadas.
+
+- O parser registra a distribuição das **datas de finalização de todas as
+  linhas**, não apenas o segmento de seguros: quantidade de dias observados,
+  primeiro/último dia, dias ausentes e maior sequência consecutiva ausente.
+- Quando há **ao menos 1.000 linhas**, ausência de **três dias consecutivos**
+  gera `calendar_coverage_gap_requires_review`. É um **sinal heurístico
+  conservador**, não prova de truncamento; o arquivo é observado, mas o mês
+  fica `requires_manual_review` com `quality_alerts` persistente.
+- Compara o tamanho real do ZIP ao tamanho anunciado pelo JSON oficial e o
+  SHA-256 ao hash local fixado, se houver. Divergências geram alertas,
+  `requires_manual_review` e jamais resultam em aprovação automática.
+- Confronta o número de linhas com a **observação histórica da mesma URL e
+  código de publicação**. Mudança registrada aciona revisão; contagens
+  históricas do próprio observador não são consideradas totais oficiais
+  independentes.
+- O contrato `population_completeness.status=not_demonstrated` e
+  `official_monthly_rows=null` é deliberado: **não foi identificado, na
+  fonte oficial contratada, um total mensal independente verificável**,
+  nem checksum oficial independente para confrontar a população exportada.
+  Não há estado `complete` ou `certified` gerado por esta rotina.
+- `validated_experimental`, quando nenhum alerta é acionado, significa
+  apenas que **as verificações experimentais aplicáveis passaram**. A fonte
+  continua `experimental_no_publication`, fora da Conduta. CSVs coerentes
+  mas incompletos (por exemplo, contendo linhas de todos os dias) ainda
+  podem escapar aos sinais heurísticos.
+
+As alterações do A05 incrementam `PARSER_CONTRACT_VERSION`: um derivado
+anterior à instrumentação não pode ser reutilizado pelo A06 como se já
+contivesse esses controles. O primeiro ciclo na nova versão fará download
+e reprocessamento quando a fonte oficial estiver disponível. O A05 não
+autoriza promoção para a Conduta e não introduz uma nova origem de dados.
+
 ## Limitações verificadas na auditoria de 12–13/11/2026
 
 - **Achado histórico A02 corrigido na PR #56 (sujeito a CI e merge):**
@@ -187,8 +225,9 @@ de armazenamento permanente nem integra dados à Conduta.
   sem download. Entradas oficiais da mesma competência com metadados
   conflitantes falham fechado, mesmo com código idêntico.
 - Um CSV interrompido entre registros completos, ainda acima do limite mínimo,
-  pode passar pelos controles estruturais. SHA-256 identifica os bytes
-  adquiridos; não comprova que a origem forneceu a população completa.
+  pode passar pelos controles estruturais. O A05 agora aponta lacunas temporais
+  e divergências de metadados/observação histórica, mas **não demonstra
+  completude** na ausência de referência oficial independente.
 - As provas de setembro/outubro ocorreram na branch experimental. A busca
   automática continua filtrando `main` e não as promove por conveniência.
   Artefatos parciais não são tratados como histórico válido. Sem sucessos
