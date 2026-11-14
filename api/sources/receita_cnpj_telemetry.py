@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-FILE_CATEGORY = re.compile(r"^(Empresas|Estabelecimentos)(\d+)\.zip$", re.I)
+FILE_CATEGORY = re.compile(r"^(Empresas|Estabelecimentos)(\d+)\.zip$", re.IGNORECASE)
 METADATA_KEYS = ("name", "size", "etag", "last_modified")
 SAFE_FIELDS = frozenset({
     "phase", "category", "file_index", "attempts", "retry_wait_s",
