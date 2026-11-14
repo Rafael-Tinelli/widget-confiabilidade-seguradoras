@@ -622,3 +622,92 @@ def test_invalid_official_json_is_not_retried(tmp_path, monkeypatch):
             catalog, feed_url=obs.OFFICIAL_CATALOG_URL, http=session,
         )
     assert len(session.calls) == 1
+
+
+def test_a07_second_month_failure_does_not_promote_partial_bundle(tmp_path, monkeypatch):
+    """Month one must not leak into the accepted output when month two fails."""
+    monkeypatch.setattr(obs, "MIN_CSV_BYTES", 0)
+    september = _zip(
+        tmp_path / "sep.zip", [_row(data_finalizacao="17/09/2026")],
+        member="finalizadas_2026-09.csv",
+    )
+    october = _zip(tmp_path / "oct.zip", [_row()])
+    catalog = tmp_path / "catalog.json"
+    catalog.write_text('{"publications":[]}', encoding="utf-8")
+    monkeypatch.setattr(obs, "read_catalog", lambda *_args, **_kwargs: [
+        {"month": "2026-09", "url": URL, "expected_sha256": ""},
+        {"month": "2026-10", "url": URL, "expected_sha256": ""},
+    ])
+    calls = []
+
+    def download(_url, target, http=None):
+        calls.append(target.parent.name)
+        if len(calls) == 2:
+            raise obs.ObservationalError("partial second month")
+        shutil.copyfile(september, target)
+        return obs.sha256(september)
+
+    monkeypatch.setattr(obs, "download_direct", download)
+    output = tmp_path / "accepted"
+    with pytest.raises(obs.ObservationalError, match="partial second month"):
+        obs.main(["--catalog", str(catalog), "--output-dir", str(output)])
+    assert calls == ["2026-09", "2026-10"]
+    assert not output.exists()
+    assert not list(tmp_path.glob(".finalizadas-stage-*"))
+    assert october.exists()
+
+
+def test_a07_accepted_output_cannot_be_replaced(tmp_path, monkeypatch):
+    catalog = tmp_path / "catalog.json"
+    catalog.write_text('{"publications":[]}', encoding="utf-8")
+    output = tmp_path / "accepted"
+    output.mkdir()
+    sentinel = output / "manifest.json"
+    sentinel.write_bytes(b"previous valid manifest")
+    monkeypatch.setattr(obs, "read_catalog", lambda *_a, **_k:
+                        pytest.fail("Existing bundle must be rejected before acquisition"))
+    with pytest.raises(obs.ObservationalError, match="sobrescrita proibida"):
+        obs.main(["--catalog", str(catalog), "--output-dir", str(output)])
+    assert sentinel.read_bytes() == b"previous valid manifest"
+    assert not list(tmp_path.glob(".finalizadas-stage-*"))
+
+
+def test_a07_manifest_write_failure_leaves_no_accepted_bundle(tmp_path, monkeypatch):
+    monkeypatch.setattr(obs, "MIN_CSV_BYTES", 0)
+    archive = _zip(tmp_path / "src.zip", [_row()])
+    catalog = tmp_path / "catalog.json"
+    catalog.write_text(json.dumps({"publications": [{"month": "2026-10", "url": URL}]}))
+    monkeypatch.setattr(obs, "download_direct", lambda _url, path, http=None: (
+        shutil.copyfile(archive, path), obs.sha256(archive)
+    )[1])
+    original = obs._write_json
+
+    def interrupted_write(path, data):
+        if path.name == "manifest.json":
+            raise OSError("simulated interruption before commit")
+        return original(path, data)
+
+    monkeypatch.setattr(obs, "_write_json", interrupted_write)
+    output = tmp_path / "accepted"
+    with pytest.raises(OSError, match="simulated interruption"):
+        obs.main(["--catalog", str(catalog), "--output-dir", str(output)])
+    assert not output.exists()
+    assert not list(tmp_path.glob(".finalizadas-stage-*"))
+
+
+def test_a07_protection_anchored_to_repository_not_current_cwd(tmp_path, monkeypatch):
+    checkout = Path(obs.__file__).resolve().parents[2]
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(obs.ObservationalError, match="protegida"):
+        obs._safe_output(checkout / "data" / "derived" / "untrusted.json")
+    (tmp_path / "data" / "derived").mkdir(parents=True)
+    (tmp_path / "link").symlink_to(tmp_path / "data" / "derived", target_is_directory=True)
+    with pytest.raises(obs.ObservationalError, match="protegida"):
+        obs._safe_output(tmp_path / "link" / "bypass.json")
+
+
+def test_a07_direct_download_guard_blocks_protected_checkout(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    checkout = Path(obs.__file__).resolve().parents[2]
+    with pytest.raises(obs.ObservationalError, match="protegida"):
+        obs.download_direct(URL, checkout / "data" / "derived" / "malicious.zip")
