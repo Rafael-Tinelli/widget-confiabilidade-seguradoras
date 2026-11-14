@@ -7,8 +7,8 @@ from pathlib import Path
 from typing import Any
 
 from api.sources.receita_cnpj_bulk import discover_latest_release
-from api.sources.receita_cnpj_telemetry import emit, release_fingerprint, utcnow
 from api.sources.receita_cnpj_identity import build_filtered_identity_snapshot
+from api.sources.receita_cnpj_telemetry import emit, release_fingerprint, utcnow
 from api.utils.identifiers import normalize_cnpj_v2
 from api.utils.name_cleaner import normalize_name_key
 from api.v2.build_consumer_gov_157_experiment import ELIGIBILITY_PATH
