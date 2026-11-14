@@ -1,0 +1,223 @@
+name: A05 one-time isolated operational proof
+
+# Throwaway PR-only workflow. Never merged; does not change production.
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/a05-one-time-proof.yml"
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  prove-a05:
+    if: github.event.pull_request.head.ref == 'ops/a05-operational-proof-20261114' && github.event.pull_request.base.ref == 'main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout PR merge (production code unchanged)
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Assert exact integrated A05 production base
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$BASE_SHA" = "fb22926c5668f22a1e8785635b46e4c277e3f69c"
+          test -f api/probes/finalizadas_completeness.py
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install isolated observational dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Retrieve prior successful official ZIP evidence (read-only)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/a05-historical"
+          gh run download 43530557942 -R "$GITHUB_REPOSITORY" \
+            -n finalizadas-observational-43530557942-a1 \
+            -D "$RUNNER_TEMP/a05-historical"
+          test -s "$RUNNER_TEMP/a05-historical/manifest.json"
+          test -s "$RUNNER_TEMP/a05-historical/2026-09/finalizadas_2026-09.zip"
+          test -s "$RUNNER_TEMP/a05-historical/2026-10/finalizadas_2026-10.zip"
+
+      - name: Replay integrated A05 on real official ZIP bytes
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          import shutil
+          from pathlib import Path
+
+          from api.probes import finalizadas_observational as obs
+          from api.probes import finalizadas_history as history
+
+          temp = Path(os.environ["RUNNER_TEMP"])
+          prior = temp / "a05-historical"
+          original = history.validate_manifest(prior / "manifest.json")
+          observed = {"2026-09": 358865, "2026-10": 414538}
+          items = []
+          by_url = {}
+          for month in sorted(observed):
+              state = original["months"][month]
+              archive = prior / month / f"finalizadas_{month}.zip"
+              assert obs.sha256(archive) == state["zip_sha256"]
+              assert archive.stat().st_size == state["zip_bytes"]
+              item = {
+                  "month": month, "url": state["source_url"],
+                  "expected_sha256": state["zip_sha256"],
+                  "announced_bytes": state["announced_bytes"],
+                  "publication_code": state["publication_code"],
+                  "published_at": state["published_at"],
+                  "modified_at": state["modified_at"],
+                  "catalog_status": "listed",
+                  "discovery": "official_publicacoes_json",
+              }
+              items.append(item)
+              by_url[state["source_url"]] = archive
+
+          # Replay recorded official publications/bytes, NOT a live catalog.
+          obs.read_catalog = lambda *args, **kwargs: items
+          def replay_download(url, destination, http=None):
+              shutil.copyfile(by_url[url], destination)
+              return obs.sha256(destination)
+          obs.download_direct = replay_download
+
+          target = temp / "a05-replayed"
+          result = obs.main([
+              "--catalog", ".github/finalizadas-publications.json",
+              "--previous-manifest", str(prior / "manifest.json"),
+              "--output-dir", str(target), "--latest-months", "2",
+          ])
+          assert result == 0
+          manifest = history.validate_manifest(target / "manifest.json")
+          proof = {
+              "mode": "replay_historical_official_zip_not_live",
+              "integrated_code_base": "fb22926c5668f22a1e8785635b46e4c277e3f69c",
+              "parser_contract": obs.PARSER_CONTRACT_VERSION,
+              "months": {},
+          }
+          for month, count in observed.items():
+              evidence = manifest["months"][month]
+              completeness = evidence["population_completeness"]
+              assert evidence["rows_total"] == count
+              assert completeness["status"] == "not_demonstrated"
+              assert completeness["official_monthly_rows"] is None
+              assert completeness["calendar"]["distinct_days"] == (30 if month.endswith("-09") else 31)
+              assert not completeness["warnings"]
+              assert completeness["checks"]["published_zip_bytes_match"] is True
+              assert completeness["checks"]["pinned_observation_sha256_match"] is True
+              assert completeness["checks"]["previous_observation_rows_match"] is True
+              assert evidence["parser_version"] == obs.PARSER_CONTRACT_VERSION
+              assert evidence["acquisition_mode"] == "current_http_fetch"
+              proof["months"][month] = {
+                  "rows": count, "status": evidence["status"],
+                  "completeness": completeness,
+                  "sha256": evidence["zip_sha256"],
+              }
+          assert manifest["months"]["2026-09"]["status"] == "requires_manual_review"
+          assert manifest["months"]["2026-10"]["status"] == "validated_experimental"
+          report = temp / "a05-report"
+          report.mkdir(exist_ok=True)
+          (report / "replay-a05.json").write_text(
+              json.dumps(proof, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+          )
+          shutil.copyfile(target / "manifest.json", report / "replay-manifest.json")
+          print("A05_REPLAY_VALIDATED: " + json.dumps(
+              {m: a["rows"] for m, a in proof["months"].items()}
+          ))
+          PY
+
+      - name: Attempt live official acquisition using production observer
+        id: live
+        continue-on-error: true
+        shell: bash
+        timeout-minutes: 8
+        run: |
+          set -euo pipefail
+          python -m api.probes.finalizadas_history restore \
+            --repository "$GITHUB_REPOSITORY" \
+            --output-dir "$RUNNER_TEMP/a05-previous"
+          extra=(
+            --feed-url 'https://www.consumidor.gov.br/pages/publicacao/externo/publicacoes.json?indicadorTipoPublicacao=2'
+            --recovery-report "$RUNNER_TEMP/a05-previous/recovery.json"
+            --reuse-dir "$RUNNER_TEMP/a05-verified-reuse"
+          )
+          if [[ -f "$RUNNER_TEMP/a05-previous/manifest.json" ]]; then
+            extra+=(--previous-manifest "$RUNNER_TEMP/a05-previous/manifest.json")
+          fi
+          python -m api.probes.finalizadas_observational \
+            --catalog .github/finalizadas-publications.json \
+            --output-dir "$RUNNER_TEMP/a05-live" --latest-months 2 "${extra[@]}"
+          python -m api.probes.finalizadas_history seal \
+            --manifest "$RUNNER_TEMP/a05-live/manifest.json" \
+            --output-dir "$RUNNER_TEMP/a05-live-sealed" \
+            --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT" \
+            --head-sha "$GITHUB_SHA"
+
+      - name: Preserve only small A05 results, not the source ZIPs
+        if: always()
+        env:
+          LIVE_OUTCOME: ${{ steps.live.outcome }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/a05-report"
+          python - <<'PY'
+          import json
+          import os
+          import shutil
+          from pathlib import Path
+          tmp = Path(os.environ["RUNNER_TEMP"])
+          report_dir = tmp / "a05-report"
+          live = tmp / "a05-live" / "manifest.json"
+          status = {
+              "live_step_outcome": os.environ["LIVE_OUTCOME"],
+              "live_manifest_exists": live.is_file(),
+              "live_months": {},
+              "replay_result_exists": (report_dir / "replay-a05.json").is_file(),
+          }
+          if live.is_file():
+              payload = json.loads(live.read_text(encoding="utf-8"))
+              for month, value in payload.get("months", {}).items():
+                  status["live_months"][month] = {
+                      "rows_total": value.get("rows_total"),
+                      "acquisition_mode": value.get("acquisition_mode"),
+                      "status": value.get("status"),
+                      "completeness": value.get("population_completeness"),
+                  }
+              shutil.copyfile(live, report_dir / "live-manifest.json")
+          (report_dir / "operational-status.json").write_text(
+              json.dumps(status, ensure_ascii=False, indent=2) + "\n",
+              encoding="utf-8",
+          )
+          print("A05_OPERATIONAL_STATUS: " + json.dumps(status))
+          PY
+          {
+            echo "## Isolated A05 operational proof"
+            echo "- Replay from verified earlier official artifact: see replay-a05.json"
+            echo "- Live run outcome: $LIVE_OUTCOME"
+            echo "- No Conduta, Gate 4, HostGator or publication was triggered"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload A05 metadata evidence only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: a05-operational-evidence-${{ github.run_id }}
+          path: ${{ runner.temp }}/a05-report/
+          retention-days: 14
+          if-no-files-found: error
