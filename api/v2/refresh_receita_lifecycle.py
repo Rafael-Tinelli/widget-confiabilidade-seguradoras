@@ -17,6 +17,7 @@ from api.sources.receita_cnpj_bulk import (
     discover_latest_release,
     refresh_filtered_lifecycle,
 )
+from api.sources.receita_cnpj_cache_integrity import lifecycle_cache_current
 from api.sources.ses import extract_ses_master_and_financials
 from api.sources.susep_licensed import fetch_licensed_entities
 from api.sources.susep_sandbox import fetch_sandbox_participants
@@ -55,6 +56,16 @@ def _existing_metadata(
         str(meta.get("gate4_cache_contract_version") or "").strip() or None
     )
     return period, target_hash, contract_version
+
+
+def _snapshot_release_metadata_current(path: Path, release: ReceitaOpenDataRelease) -> bool:
+    if not path.is_file():
+        return False
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return lifecycle_cache_current(payload, release)
 
 
 def regulatory_target_cnpjs(entities: list[dict[str, Any]]) -> list[str]:
@@ -243,6 +254,7 @@ def main() -> None:
         and existing_contract_version == RECEITA_LIFECYCLE_CACHE_CONTRACT_VERSION
         and existing_period == release.period
         and existing_target_hash == current_target_hash
+        and _snapshot_release_metadata_current(args.output, release)
     ):
         print(
             "Receita lifecycle refresh skipped: "

@@ -16,6 +16,8 @@ from api.sources.receita_cnpj import (
     load_filtered_lifecycle_snapshot,
 )
 from api.sources.receita_cnpj_bulk import discover_latest_release
+from api.sources.receita_cnpj_cache_integrity import lifecycle_cache_current
+from api.sources.receita_cnpj_telemetry import emit
 from api.sources.ses import (
     SES_LISTAEMPRESAS_URL,
     SES_ZIP_URL,
@@ -593,7 +595,9 @@ def _receita_snapshot(
             cached_period = str(
                 (cached_payload.get("source") or {}).get("reference_period") or ""
             )
-            if cached_period == release.period:
+            if cached_period == release.period and lifecycle_cache_current(
+                cached_payload, release,
+            ):
                 try:
                     fetched_at, migrated = _materialize_compatible_receita_cache(
                         cache=cache,
@@ -641,6 +645,15 @@ def _receita_snapshot(
                         )
                         return AcquisitionResult(observation=observation, used_cache=True)
 
+        if cache.content_path.is_file():
+            emit(
+                "cache_decision", phase="lifecycle",
+                reference_period=release.period,
+                cache_decision=(
+                    "miss_release_fingerprint"
+                    if cached_period == release.period else "miss_period"
+                ),
+            )
         temp = destination.with_suffix(destination.suffix + ".incoming")
         if temp.exists():
             temp.unlink()
