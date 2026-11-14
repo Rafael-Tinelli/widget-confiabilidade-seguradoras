@@ -10,7 +10,9 @@ import argparse
 import json
 import os
 import shutil
+import subprocess
 import tempfile
+import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -165,8 +167,9 @@ def main() -> int:
             args.repository, args.recovery_report, args.previous_manifest,
             args.output_dir,
         )
-    except (OSError, ValueError, history.HistoryError,
-            json.JSONDecodeError, shutil.Error) as exc:
+    except (OSError, ValueError, history.HistoryError, shutil.Error,
+            subprocess.CalledProcessError, subprocess.TimeoutExpired,
+            zipfile.BadZipFile) as exc:
         # The cache is an optimization, never an alternative truth source.
         print(f"REUSE_UNAVAILABLE: {type(exc).__name__}: {exc}")
         months = []
