@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from api.sources.receita_cnpj_bulk import discover_latest_release
+from api.sources.receita_cnpj_telemetry import emit, release_fingerprint, utcnow
 from api.sources.receita_cnpj_identity import build_filtered_identity_snapshot
 from api.utils.identifiers import normalize_cnpj_v2
 from api.utils.name_cleaner import normalize_name_key
@@ -96,6 +97,64 @@ def _existing_cache_key(path: Path) -> dict[str, str] | None:
     }
 
 
+def _cache_decision(
+    output: Path, existing: dict[str, str] | None,
+    expected: dict[str, str],
+) -> str:
+    """Explain existing eligibility exactly; do not change the cache key."""
+    if not output.is_file():
+        return "miss_snapshot"
+    if existing is None:
+        return "miss_contract"
+    for field, reason in (
+        ("version", "miss_contract"),
+        ("reference_period", "miss_period"),
+        ("target_universe_hash", "miss_universe_hash"),
+        ("target_universe_hash_method", "miss_contract"),
+        ("unresolved_provider_hash", "miss_provider_hash"),
+    ):
+        if existing.get(field) != expected.get(field):
+            return reason
+    return "hit"
+
+
+def _write_a09_marker(
+    output: Path, *, release: Any, decision: str,
+    expected_key: dict[str, str], checked_at: str,
+    snapshot: dict[str, Any] | None,
+) -> None:
+    """Optional run-scoped metadata; never a replacement for source content."""
+    marker = output.with_suffix(".a09.json")
+    fingerprint = release_fingerprint(
+        release.period, list(release.resource_metadata),
+    )
+    source = (snapshot or {}).get("source") or {}
+    payload = {
+        "schema": "receita-a09-1-observation-v1",
+        "observed_release_period": release.period,
+        "observed_release_url": release.release_url,
+        "release_checked_at": checked_at,
+        "catalog_fingerprint": fingerprint,
+        "catalog_fingerprint_scope": "discovery_estabelecimentos_motivos",
+        "snapshot_reference_period": source.get("reference_period"),
+        "snapshot_release_fingerprint": source.get("release_fingerprint"),
+        "cache_decision": decision,
+        "cache_contract_version": CACHE_KEY_VERSION,
+        "target_universe_hash": expected_key["target_universe_hash"],
+        "unresolved_provider_hash": expected_key["unresolved_provider_hash"],
+    }
+    try:
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        temp = marker.with_suffix(".a09.tmp")
+        temp.write_text(
+            json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        temp.replace(marker)
+    except OSError:
+        emit("provenance_write", state="unavailable")
+
+
 def _load_inputs() -> tuple[list[dict[str, Any]], list[str]]:
     eligibility = json.loads(ELIGIBILITY_PATH.read_text(encoding="utf-8"))
     consumer = json.loads(CONSUMER_IDENTITY_PATH.read_text(encoding="utf-8"))
@@ -125,17 +184,34 @@ def build_snapshot(
     output: Path = DEFAULT_RECEITA_IDENTITY_SNAPSHOT,
     force: bool = False,
 ) -> dict[str, Any] | None:
+    marker = output.with_suffix(".a09.json")
+    marker.unlink(missing_ok=True)
     entities, providers = _load_inputs()
     universe_hash = target_universe_hash(entities)
     provider_hash = unresolved_provider_hash(providers)
     release = discover_latest_release()
+    checked_at = utcnow()
     expected_key = _cache_key(
         reference_period=release.period,
         universe_hash=universe_hash,
         provider_hash=provider_hash,
     )
     existing_key = _existing_cache_key(output)
+    decision = _cache_decision(output, existing_key, expected_key)
+    if force:
+        decision = "forced_rebuild"
+    emit(
+        "cache_decision", cache_decision=decision,
+        reference_period=release.period,
+        target_count=len(entities), provider_count=len(providers),
+    )
     if not force and existing_key == expected_key:
+        prior = json.loads(output.read_text(encoding="utf-8"))
+        _write_a09_marker(
+            output, release=release, decision=decision,
+            expected_key=expected_key, checked_at=checked_at,
+            snapshot=prior,
+        )
         print(
             "Receita Consumer.gov identity build skipped: stored snapshot cache key "
             "matches current release, CNPJ target population and unresolved providers"
@@ -151,6 +227,11 @@ def build_snapshot(
     meta["gate4_cache_key"] = expected_key
     meta["target_universe_hash_method"] = TARGET_UNIVERSE_HASH_METHOD
     write_snapshot(payload, output)
+    _write_a09_marker(
+        output, release=release, decision=decision,
+        expected_key=expected_key, checked_at=checked_at,
+        snapshot=payload,
+    )
     return payload
 
 
