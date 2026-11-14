@@ -26,6 +26,8 @@ from api.v2.build_consumer_gov_receita_identity import (
     unresolved_provider_hash,
 )
 from api.v2.conduct_receita_cache_fallback import materialize_additions_only_cache
+from api.v2.receita_a09_provenance import try_write_compact_provenance
+from api.sources.receita_cnpj_telemetry import emit
 from api.v2.consumer_gov_receita_resolution import (
     DEFAULT_RECEITA_IDENTITY_SNAPSHOT,
 )
@@ -471,6 +473,8 @@ def _receita_observation(*, cache_dir: Path) -> SourceObservation:
         try:
             cache.materialize(DEFAULT_RECEITA_IDENTITY_SNAPSHOT)
         except (OSError, ValueError, SourceCacheError):
+            emit("cache_integrity", cache_decision="invalid_integrity",
+                 state="materialization_failed")
             DEFAULT_RECEITA_IDENTITY_SNAPSHOT.unlink(missing_ok=True)
 
     try:
@@ -591,6 +595,9 @@ def build_conduct_source_snapshot(
     )
     receita = _receita_observation(cache_dir=cache_dir)
     receita_lineage = receita.to_lineage(context)
+    try_write_compact_provenance(
+        DEFAULT_RECEITA_IDENTITY_SNAPSHOT, receita_lineage,
+    )
     finish_source_acquisition(
         started=receita_started,
         source_id="receita_consumer_identity",
