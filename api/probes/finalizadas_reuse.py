@@ -155,6 +155,19 @@ def prepare_cache(repository: str, recovery: Path, manifest_path: Path,
         return valid
 
 
+def try_prepare_cache(repository: str, recovery: Path, manifest_path: Path,
+                      output_dir: Path) -> list[str]:
+    """Optional optimization: any failure means direct official acquisition."""
+    try:
+        return prepare_cache(repository, recovery, manifest_path, output_dir)
+    except (OSError, ValueError, TypeError, KeyError, IndexError,
+            history.HistoryError, shutil.Error,
+            subprocess.CalledProcessError, subprocess.TimeoutExpired,
+            zipfile.BadZipFile) as exc:
+        print(f"REUSE_UNAVAILABLE: {type(exc).__name__}: {exc}")
+        return []
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repository", required=True)
@@ -162,17 +175,10 @@ def main() -> int:
     parser.add_argument("--previous-manifest", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     args = parser.parse_args()
-    try:
-        months = prepare_cache(
-            args.repository, args.recovery_report, args.previous_manifest,
-            args.output_dir,
-        )
-    except (OSError, ValueError, history.HistoryError, shutil.Error,
-            subprocess.CalledProcessError, subprocess.TimeoutExpired,
-            zipfile.BadZipFile) as exc:
-        # The cache is an optimization, never an alternative truth source.
-        print(f"REUSE_UNAVAILABLE: {type(exc).__name__}: {exc}")
-        months = []
+    months = try_prepare_cache(
+        args.repository, args.recovery_report, args.previous_manifest,
+        args.output_dir,
+    )
     print(json.dumps({"reuse_verified_months": months,
                       "state": "local_verified_only" if months else "no_reuse"}))
     return 0
