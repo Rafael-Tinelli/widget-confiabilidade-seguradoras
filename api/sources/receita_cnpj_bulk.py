@@ -17,11 +17,11 @@ from urllib.parse import urljoin
 import requests
 
 from api.sources.receita_cnpj import normalize_receita_lifecycle_record
-from api.sources.receita_cnpj_telemetry import emit, file_category
 from api.sources.receita_cnpj_cache_integrity import (
     FINGERPRINT_METHOD,
     lifecycle_release_fingerprint,
 )
+from api.sources.receita_cnpj_telemetry import emit, file_category
 from api.utils.identifiers import normalize_cnpj_v2
 
 OFFICIAL_CNPJ_HOST = "https://arquivos.receitafederal.gov.br"

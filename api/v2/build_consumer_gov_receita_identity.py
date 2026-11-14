@@ -3,10 +3,10 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-
-import requests
 from pathlib import Path
 from typing import Any
+
+import requests
 
 from api.sources.receita_cnpj_bulk import (
     _configure_official_session,

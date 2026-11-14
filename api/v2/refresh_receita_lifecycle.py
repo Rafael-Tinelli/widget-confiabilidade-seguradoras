@@ -12,12 +12,12 @@ from api.sources.receita_cnpj import (
     load_verified_lifecycle_snapshot,
     validate_verified_snapshot_against_bulk,
 )
-from api.sources.receita_cnpj_cache_integrity import lifecycle_cache_current
 from api.sources.receita_cnpj_bulk import (
     ReceitaOpenDataRelease,
     discover_latest_release,
     refresh_filtered_lifecycle,
 )
+from api.sources.receita_cnpj_cache_integrity import lifecycle_cache_current
 from api.sources.ses import extract_ses_master_and_financials
 from api.sources.susep_licensed import fetch_licensed_entities
 from api.sources.susep_sandbox import fetch_sandbox_participants
