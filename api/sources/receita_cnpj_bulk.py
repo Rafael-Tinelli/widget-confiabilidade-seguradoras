@@ -17,6 +17,7 @@ from urllib.parse import urljoin
 import requests
 
 from api.sources.receita_cnpj import normalize_receita_lifecycle_record
+from api.sources.receita_cnpj_telemetry import emit, file_category
 from api.utils.identifiers import normalize_cnpj_v2
 
 OFFICIAL_CNPJ_HOST = "https://arquivos.receitafederal.gov.br"
@@ -271,8 +272,13 @@ def _download_zip(
     destination.parent.mkdir(parents=True, exist_ok=True)
     temp = destination.with_suffix(destination.suffix + ".part")
     last_error: Exception | None = None
+    category, index = file_category(destination.name)
+    started = time.perf_counter()
+    retry_wait = 0.0
+    total_transferred = 0
 
     for attempt in range(retries):
+        transferred = 0
         try:
             with session.get(
                 url,
@@ -284,17 +290,36 @@ def _download_zip(
                 with temp.open("wb") as handle:
                     for chunk in response.iter_content(chunk_size=8 * 1024 * 1024):
                         if chunk:
+                            transferred += len(chunk)
+                            total_transferred += len(chunk)
                             handle.write(chunk)
             if not zipfile.is_zipfile(temp):
                 raise ReceitaOpenDataError(f"Downloaded file is not a valid ZIP: {url}")
             temp.replace(destination)
+            emit(
+                "zip_download", category=category, file_index=index,
+                attempts=attempt + 1, retry_wait_s=round(retry_wait, 3),
+                elapsed_download_s=round(time.perf_counter() - started, 3),
+                received_bytes=transferred,
+                transferred_bytes_total=total_transferred,
+                zip_valid=True, state="success",
+            )
             return destination
         except (requests.RequestException, OSError, ReceitaOpenDataError) as exc:
             last_error = exc
             temp.unlink(missing_ok=True)
             if attempt + 1 < retries:
-                time.sleep(min(2 ** attempt, 8))
+                delay = min(2 ** attempt, 8)
+                retry_wait += delay
+                time.sleep(delay)
 
+    emit(
+        "zip_download", category=category, file_index=index,
+        attempts=retries, retry_wait_s=round(retry_wait, 3),
+        elapsed_download_s=round(time.perf_counter() - started, 3),
+        received_bytes=0, transferred_bytes_total=total_transferred,
+        zip_valid=False, state="failure",
+    )
     raise ReceitaOpenDataError(
         f"Failed to download official Receita ZIP {url}: {last_error}"
     )

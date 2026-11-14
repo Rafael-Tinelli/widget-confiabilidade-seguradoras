@@ -13,6 +13,7 @@ import requests
 from api import build_consumidor_gov as consumer_gov_build
 from api.sources import consumer_gov_direct
 from api.sources.receita_cnpj import RECEITA_CNPJ_OPEN_DATA_URL
+from api.sources.receita_cnpj_telemetry import emit
 from api.v2.build_consumer_gov_identity_experiment import (
     OUTPUT_PATH as CONSUMER_IDENTITY_PATH,
 )
@@ -31,6 +32,7 @@ from api.v2.consumer_gov_receita_resolution import (
 )
 from api.v2.consumer_gov_window import ConsumerGovWindowError, load_active_window
 from api.v2.generation import BuildContext
+from api.v2.receita_a09_provenance import try_write_compact_provenance
 from api.v2.source_cache import (
     CachedSource,
     SourceCacheError,
@@ -470,7 +472,13 @@ def _receita_observation(*, cache_dir: Path) -> SourceObservation:
     ):
         try:
             cache.materialize(DEFAULT_RECEITA_IDENTITY_SNAPSHOT)
-        except (OSError, ValueError, SourceCacheError):
+        except SourceCacheError:
+            emit("cache_integrity", cache_decision="cache_validation_failed",
+                 state="materialization_failed")
+            DEFAULT_RECEITA_IDENTITY_SNAPSHOT.unlink(missing_ok=True)
+        except (OSError, ValueError):
+            emit("cache_integrity", cache_decision="cache_io_or_payload_error",
+                 state="materialization_failed")
             DEFAULT_RECEITA_IDENTITY_SNAPSHOT.unlink(missing_ok=True)
 
     try:
@@ -591,6 +599,9 @@ def build_conduct_source_snapshot(
     )
     receita = _receita_observation(cache_dir=cache_dir)
     receita_lineage = receita.to_lineage(context)
+    try_write_compact_provenance(
+        DEFAULT_RECEITA_IDENTITY_SNAPSHOT, receita_lineage,
+    )
     finish_source_acquisition(
         started=receita_started,
         source_id="receita_consumer_identity",

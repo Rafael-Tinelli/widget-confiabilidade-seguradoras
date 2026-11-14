@@ -4,6 +4,7 @@ import csv
 import io
 import re
 import tempfile
+import time
 import zipfile
 from collections import defaultdict
 from collections.abc import Iterable
@@ -24,6 +25,7 @@ from api.sources.receita_cnpj_bulk import (
     _propfind,
     discover_latest_release,
 )
+from api.sources.receita_cnpj_telemetry import emit, release_fingerprint, utcnow
 from api.utils.identifiers import normalize_cnpj_v2
 from api.utils.name_cleaner import normalize_name_key
 
@@ -331,11 +333,27 @@ def build_filtered_identity_snapshot(
     target_bases = {cnpj[:8] for cnpj in targets}
     queries = _build_query_indexes(provider_names)
 
+    acquisition_started = time.perf_counter()
     own_session = session is None
     sess = session or requests.Session()
     _configure_official_session(sess)
     resolved_release = release or discover_latest_release(sess)
     files = _release_files(sess, resolved_release)
+    release_checked_at = utcnow()
+    selected = [
+        files["metadata"][name]
+        for name in [*files["companies"], *resolved_release.establishment_files,
+                     files["cnaes"], files["legal_natures"]]
+    ]
+    metadata_fingerprint = release_fingerprint(resolved_release.period, selected)
+    emit(
+        "release_discovery", reference_period=resolved_release.period,
+        elapsed_s=round(time.perf_counter() - acquisition_started, 3),
+        release_fingerprint=metadata_fingerprint,
+        fingerprint_method="period_filename_size_etag_last_modified_sha256_metadata",
+        file_count=len(selected), company_partitions=len(files["companies"]),
+        establishment_partitions=len(resolved_release.establishment_files),
+    )
 
     temp_context = None
     if work_dir is None:
@@ -346,12 +364,20 @@ def build_filtered_identity_snapshot(
         root.mkdir(parents=True, exist_ok=True)
 
     try:
+        dictionaries_started = time.perf_counter()
         cnae_name = str(files["cnaes"])
         nature_name = str(files["legal_natures"])
         cnae_zip = _download_zip(sess, urljoin(resolved_release.release_url, cnae_name), root / cnae_name)
         nature_zip = _download_zip(sess, urljoin(resolved_release.release_url, nature_name), root / nature_name)
         cnae_map = _load_code_map(cnae_zip)
         nature_map = _load_code_map(nature_zip)
+        emit(
+            "dictionary_parse", category="dictionaries",
+            elapsed_parse_s=round(time.perf_counter() - dictionaries_started, 3),
+            rows_scanned=len(cnae_map) + len(nature_map),
+            rows_retained=len(cnae_map) + len(nature_map),
+            state="success",
+        )
         cnae_zip.unlink(missing_ok=True)
         nature_zip.unlink(missing_ok=True)
 
@@ -359,8 +385,11 @@ def build_filtered_identity_snapshot(
         legal_matches_by_base: dict[str, list[tuple[str, str]]] = defaultdict(list)
         company_files_scanned: list[str] = []
 
-        for name in files["companies"]:
+        for index, name in enumerate(files["companies"]):
             local = _download_zip(sess, urljoin(resolved_release.release_url, name), root / name)
+            parse_started = time.perf_counter()
+            scanned = retained = 0
+            parsed = False
             try:
                 with zipfile.ZipFile(local) as archive:
                     member = _first_csv_member(archive)
@@ -368,6 +397,7 @@ def build_filtered_identity_snapshot(
                         text = io.TextIOWrapper(raw, encoding="latin1", newline="")
                         reader = csv.reader(text, delimiter=";", quotechar='"')
                         for row in reader:
+                            scanned += 1
                             if len(row) < 3:
                                 continue
                             base = _digits(row[0])
@@ -377,6 +407,7 @@ def build_filtered_identity_snapshot(
                             nature_code = _digits(row[2])
                             matches = _match_name_to_queries(legal_name, queries, prefix="legal_name")
                             if base in target_bases or matches:
+                                retained += 1
                                 companies_by_base[base] = {
                                     "cnpj_base": base,
                                     "legal_name_receita": legal_name or None,
@@ -386,15 +417,30 @@ def build_filtered_identity_snapshot(
                             for provider_key, method in matches:
                                 legal_matches_by_base[base].append((provider_key, method))
                 company_files_scanned.append(name)
+                parsed = True
             finally:
+                meta = files["metadata"].get(name) or {}
+                emit(
+                    "partition_parse", category="empresas", file_index=index,
+                    expected_bytes=meta.get("size"),
+                    received_bytes=local.stat().st_size if local.exists() else None,
+                    etag_present=bool(meta.get("etag")),
+                    last_modified_present=bool(meta.get("last_modified")),
+                    elapsed_parse_s=round(time.perf_counter() - parse_started, 3),
+                    rows_scanned=scanned, rows_retained=retained,
+                    state="success" if parsed else "partial",
+                )
                 local.unlink(missing_ok=True)
 
         canonical_records: dict[str, dict[str, Any]] = {}
         provider_candidates: dict[str, list[dict[str, Any]]] = defaultdict(list)
         establishment_files_scanned: list[str] = []
 
-        for name in resolved_release.establishment_files:
+        for index, name in enumerate(resolved_release.establishment_files):
             local = _download_zip(sess, urljoin(resolved_release.release_url, name), root / name)
+            parse_started = time.perf_counter()
+            scanned = retained = 0
+            parsed = False
             try:
                 with zipfile.ZipFile(local) as archive:
                     member = _first_csv_member(archive)
@@ -402,6 +448,7 @@ def build_filtered_identity_snapshot(
                         text = io.TextIOWrapper(raw, encoding="latin1", newline="")
                         reader = csv.reader(text, delimiter=";", quotechar='"')
                         for row in reader:
+                            scanned += 1
                             if len(row) < 13:
                                 continue
                             cnpj = normalize_cnpj_v2("".join(str(part).strip() for part in row[:3]))
@@ -423,6 +470,7 @@ def build_filtered_identity_snapshot(
                             )
                             if record is None:
                                 continue
+                            retained += 1
                             if need_target:
                                 record["entity_id"] = targets[cnpj].get("entity_id")
                                 record["project_legal_name"] = targets[cnpj].get("project_legal_name")
@@ -433,14 +481,38 @@ def build_filtered_identity_snapshot(
                                     candidate["match_method"] = method
                                     provider_candidates[provider_key].append(candidate)
                 establishment_files_scanned.append(name)
+                parsed = True
             finally:
+                meta = files["metadata"].get(name) or {}
+                emit(
+                    "partition_parse", category="estabelecimentos", file_index=index,
+                    expected_bytes=meta.get("size"),
+                    received_bytes=local.stat().st_size if local.exists() else None,
+                    etag_present=bool(meta.get("etag")),
+                    last_modified_present=bool(meta.get("last_modified")),
+                    elapsed_parse_s=round(time.perf_counter() - parse_started, 3),
+                    rows_scanned=scanned, rows_retained=retained,
+                    state="success" if parsed else "partial",
+                )
                 local.unlink(missing_ok=True)
 
+        finalize_started = time.perf_counter()
         provider_matches = _finalize_provider_matches(queries, provider_candidates)
+        emit(
+            "candidate_finalize", phase="identity", category="matches",
+            elapsed_s=round(time.perf_counter() - finalize_started, 3),
+            target_count=len(targets), provider_count=len(queries["display"]),
+        )
         unique = sum(row["candidate_state"] == "unique_candidate" for row in provider_matches)
         ambiguous = sum(row["candidate_state"] == "ambiguous_candidates" for row in provider_matches)
         none = sum(row["candidate_state"] == "no_candidate" for row in provider_matches)
 
+        emit(
+            "identity_complete", phase="identity",
+            elapsed_s=round(time.perf_counter() - acquisition_started, 3),
+            target_count=len(targets), provider_count=len(queries["display"]),
+            reference_period=resolved_release.period,
+        )
         return {
             "artifact": "v2_receita_cnpj_identity",
             "generated_at": _utc_now(),
@@ -451,6 +523,11 @@ def build_filtered_identity_snapshot(
                 "public_share_url": OFFICIAL_CNPJ_SHARE_URL,
                 "release_url": resolved_release.release_url,
                 "reference_period": resolved_release.period,
+                "release_checked_at": release_checked_at,
+                "release_fingerprint": metadata_fingerprint,
+                "release_fingerprint_method": (
+                    "period_filename_size_etag_last_modified_sha256_metadata"
+                ),
                 "ingestion_method": "official_nextcloud_webdav_bulk_filtered_identity",
                 "retrieved_at": _utc_now(),
             },
