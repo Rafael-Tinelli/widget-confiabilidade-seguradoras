@@ -252,3 +252,61 @@ def test_a06_future_reuse_does_not_extend_original_remote_fetch(tmp_path, monkey
     changed = _live_item(state)
     changed["announced_bytes"] = state["announced_bytes"] + 1
     assert obs._can_reuse(state, changed) is False
+
+
+def test_a06_lazy_restore_only_after_current_official_catalog(tmp_path, monkeypatch):
+    downloaded, manifest, recovery, state, _acquired = _fixture(tmp_path, monkeypatch)
+    calls = _mock_artifact(monkeypatch, downloaded)
+    events = []
+    original_prepare = reuse.prepare_cache
+
+    def tracked_prepare(*args, **kwargs):
+        events.append("artifact")
+        return original_prepare(*args, **kwargs)
+
+    monkeypatch.setattr(reuse, "prepare_cache", tracked_prepare)
+    monkeypatch.setenv("GITHUB_REPOSITORY", REPO)
+    monkeypatch.setattr(obs, "read_catalog", lambda *_a, **_k:
+                        (events.append("official_catalog"), [_live_item(state)])[1])
+    monkeypatch.setattr(obs, "download_direct", lambda *_a, **_k:
+                        pytest.fail("Verified reuse must bypass direct ZIP download"))
+    catalog = tmp_path / "catalog.json"
+    catalog.write_text('{"publications":[]}', encoding="utf-8")
+    cache = tmp_path / "lazy-cache"
+    out = tmp_path / "result"
+    assert obs.main([
+        "--catalog", str(catalog), "--output-dir", str(out),
+        "--previous-manifest", str(manifest),
+        "--recovery-report", str(recovery),
+        "--reuse-dir", str(cache),
+    ]) == 0
+    assert events == ["official_catalog", "artifact"]
+    assert len(calls) == 1
+    assert (cache / "2026-10" / "finalizadas_2026-10.zip").is_file()
+    payload = json.loads((out / "manifest.json").read_text())
+    assert payload["months"]["2026-10"]["acquisition_mode"] == "reused_local_verified"
+
+
+def test_a06_catalog_504_does_not_download_unneeded_github_artifact(
+    tmp_path, monkeypatch,
+):
+    _downloaded, manifest, recovery, _state, _acquired = _fixture(tmp_path, monkeypatch)
+    monkeypatch.setenv("GITHUB_REPOSITORY", REPO)
+
+    def offline_catalog(*_a, **_kw):
+        raise obs.ObservationalError("simulated official HTTP 504")
+
+    monkeypatch.setattr(obs, "read_catalog", offline_catalog)
+    monkeypatch.setattr(reuse.history, "_gh_json", lambda _route:
+                        pytest.fail("No prior full artifact transfer before catalog"))
+    catalog = tmp_path / "catalog.json"
+    catalog.write_text('{"publications":[]}', encoding="utf-8")
+    out = tmp_path / "result"
+    with pytest.raises(obs.ObservationalError, match="HTTP 504"):
+        obs.main([
+            "--catalog", str(catalog), "--output-dir", str(out),
+            "--previous-manifest", str(manifest),
+            "--recovery-report", str(recovery),
+            "--reuse-dir", str(tmp_path / "unused-cache"),
+        ])
+    assert not out.exists()
