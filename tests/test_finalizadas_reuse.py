@@ -152,7 +152,7 @@ def test_a06_reuse_verifies_full_artifact_and_skips_official_zip(tmp_path, monke
 def test_a06_corrupted_or_adulterated_bytes_cannot_be_reused(
     tmp_path, monkeypatch, tamper,
 ):
-    downloaded, manifest, recovery, state, acquired = _fixture(tmp_path, monkeypatch)
+    downloaded, manifest, recovery, _state, acquired = _fixture(tmp_path, monkeypatch)
     month = downloaded / "2026-10"
     target = {
         "zip": month / "finalizadas_2026-10.zip",
@@ -171,7 +171,7 @@ def test_a06_corrupted_or_adulterated_bytes_cannot_be_reused(
 def test_a06_parser_mismatch_and_stale_ttl_skip_even_artifact_request(
     tmp_path, monkeypatch,
 ):
-    downloaded, manifest, recovery, state, acquired = _fixture(tmp_path, monkeypatch)
+    _downloaded, manifest, recovery, _state, acquired = _fixture(tmp_path, monkeypatch)
     monkeypatch.setattr(reuse.history, "_gh_json", lambda _route:
                         pytest.fail("No artifact query for ineligible cache"))
     stale = json.loads(manifest.read_text(encoding="utf-8"))
@@ -199,6 +199,7 @@ def test_a06_changed_catalog_metadata_forces_new_download(tmp_path, monkeypatch)
     calls = _mock_artifact(monkeypatch, downloaded)
     cache = tmp_path / "verified"
     assert reuse.prepare_cache(REPO, recovery, manifest, cache, now=acquired)
+    assert len(calls) == 1
 
     catalog = tmp_path / "catalog.json"
     catalog.write_text('{"publications":[]}', encoding="utf-8")
@@ -229,7 +230,7 @@ def test_a06_changed_catalog_metadata_forces_new_download(tmp_path, monkeypatch)
 def test_a06_history_gap_or_missing_full_artifact_never_claims_reuse(
     tmp_path, monkeypatch,
 ):
-    downloaded, manifest, recovery, state, acquired = _fixture(tmp_path, monkeypatch)
+    _downloaded, manifest, recovery, _state, acquired = _fixture(tmp_path, monkeypatch)
     report = json.loads(recovery.read_text())
     report["status"] = "restored_with_gap"
     obs._write_json(recovery, report)
@@ -243,7 +244,7 @@ def test_a06_history_gap_or_missing_full_artifact_never_claims_reuse(
 
 
 def test_a06_future_reuse_does_not_extend_original_remote_fetch(tmp_path, monkeypatch):
-    downloaded, manifest, recovery, state, acquired = _fixture(tmp_path, monkeypatch)
+    _downloaded, _manifest, _recovery, state, acquired = _fixture(tmp_path, monkeypatch)
     assert obs._can_reuse(state, _live_item(state))
     old = dict(state)
     old["source_fetched_at"] = (acquired - timedelta(days=8)).isoformat()
