@@ -47,6 +47,7 @@ def build_compact_provenance(
         "target_universe_hash": None,
         "unresolved_provider_hash": None,
         "marker_consistency": "not_available",
+        "snapshot_contract_consistency": "not_available",
     }
     if not snapshot.is_file():
         return result
@@ -58,6 +59,13 @@ def build_compact_provenance(
         raise TypeError("Receita provenance snapshot must be JSON object")
     source = data.get("source") or {}
     cache_key = (data.get("meta") or {}).get("gate4_cache_key") or {}
+    contract_matches = (
+        bool(source.get("reference_period"))
+        and cache_key.get("reference_period") == source.get("reference_period")
+    )
+    result["snapshot_contract_consistency"] = (
+        "matched" if contract_matches else "mismatch"
+    )
     result.update({
         "reference_period": source.get("reference_period"),
         "release_url": source.get("release_url"),
@@ -74,7 +82,10 @@ def build_compact_provenance(
     if not isinstance(observed, dict):
         return result
     consistent = (
-        observed.get("snapshot_reference_period") in (
+        contract_matches
+        and observed.get("snapshot_release_fingerprint")
+        == result["release_fingerprint"]
+        and observed.get("snapshot_reference_period") in (
             None, result["reference_period"]
         )
         and observed.get("observed_release_period") == result["reference_period"]

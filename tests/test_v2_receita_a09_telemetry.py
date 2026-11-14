@@ -136,6 +136,7 @@ def test_a09_zip_download_emits_retry_wait_and_bytes_without_identifiers(
     assert record["attempts"] == 2
     assert record["retry_wait_s"] == 1
     assert record["received_bytes"] == len(data)
+    assert record["transferred_bytes_total"] == len(data)
     assert record["zip_valid"] is True
     assert "official.example" not in lines[-1]
 
@@ -225,6 +226,7 @@ def test_a09_provenance_matches_snapshot_and_rejects_false_current_period(
         "observed_release_url": source["release_url"],
         "release_checked_at": "2026-11-14T12:00:00Z",
         "snapshot_reference_period": "2026-10",
+        "snapshot_release_fingerprint": "b" * 64,
         "cache_decision": "miss_period",
         "cache_contract_version": key["version"],
         "target_universe_hash": key["target_universe_hash"],
@@ -232,6 +234,7 @@ def test_a09_provenance_matches_snapshot_and_rejects_false_current_period(
     }), encoding="utf-8")
     proof = provenance.build_compact_provenance(snapshot, lineage, marker)
     assert proof["marker_consistency"] == "matched"
+    assert proof["snapshot_contract_consistency"] == "matched"
     assert proof["reference_period"] == "2026-10"
     assert proof["cache_decision_reason"] == "miss_period"
     assert proof["release_checked_at"] == "2026-11-14T12:00:00Z"
@@ -245,3 +248,11 @@ def test_a09_provenance_matches_snapshot_and_rejects_false_current_period(
     assert changed["marker_consistency"] == "mismatch"
     assert changed["release_checked_at"] is None
     assert changed["cache_decision_reason"] is None
+    bad["observed_release_period"] = "2026-10"
+    bad["snapshot_release_fingerprint"] = "0" * 64
+    marker.write_text(json.dumps(bad), encoding="utf-8")
+    fingerprint_mismatch = provenance.build_compact_provenance(
+        snapshot, lineage, marker
+    )
+    assert fingerprint_mismatch["marker_consistency"] == "mismatch"
+    assert fingerprint_mismatch["release_checked_at"] is None
