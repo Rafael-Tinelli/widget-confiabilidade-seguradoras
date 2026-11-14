@@ -8,8 +8,6 @@ import shutil
 import zipfile
 from pathlib import Path
 
-import pytest
-
 from api.probes import finalizadas_completeness as complete
 from api.probes import finalizadas_history as history
 from api.probes import finalizadas_observational as obs
