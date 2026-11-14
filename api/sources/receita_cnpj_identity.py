@@ -146,10 +146,29 @@ def _match_name_to_queries(
     if not name:
         return []
     out: list[tuple[str, str]] = []
-    surface = _surface_name(name)
+    # Both matching tiers use exactly the same normalization. On the national
+    # Empresas/Estabelecimentos scan this avoids doing NFKD, regex and lower()
+    # twice for every name. Preserve the exact existing token, suffix and
+    # stopword rules (including one-token core minimum and match ordering).
+    tokens = normalize_name_key(name).split()
+    surface_end = len(tokens)
+    while surface_end and tokens[surface_end - 1] in _LEGAL_FORM_SUFFIXES:
+        surface_end -= 1
+    surface = " ".join(tokens[:surface_end])
     for provider_key in query_indexes["surface"].get(surface, set()):
         out.append((provider_key, f"{prefix}_surface_exact"))
-    core = _business_core(name)
+
+    core_tokens = [
+        token
+        for token in tokens
+        if token not in _BUSINESS_CORE_STOPWORDS and len(token) > 1
+    ]
+    if not core_tokens or (len(core_tokens) == 1 and len(core_tokens[0]) < 7):
+        core = ""
+    else:
+        core = " ".join(core_tokens)
+        if len(core.replace(" ", "")) < 7:
+            core = ""
     for provider_key in query_indexes["core"].get(core, set()):
         out.append((provider_key, f"{prefix}_business_core"))
     return out
@@ -404,9 +423,13 @@ def build_filtered_identity_snapshot(
                             if len(base) != 8:
                                 continue
                             legal_name = str(row[1] or "").strip()
-                            nature_code = _digits(row[2])
-                            matches = _match_name_to_queries(legal_name, queries, prefix="legal_name")
+                            matches = _match_name_to_queries(
+                                legal_name, queries, prefix="legal_name",
+                            )
                             if base in target_bases or matches:
+                                # Do not normalize the legal nature for the
+                                # millions of companies discarded here.
+                                nature_code = _digits(row[2])
                                 retained += 1
                                 companies_by_base[base] = {
                                     "cnpj_base": base,
