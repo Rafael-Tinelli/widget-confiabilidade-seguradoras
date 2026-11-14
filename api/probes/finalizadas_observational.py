@@ -671,6 +671,21 @@ def _produce_observation(args: argparse.Namespace, destination: Path) -> int:
         for state in manifest["months"].values():
             state["status"] = "requires_manual_review"
             state["history_gap"] = True
+    # Query and validate the current official catalog FIRST. A 504 or a
+    # changed publication must not trigger a needless full-artifact transfer.
+    if (args.reuse_dir and args.recovery_report and args.previous_manifest
+            and recovery_status == "restored"
+            and not args.reuse_dir.exists()
+            and os.environ.get("GITHUB_REPOSITORY")
+            and any(_can_reuse(previous.get(item["month"]), item)
+                    for item in publications[-args.latest_months:])):
+        from api.probes.finalizadas_reuse import try_prepare_cache
+        verified = try_prepare_cache(
+            os.environ["GITHUB_REPOSITORY"], args.recovery_report,
+            args.previous_manifest, args.reuse_dir,
+        )
+        print(json.dumps({"reuse_verified_months": verified,
+                          "state": "local_verified_only" if verified else "no_reuse"}))
     client = _session()
     for item in publications[-args.latest_months:]:
         month = item["month"]
