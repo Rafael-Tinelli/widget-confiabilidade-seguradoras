@@ -271,3 +271,85 @@ def test_a092_lifecycle_standalone_skip_needs_metadata_fingerprint(
     assert not _snapshot_release_metadata_current(dest, revised)
     dest.write_text("{invalid JSON", encoding="utf-8")
     assert not _snapshot_release_metadata_current(dest, release)
+
+
+def test_a092_current_identity_fingerprint_reads_only_webdav_metadata(
+    monkeypatch,
+) -> None:
+    release = _release()
+    expected_files = _resources()
+    calls = []
+
+    class Session:
+        def __enter__(self):
+            calls.append("session_open")
+            return self
+
+        def __exit__(self, *_args):
+            calls.append("session_close")
+
+        def get(self, *_args, **_kwargs):
+            pytest.fail("ZIP transfer forbidden in metadata-only current validation")
+
+    def catalog(session, given):
+        assert isinstance(session, Session)
+        assert given is release
+        calls.append("propfind")
+        return {
+            "companies": ["Empresas0.zip"],
+            "cnaes": "Cnaes.zip",
+            "legal_natures": "Naturezas.zip",
+            "metadata": {item["name"]: item for item in expected_files},
+        }
+
+    monkeypatch.setattr(identity_builder.requests, "Session", Session)
+    monkeypatch.setattr(identity_builder, "_configure_official_session",
+                        lambda _session: None)
+    monkeypatch.setattr(identity_builder, "_release_files", catalog)
+    fingerprint = identity_builder._official_identity_release_fingerprint(release)
+    assert fingerprint == checked_release_fingerprint(
+        release.period,
+        [item for item in expected_files if item["name"] in _identity_names()],
+        _identity_names(),
+    )
+    assert calls == ["session_open", "propfind", "session_close"]
+
+
+def test_a092_cache_decision_emitted_once_after_fingerprint_check(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    release = _release()
+    entities = [{"cnpj": "11111111000111", "entity_id": "e1", "legal_name": "Demo"}]
+    providers = ["Demo Seguradora"]
+    key = identity_builder._cache_key(
+        reference_period=release.period,
+        universe_hash=identity_builder.target_universe_hash(entities),
+        provider_hash=identity_builder.unresolved_provider_hash(providers),
+    )
+    previous = {
+        "source": {
+            "reference_period": release.period,
+            "release_url": release.release_url,
+            "release_fingerprint_method": FINGERPRINT_METHOD,
+            "release_fingerprint": "a" * 64,
+        },
+        "meta": {"gate4_cache_key": key},
+    }
+    output = tmp_path / "identity.json"
+    output.write_text(json.dumps(previous), encoding="utf-8")
+    monkeypatch.setattr(identity_builder, "_load_inputs", lambda: (entities, providers))
+    monkeypatch.setattr(identity_builder, "discover_latest_release", lambda: release)
+    monkeypatch.setattr(identity_builder, "_official_identity_release_fingerprint",
+                        lambda _release: "b" * 64)
+    monkeypatch.setattr(identity_builder, "build_filtered_identity_snapshot",
+                        lambda *_a, **_k: {
+                            **previous, "source": {
+                                **previous["source"], "release_fingerprint": "b" * 64,
+                            },
+                        })
+    decisions = []
+    monkeypatch.setattr(identity_builder, "emit", lambda event, **fields: (
+        decisions.append(fields["cache_decision"]) if event == "cache_decision" else None
+    ))
+    assert identity_builder.build_snapshot(output=output) is not None
+    assert decisions == ["miss_release_fingerprint"]

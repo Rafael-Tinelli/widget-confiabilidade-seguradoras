@@ -228,15 +228,15 @@ def build_snapshot(
     decision = _cache_decision(output, existing_key, expected_key)
     if force:
         decision = "forced_rebuild"
-    emit(
-        "cache_decision", cache_decision=decision,
-        reference_period=release.period,
-        target_count=len(entities), provider_count=len(providers),
-    )
     if not force and existing_key == expected_key:
         prior = json.loads(output.read_text(encoding="utf-8"))
         current_fingerprint = _official_identity_release_fingerprint(release)
         if identity_cache_current(prior, release, current_fingerprint):
+            emit(
+                "cache_decision", cache_decision="hit",
+                reference_period=release.period,
+                target_count=len(entities), provider_count=len(providers),
+            )
             _write_a09_marker(
                 output, release=release, decision=decision,
                 expected_key=expected_key, checked_at=checked_at,
@@ -252,9 +252,12 @@ def build_snapshot(
         decision = "miss_release_fingerprint"
         emit("cache_integrity", phase="identity", state="mismatch",
              reference_period=release.period)
-        emit("cache_decision", phase="identity", cache_decision=decision,
-             reference_period=release.period)
 
+    emit(
+        "cache_decision", cache_decision=decision,
+        reference_period=release.period,
+        target_count=len(entities), provider_count=len(providers),
+    )
     payload = build_filtered_identity_snapshot(
         entities,
         providers,
