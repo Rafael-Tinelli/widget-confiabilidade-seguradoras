@@ -1,0 +1,416 @@
+name: Receita Pre-Full-Generation Preflight
+
+on:
+  push:
+    branches:
+      - fix/receita-cache-bridge-final
+    paths-ignore:
+      - .github/workflows/v2-gate4-full-generation-proof.yml
+      - .github/workflows/tmp-receita-full-lifecycle-proof.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: v2-receita-hostgator-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  preflight:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      V2_BUILD_ID: receita-preflight-${{ github.run_id }}-a${{ github.run_attempt }}
+      V2_RECEITA_REMOTE_ENABLED: ${{ secrets.V2_HOSTGATOR_HOST != '' && secrets.V2_HOSTGATOR_USER != '' && secrets.V2_HOSTGATOR_SSH_KEY != '' && secrets.V2_HOSTGATOR_KNOWN_HOSTS != '' && '1' || '0' }}
+      V2_RECEITA_SSH_HOST: ${{ secrets.V2_HOSTGATOR_HOST }}
+      V2_RECEITA_SSH_USER: ${{ secrets.V2_HOSTGATOR_USER }}
+      V2_RECEITA_SSH_PORT: ${{ vars.V2_HOSTGATOR_SSH_PORT }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install -r requirements-dev.txt
+
+      - name: Compile Receita path
+        shell: bash
+        run: |
+          set -euo pipefail
+          command -v unzip >/dev/null
+          command -v split >/dev/null
+          python -m py_compile \
+            api/sources/receita_cnpj_bulk.py \
+            api/sources/receita_cnpj_identity.py \
+            api/v2/build_source_snapshot.py \
+            api/v2/build_consumer_gov_receita_identity.py \
+            api/v2/receita_remote_bridge.py \
+            ops/hostgator/receita_remote_worker.py
+
+      - name: Run focused Receita regression suite
+        env:
+          V2_RECEITA_REMOTE_ENABLED: "0"
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pytest -q \
+            tests/test_receita_cnpj_bulk_webdav.py \
+            tests/test_v2_receita_cnpj_bulk.py \
+            tests/test_v2_receita_cnpj_identity.py \
+            tests/test_v2_consumer_gov_receita_cache_key.py \
+            tests/test_v2_conduct_receita_cache_fallback.py \
+            tests/test_v2_receita_partial_cache_fallback.py \
+            tests/test_v2_receita_remote_bridge.py
+
+      - name: Configure pinned SSH transport
+        if: env.V2_RECEITA_REMOTE_ENABLED == '1'
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.V2_HOSTGATOR_SSH_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.V2_HOSTGATOR_KNOWN_HOSTS }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${V2_RECEITA_SSH_HOST:?missing Receita bridge host}"
+          : "${V2_RECEITA_SSH_USER:?missing Receita bridge user}"
+          SSH_PORT=${V2_RECEITA_SSH_PORT:-22}
+          ssh_dir="$RUNNER_TEMP/v2-receita-preflight-ssh"
+          key_file="$ssh_dir/private_key"
+          known_hosts_file="$ssh_dir/known_hosts"
+          rm -rf "$ssh_dir"
+          umask 077
+          install -d -m 700 "$ssh_dir"
+          printf '%s\n' "$SSH_PRIVATE_KEY" | tr -d '\r' > "$key_file"
+          printf '%s\n' "$SSH_KNOWN_HOSTS" | tr -d '\r' > "$known_hosts_file"
+          chmod 600 "$key_file" "$known_hosts_file"
+          ssh-keygen -y -P '' -f "$key_file" >/dev/null
+          known_host_lookup="$V2_RECEITA_SSH_HOST"
+          if [[ "$SSH_PORT" != "22" ]]; then
+            known_host_lookup="[$V2_RECEITA_SSH_HOST]:$SSH_PORT"
+          fi
+          ssh-keygen -F "$known_host_lookup" -f "$known_hosts_file" >/dev/null
+          {
+            echo "V2_RECEITA_SSH_PORT=$SSH_PORT"
+            echo "V2_RECEITA_SSH_KEY_FILE=$key_file"
+            echo "V2_RECEITA_SSH_KNOWN_HOSTS_FILE=$known_hosts_file"
+          } >> "$GITHUB_ENV"
+
+      - name: Stress multiplexed SSH transport
+        if: env.V2_RECEITA_REMOTE_ENABLED == '1'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import time
+
+          from api.v2.receita_remote_bridge import (
+              _config_from_env,
+              _control_path,
+              _run_transport,
+              _ssh_base,
+          )
+
+          config = _config_from_env()
+          control_path = _control_path(config)
+          ssh = _ssh_base(config, control_path=control_path)
+
+          for index in range(12):
+              result = _run_transport(
+                  [*ssh, "printf 'SSH_CHANNEL_OK\\n'"],
+                  timeout=60,
+                  attempts=6,
+              )
+              if result.stdout.strip() != "SSH_CHANNEL_OK":
+                  raise SystemExit(
+                      f"unexpected SSH channel response at iteration {index + 1}: "
+                      f"{result.stdout!r}"
+                  )
+
+          runtime = _run_transport(
+              [
+                  *ssh,
+                  (
+                      "python3 -c 'import requests,sys; "
+                      "print(\"%d.%d.%d requests=%s\" % "
+                      "(sys.version_info[0],sys.version_info[1],sys.version_info[2],"
+                      "requests.__version__))'"
+                  ),
+              ],
+              timeout=60,
+              attempts=6,
+          ).stdout.strip()
+          available_kb_text = _run_transport(
+              [
+                  *ssh,
+                  (
+                      "mkdir -p ~/.sanida-v2-receita-bridge/cache && "
+                      "test -w ~/.sanida-v2-receita-bridge/cache && "
+                      "df -Pk \"$HOME\" | tail -1 | awk '{print $4}'"
+                  ),
+              ],
+              timeout=60,
+              attempts=6,
+          ).stdout.strip().splitlines()[-1]
+          available_kb = int(available_kb_text)
+          minimum_kb = 12 * 1024 * 1024
+          if available_kb < minimum_kb:
+              raise SystemExit(
+                  f"HostGator free space too low: {available_kb} KB < {minimum_kb} KB"
+              )
+
+          long_channel_started = time.monotonic()
+          long_channel = _run_transport(
+              [*ssh, "sleep 40; printf 'LONG_CHANNEL_OK\\n'"],
+              timeout=60,
+              attempts=3,
+          ).stdout.strip()
+          long_channel_seconds = round(
+              time.monotonic() - long_channel_started,
+              3,
+          )
+          if long_channel != "LONG_CHANNEL_OK":
+              raise SystemExit(
+                  f"long SSH channel probe failed: {long_channel!r}"
+              )
+          if long_channel_seconds < 35:
+              raise SystemExit(
+                  f"long SSH channel returned too early: {long_channel_seconds}s"
+              )
+
+
+          print(
+              "RECEITA_SSH_CHANNEL_STRESS "
+              + json.dumps(
+                  {
+                      "channels": 12,
+                      "multiplexed": True,
+                      "remote_runtime": runtime,
+                      "available_kb": available_kb,
+                      "minimum_kb": minimum_kb,
+                      "long_channel_seconds": long_channel_seconds,
+                      "status": "pass",
+                  },
+                  sort_keys=True,
+              )
+          )
+          PY
+
+      - name: Prove foreground SSH session survives shared-host reap horizon
+        if: env.V2_RECEITA_REMOTE_ENABLED == '1'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import time
+
+          from api.v2.receita_remote_bridge import (
+              _config_from_env,
+              _control_path,
+              _run_transport,
+              _ssh_base,
+          )
+
+          config = _config_from_env()
+          control_path = _control_path(config)
+          ssh = _ssh_base(config, control_path=control_path)
+
+          started = time.monotonic()
+          result = _run_transport(
+              [*ssh, "sleep 150; printf 'FOREGROUND_150_OK\\n'"],
+              timeout=180,
+              attempts=3,
+          )
+          elapsed = round(time.monotonic() - started, 3)
+          if result.stdout.strip() != "FOREGROUND_150_OK":
+              raise SystemExit(
+                  f"foreground 150s probe failed: {result.stdout!r}"
+              )
+          if elapsed < 145:
+              raise SystemExit(
+                  f"foreground 150s probe returned too early: {elapsed}s"
+              )
+
+          print(
+              "RECEITA_FOREGROUND_SSH_STRESS "
+              + json.dumps(
+                  {
+                      "elapsed_seconds": elapsed,
+                      "shared_host_reap_horizon_seconds": 120,
+                      "status": "pass",
+                  },
+                  sort_keys=True,
+              )
+          )
+          PY
+
+      - name: Verify current official Receita release through final bridge
+        if: env.V2_RECEITA_REMOTE_ENABLED == '1'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import re
+          from api.sources.receita_cnpj_bulk import release_fingerprint
+          from api.v2.receita_remote_bridge import discover_release_remote
+
+          releases = [discover_release_remote(), discover_release_remote()]
+          fingerprints = [release_fingerprint(release) for release in releases]
+          if len(set(fingerprints)) != 1:
+              raise SystemExit(
+                  f"Receita release fingerprint changed inside preflight: {fingerprints}"
+              )
+
+          release = releases[-1]
+          fingerprint = fingerprints[-1]
+          metadata = list(release.resource_metadata)
+          if not re.fullmatch(r"20\d{2}-\d{2}", release.period):
+              raise SystemExit(f"invalid current Receita period: {release.period}")
+          if release.period < "2026-09":
+              raise SystemExit(f"unexpectedly old Receita period: {release.period}")
+          if len(fingerprint) != 64:
+              raise SystemExit("invalid Receita release fingerprint")
+          if not metadata:
+              raise SystemExit("Receita release has no resource metadata")
+          if not any(row.get("etag") for row in metadata):
+              raise SystemExit("Receita release metadata has no ETag")
+          if "Estabelecimentos0.zip" not in release.establishment_files:
+              raise SystemExit("Receita release missing Estabelecimentos0.zip")
+          print("RECEITA_PREFLIGHT_RELEASE " + json.dumps({
+              "period": release.period,
+              "fingerprint": fingerprint,
+              "establishment_files": len(release.establishment_files),
+              "metadata_rows": len(metadata),
+              "share": release.base_url,
+              "consecutive_discoveries": 2,
+          }, sort_keys=True))
+          PY
+
+      - name: Verify lifecycle smoke through final bridge
+        if: env.V2_RECEITA_REMOTE_ENABLED == '1'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+
+          from api.v2.receita_remote_bridge import (
+              discover_release_remote,
+              refresh_lifecycle_remote,
+          )
+
+          release = discover_release_remote()
+          result = refresh_lifecycle_remote(
+              [
+                  {
+                      "cnpj": "55993861000100",
+                      "legal_name": "CACHE ONLY LIFECYCLE PREFLIGHT TARGET",
+                  }
+              ],
+              release=release,
+          )
+          if result["status"] != "ok":
+              raise SystemExit(f"lifecycle smoke not ok: {result}")
+          if result["unresolved_cnpjs"]:
+              raise SystemExit(
+                  f"lifecycle smoke unresolved: {result['unresolved_cnpjs']}"
+              )
+          records = result["records"]
+          if len(records) != 1 or records[0]["cnpj"] != "55993861000100":
+              raise SystemExit(f"unexpected lifecycle smoke records: {records}")
+
+          print(
+              "RECEITA_LIFECYCLE_SMOKE "
+              + json.dumps(
+                  {
+                      "period": release.period,
+                      "status": result["status"],
+                      "cnpj": records[0]["cnpj"],
+                      "cadastral_status": records[0]["cadastral_status"],
+                      "files_scanned": result["meta"]["files_scanned"],
+                      "resolved_count": result["meta"]["resolved_count"],
+                  },
+                  ensure_ascii=False,
+                  sort_keys=True,
+              )
+          )
+          PY
+
+      - name: Verify identity smoke through final bridge
+        if: env.V2_RECEITA_REMOTE_ENABLED == '1'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+
+          from api.v2.receita_remote_bridge import (
+              build_identity_remote,
+              discover_release_remote,
+          )
+
+          release = discover_release_remote()
+          result = build_identity_remote(
+              [
+                  {
+                      "cnpj": "41.277.393/0001-62",
+                      "entity_id": "preflight-gervasio-jose-nunes",
+                      "legal_name": "GERVASIO JOSE NUNES",
+                  }
+              ],
+              ["GERVASIO JOSE NUNES"],
+              release=release,
+          )
+
+          records = result["canonical_records"]
+          if len(records) != 1 or records[0]["cnpj"] != "41277393000162":
+              raise SystemExit(
+                  f"unexpected identity smoke canonical records: {records}"
+              )
+          matches = result["provider_matches"]
+          if not matches:
+              raise SystemExit("identity smoke produced no provider match rows")
+
+          print(
+              "RECEITA_IDENTITY_SMOKE "
+              + json.dumps(
+                  {
+                      "period": release.period,
+                      "cnpj": records[0]["cnpj"],
+                      "entity_id": records[0].get("entity_id"),
+                      "provider_rows": len(matches),
+                      "company_files_scanned": result["meta"]["company_files_scanned"],
+                      "establishment_files_scanned": (
+                          result["meta"]["establishment_files_scanned"]
+                      ),
+                      "status": "pass",
+                  },
+                  ensure_ascii=False,
+                  sort_keys=True,
+              )
+          )
+          PY
+
+      - name: Ensure Full Generation was not invoked
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "PRE_FULL_GENERATION_ONLY=PASS"
+
+      - name: Cleanup SSH material
+        if: always()
+        shell: bash
+        run: rm -rf "$RUNNER_TEMP/v2-receita-preflight-ssh"
