@@ -466,7 +466,7 @@ def build_filtered_identity_snapshot(
                 name=name,
                 metadata=files["metadata"].get(name),
                 destination=root / name,
-                download=lambda: _download_zip(
+                download=lambda name=name: _download_zip(
                     sess, urljoin(resolved_release.release_url, name), root / name,
                 ),
             )
