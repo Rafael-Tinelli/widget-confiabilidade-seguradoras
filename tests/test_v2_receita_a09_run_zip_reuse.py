@@ -199,3 +199,80 @@ def test_a094_wrong_size_is_not_stored(
         dest = tmp_path / f"wrong-{i}.zip"
         _acquire(_release(), wrong, dest, _downloader(dest, raw, calls))
     assert len(calls) == 2
+
+
+def test_a094_production_lifecycle_and_identity_reuse_one_official_zip(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """Integration: actual consuming functions, mocked HTTP with small ZIPs."""
+    from collections import Counter
+
+    from api.sources import receita_cnpj_bulk as bulk
+    from api.sources import receita_cnpj_identity as identity
+
+    _configure(monkeypatch, tmp_path)
+
+    def zip_data(rows: str) -> bytes:
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr("data.csv", rows.encode("latin1"))
+        return buf.getvalue()
+
+    blobs = {
+        "Motivos.zip": zip_data("01;Motivo\n"),
+        "Empresas0.zip": zip_data("12345678;DEMO SEGURADORA SA;2054\n"),
+        "Cnaes.zip": zip_data("6511101;Seguradoras\n"),
+        "Naturezas.zip": zip_data("2054;Sociedade anonima\n"),
+        "Estabelecimentos0.zip": zip_data(
+            "12345678;0001;00;1;DEMO SEGURADORA;02;20260110"
+            ";;;;20010101;6511101;\n"
+        ),
+    }
+    metadata = {
+        name: {"name": name, "size": len(blob), "etag": f"etag-{name}",
+               "last_modified": "2026-11-01"}
+        for name, blob in blobs.items()
+    }
+    release = bulk.ReceitaOpenDataRelease(
+        base_url="https://official.example/",
+        release_url="https://official.example/2026-10/",
+        period="2026-10",
+        establishment_files=("Estabelecimentos0.zip",),
+        resource_metadata=(
+            metadata["Motivos.zip"], metadata["Estabelecimentos0.zip"],
+        ),
+    )
+    calls = Counter()
+
+    def download(_session, _url, destination: Path) -> Path:
+        calls[destination.name] += 1
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(blobs[destination.name])
+        return destination
+
+    monkeypatch.setattr(bulk, "_download_zip", download)
+    monkeypatch.setattr(bulk, "load_reason_map", lambda _path: {"01": "Demo"})
+    monkeypatch.setattr(
+        bulk, "extract_target_lifecycle_from_zip",
+        lambda *_a, **_k: [{"cnpj": "12345678000100"}],
+    )
+    targets = [{"cnpj": "12345678000100", "entity_id": "e1",
+                "legal_name": "DEMO SEGURADORA SA"}]
+    lifecycle = bulk.refresh_filtered_lifecycle(
+        targets, release=release, work_dir=tmp_path / "lifecycle",
+    )
+    assert lifecycle["status"] == "ok"
+    assert calls["Estabelecimentos0.zip"] == 1
+
+    monkeypatch.setattr(identity, "_download_zip", download)
+    monkeypatch.setattr(identity, "_release_files", lambda *_a, **_k: {
+        "companies": ["Empresas0.zip"], "cnaes": "Cnaes.zip",
+        "legal_natures": "Naturezas.zip", "metadata": metadata,
+    })
+    result = identity.build_filtered_identity_snapshot(
+        targets, ["DEMO SEGURADORA"], release=release,
+        work_dir=tmp_path / "identity",
+    )
+    assert len(result["canonical_records"]) == 1
+    assert calls["Empresas0.zip"] == 1
+    assert calls["Estabelecimentos0.zip"] == 1
