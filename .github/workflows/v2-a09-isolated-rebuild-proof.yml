@@ -1,0 +1,114 @@
+name: V2 A09 Isolated Full Rebuild Proof
+
+# Manual, non-publication proof. Not a source workflow for HostGator sync.
+# Runs the canonical Gate 4 DAG with deliberately empty Receita caches
+# so BOTH lifecycle and identity must read official ZIPs in one runner.
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_rebuild:
+        description: "Type REBUILD to run an uncached official A09 proof (no production publication)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: v2-a09-isolated-proof-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  prove-a09-reuse:
+    if: inputs.confirm_rebuild == 'REBUILD'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    env:
+      V2_BUILD_ID: v2-a09-isolated-${{ github.run_id }}-a${{ github.run_attempt }}
+      V2_SOURCE_HEAD_SHA: ${{ github.sha }}
+      V2_SOURCE_CACHE_DIR: data/cache/v2/a09-proof-regulatory-source
+      RECEITA_A09_TELEMETRY_PATH: data/derived/v2/a09-proof-events.jsonl
+      SES_ALLOW_INSECURE_SSL: "0"
+      SUSEP_LICENSED_VERIFY_SSL: "1"
+      SUSEP_SPECIAL_VERIFY_SSL: "1"
+      SUSEP_SANDBOX_VERIFY_SSL: "1"
+
+    steps:
+      - name: Checkout exact source head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          python -m pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Freeze generation timestamp
+        run: echo "V2_GENERATED_AT=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_ENV"
+
+      - name: Validate isolated A09 proof code
+        run: |
+          set -euo pipefail
+          python -m pytest -q \
+            tests/test_v2_receita_a09_cache_integrity.py \
+            tests/test_v2_receita_a09_run_zip_reuse.py \
+            tests/test_v2_receita_a09_isolated_proof.py
+
+      - name: Bootstrap versioned Conduct evidence
+        run: |
+          set -euo pipefail
+          python -m api.v2.bootstrap_conduct_consumer_cache
+
+      - name: Guarantee fresh Receita rebuilds inside this runner
+        run: |
+          set -euo pipefail
+          # Only the ephemeral proof checkout is affected. No actions/cache restore/save.
+          rm -rf -- "$V2_SOURCE_CACHE_DIR"
+          mkdir -p -- "$V2_SOURCE_CACHE_DIR"
+          rm -f -- \
+            data/cache/v2/conduct/receita_consumer_identity.json \
+            data/cache/v2/conduct/receita_consumer_identity.meta.json \
+            data/derived/v2/receita_cnpj_lifecycle.json \
+            data/derived/v2/receita_consumer_gov_identity.json \
+            "$RECEITA_A09_TELEMETRY_PATH"
+          test ! -e data/cache/v2/conduct/receita_consumer_identity.json
+          test ! -e data/cache/v2/conduct/receita_consumer_identity.meta.json
+          test ! -e data/derived/v2/receita_consumer_gov_identity.json
+          test ! -e data/derived/v2/receita_cnpj_lifecycle.json
+
+      - name: Execute canonical full DAG without publication
+        run: |
+          set -euo pipefail
+          # Emit bounded acquisition progress; keep the raw log only within
+          # this ephemeral runner for validation, never in uploaded artifacts.
+          python -u -m api.v2.gate4_pipeline --run-all 2>&1 \
+            | tee "$RUNNER_TEMP/a09-proof-dag.log" \
+            | grep --line-buffered -E 'RECEITA_A09|V2_SOURCE_ACQUISITION|Gate 4|Pipeline'
+
+      - name: Prove one GET and verified reuse per official establishment ZIP
+        run: |
+          set -euo pipefail
+          python -m scripts.a09_validate_rebuild_proof \
+            --telemetry "$RECEITA_A09_TELEMETRY_PATH" \
+            --dag-log "$RUNNER_TEMP/a09-proof-dag.log" \
+            --output "$RUNNER_TEMP/a09-proof-report.json"
+
+      - name: Upload compact A09 proof only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: a09-isolated-rebuild-proof-${{ github.run_id }}-a${{ github.run_attempt }}
+          retention-days: 14
+          if-no-files-found: warn
+          path: |
+            ${{ runner.temp }}/a09-proof-report.json
+            data/derived/v2/a09-proof-events.jsonl
+
+      # No deployment, actions/cache save, or handoff to HostGator publication.
