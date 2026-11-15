@@ -14,8 +14,9 @@ import re
 import shutil
 import time
 import zipfile
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from api.sources.receita_cnpj_telemetry import emit, file_category
 
