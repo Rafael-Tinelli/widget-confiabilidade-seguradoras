@@ -26,8 +26,8 @@ jobs:
     env:
       V2_BUILD_ID: v2-a09-isolated-${{ github.run_id }}-a${{ github.run_attempt }}
       V2_SOURCE_HEAD_SHA: ${{ github.sha }}
-      V2_SOURCE_CACHE_DIR: ${{ runner.temp }}/a09-proof-regulatory-source
-      RECEITA_A09_TELEMETRY_PATH: ${{ runner.temp }}/a09-proof-events.jsonl
+      V2_SOURCE_CACHE_DIR: data/cache/v2/a09-proof-regulatory-source
+      RECEITA_A09_TELEMETRY_PATH: data/derived/v2/a09-proof-events.jsonl
       SES_ALLOW_INSECURE_SSL: "0"
       SUSEP_LICENSED_VERIFY_SSL: "1"
       SUSEP_SPECIAL_VERIFY_SSL: "1"
@@ -109,6 +109,6 @@ jobs:
           if-no-files-found: warn
           path: |
             ${{ runner.temp }}/a09-proof-report.json
-            ${{ runner.temp }}/a09-proof-events.jsonl
+            data/derived/v2/a09-proof-events.jsonl
 
       # No deployment, actions/cache save, or handoff to HostGator publication.
