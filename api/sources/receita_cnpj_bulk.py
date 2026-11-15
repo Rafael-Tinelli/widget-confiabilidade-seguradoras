@@ -21,6 +21,7 @@ from api.sources.receita_cnpj_cache_integrity import (
     FINGERPRINT_METHOD,
     lifecycle_release_fingerprint,
 )
+from api.sources.receita_cnpj_run_zip_cache import acquire_run_establishment_zip
 from api.sources.receita_cnpj_telemetry import emit, file_category
 from api.utils.identifiers import normalize_cnpj_v2
 
@@ -493,7 +494,16 @@ def refresh_filtered_lifecycle(
         files_scanned: list[str] = []
         for name in resolved_release.establishment_files:
             url = urljoin(resolved_release.release_url, name)
-            local = _download_zip(sess, url, root / name)
+            resource = next(
+                (item for item in resolved_release.resource_metadata
+                 if item.get("name") == name),
+                None,
+            )
+            local = acquire_run_establishment_zip(
+                release=resolved_release, name=name, metadata=resource,
+                destination=root / name,
+                download=lambda: _download_zip(sess, url, root / name),
+            )
             try:
                 rows = extract_target_lifecycle_from_zip(
                     local,
