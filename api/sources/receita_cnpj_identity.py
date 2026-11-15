@@ -25,6 +25,7 @@ from api.sources.receita_cnpj_bulk import (
     _propfind,
     discover_latest_release,
 )
+from api.sources.receita_cnpj_run_zip_cache import acquire_run_establishment_zip
 from api.sources.receita_cnpj_telemetry import emit, release_fingerprint, utcnow
 from api.utils.identifiers import normalize_cnpj_v2
 from api.utils.name_cleaner import normalize_name_key
@@ -460,7 +461,15 @@ def build_filtered_identity_snapshot(
         establishment_files_scanned: list[str] = []
 
         for index, name in enumerate(resolved_release.establishment_files):
-            local = _download_zip(sess, urljoin(resolved_release.release_url, name), root / name)
+            local = acquire_run_establishment_zip(
+                release=resolved_release,
+                name=name,
+                metadata=files["metadata"].get(name),
+                destination=root / name,
+                download=lambda: _download_zip(
+                    sess, urljoin(resolved_release.release_url, name), root / name,
+                ),
+            )
             parse_started = time.perf_counter()
             scanned = retained = 0
             parsed = False
