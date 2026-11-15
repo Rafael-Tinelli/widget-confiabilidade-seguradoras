@@ -502,7 +502,7 @@ def refresh_filtered_lifecycle(
             local = acquire_run_establishment_zip(
                 release=resolved_release, name=name, metadata=resource,
                 destination=root / name,
-                download=lambda: _download_zip(sess, url, root / name),
+                download=lambda url=url, name=name: _download_zip(sess, url, root / name),
             )
             try:
                 rows = extract_target_lifecycle_from_zip(
