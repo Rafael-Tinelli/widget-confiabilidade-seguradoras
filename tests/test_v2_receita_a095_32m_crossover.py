@@ -1,7 +1,6 @@
 """A09.5 final isolated crossover: strict offline invariants and false-positive guards."""
 from __future__ import annotations
 
-import json
 import threading
 import time
 from pathlib import Path
