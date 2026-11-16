@@ -70,9 +70,10 @@ def _check_get_headers(response: requests.Response, expected_size: int) -> dict[
     if response.headers.get("Content-Encoding", "identity").lower().strip() not in ("", "identity"):
         raise GetProbeError("unexpected_content_encoding")
     content_length = response.headers.get("Content-Length")
-    if content_length is not None:
-        if not content_length.isdecimal() or int(content_length) != expected_size:
-            raise GetProbeError("official_size_does_not_match_response")
+    if content_length is not None and (
+        not content_length.isdecimal() or int(content_length) != expected_size
+    ):
+        raise GetProbeError("official_size_does_not_match_response")
     return {
         "content_length_present": content_length is not None,
         "etag": response.headers.get("ETag"),
