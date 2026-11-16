@@ -80,15 +80,19 @@ def _check_get_headers(response: requests.Response, expected_size: int) -> dict[
     }
 
 
-def _get_prefix(resource: dict[str, Any]) -> dict[str, Any]:
-    """Read exactly READ_LIMIT bytes and close the full-GET response immediately.
+def _get_prefix(resource: dict[str, Any], *, read_limit: int | None = None) -> dict[str, Any]:
+    """Read a strictly bounded prefix and close the full-GET response immediately.
 
     Underlying network and OS buffers may receive slightly more bytes; this
     caps APPLICATION-CONSUMED data, not bytes sent by the official server.
     """
+    if read_limit is None:
+        read_limit = READ_LIMIT
+    if type(read_limit) is not int or read_limit < 4 or read_limit > 32 * 1024 * 1024:
+        raise GetProbeError("invalid_probe_read_limit")
     size = resource["size"]
     index = resource["file_index"]
-    if type(size) is not int or size <= READ_LIMIT or type(index) is not int:
+    if type(size) is not int or size <= read_limit or type(index) is not int:
         raise GetProbeError("invalid_probe_resource")
     started = time.monotonic()
     received = 0
@@ -112,17 +116,17 @@ def _get_prefix(resource: dict[str, Any]) -> dict[str, Any]:
                     raise GetProbeError("get_elapsed_budget_exceeded")
                 if not chunk:
                     continue
-                if len(chunk) > READ_CHUNK or received + len(chunk) > READ_LIMIT:
+                if len(chunk) > READ_CHUNK or received + len(chunk) > read_limit:
                     raise GetProbeError("prefix_read_limit_exceeded")
                 if received == 0 and chunk[:4] != b"PK\x03\x04":
                     raise GetProbeError("unexpected_zip_local_header")
                 digest.update(chunk)
                 received += len(chunk)
-                if received == READ_LIMIT:
+                if received == read_limit:
                     break
             read_seconds = time.monotonic() - read_started
 
-    if received != READ_LIMIT:
+    if received != read_limit:
         raise GetProbeError("truncated_get_prefix")
     elapsed = time.monotonic() - started
     if elapsed <= 0 or elapsed > MAX_REQUEST_SECONDS:

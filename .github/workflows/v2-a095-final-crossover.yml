@@ -1,0 +1,67 @@
+name: V2 A09.5 Final 32MiB Crossover
+
+# Strictly manual diagnostic. The whole test reads at most 256 MiB into
+# the application across eight HTTP GETs to the official Receita WebDAV.
+# Up to two simultaneous streams, no completed national ZIP, no deploy,
+# no production cache modifications and no persisted raw ZIP artifacts.
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_probe:
+        description: "Type CROSSOVER for 32MiB S-P / P-S test (no publication)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: v2-a095-final-32m-crossover
+  cancel-in-progress: false
+
+jobs:
+  run-final-crossover:
+    if: inputs.confirm_probe == 'CROSSOVER'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          python -m pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Validate crossover, metadata and bounded transport offline
+        run: |
+          set -euo pipefail
+          python -m pytest -q \
+            tests/test_v2_receita_a095_get_probe.py \
+            tests/test_v2_receita_a095_32m_crossover.py
+
+      - name: Measure 32MiB crossover and inspect November 2026 publication
+        run: |
+          set -euo pipefail
+          python -m scripts.a095_32m_crossover_probe \
+            --output "$RUNNER_TEMP/a095-final-crossover-report.json"
+
+      - name: Upload compact report only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: a095-32m-crossover-${{ github.run_id }}-a${{ github.run_attempt }}
+          retention-days: 14
+          if-no-files-found: warn
+          path: ${{ runner.temp }}/a095-final-crossover-report.json
+
+      # Never participates in the HostGator publication workflow_run trigger.
