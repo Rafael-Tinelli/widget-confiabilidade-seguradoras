@@ -1,0 +1,65 @@
+name: V2 A09.5 Bounded GET Probe
+
+# Manual second network experiment. Four HTTP 200 GET requests total;
+# no Range headers and at most two concurrent connections. Each GET response
+# is closed after 8 MiB of APPLICATION-CONSUMED data; server-side buffering
+# may send additional bytes. No full ZIP, persistent source cache, or deploy.
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_probe:
+        description: "Type GET to test official 1-vs-2 ordinary GET transfers; no publication"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: v2-a095-bounded-get-probe
+  cancel-in-progress: false
+
+jobs:
+  measure-ordinary-get:
+    if: inputs.confirm_probe == 'GET'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          python -m pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Validate bounded GET safety offline
+        run: |
+          set -euo pipefail
+          python -m pytest -q tests/test_v2_receita_a095_get_probe.py
+
+      - name: Measure official sequential versus two concurrent GET prefixes
+        run: |
+          set -euo pipefail
+          python -m scripts.a095_bounded_get_probe \
+            --output "$RUNNER_TEMP/a095-bounded-get-report.json"
+
+      - name: Upload report only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: a095-bounded-get-${{ github.run_id }}-a${{ github.run_attempt }}
+          retention-days: 14
+          if-no-files-found: warn
+          path: ${{ runner.temp }}/a095-bounded-get-report.json
+
+      # Does not participate in V2 HostGator Public Package Sync triggers.
