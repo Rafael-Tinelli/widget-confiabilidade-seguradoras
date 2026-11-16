@@ -91,7 +91,6 @@ def _get_prefix(resource: dict[str, Any]) -> dict[str, Any]:
         raise GetProbeError("invalid_probe_resource")
     started = time.monotonic()
     received = 0
-    signature = b""
     digest = hashlib.sha256()
 
     # requests.Session is NOT shared between threads.
@@ -114,10 +113,8 @@ def _get_prefix(resource: dict[str, Any]) -> dict[str, Any]:
                     continue
                 if len(chunk) > READ_CHUNK or received + len(chunk) > READ_LIMIT:
                     raise GetProbeError("prefix_read_limit_exceeded")
-                if not signature:
-                    signature = chunk[:4]
-                    if signature != b"PK\x03\x04":
-                        raise GetProbeError("unexpected_zip_local_header")
+                if received == 0 and chunk[:4] != b"PK\x03\x04":
+                    raise GetProbeError("unexpected_zip_local_header")
                 digest.update(chunk)
                 received += len(chunk)
                 if received == READ_LIMIT:
