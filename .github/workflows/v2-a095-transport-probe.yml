@@ -1,0 +1,61 @@
+name: V2 A09.5 Bounded Transport Probe
+
+# Manual-only research. Uses at most two concurrent 8-MiB HTTP byte ranges.
+# No full ZIP acquisition, no persisted sources, no scoring, no publishing.
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_probe:
+        description: "Type PROBE to execute a bounded official HTTP test (no deploy)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: v2-a095-transport-probe
+  cancel-in-progress: false
+
+jobs:
+  test-webdav-throughput:
+    if: inputs.confirm_probe == 'PROBE'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install test prerequisites
+        run: |
+          set -euo pipefail
+          python -m pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Verify safety and bounds offline
+        run: |
+          set -euo pipefail
+          python -m pytest -q tests/test_v2_receita_a095_transport_probe.py
+
+      - name: Inspect official WebDAV 1-vs-2 connection throughput
+        run: |
+          set -euo pipefail
+          python -m scripts.a095_bounded_transport_probe \
+            --output "$RUNNER_TEMP/a095-bounded-transport-report.json"
+
+      - name: Upload only small JSON diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: a095-bounded-transport-${{ github.run_id }}-a${{ github.run_attempt }}
+          retention-days: 14
+          if-no-files-found: warn
+          path: ${{ runner.temp }}/a095-bounded-transport-report.json
+
+      # Nothing from this workflow can trigger the HostGator publisher.
