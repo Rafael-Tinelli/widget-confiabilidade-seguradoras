@@ -229,14 +229,22 @@ class PartitionPrefetch:
 
     def __enter__(self) -> PartitionPrefetch:
         if self.enabled and len(self.specs) >= 2:
-            self.root.mkdir(parents=True, exist_ok=True)
-            self._temporary = tempfile.TemporaryDirectory(
-                prefix="a096-prefetch-", dir=self.root,
-            )
-            self._stage = Path(self._temporary.name)
-            self._executor = ThreadPoolExecutor(max_workers=MAX_WORKERS)
-            self._schedule(0)
-            self._schedule(1)
+            try:
+                self.root.mkdir(parents=True, exist_ok=True)
+                self._temporary = tempfile.TemporaryDirectory(
+                    prefix="a096-prefetch-", dir=self.root,
+                )
+                self._stage = Path(self._temporary.name)
+                self._executor = ThreadPoolExecutor(max_workers=MAX_WORKERS)
+                self._schedule(0)
+                self._schedule(1)
+            except (OSError, RuntimeError):
+                # The optional optimization cannot make a healthy serial
+                # acquisition fail during initialization.
+                self.__exit__(None, None, None)
+                self._executor = None
+                self._temporary = None
+                self._stage = None
         return self
 
     def _schedule(self, i: int) -> None:
@@ -245,16 +253,25 @@ class PartitionPrefetch:
         spec = self.specs[i]
         pending = sum(self.specs[k].size for k in self._pending)
         required = spec.size + pending
-        if (
-            required > MAX_STAGED_BYTES
-            or shutil.disk_usage(self._stage).free < required + MIN_FREE_RESERVE_BYTES
-        ):
+        try:
+            affordable = (
+                required <= MAX_STAGED_BYTES
+                and shutil.disk_usage(self._stage).free
+                >= required + MIN_FREE_RESERVE_BYTES
+            )
+        except OSError:
+            affordable = False
+        if not affordable:
             category, index = file_category(spec.name)
             emit("prefetch_skipped", category=category, file_index=index, state="disk_guard")
             return
-        self._pending[i] = self._executor.submit(
-            _fetch_stage, spec, self._stage, self._cancel,
-        )
+        try:
+            self._pending[i] = self._executor.submit(
+                _fetch_stage, spec, self._stage, self._cancel,
+            )
+        except RuntimeError:
+            # Executor shutdown is not a reason to fail the original reader.
+            return
 
     def __iter__(self):
         for i, spec in enumerate(self.specs):
@@ -290,3 +307,16 @@ def adopt_staged(staged: Path, destination: Path) -> Path:
         destination.unlink()
     staged.replace(destination)
     return destination
+
+def adopt_or_download(
+    staged: Path | None, destination: Path, serial_download,
+) -> Path:
+    """Use an already verified staging ZIP, otherwise run original downloader."""
+    if staged is None:
+        return serial_download()
+    try:
+        return adopt_staged(staged, destination)
+    except OSError:
+        # Staging promotion failure must not change the original semantics.
+        destination.unlink(missing_ok=True)
+        return serial_download()
