@@ -274,3 +274,133 @@ def test_a096_exact_volatile_allowlist_does_not_hide_business_fields(
     assert any("cadastral_status" in x for x in verdict["semantic_checks"][
         "receita_cnpj_lifecycle"
     ]["diff_paths_only"])
+
+
+def _fixture_november_archive(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *,
+    bad_public: bool = False,
+) -> Path:
+    """Tiny stand-in exercising the exact structural contracts of the real ZIP."""
+    build = {
+        "build_id": proof.RUN_BUILD,
+        "workflow_run_id": str(proof.RUN_ID),
+        "workflow_run_attempt": 1,
+        "source_head_sha": proof.RUN_SHA,
+    }
+    snapshots = {
+        name: {
+            "source_id": name,
+            "sha256": ("a" if name == "receita_cnpj_lifecycle" else "b") * 64,
+            "snapshot_path": entry["snapshot_path"],
+            "build_id": proof.RUN_BUILD,
+            "state": "fresh",
+            "freshness_method": "current_fetch",
+        }
+        for name, entry in proof.SOURCES.items()
+    }
+    lineage = {"build": build, "sources": [snapshots["receita_cnpj_lifecycle"]]}
+    conduct = {"build": build, "sources": [snapshots["receita_consumer_identity"]]}
+    identity = {
+        "build_id": proof.RUN_BUILD,
+        "source_id": "receita_consumer_identity",
+        "reference_period": "2026-11",
+        "snapshot_sha256": snapshots["receita_consumer_identity"]["sha256"],
+        "source_state": "fresh", "freshness_method": "current_fetch",
+        "marker_consistency": "matched",
+        "snapshot_contract_consistency": "matched",
+        "release_fingerprint": "c" * 64,
+        "target_universe_hash": "d" * 64,
+        "unresolved_provider_hash": "e" * 64,
+        "cache_contract_version": "v2-consumer-receita-identity-2",
+    }
+    summary = {
+        "build_id": proof.RUN_BUILD,
+        "source_head_sha": proof.RUN_SHA,
+        "stage_count": 25,
+        "package_sha256": "f" * 64,
+    }
+    events = [
+        {
+            "event": "release_discovery",
+            "reference_period": "2026-11",
+            "release_fingerprint": identity["release_fingerprint"],
+        },
+    ]
+    for category in ("estabelecimentos", "empresas"):
+        for i in range(10):
+            events.append({
+                "event": "zip_download", "category": category,
+                "file_index": i, "state": "success",
+            })
+    for state in ("stored", "verified"):
+        for i in range(10):
+            events.append({
+                "event": "zip_reuse", "category": "estabelecimentos",
+                "file_index": i, "state": state,
+            })
+    files = []
+    for i in range(816):
+        blob = b"{}"
+        files.append({
+            "path": f"profiles/example-{i:04d}.json",
+            "bytes": len(blob),
+            "sha256": _sha(blob),
+        })
+    if bad_public:
+        files[400]["sha256"] = "0" * 64
+    distribution = {
+        "build": {"build_id": proof.RUN_BUILD},
+        "public_package": {
+            "files_count": 816,
+            "package_sha256": summary["package_sha256"],
+            "files": files,
+        },
+    }
+    proof_data = {
+        "gate4_full_generation_summary.json": summary,
+        "source_lineage.json": lineage,
+        "conduct_source_lineage.json": conduct,
+        "receita_identity_provenance_a09.json": identity,
+        "public/distribution_manifest.json": distribution,
+    }
+    path = tmp_path / "november-proof.zip"
+    with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for name, row in proof_data.items():
+            archive.writestr(name, json.dumps(row))
+        archive.writestr(
+            "receita_a09_events.jsonl",
+            "".join(json.dumps(row) + "\n" for row in events),
+        )
+        for item in files:
+            archive.writestr("public/" + item["path"], b"{}")
+    monkeypatch.setattr(proof, "ARCHIVE_SHA", proof._hash_file(path))
+    return path
+
+
+def test_a096_reference_builder_reads_all_816_file_hashes_and_20_zip_events(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    path = _fixture_november_archive(tmp_path, monkeypatch)
+    result = proof.reference_from_archive(path)
+    assert result["reference_run"]["id"] == proof.RUN_ID
+    assert result["public_package"]["files_verified_by_sha256"] == 816
+    assert result["source_snapshots"]["receita_cnpj_lifecycle"]["sha256"] == "a" * 64
+    assert result["source_snapshots"]["receita_consumer_identity"]["sha256"] == "b" * 64
+    assert result["raw_national_zip_bytes_in_proof"] is False
+
+
+def test_a096_reference_builder_rejects_unlisted_or_corrupt_public_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    path = _fixture_november_archive(tmp_path, monkeypatch, bad_public=True)
+    with pytest.raises(proof.ProofError, match="public_file_digest_mismatch"):
+        proof.reference_from_archive(path)
+
+
+def test_a096_reference_builder_rejects_changed_archive_sha(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    path = _fixture_november_archive(tmp_path, monkeypatch)
+    monkeypatch.setattr(proof, "ARCHIVE_SHA", "f" * 64)
+    with pytest.raises(proof.ProofError, match="archive_sha256"):
+        proof.reference_from_archive(path)
