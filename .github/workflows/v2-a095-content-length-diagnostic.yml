@@ -1,0 +1,78 @@
+name: V2 A09.5 Content-Length Diagnostic
+
+# A purely observational HTTP header probe. The ZIP bodies are never read.
+# The only external requests are official WebDAV PROPFIND, HEAD and streamed
+# GET with immediate close. It cannot modify production or publish a package.
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_probe:
+        description: "Type HEADERS to inspect official WebDAV length and ETag headers"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: v2-a095-content-length-diagnostic
+  cancel-in-progress: false
+
+jobs:
+  inspect-http-headers:
+    if: inputs.confirm_probe == 'HEADERS'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          python -m pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Refuse overlap with canonical national acquisition
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          states=$(gh api \
+            "repos/$GITHUB_REPOSITORY/actions/workflows/v2-gate4-full-generation-proof.yml/runs?per_page=30" \
+            --jq '[.workflow_runs[] | select(.status == "in_progress" or .status == "queued" or .status == "waiting" or .status == "pending")] | length')
+          if [[ "$states" != "0" ]]; then
+            echo "::error::Canonical Full Generation is active; aborting isolated probe."
+            exit 1
+          fi
+
+      - name: Validate safe header-only observations offline
+        run: |
+          set -euo pipefail
+          python -m pytest -q tests/test_v2_receita_a095_content_length_diagnostic.py
+
+      - name: Compare GET and HEAD headers against official WebDAV metadata
+        run: |
+          set -euo pipefail
+          python -m scripts.a095_content_length_diagnostic \
+            --output "$RUNNER_TEMP/a095-content-length-headers.json"
+
+      - name: Upload compact metadata report only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: a095-length-headers-${{ github.run_id }}-a${{ github.run_attempt }}
+          retention-days: 14
+          if-no-files-found: warn
+          path: ${{ runner.temp }}/a095-content-length-headers.json
+
+      # Never used as a trigger of the public package publisher.
