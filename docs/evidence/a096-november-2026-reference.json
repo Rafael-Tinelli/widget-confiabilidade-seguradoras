@@ -1,0 +1,58 @@
+{
+  "filtered_snapshot_bytes_in_proof": false,
+  "identity_contract": {
+    "cache_contract_version": "v2-consumer-receita-identity-2",
+    "marker_consistency": "matched",
+    "release_fingerprint": "bd843750f0db500193dd40fbbb9fff16b3b30028a71d7bb0db8d4dbc21e4b5b9",
+    "target_universe_hash": "214c329eda6adf1b4660e860426f08e31bd4b93c391e5c08009f6ea06d86f05b",
+    "unresolved_provider_hash": "d1306c8dcdafd3b771baaa5ffa18948a434f5c282dfcb74e6bb0ab3b13a0970b"
+  },
+  "proof_artifact": {
+    "archive_sha256": "6a8c1e04ef697779129724fb5c5e857d28d3d72bd66036f0f472ca9732c9a068",
+    "entry_sha256": {
+      "conduct_source_lineage.json": "48a6d5763d2448513ddd8c0353393fcfa3f1cc6b6bb2982bc7ba9d15eaf379f1",
+      "gate4_full_generation_summary.json": "cbebb5dbdd2db7ad58aad822bdf012195d87826b65e879189de58687b7a21a0d",
+      "public/distribution_manifest.json": "51b1e86a565985c087b014bade99c3feb8bffa169897873ecdbfafd3f01690ef",
+      "receita_a09_events.jsonl": "9dc702cfa16b0e50cf866844d0e2038a51e204b922cf5698195cb01897224685",
+      "receita_identity_provenance_a09.json": "cee41b9657c1125e36351be98fd95086611c626c7aba333a3002d0e36dbb5f08",
+      "source_lineage.json": "cff789158e17159204e7e6d35a9ebff9e22125741322bdec4c96c18a05b62b05"
+    },
+    "id": 14277894275,
+    "name": "v2-gate4-full-generation-43941197377-a1"
+  },
+  "public_package": {
+    "file_count": 816,
+    "files_verified_by_sha256": 816,
+    "package_sha256": "57cdaee41f03c4ee337741874133614d2208756b2e31299a3b27f95743105e89"
+  },
+  "raw_national_zip_bytes_in_proof": false,
+  "reference_run": {
+    "attempt": 1,
+    "build_id": "v2-gate4-full-43941197377-a1",
+    "id": 43941197377,
+    "period": "2026-11",
+    "source_head_sha": "0b7c40bb3d9463e7d71680b49e93c90e3c54f46d"
+  },
+  "schema": "a096-receita-november-reference-v1",
+  "source_snapshots": {
+    "receita_cnpj_lifecycle": {
+      "artifact": "v2_receita_cnpj_lifecycle",
+      "cache_group": "source",
+      "cache_name": "receita_cnpj_lifecycle",
+      "freshness_method": "current_fetch",
+      "sha256": "9e32fef301c6104bcf3c3394a55636a0a5f783ea0b47a1dc9636760a483e5382",
+      "snapshot_path": "data/derived/v2/source/receita_cnpj_lifecycle.json",
+      "state": "fresh"
+    },
+    "receita_consumer_identity": {
+      "artifact": "v2_receita_cnpj_identity",
+      "cache_group": "conduct",
+      "cache_name": "receita_consumer_identity",
+      "freshness_method": "current_fetch",
+      "sha256": "62928cf04a72f5476ac0ababc62e91124f8805cc5e2c3be966360b8e0f103e97",
+      "snapshot_path": "data/derived/v2/receita_consumer_gov_identity.json",
+      "state": "fresh"
+    }
+  },
+  "zip_evidence_scope": "observed_downloads_and_a094_verified_not_retained_content_hashes"
+}
