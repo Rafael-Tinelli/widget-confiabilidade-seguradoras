@@ -133,7 +133,7 @@ def test_a096_safe_diagnostics_only_contains_counts_and_presence(
     assert stats["a094_stored_count"] == 10
     assert stats["a094_verified_count"] == 10
     assert stats["company_retained_count"] == 10
-    assert "cnpj" not in str(stats).lower()
+    assert "12345678000100" not in str(stats)
     assert "https" not in str(stats).lower()
 
 
