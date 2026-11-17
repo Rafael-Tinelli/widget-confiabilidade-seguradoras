@@ -97,3 +97,104 @@ migração de caches nem reversão de dados. A09.4 permanece independente.
 
 Nenhuma publicação HostGator, Full Generation, alteração de Conduta,
 registro de marca ou pontuação é necessária para revisar esta PR.
+
+
+## Homologação adicional — referência de novembro e replay local (PR #71)
+
+### Referência documental já materializada
+
+A geração histórica de novembro, run
+[`#43941197377`](https://github.com/Rafael-Tinelli/widget-confiabilidade-seguradoras/actions/runs/43941197377),
+tem sua referência em
+[`docs/evidence/a096-november-2026-reference.json`](../evidence/a096-november-2026-reference.json)
+(arquivo dentro de `docs/evidence/`).
+
+Foi extraída **do ZIP real da prova** (artifact ID `14277894275`), não de
+números inventados. O SHA-256 do arquivo de prova foi fixado; o manifesto
+de distribuição conferiu **816/816 arquivos públicos** por SHA-256 e tamanho.
+Os dois snapshots da Receita estão identificados por hashes de sua linhagem:
+
+- Lifecycle `9e32fef301c6104bcf3c3394a55636a0a5f783ea0b47a1dc9636760a483e5382`.
+- Identidade `62928cf04a72f5476ac0ababc62e91124f8805cc5e2c3be966360b8e0f103e97`.
+
+**Limite de evidência:** o pacote de prova de 1,68 MB NÃO contém os bytes
+desses dois snapshots filtrados nem os 20 ZIPs nacionais. Seu arquivo
+compacto de referência não contém CNPJs nem URL do compartilhamento WebDAV
+(com token). O artifact histórico expira em **30/11/2026**; nenhum ZIP bruto
+foi versionado nem publicado.
+
+### Recuperação de snapshots por cache persistente
+
+O workflow manual
+`V2 A09.6 November Reference Homologation`
+(`.github/workflows/v2-a096-november-reference.yml`) existe **somente
+para revisão após eventual integração**: exige `REFERENCE`, restaura
+EXATAMENTE os caches `v2-gate4-source-Linux-43941197377` e
+`v2-gate4-conduct-Linux-43941197377`, sem usar restore-keys, e adquire
+apenas o ZIP de evidências de 1,68 MB **do GitHub**, nunca os ZIPs da Receita.
+
+O script `scripts/a096_homologation.py reference` reconstitui o manifesto
+e confere a referência pinada, o contrato da geração, linhagem, proveniência,
+fingerprint, A09.4 e 816 hashes do pacote. Em seguida, o subcomando `audit`
+verifica o **SHA-256 real do arquivo restaurado e do recibo** do cache,
+identidade da fonte, competência, artifact e chave de universo/provedores.
+Qualquer cache ausente, divergente ou incompleto bloqueia a aprovação.
+A execução não publica e não salva cache.
+
+Mesmo com hashes e contratos verificados, **o status sem candidato é
+`insufficient_evidence`**, enquanto o workflow pode encerrar verde para a
+verificação da *referência* especificamente. Isso não autoriza o prefetch.
+
+### Preparação dos ZIPs para a próxima aquisição realmente necessária
+
+`RECEITA_A096_RETAIN_ZIPS=1` (não definido na produção) captura, de modo
+**opcional e temporário**, os dez ZIPs de **Empresas** por `os.link` no
+mesmo `RUNNER_TEMP`, antes do parser descartar cada arquivo. Não faz cópia
+se o hardlink falhar e não altera a aquisição. Os dez ZIPs de
+**Estabelecimentos** são os que a A09.4 já mantém no mesmo runner.
+Os dois grupos têm recibos por `V2_BUILD_ID`, tamanho, metadados de origem
+e SHA-256 local. O script:
+
+```bash
+python -m scripts.a096_finalize_local_capture \
+  --source-cache data/cache/v2/source \
+  --conduct-cache data/cache/v2/conduct \
+  --output "$RUNNER_TEMP/a096-local-input-proof.json"
+```
+
+somente emite o manifesto se os **20 ZIPs** íntegros e os dois snapshots
+da **mesma geração e competência** estiverem presentes. Os ZIPs ficam no
+runner, nunca no artifact ou HostGator, e desaparecem quando o job acaba.
+Esse comando deve ser executado depois das duas fases e **antes** de
+desmontar o workspace. Não foi introduzido no workflow produtivo.
+
+Para comparar o parser sequencial com a execução candidata sobre **os
+mesmos ZIPs locais**, sem rede, após a retenção e o replay controlado:
+
+```bash
+python -m scripts.a096_homologation compare-local \
+  --zip-proof "$RUNNER_TEMP/a096-local-input-proof.json" \
+  --companies "$RUNNER_TEMP/a096-company-run-zips/$V2_BUILD_ID" \
+  --establishments "$RUNNER_TEMP/receita-a09-run-zips/$V2_BUILD_ID" \
+  --serial-lifecycle caminho/serial-lifecycle.json \
+  --serial-identity caminho/serial-identity.json \
+  --candidate-lifecycle caminho/prefetch-lifecycle.json \
+  --candidate-identity caminho/prefetch-identity.json \
+  --output "$RUNNER_TEMP/a096-semantic-verdict.json"
+```
+
+O verificador lê e confere **todos os 20 ZIPs por SHA-256**, inclusive
+tamanho, integridade ZIP, identidade e competência, e confere o hash do
+snapshot sequencial. Os resultados só podem ser
+`equivalent`, `different` ou `insufficient_evidence`.
+São ignorados **somente** `generated_at`, `source.retrieved_at` e
+`source.release_checked_at` (sem descartar campos contratuais, registros,
+coberturas ou resultados). O relatório de diferenças lista **caminhos de
+campos**, não CNPJs ou valores privados.
+
+**Para outra competência**, a referência de novembro não substitui o
+baseline local; a comparação deve nascer dos mesmos bytes da nova
+aquisição. O mecanismo de retenção e o comparador estão prontos;
+o replay que realmente produz os snapshots candidatos fica como etapa
+de homologação **a ser executada na próxima aquisição necessária**.
+A PR não habilita prefetch, retenção ou publicação.
