@@ -13,8 +13,8 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
 import os
+import re
 import shutil
 from collections import Counter
 from pathlib import Path
