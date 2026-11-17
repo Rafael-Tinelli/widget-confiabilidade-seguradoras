@@ -21,12 +21,12 @@ from api.sources.receita_cnpj_cache_integrity import (
     FINGERPRINT_METHOD,
     lifecycle_release_fingerprint,
 )
-from api.sources.receita_cnpj_run_zip_cache import acquire_run_establishment_zip
 from api.sources.receita_cnpj_prefetch import (
     PartitionPrefetch,
     adopt_or_download,
     official_partitions,
 )
+from api.sources.receita_cnpj_run_zip_cache import acquire_run_establishment_zip
 from api.sources.receita_cnpj_telemetry import emit, file_category
 from api.utils.identifiers import normalize_cnpj_v2
 
