@@ -21,6 +21,7 @@ import time
 import zipfile
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 from urllib.parse import urljoin, urlsplit
@@ -176,6 +177,9 @@ def _fetch_stage(spec: Partition, root: Path, cancel: threading.Event) -> Staged
                 etag = response.headers.get("ETag")
                 if spec.etag and etag and etag != spec.etag:
                     raise PrefetchRejected("prefetch_etag_mismatch")
+                modified = response.headers.get("Last-Modified")
+                if spec.last_modified and modified and modified != spec.last_modified:
+                    raise PrefetchRejected("prefetch_last_modified_mismatch")
                 with part.open("xb") as stream:
                     for chunk in response.iter_content(chunk_size=READ_CHUNK):
                         if cancel.is_set():
@@ -309,14 +313,34 @@ def adopt_staged(staged: Path, destination: Path) -> Path:
     return destination
 
 def adopt_or_download(
-    staged: Path | None, destination: Path, serial_download,
+    staged: Path | None,
+    destination: Path,
+    serial_download: Callable[[], Path],
+    *,
+    expected: Partition | None = None,
 ) -> Path:
-    """Use an already verified staging ZIP, otherwise run original downloader."""
-    if staged is None:
-        return serial_download()
-    try:
-        return adopt_staged(staged, destination)
-    except OSError:
-        # Staging promotion failure must not change the original semantics.
-        destination.unlink(missing_ok=True)
-        return serial_download()
+    """Use a verified staging ZIP, or verify a serial fallback before parsing.
+
+    Keep the original legacy path unchanged when expected is None (flag OFF
+    or the official metadata is insufficient to activate the prefetch).
+    """
+    if staged is not None:
+        try:
+            return adopt_staged(staged, destination)
+        except OSError:
+            destination.unlink(missing_ok=True)
+    local = serial_download()
+    if expected is not None:
+        try:
+            if (local.is_symlink() or not local.is_file()
+                    or local.stat().st_size != expected.size
+                    or not zipfile.is_zipfile(local)):
+                raise PrefetchRejected("serial_fallback_size_or_zip_invalid")
+            # Official content hashes are not published. This is a LOCAL
+            # post-transfer digest; A09.4 separately seals and verifies it.
+            if not SHA256.fullmatch(_digest(local)):
+                raise PrefetchRejected("serial_fallback_digest_invalid")
+        except Exception:
+            local.unlink(missing_ok=True)
+            raise
+    return local
