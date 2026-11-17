@@ -26,6 +26,11 @@ from api.sources.receita_cnpj_bulk import (
     discover_latest_release,
 )
 from api.sources.receita_cnpj_run_zip_cache import acquire_run_establishment_zip
+from api.sources.receita_cnpj_prefetch import (
+    PartitionPrefetch,
+    adopt_staged,
+    official_partitions,
+)
 from api.sources.receita_cnpj_telemetry import emit, release_fingerprint, utcnow
 from api.utils.identifiers import normalize_cnpj_v2
 from api.utils.name_cleaner import normalize_name_key
@@ -405,56 +410,70 @@ def build_filtered_identity_snapshot(
         legal_matches_by_base: dict[str, list[tuple[str, str]]] = defaultdict(list)
         company_files_scanned: list[str] = []
 
-        for index, name in enumerate(files["companies"]):
-            local = _download_zip(sess, urljoin(resolved_release.release_url, name), root / name)
-            parse_started = time.perf_counter()
-            scanned = retained = 0
-            parsed = False
-            try:
-                with zipfile.ZipFile(local) as archive:
-                    member = _first_csv_member(archive)
-                    with archive.open(member) as raw:
-                        text = io.TextIOWrapper(raw, encoding="latin1", newline="")
-                        reader = csv.reader(text, delimiter=";", quotechar='"')
-                        for row in reader:
-                            scanned += 1
-                            if len(row) < 3:
-                                continue
-                            base = _digits(row[0])
-                            if len(base) != 8:
-                                continue
-                            legal_name = str(row[1] or "").strip()
-                            matches = _match_name_to_queries(
-                                legal_name, queries, prefix="legal_name",
-                            )
-                            if base in target_bases or matches:
-                                # Do not normalize the legal nature for the
-                                # millions of companies discarded here.
-                                nature_code = _digits(row[2])
-                                retained += 1
-                                companies_by_base[base] = {
-                                    "cnpj_base": base,
-                                    "legal_name_receita": legal_name or None,
-                                    "legal_nature_code": nature_code or None,
-                                    "legal_nature": nature_map.get(nature_code) if nature_code else None,
-                                }
-                            for provider_key, method in matches:
-                                legal_matches_by_base[base].append((provider_key, method))
-                company_files_scanned.append(name)
-                parsed = True
-            finally:
-                meta = files["metadata"].get(name) or {}
-                emit(
-                    "partition_parse", category="empresas", file_index=index,
-                    expected_bytes=meta.get("size"),
-                    received_bytes=local.stat().st_size if local.exists() else None,
-                    etag_present=bool(meta.get("etag")),
-                    last_modified_present=bool(meta.get("last_modified")),
-                    elapsed_parse_s=round(time.perf_counter() - parse_started, 3),
-                    rows_scanned=scanned, rows_retained=retained,
-                    state="success" if parsed else "partial",
+        # Parse Empresas in the same order; speculative downloads are optional
+        # and never change the identity matching/normalization methodology.
+        company_specs = official_partitions(
+            resolved_release.release_url, files["companies"], files["metadata"],
+        )
+        with PartitionPrefetch(company_specs, root=root) as prefetch:
+            paths = (
+                ((spec.name, staged) for spec, staged in prefetch)
+                if company_specs is not None
+                else ((name, None) for name in files["companies"])
+            )
+            for index, (name, staged) in enumerate(paths):
+                local = (
+                    adopt_staged(staged, root / name) if staged is not None
+                    else _download_zip(sess, urljoin(resolved_release.release_url, name), root / name)
                 )
-                local.unlink(missing_ok=True)
+                parse_started = time.perf_counter()
+                scanned = retained = 0
+                parsed = False
+                try:
+                    with zipfile.ZipFile(local) as archive:
+                        member = _first_csv_member(archive)
+                        with archive.open(member) as raw:
+                            text = io.TextIOWrapper(raw, encoding="latin1", newline="")
+                            reader = csv.reader(text, delimiter=";", quotechar='"')
+                            for row in reader:
+                                scanned += 1
+                                if len(row) < 3:
+                                    continue
+                                base = _digits(row[0])
+                                if len(base) != 8:
+                                    continue
+                                legal_name = str(row[1] or "").strip()
+                                matches = _match_name_to_queries(
+                                    legal_name, queries, prefix="legal_name",
+                                )
+                                if base in target_bases or matches:
+                                    # Do not normalize the legal nature for the
+                                    # millions of companies discarded here.
+                                    nature_code = _digits(row[2])
+                                    retained += 1
+                                    companies_by_base[base] = {
+                                        "cnpj_base": base,
+                                        "legal_name_receita": legal_name or None,
+                                        "legal_nature_code": nature_code or None,
+                                        "legal_nature": nature_map.get(nature_code) if nature_code else None,
+                                    }
+                                for provider_key, method in matches:
+                                    legal_matches_by_base[base].append((provider_key, method))
+                    company_files_scanned.append(name)
+                    parsed = True
+                finally:
+                    meta = files["metadata"].get(name) or {}
+                    emit(
+                        "partition_parse", category="empresas", file_index=index,
+                        expected_bytes=meta.get("size"),
+                        received_bytes=local.stat().st_size if local.exists() else None,
+                        etag_present=bool(meta.get("etag")),
+                        last_modified_present=bool(meta.get("last_modified")),
+                        elapsed_parse_s=round(time.perf_counter() - parse_started, 3),
+                        rows_scanned=scanned, rows_retained=retained,
+                        state="success" if parsed else "partial",
+                    )
+                    local.unlink(missing_ok=True)
 
         canonical_records: dict[str, dict[str, Any]] = {}
         provider_candidates: dict[str, list[dict[str, Any]]] = defaultdict(list)
