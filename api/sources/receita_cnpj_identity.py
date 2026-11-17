@@ -25,12 +25,12 @@ from api.sources.receita_cnpj_bulk import (
     _propfind,
     discover_latest_release,
 )
-from api.sources.receita_cnpj_run_zip_cache import acquire_run_establishment_zip
 from api.sources.receita_cnpj_prefetch import (
     PartitionPrefetch,
     adopt_or_download,
     official_partitions,
 )
+from api.sources.receita_cnpj_run_zip_cache import acquire_run_establishment_zip
 from api.sources.receita_cnpj_telemetry import emit, release_fingerprint, utcnow
 from api.utils.identifiers import normalize_cnpj_v2
 from api.utils.name_cleaner import normalize_name_key
@@ -425,7 +425,7 @@ def build_filtered_identity_snapshot(
             for index, (name, staged) in enumerate(paths):
                 local = adopt_or_download(
                     staged, root / name,
-                    lambda: _download_zip(
+                    lambda name=name: _download_zip(
                         sess, urljoin(resolved_release.release_url, name), root / name,
                     ),
                     expected=spec_by_name.get(name) if prefetch.enabled else None,
