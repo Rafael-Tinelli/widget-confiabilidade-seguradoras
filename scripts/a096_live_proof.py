@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import os
 import shutil
 from collections import Counter
@@ -319,12 +320,20 @@ def replay() -> dict:
     if release.period != info["reference_period"]:
         raise RuntimeError("release_changed_before_local_replay")
 
+    # The actual Gate 4 artifact is at derived/v2/entity_classification_inventory.json;
+    # "source/classification_inventory.json" does not exist. Check the exact
+    # CNPJ universe fingerprint against the prefetch snapshot before replay.
     classification = _json_bytes(
-        (DERIVED / "source/classification_inventory.json").read_bytes()
+        (DERIVED / "entity_classification_inventory.json").read_bytes()
     )
     entities = list(classification.get("entities") or [])
     if not entities:
         raise RuntimeError("regulatory_universe_missing")
+    from api.v2.refresh_receita_lifecycle import regulatory_target_universe_hash
+    primary = _json_bytes(_candidate_file(NOVEMBER_SOURCE).read_bytes())
+    if (regulatory_target_universe_hash(entities)
+            != (primary.get("meta") or {}).get("target_universe_hash")):
+        raise RuntimeError("regulatory_universe_not_equivalent_to_primary")
     consumer_entities, providers = _load_inputs()
     if not consumer_entities or not providers:
         raise RuntimeError("consumer_identity_universe_missing")
@@ -474,12 +483,19 @@ def main() -> None:
         stage = globals()[args.stage]
         report = stage()
     except Exception as exc:  # noqa: BLE001 - proof failures are fail-closed and redacted
-        # Do not log path-based CNPJ data, external sharing tokens or secrets.
+        # Only fixed-format failure identifiers may be reported: never
+        # disclose arbitrary errors containing CNPJs, URLs or file paths.
+        safe_code = str(exc)
+        if (isinstance(exc, RuntimeError)
+                and re.fullmatch(r"[a-z][a-z_]{5,100}", safe_code)):
+            reason = safe_code
+        else:
+            reason = type(exc).__name__
         report = {
             "schema": PREFIX,
             "stage": args.stage,
             "status": "insufficient_evidence",
-            "reason": type(exc).__name__,
+            "reason": reason,
             "production_publication_authorized": False,
         }
     # Always preserve safe, granular evidence even on a failed stage.
