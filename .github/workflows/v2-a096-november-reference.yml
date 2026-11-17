@@ -65,8 +65,18 @@ jobs:
           python -m scripts.a096_homologation reference \
             --proof-zip "$RUNNER_TEMP/a096-november-proof.zip" \
             --output "$RUNNER_TEMP/a096-november-generated.json"
-          cmp docs/evidence/a096-november-2026-reference.json \
-            "$RUNNER_TEMP/a096-november-generated.json"
+          python - "$RUNNER_TEMP/a096-november-generated.json" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+          committed = json.loads(
+              Path("docs/evidence/a096-november-2026-reference.json").read_text()
+          )
+          actual = json.loads(Path(sys.argv[1]).read_text())
+          if committed != actual:
+              raise SystemExit("november_reference_manifest_mismatch")
+          print("Pinned November proof archive matches committed reference.")
+          PY
 
       - name: Verify actual snapshot bytes and original cache receipts
         run: |
