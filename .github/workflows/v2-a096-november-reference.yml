@@ -1,0 +1,110 @@
+name: V2 A09.6 November Reference Homologation
+
+# Manual, read-only validation. It restores only the EXACT November cache keys.
+# No Receita ZIP downloads, no run-all, no publication, no cache write-back.
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_reference:
+        description: "Type REFERENCE to verify pinned November proof and snapshot caches"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: v2-a096-november-reference
+  cancel-in-progress: false
+
+jobs:
+  november-reference:
+    if: inputs.confirm_reference == 'REFERENCE'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - name: Checkout source for offline reference checks
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Configure Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Restore EXACT validated regulatory cache (no restore-keys)
+        id: source-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: data/cache/v2/source
+          key: v2-gate4-source-${{ runner.os }}-43941197377
+
+      - name: Restore EXACT validated conduct cache (no restore-keys)
+        id: conduct-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: data/cache/v2/conduct
+          key: v2-gate4-conduct-${{ runner.os }}-43941197377
+
+      - name: Retrieve exact November Gate 4 evidence artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          curl -fsSL --retry 0 \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/artifacts/14277894275/zip" \
+            -o "$RUNNER_TEMP/a096-november-proof.zip"
+
+      - name: Independently regenerate and compare pinned November manifest
+        run: |
+          set -euo pipefail
+          python -m scripts.a096_homologation reference \
+            --proof-zip "$RUNNER_TEMP/a096-november-proof.zip" \
+            --output "$RUNNER_TEMP/a096-november-generated.json"
+          cmp docs/evidence/a096-november-2026-reference.json \
+            "$RUNNER_TEMP/a096-november-generated.json"
+
+      - name: Verify actual snapshot bytes and original cache receipts
+        run: |
+          set -euo pipefail
+          set +e
+          python -m scripts.a096_homologation audit \
+            --reference docs/evidence/a096-november-2026-reference.json \
+            --cache-root data/cache/v2 \
+            --proof-zip "$RUNNER_TEMP/a096-november-proof.zip" \
+            --output "$RUNNER_TEMP/a096-november-cache-audit.json"
+          status=$?
+          set -e
+          python - "$RUNNER_TEMP/a096-november-cache-audit.json" "$status" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+          result = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          # Reference-only check does not have an experimental candidate.
+          # Its status must remain insufficient_evidence, never equivalent.
+          if result.get("status") != "insufficient_evidence":
+              raise SystemExit("unexpected_semantic_approval_or_mismatch")
+          if (result.get("november_archive_verified") is not True
+                  or result.get("reference_snapshots_verified") is not True
+                  or result.get("source_checks") != {
+                      "receita_cnpj_lifecycle": "verified",
+                      "receita_consumer_identity": "verified",
+                  }):
+              raise SystemExit("november_cache_bytes_or_contract_not_verified")
+          if int(sys.argv[2]) != 1:
+              raise SystemExit("reference-only audit should not claim equivalence")
+          print("November reference verified; candidate still missing.")
+          PY
+
+      - name: Upload only compact cache-audit evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: a096-november-reference-${{ github.run_id }}-a${{ github.run_attempt }}
+          retention-days: 14
+          if-no-files-found: warn
+          path: ${{ runner.temp }}/a096-november-cache-audit.json
