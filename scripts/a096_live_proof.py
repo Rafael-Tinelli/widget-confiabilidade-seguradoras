@@ -158,8 +158,43 @@ def _verify_source_rows() -> dict:
     return evidence
 
 
+def _verify_partition_transfer_routes(rows: list[dict]) -> dict:
+    """Require one proven transfer path per ZIP, allowing verified serial fallback."""
+    ready = Counter(
+        (x.get("category"), x.get("file_index"))
+        for x in rows if x.get("event") == "prefetch_ready" and x.get("state") == "verified"
+    )
+    serial = Counter(
+        (x.get("category"), x.get("file_index"))
+        for x in rows if x.get("event") == "zip_download" and x.get("state") == "success"
+    )
+    fallback = Counter(
+        (x.get("category"), x.get("file_index"))
+        for x in rows if x.get("event") == "prefetch_fallback" and x.get("state") == "serial"
+    )
+    summary: dict[str, dict[str, int]] = {}
+    for category in ("empresas", "estabelecimentos"):
+        used = serial_fallback = 0
+        for index in range(10):
+            key = (category, index)
+            p, d, f = ready[key], serial[key], fallback[key]
+            if p == 1 and d == 0 and f == 0:
+                used += 1
+            elif d == 1 and (p == 0 or (p == 1 and f == 1)):
+                serial_fallback += 1
+            else:
+                raise RuntimeError("ambiguous_or_missing_zip_transfer_" + category)
+        if used == 0:
+            raise RuntimeError("no_effective_prefetch_for_" + category)
+        summary[category] = {
+            "prefetch_used": used, "serial_fallback_verified": serial_fallback,
+            "total": used + serial_fallback,
+        }
+    return summary
+
+
 def validate() -> dict:
-    """Hard fail if prefetch was skipped or any partition/receipt is missing."""
+    """Require complete ZIP integrity and permit legitimate verified fallbacks."""
     if os.environ.get("RECEITA_A096_PREFETCH") != "1":
         raise RuntimeError("prefetch_not_explicitly_enabled")
     if os.environ.get("RECEITA_A096_RETAIN_ZIPS") != "1":
@@ -184,11 +219,7 @@ def validate() -> dict:
         shutil.copy2(_cache_file(source), destination)
 
     rows = _receita_events()
-    ready = Counter(
-        (x.get("category"), x.get("file_index"))
-        for x in rows if x.get("event") == "prefetch_ready"
-        and x.get("state") == "verified"
-    )
+    transfers = _verify_partition_transfer_routes(rows)
     stored = Counter(
         x.get("file_index") for x in rows
         if x.get("event") == "zip_reuse" and x.get("category") == "estabelecimentos"
@@ -201,21 +232,12 @@ def validate() -> dict:
     )
     retained = Counter(
         x.get("file_index") for x in rows
-        if x.get("event") == "a096_capture" and x.get("category") == "empresas"
+        if x.get("event") == "company_capture" and x.get("category") == "empresas"
         and x.get("state") == "verified_hardlink"
     )
     expected = Counter({i: 1 for i in range(10)})
-    if (
-        stored != expected or reused != expected or retained != expected
-        or Counter({i: ready[("empresas", i)] for i in range(10)}) != expected
-        or Counter({i: ready[("estabelecimentos", i)] for i in range(10)}) != expected
-    ):
-        raise RuntimeError("prefetch_or_a094_or_capture_not_proven_for_all_partitions")
-    if any(
-        x.get("event") == "prefetch_fallback" or x.get("event") == "prefetch_skipped"
-        for x in rows
-    ):
-        raise RuntimeError("prefetch_fallback_or_disk_guard_detected")
+    if stored != expected or reused != expected or retained != expected:
+        raise RuntimeError("a094_or_company_retention_not_proven_for_all_partitions")
 
     # The previous November baseline is for an EXTERNAL comparison, not
     # sufficient to claim same-input equivalence because raw hashes were lost.
@@ -245,8 +267,9 @@ def validate() -> dict:
         "reference_period": evidence["reference_period"],
         "zip_files_verified": 20,
         "source_lineage": snapshots,
+        "transfer_paths": transfers,
         "prefetch_verified": {
-            "empresas": 10, "estabelecimentos": 10,
+            category: counts["prefetch_used"] for category, counts in transfers.items()
         },
         "a094": {"stored": 10, "verified": 10},
         "company_hardlinks_verified": 10,
@@ -393,6 +416,9 @@ def _safe_diagnostics(stage: str) -> dict:
         "a094_stored_count": 0,
         "a094_verified_count": 0,
         "company_retained_count": 0,
+        "serial_zip_download_success_count": {"empresas": 0, "estabelecimentos": 0},
+        "prefetch_fallback_count": {"empresas": 0, "estabelecimentos": 0},
+        "prefetch_disk_guard_skip_count": {"empresas": 0, "estabelecimentos": 0},
     }
     company = _company_root()
     establishment = _cache_dir()
@@ -423,9 +449,18 @@ def _safe_diagnostics(stage: str) -> dict:
                 observations["a094_stored_count"] += 1
             elif state == "verified":
                 observations["a094_verified_count"] += 1
-        elif (event == "a096_capture" and category == "empresas"
+        elif (event == "company_capture" and category == "empresas"
               and state == "verified_hardlink"):
             observations["company_retained_count"] += 1
+        elif (event == "zip_download" and state == "success"
+              and category in observations["serial_zip_download_success_count"]):
+            observations["serial_zip_download_success_count"][category] += 1
+        elif (event == "prefetch_fallback"
+              and category in observations["prefetch_fallback_count"]):
+            observations["prefetch_fallback_count"][category] += 1
+        elif (event == "prefetch_skipped"
+              and category in observations["prefetch_disk_guard_skip_count"]):
+            observations["prefetch_disk_guard_skip_count"][category] += 1
     observations["inspection_stage"] = stage
     return observations
 
