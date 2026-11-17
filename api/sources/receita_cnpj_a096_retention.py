@@ -76,7 +76,7 @@ def capture_company(
                 or not (isinstance(etag, str) and etag.strip()
                         or isinstance(modified, str) and modified.strip())
                 or not _file_valid(original, size)):
-            emit("a096_capture", category="empresas", state="invalid_candidate")
+            emit("company_capture", category="empresas", state="invalid_candidate")
             return
         period = getattr(release, "period", "")
         release_url = getattr(release, "release_url", "")
@@ -106,11 +106,11 @@ def capture_company(
             "sha256": local_digest,
         }
         sidecar.write_text(json.dumps(receipt, sort_keys=True) + "\n", encoding="utf-8")
-        emit("a096_capture", category="empresas", file_index=int(name[8:-4]),
+        emit("company_capture", category="empresas", file_index=int(name[8:-4]),
              state="verified_hardlink", expected_bytes=size)
     except (OSError, ValueError, TypeError, zipfile.BadZipFile):
         # Never override the valid original download or interfere with parsing.
-        emit("a096_capture", category="empresas", state="unavailable")
+        emit("company_capture", category="empresas", state="unavailable")
 
 
 def local_input_manifest(
