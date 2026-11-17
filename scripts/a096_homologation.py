@@ -22,6 +22,10 @@ ARTIFACT_ID = 14277894275
 ARTIFACT_NAME = f"v2-gate4-full-generation-{RUN_ID}-a1"
 ARCHIVE_SHA = "6a8c1e04ef697779129724fb5c5e857d28d3d72bd66036f0f472ca9732c9a068"
 PERIOD = "2026-11"
+EXPECTED_RECEITA_SOURCE_URL = (
+    "https://www.gov.br/receitafederal/pt-br/acesso-a-informacao/"
+    "dados-abertos/cadastros/cnpj"
+)
 SCHEMA = "a096-receita-november-reference-v1"
 REPORT_SCHEMA = "a096-homologation-report-v1"
 SHA = re.compile(r"[0-9a-f]{64}\Z")
@@ -273,7 +277,7 @@ def _read_cached(
     if (actual_sha != entry["sha256"] or metadata.get("sha256") != actual_sha):
         return None, "cache_sha256_mismatch"
     if (metadata.get("source_id") != source or not metadata.get("fetched_at")
-            or not isinstance(metadata.get("source_url"), str)):
+            or metadata.get("source_url") != EXPECTED_RECEITA_SOURCE_URL):
         return None, "invalid_cache_contract"
     if data.get("artifact") != entry["artifact"]:
         return None, "unexpected_snapshot_artifact"
