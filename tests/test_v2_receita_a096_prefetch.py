@@ -370,3 +370,153 @@ def test_a096_production_workflows_do_not_enable_flag() -> None:
     assert prefetch.ENV_NAME not in publish
     assert prefetch.MAX_WORKERS == 2
     assert prefetch.MAX_STAGED_BYTES == 4 * 1024**3
+
+
+class _HTTPResponse:
+    def __init__(
+        self, spec: prefetch.Partition, raw: bytes, *,
+        status: int = 200, length: str | None = None,
+        etag: str | None = None, modified: str | None = None,
+        redirected: str | None = None,
+        cancel: threading.Event | None = None,
+    ) -> None:
+        self.status_code = status
+        self.url = redirected or spec.url
+        self.headers = {
+            "Content-Length": length if length is not None else str(len(raw)),
+            "ETag": etag if etag is not None else str(spec.etag),
+            "Last-Modified": modified if modified is not None else str(spec.last_modified),
+        }
+        self.raw = raw
+        self.closed = False
+        self.cancel = cancel
+        self.read_bytes = 0
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args) -> None:
+        self.closed = True
+
+    def iter_content(self, *, chunk_size: int):
+        for i in range(0, len(self.raw), chunk_size):
+            chunk = self.raw[i:i + chunk_size]
+            self.read_bytes += len(chunk)
+            if self.cancel is not None:
+                self.cancel.set()
+            yield chunk
+
+
+def _http_spec(raw: bytes) -> prefetch.Partition:
+    return prefetch.Partition(
+        name="Empresas0.zip", url=OFFICIAL + "Empresas0.zip",
+        size=len(raw), etag='"etag-0"',
+        last_modified="Mon, 16 Nov 2026 10:04:47 GMT",
+    )
+
+
+def _fake_http(
+    monkeypatch: pytest.MonkeyPatch, response: _HTTPResponse,
+) -> None:
+    class Session:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def get(self, url, **kwargs):
+            assert url == OFFICIAL + "Empresas0.zip"
+            assert kwargs["stream"] is True
+            assert kwargs["allow_redirects"] is True
+            assert kwargs["headers"]["Accept-Encoding"] == "identity"
+            assert kwargs["timeout"] == (15, 20)
+            return response
+
+    monkeypatch.setattr(prefetch.requests, "Session", Session)
+    monkeypatch.setattr(bulk, "_configure_official_session", lambda _s: None)
+
+
+def test_a096_real_stream_worker_verifies_zip_sha_and_closes_response(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    raw = _zip("12345678;EMPRESA DEMO;2054\n")
+    spec = _http_spec(raw)
+    response = _HTTPResponse(spec, raw)
+    _fake_http(monkeypatch, response)
+    staged = prefetch._fetch_stage(spec, tmp_path, threading.Event())
+    assert staged.path.read_bytes() == raw
+    assert staged.sha256 == hashlib.sha256(raw).hexdigest()
+    prefetch._verify(staged.path, spec, staged.sha256)
+    assert response.closed
+    assert response.read_bytes == len(raw)
+    assert not (tmp_path / (spec.name + ".part")).exists()
+
+
+@pytest.mark.parametrize("failure", [
+    "status", "content_length", "etag", "last_modified",
+    "redirect", "invalid_zip", "truncated", "overflow",
+])
+def test_a096_untrusted_http_transfer_never_reaches_parser(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, failure: str,
+) -> None:
+    raw = _zip("12345678;EMPRESA DEMO;2054\n")
+    spec = _http_spec(raw)
+    data = raw
+    options = {}
+    if failure == "status":
+        options["status"] = 206
+    elif failure == "content_length":
+        options["length"] = str(len(raw) + 9)
+    elif failure == "etag":
+        options["etag"] = '"different"'
+    elif failure == "last_modified":
+        options["modified"] = "Mon, 15 Nov 2026 10:04:47 GMT"
+    elif failure == "redirect":
+        options["redirected"] = "https://other.example/download.zip"
+    elif failure == "invalid_zip":
+        data = b"NOT A ZIP!" + b"x" * (len(raw) - 10)
+    elif failure == "truncated":
+        data = raw[:-10]
+        options["length"] = str(len(raw))
+    elif failure == "overflow":
+        data = raw + b"extra"
+        options["length"] = str(len(raw))
+    response = _HTTPResponse(spec, data, **options)
+    _fake_http(monkeypatch, response)
+    with pytest.raises(prefetch.PrefetchRejected):
+        prefetch._fetch_stage(spec, tmp_path, threading.Event())
+    assert response.closed
+    assert not (tmp_path / spec.name).exists()
+    assert not (tmp_path / (spec.name + ".part")).exists()
+
+
+def test_a096_cooperative_cancel_during_stream_removes_partial_zip(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    raw = _zip("12345678;EMPRESA DEMO;2054\n")
+    spec = _http_spec(raw)
+    cancel = threading.Event()
+    response = _HTTPResponse(spec, raw, cancel=cancel)
+    _fake_http(monkeypatch, response)
+    with pytest.raises(prefetch.PrefetchRejected, match="cancelled"):
+        prefetch._fetch_stage(spec, tmp_path, cancel)
+    assert response.closed
+    assert not (tmp_path / (spec.name + ".part")).exists()
+
+
+def test_a096_serial_fallback_rejects_incomplete_even_if_zip_valid(
+    tmp_path: Path,
+) -> None:
+    raw = _zip("12345678;EMPRESA DEMO;2054\n")
+    spec = prefetch.Partition(
+        name="Empresas0.zip", url=OFFICIAL + "Empresas0.zip",
+        size=len(raw) + 2,
+    )
+    output = tmp_path / spec.name
+    def serial() -> Path:
+        output.write_bytes(raw)
+        return output
+    with pytest.raises(prefetch.PrefetchRejected, match="serial_fallback"):
+        prefetch.adopt_or_download(None, output, serial, expected=spec)
+    assert not output.exists()
