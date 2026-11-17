@@ -416,6 +416,7 @@ def build_filtered_identity_snapshot(
             resolved_release.release_url, files["companies"], files["metadata"],
         )
         with PartitionPrefetch(company_specs, root=root) as prefetch:
+            spec_by_name = {item.name: item for item in company_specs or []}
             paths = (
                 ((spec.name, staged) for spec, staged in prefetch)
                 if company_specs is not None
@@ -427,6 +428,7 @@ def build_filtered_identity_snapshot(
                     lambda: _download_zip(
                         sess, urljoin(resolved_release.release_url, name), root / name,
                     ),
+                    expected=spec_by_name.get(name) if prefetch.enabled else None,
                 )
                 parse_started = time.perf_counter()
                 scanned = retained = 0
