@@ -501,6 +501,7 @@ def refresh_filtered_lifecycle(
         # serial path, never skipping any partition.
         metadata_by_name = {
             item["name"]: item for item in resolved_release.resource_metadata
+            if isinstance(item, dict) and isinstance(item.get("name"), str)
         }
         specs = official_partitions(
             resolved_release.release_url,
@@ -508,6 +509,7 @@ def refresh_filtered_lifecycle(
             metadata_by_name,
         )
         with PartitionPrefetch(specs, root=root) as prefetch:
+            spec_by_name = {item.name: item for item in specs or []}
             paths = (
                 ((spec.name, staged) for spec, staged in prefetch)
                 if specs is not None
@@ -526,6 +528,7 @@ def refresh_filtered_lifecycle(
                     download=lambda staged=staged, name=name, url=url: adopt_or_download(
                         staged, root / name,
                         lambda: _download_zip(sess, url, root / name),
+                        expected=spec_by_name.get(name) if prefetch.enabled else None,
                     ),
                 )
                 try:
