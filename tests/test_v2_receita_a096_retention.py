@@ -200,3 +200,23 @@ def test_a096_foreign_snapshot_cache_source_cannot_enter_replay(
     receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
     with pytest.raises(ValueError, match="snapshot_contract"):
         keep.local_input_manifest(source_root=source, conduct_root=conduct)
+
+
+def test_a096_capture_telemetry_is_actually_written_by_a09_emitter(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    # Catch the previous silent failure: "a096_capture" was ignored by the
+    # shared A09 event-name regex despite 10 complete physical ZIP receipts.
+    events = tmp_path / "a09_events.jsonl"
+    monkeypatch.setenv("RECEITA_A09_TELEMETRY_PATH", str(events))
+    _prepare_full_capture(monkeypatch, tmp_path)
+    rows = [json.loads(line) for line in events.read_text().splitlines()]
+    recorded = [
+        row for row in rows
+        if row["event"] == "company_capture"
+        and row["category"] == "empresas"
+        and row.get("state") == "verified_hardlink"
+    ]
+    assert len(recorded) == 10
+    assert sorted(row["file_index"] for row in recorded) == list(range(10))
+    assert not any("cnpj" in row for row in recorded)
