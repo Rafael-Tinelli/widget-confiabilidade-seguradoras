@@ -19,6 +19,10 @@ from api.sources.receita_cnpj_run_zip_cache import _cache_dir as a094_cache_dir
 from api.sources.receita_cnpj_telemetry import emit
 
 ENV_NAME = "RECEITA_A096_RETAIN_ZIPS"
+EXPECTED_SOURCE_URL = (
+    "https://www.gov.br/receitafederal/pt-br/acesso-a-informacao/"
+    "dados-abertos/cadastros/cnpj"
+)
 _BUILD_ID = re.compile(r"[A-Za-z0-9_.-]{1,160}\Z")
 _COMPANY = re.compile(r"Empresas(?:0|[1-9]\d*)\.zip\Z")
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
@@ -181,6 +185,7 @@ def local_input_manifest(
         content = json.loads(file.read_text(encoding="utf-8"))
         digest = _sha256(file)
         if (meta.get("source_id") != source or meta.get("sha256") != digest
+                or meta.get("source_url") != EXPECTED_SOURCE_URL
                 or (content.get("source") or {}).get("reference_period") not in periods):
             raise ValueError("snapshot_contract_does_not_match_captured_zips")
         snapshots[source] = digest
