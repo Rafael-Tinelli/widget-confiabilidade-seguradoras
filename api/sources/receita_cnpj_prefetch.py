@@ -27,7 +27,6 @@ from urllib.parse import urljoin, urlsplit
 
 import requests
 
-from api.sources.receita_cnpj_bulk import _configure_official_session
 from api.sources.receita_cnpj_telemetry import emit, file_category
 
 ENV_NAME = "RECEITA_A096_PREFETCH"
@@ -140,6 +139,8 @@ def _fetch_stage(spec: Partition, root: Path, cancel: threading.Event) -> Staged
     ZIP CRC for every CSV is NOT decompressed here; parsing remains serial
     downstream, while is_zipfile checks the ZIP central directory.
     """
+    from api.sources.receita_cnpj_bulk import _configure_official_session
+
     if (urlsplit(spec.url).scheme != "https"
             or urlsplit(spec.url).hostname != OFFICIAL_HOST):
         raise PrefetchRejected("nonofficial_prefetch_url")
