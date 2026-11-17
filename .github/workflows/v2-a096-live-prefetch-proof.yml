@@ -1,7 +1,8 @@
 name: V2 A09.6 One-Shot Real Prefetch Proof
 
-# Exactly one operational proof on the isolated PR branch. This workflow is
-# triggered by the addition of THIS file and not by subsequent code changes.
+# Explicit one-shot operational retry after CI 945/945 approved and a verified
+# fix for the missing snapshot staging directory. No production publication.
+# Triggered only when this workflow file changes on the isolated PR branch.
 # It is NOT an upstream workflow of the HostGator publication workflow.
 on:
   push:
