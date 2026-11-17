@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import copy
 from pathlib import Path
+from typing import ClassVar
 
 import pytest
 
@@ -95,13 +96,13 @@ def test_a095_inconclusive_headers_flagged(field: str, value) -> None:
 class FakeResponse:
     status_code = 200
     url = "https://arquivos.receitafederal.gov.br/index.php/s/authentication-token"
-    headers = {
+    headers: ClassVar[dict[str, str]] = {
         "Content-Length": "2321438760",
         "ETag": '"etag0"',
         "Last-Modified": "Mon, 16 Nov 2026 19:00:00 GMT",
         "Content-Type": "application/zip",
     }
-    history = []
+    history: ClassVar[list] = []
 
     def __init__(self) -> None:
         self.closed = False
