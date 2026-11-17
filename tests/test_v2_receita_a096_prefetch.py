@@ -368,6 +368,10 @@ def test_a096_production_workflows_do_not_enable_flag() -> None:
     assert prefetch.ENV_NAME not in canonical
     assert prefetch.ENV_NAME not in scheduled
     assert prefetch.ENV_NAME not in publish
+    from api.sources.receita_cnpj_a096_retention import ENV_NAME as retention_flag
+    assert retention_flag not in canonical
+    assert retention_flag not in scheduled
+    assert retention_flag not in publish
     assert prefetch.MAX_WORKERS == 2
     assert prefetch.MAX_STAGED_BYTES == 4 * 1024**3
 
@@ -520,3 +524,19 @@ def test_a096_serial_fallback_rejects_incomplete_even_if_zip_valid(
     with pytest.raises(prefetch.PrefetchRejected, match="serial_fallback"):
         prefetch.adopt_or_download(None, output, serial, expected=spec)
     assert not output.exists()
+
+def test_a096_november_reference_workflow_is_strictly_readonly() -> None:
+    workflow = Path(".github/workflows/v2-a096-november-reference.yml").read_text()
+    publisher = Path(".github/workflows/v2-hostgator-publication.yml").read_text()
+    assert "workflow_dispatch:" in workflow
+    assert "if: inputs.confirm_reference == 'REFERENCE'" in workflow
+    assert "actions/cache/restore@v4" in workflow
+    assert "v2-gate4-source-${{ runner.os }}-43941197377" in workflow
+    assert "v2-gate4-conduct-${{ runner.os }}-43941197377" in workflow
+    assert "restore-keys:" not in workflow
+    assert "actions/cache/save" not in workflow
+    assert "gate4_pipeline --run-all" not in workflow
+    assert "RECEITA_A096_PREFETCH" not in workflow
+    assert "RECEITA_A096_RETAIN_ZIPS" not in workflow
+    assert "V2 A09.6 November Reference Homologation" not in publisher
+    assert "artifacts/14277894275/zip" in workflow
