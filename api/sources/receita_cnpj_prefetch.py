@@ -287,6 +287,13 @@ class PartitionPrefetch:
                     _verify(result.path, spec, result.sha256)
                     staged = result.path
                 except Exception:  # noqa: BLE001 - speculative failure is always serial fallback
+                    # Reject and discard the speculative candidate immediately,
+                    # rather than reserving its disk space until context exit.
+                    if self._stage is not None:
+                        try:
+                            (self._stage / spec.name).unlink(missing_ok=True)
+                        except OSError:
+                            pass
                     category, index = file_category(spec.name)
                     emit("prefetch_fallback", category=category, file_index=index,
                          state="serial")
