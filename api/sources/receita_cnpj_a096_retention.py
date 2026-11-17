@@ -78,7 +78,9 @@ def capture_company(
         release_url = getattr(release, "release_url", "")
         if not re.fullmatch(r"20\d{2}-(?:0[1-9]|1[0-2])", period):
             return
-        if not isinstance(release_url, str) or not release_url.startswith("https://"):
+        if (not isinstance(release_url, str)
+                or urlsplit(release_url).scheme != "https"
+                or urlsplit(release_url).hostname != "arquivos.receitafederal.gov.br"):
             return
         root.mkdir(parents=True, exist_ok=True)
         target = root / name
@@ -146,7 +148,7 @@ def local_input_manifest(
                 raise ValueError("invalid_local_zip_capture")
             period = payload.get("reference_period")
             if not isinstance(period, str):
-                raise ValueError("missing_local_reference_period")
+                raise TypeError("missing_local_reference_period")
             periods.add(period)
             if family == "Empresas":
                 official_sha[family].add(payload.get("release_url_sha256"))
