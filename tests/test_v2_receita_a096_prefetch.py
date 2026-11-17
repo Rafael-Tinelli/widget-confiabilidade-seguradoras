@@ -8,7 +8,6 @@ from __future__ import annotations
 import copy
 import hashlib
 import io
-import os
 import threading
 import time
 import zipfile
@@ -144,8 +143,8 @@ def test_a096_metadata_requires_bounded_complete_order() -> None:
     assert prefetch.official_partitions(OFFICIAL, [x.name for x in specs], meta) is None
     # Tiny test ZIPs are rejected under real 1-MiB minimum; this is a
     # deliberate fail-open to the original serial processing.
-    for name in meta:
-        meta[name]["size"] = 100_000_000
+    for item in meta.values():
+        item["size"] = 100_000_000
     assert [x.index for x in prefetch.official_partitions(
         OFFICIAL, list(meta), meta,
     )] == [0, 1]
@@ -209,7 +208,7 @@ def test_a096_corrupt_staged_zip_falls_back_to_original_serial(
     fallback = []
     with prefetch.PartitionPrefetch(specs, root=tmp_path, enabled=True) as queue:
         for spec, staged in queue:
-            def serial():
+            def serial(spec=spec):
                 fallback.append(spec.name)
                 path = tmp_path / spec.name
                 path.write_bytes(raw[spec.name])
