@@ -28,7 +28,7 @@ from api.sources.receita_cnpj_bulk import (
 from api.sources.receita_cnpj_run_zip_cache import acquire_run_establishment_zip
 from api.sources.receita_cnpj_prefetch import (
     PartitionPrefetch,
-    adopt_staged,
+    adopt_or_download,
     official_partitions,
 )
 from api.sources.receita_cnpj_telemetry import emit, release_fingerprint, utcnow
@@ -422,9 +422,11 @@ def build_filtered_identity_snapshot(
                 else ((name, None) for name in files["companies"])
             )
             for index, (name, staged) in enumerate(paths):
-                local = (
-                    adopt_staged(staged, root / name) if staged is not None
-                    else _download_zip(sess, urljoin(resolved_release.release_url, name), root / name)
+                local = adopt_or_download(
+                    staged, root / name,
+                    lambda: _download_zip(
+                        sess, urljoin(resolved_release.release_url, name), root / name,
+                    ),
                 )
                 parse_started = time.perf_counter()
                 scanned = retained = 0
