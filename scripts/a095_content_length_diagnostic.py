@@ -42,7 +42,8 @@ def _header_observation(method: str, resource: dict, round_number: int) -> dict:
     if type(round_number) is not int or not 1 <= round_number <= ROUNDS:
         raise GetProbeError("unsupported_round")
     url = resource.get("url")
-    if not isinstance(url, str) or urlsplit(url).hostname != OFFICIAL_HOST:
+    if (not isinstance(url, str) or urlsplit(url).scheme != "https"
+            or urlsplit(url).hostname != OFFICIAL_HOST):
         raise GetProbeError("unexpected_official_resource_host")
     index, size = resource.get("file_index"), resource.get("size")
     if type(index) is not int or index not in (0, 1):
@@ -60,8 +61,7 @@ def _header_observation(method: str, resource: dict, round_number: int) -> dict:
             timeout=(10, 20),
             headers={"Accept-Encoding": "identity"},
         ) as response:
-            # Intentionally no response.content, response.text, read(),
-            # iter_content() or download of a national ZIP.
+            # Do not read the response body or download a national ZIP.
             raw_length = _safe_header(response.headers.get("Content-Length"))
             header_etag = _safe_header(response.headers.get("ETag"))
             return {
