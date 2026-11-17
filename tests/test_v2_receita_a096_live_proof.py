@@ -32,7 +32,7 @@ def _events() -> list[dict]:
              "file_index": i, "state": "stored"},
             {"event": "zip_reuse", "category": "estabelecimentos",
              "file_index": i, "state": "verified"},
-            {"event": "a096_capture", "category": "empresas",
+            {"event": "company_capture", "category": "empresas",
              "file_index": i, "state": "verified_hardlink"},
         ))
     return records
@@ -101,7 +101,7 @@ def test_a096_live_validate_rejects_any_missing_prefetch_event(
     events = _events()
     events.pop(0)
     monkeypatch.setattr(proof, "_receita_events", lambda: events)
-    with pytest.raises(RuntimeError, match="prefetch_or_a094"):
+    with pytest.raises(RuntimeError, match="ambiguous_or_missing_zip_transfer"):
         proof.validate()
 
 
@@ -143,10 +143,17 @@ def test_a096_replay_calls_serial_reader_and_checks_same_input_verdict(
     _setup(monkeypatch, tmp_path)
     proof.validate()
     derivative = tmp_path / "derived"
+    target_entities = [{"cnpj": "12345678000100", "legal_name": "DEMO"}]
     _write(
-        derivative / "source/classification_inventory.json",
-        {"entities": [{"cnpj": "12345678000100", "legal_name": "DEMO"}]},
+        derivative / "entity_classification_inventory.json",
+        {"entities": target_entities},
     )
+    primary = proof._candidate_file(proof.NOVEMBER_SOURCE)
+    primary_snapshot = json.loads(primary.read_text(encoding="utf-8"))
+    primary_snapshot["meta"] = {
+        "target_universe_hash": proof.regulatory_target_universe_hash(target_entities),
+    }
+    _write(primary, primary_snapshot)
     monkeypatch.setattr(proof, "DERIVED", derivative)
     monkeypatch.setattr(
         proof.bulk, "discover_latest_release",
@@ -197,3 +204,90 @@ def test_a096_replay_calls_serial_reader_and_checks_same_input_verdict(
     assert observed == [
         ("lifecycle", "2026-11", 1), ("identity", "2026-11", 1, 1),
     ]
+
+
+
+def test_a096_realistic_mixed_prefetch_and_verified_serial_fallback(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    _setup(monkeypatch, tmp_path)
+    records = [
+        row for row in _events()
+        if not (
+            row["event"] == "prefetch_ready"
+            and (
+                (row["category"] == "empresas" and row["file_index"] == 9)
+                or (row["category"] == "estabelecimentos"
+                    and row["file_index"] in (5, 6, 7, 8, 9))
+            )
+        )
+    ]
+    for category, indices in (
+        ("empresas", (9,)),
+        ("estabelecimentos", (5, 6, 7, 8, 9)),
+    ):
+        for index in indices:
+            records.extend((
+                {"event": "prefetch_skipped", "category": category,
+                 "file_index": index, "state": "disk_guard"},
+                {"event": "zip_download", "category": category,
+                 "file_index": index, "state": "success"},
+            ))
+    monkeypatch.setattr(proof, "_receita_events", lambda: records)
+    outcome = proof.validate()
+    assert outcome["status"] == "verified"
+    assert outcome["transfer_paths"] == {
+        "empresas": {"prefetch_used": 9, "serial_fallback_verified": 1, "total": 10},
+        "estabelecimentos": {
+            "prefetch_used": 5, "serial_fallback_verified": 5, "total": 10,
+        },
+    }
+    assert outcome["a094"] == {"stored": 10, "verified": 10}
+    assert outcome["company_hardlinks_verified"] == 10
+
+
+def test_a096_ambiguous_duplicate_transfer_without_fallback_is_rejected() -> None:
+    records = _events()
+    records.append({
+        "event": "zip_download", "category": "empresas",
+        "file_index": 7, "state": "success",
+    })
+    with pytest.raises(RuntimeError, match="ambiguous_or_missing_zip_transfer"):
+        proof._verify_partition_transfer_routes(records)
+
+
+def test_a096_explicit_prefetch_failure_and_serial_success_is_valid() -> None:
+    records = _events()
+    records.extend((
+        {"event": "prefetch_fallback", "category": "empresas",
+         "file_index": 3, "state": "serial"},
+        {"event": "zip_download", "category": "empresas",
+         "file_index": 3, "state": "success"},
+    ))
+    result = proof._verify_partition_transfer_routes(records)
+    assert result["empresas"]["prefetch_used"] == 9
+    assert result["empresas"]["serial_fallback_verified"] == 1
+
+
+def test_a096_candidate_universe_mismatch_refuses_real_serial_replay(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    _setup(monkeypatch, tmp_path)
+    proof.validate()
+    source = proof._candidate_file(proof.NOVEMBER_SOURCE)
+    payload = json.loads(source.read_text())
+    payload["meta"] = {"target_universe_hash": "0" * 64}
+    _write(source, payload)
+    derived = tmp_path / "derived"
+    monkeypatch.setattr(proof, "DERIVED", derived)
+    _write(
+        derived / "entity_classification_inventory.json",
+        {"entities": [{"cnpj": "12345678000100"}]},
+    )
+    monkeypatch.setattr(
+        proof.bulk, "discover_latest_release",
+        lambda: SimpleNamespace(period="2026-11"),
+    )
+    monkeypatch.setattr(proof, "_load_inputs", lambda: ([{"cnpj": "12345678000100"}], ["DEMO"]))
+    with pytest.raises(RuntimeError, match="regulatory_universe_not_equivalent"):
+        proof.replay()
