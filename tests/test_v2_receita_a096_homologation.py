@@ -5,7 +5,6 @@ are pinned in docs/evidence, not reconstructed from an invented example.
 """
 from __future__ import annotations
 
-import copy
 import hashlib
 import io
 import json
