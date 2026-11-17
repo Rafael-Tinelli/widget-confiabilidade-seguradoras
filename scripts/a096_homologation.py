@@ -158,7 +158,7 @@ def reference_from_archive(proof_zip: Path) -> dict[str, Any]:
             blob = archive.read(full)
             if len(blob) != item.get("bytes") or _sha(blob) != item.get("sha256"):
                 raise ProofError("public_file_digest_mismatch")
-        if (set(x for x in names if x.startswith("public/"))
+        if ({x for x in names if x.startswith("public/")}
                 != {"public/distribution_manifest.json"} | {"public/" + x for x in visited}):
             raise ProofError("unlisted_public_file_in_proof")
 
