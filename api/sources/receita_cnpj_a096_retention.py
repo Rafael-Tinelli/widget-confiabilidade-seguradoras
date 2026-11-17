@@ -13,6 +13,7 @@ import re
 import zipfile
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from api.sources.receita_cnpj_run_zip_cache import _cache_dir as a094_cache_dir
 from api.sources.receita_cnpj_telemetry import emit
@@ -99,7 +100,7 @@ def capture_company(
             "sha256": local_digest,
         }
         sidecar.write_text(json.dumps(receipt, sort_keys=True) + "\n", encoding="utf-8")
-        emit("a096_capture", category="empresas", file_index=int(name[7:-4]),
+        emit("a096_capture", category="empresas", file_index=int(name[8:-4]),
              state="verified_hardlink", expected_bytes=size)
     except (OSError, ValueError, TypeError, zipfile.BadZipFile):
         # Never override the valid original download or interfere with parsing.
