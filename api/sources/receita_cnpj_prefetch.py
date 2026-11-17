@@ -19,11 +19,11 @@ import tempfile
 import threading
 import time
 import zipfile
+from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
-from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, Self
 from urllib.parse import urljoin, urlsplit
 
 import requests
@@ -231,7 +231,7 @@ class PartitionPrefetch:
         self._stage: Path | None = None
         self._pending: dict[int, Future[Staged]] = {}
 
-    def __enter__(self) -> PartitionPrefetch:
+    def __enter__(self) -> Self:
         if self.enabled and len(self.specs) >= 2:
             try:
                 self.root.mkdir(parents=True, exist_ok=True)
@@ -286,7 +286,7 @@ class PartitionPrefetch:
                     result = future.result()
                     _verify(result.path, spec, result.sha256)
                     staged = result.path
-                except Exception:
+                except Exception:  # noqa: BLE001 - speculative failure is always serial fallback
                     category, index = file_category(spec.name)
                     emit("prefetch_fallback", category=category, file_index=index,
                          state="serial")
