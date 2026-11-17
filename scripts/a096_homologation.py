@@ -345,11 +345,12 @@ def _diff_paths(a: Any, b: Any, label: str, limit: int = 12) -> list[str]:
 def audit(
     reference_file: Path, cache_root: Path, *,
     proof_zip: Path | None = None,
-    candidate_lifecycle: Path | None = None,
-    candidate_identity: Path | None = None,
-    local_zip_proof: Path | None = None,
 ) -> dict[str, Any]:
-    """Return exactly equivalent, different or insufficient_evidence."""
+    """Audit the *November baseline only*, never claim candidate equivalence.
+
+    Historical ZIP content SHA-256 was not archived. Only compare_local,
+    which re-hashes all 20 retained ZIPs, can return equivalent.
+    """
     report: dict[str, Any] = {
         "schema": REPORT_SCHEMA, "status": "insufficient_evidence",
         "reason": "not_all_evidence_available",
@@ -378,55 +379,9 @@ def audit(
         report["reference_semantic_sha256"] = {
             source: _semantic_sha(data) for source, data in baseline.items()
         }
-        if candidate_lifecycle is None or candidate_identity is None or local_zip_proof is None:
-            report["reason"] = "candidate_or_same_input_zip_evidence_missing"
-            return report
-        candidates = {
-            "receita_cnpj_lifecycle": _json_bytes(candidate_lifecycle.read_bytes()),
-            "receita_consumer_identity": _json_bytes(candidate_identity.read_bytes()),
-        }
-        # November ZIP hashes were NOT retained. Never claim this candidate
-        # shares November's exact bytes just because its period matches.
-        proof = _json_bytes(local_zip_proof.read_bytes())
-        if (proof.get("schema") != "a096-local-replay-input-v1"
-                or proof.get("reference_period") != PERIOD
-                or proof.get("source_head_sha") != RUN_SHA
-                or proof.get("zip_files_verified") != 20
-                or proof.get("input_mode") != "same_exact_local_zip_bytes"
-                or proof.get("serial_snapshot_sha256") != {
-                    source: _hash_file(path) for source, path in (
-                        ("receita_cnpj_lifecycle", cache_root / "source/receita_cnpj_lifecycle.json"),
-                        ("receita_consumer_identity", cache_root / "conduct/receita_consumer_identity.json"),
-                    )
-                }):
-            report["reason"] = "same_input_replay_proof_missing_or_invalid"
-            return report
-        # This is a NOVEMBER comparison. Any new competence must have its own
-        # reference derived from the same captured ZIPs, not these old hashes.
-        for source, candidate in candidates.items():
-            base = baseline[source]
-            if (candidate.get("artifact") != base.get("artifact")
-                    or (candidate.get("source") or {}).get("reference_period") != PERIOD
-                    or (candidate.get("source") or {}).get("release_fingerprint")
-                    != (base.get("source") or {}).get("release_fingerprint")):
-                report["reason"] = "candidate_period_or_contract_incompatible"
-                return report
-        differences = {}
-        for source, candidate in candidates.items():
-            base = baseline[source]
-            diffs = _diff_paths(base, candidate, source)
-            report["semantic_checks"][source] = {
-                "reference_sha256": _semantic_sha(base),
-                "candidate_sha256": _semantic_sha(candidate),
-                "diff_paths_only": diffs,
-            }
-            if diffs:
-                differences[source] = diffs
-        report["status"] = "different" if differences else "equivalent"
-        report["reason"] = "semantic_differences" if differences else "same_input_semantic_match"
+        report["reason"] = "candidate_or_same_input_zip_evidence_missing"
     except (OSError, KeyError, TypeError, ValueError, zipfile.BadZipFile) as exc:
-        # Deliberately do not print exception messages which might include
-        # private CNPJ values or signed source URLs.
+        # Do not print CNPJs or URLs from arbitrary exception messages.
         report["reason"] = type(exc).__name__ if not isinstance(exc, ProofError) else str(exc)
     return report
 
@@ -575,9 +530,6 @@ def main() -> None:
     verify.add_argument("--reference", type=Path, required=True)
     verify.add_argument("--cache-root", type=Path, required=True)
     verify.add_argument("--proof-zip", type=Path)
-    verify.add_argument("--candidate-lifecycle", type=Path)
-    verify.add_argument("--candidate-identity", type=Path)
-    verify.add_argument("--local-zip-proof", type=Path)
     verify.add_argument("--output", type=Path, required=True)
     local = sub.add_parser("compare-local")
     local.add_argument("--zip-proof", type=Path, required=True)
@@ -613,9 +565,6 @@ def main() -> None:
     else:
         result = audit(
             args.reference, args.cache_root, proof_zip=args.proof_zip,
-            candidate_lifecycle=args.candidate_lifecycle,
-            candidate_identity=args.candidate_identity,
-            local_zip_proof=args.local_zip_proof,
         )
         _write_json(args.output, result)
         print(json.dumps(result, ensure_ascii=False, sort_keys=True))
