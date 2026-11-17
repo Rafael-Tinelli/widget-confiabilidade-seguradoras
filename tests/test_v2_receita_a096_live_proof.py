@@ -140,7 +140,7 @@ def test_a096_safe_diagnostics_only_contains_counts_and_presence(
 def test_a096_replay_calls_serial_reader_and_checks_same_input_verdict(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
-    root = _setup(monkeypatch, tmp_path)
+    _setup(monkeypatch, tmp_path)
     proof.validate()
     derivative = tmp_path / "derived"
     _write(
