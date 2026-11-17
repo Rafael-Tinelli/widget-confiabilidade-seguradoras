@@ -431,6 +431,140 @@ def audit(
     return report
 
 
+def _validate_snapshot_pair(
+    left: dict[str, Any], right: dict[str, Any], source: str, period: str,
+) -> bool:
+    """Assert both sides have comparable nonempty inputs and exact contracts."""
+    artifact = SOURCES[source]["artifact"]
+    if (left.get("artifact") != artifact or right.get("artifact") != artifact
+            or (left.get("source") or {}).get("reference_period") != period
+            or (right.get("source") or {}).get("reference_period") != period):
+        return False
+    for key in ("release_fingerprint", "release_fingerprint_method", "ingestion_method"):
+        a = (left.get("source") or {}).get(key)
+        b = (right.get("source") or {}).get(key)
+        if not a or a != b:
+            return False
+    if source == "receita_cnpj_lifecycle":
+        return bool(isinstance(left.get("records"), list)
+                    and isinstance(right.get("records"), list)
+                    and left["records"] and right["records"])
+    base = left.get("meta") or {}
+    candidate = right.get("meta") or {}
+    if (base.get("gate4_cache_key") != candidate.get("gate4_cache_key")
+            or not isinstance(base.get("gate4_cache_key"), dict)
+            or not base["gate4_cache_key"]):
+        return False
+    return bool(
+        isinstance(left.get("canonical_records"), list)
+        and isinstance(right.get("canonical_records"), list)
+        and left["canonical_records"] and right["canonical_records"]
+        and isinstance(left.get("provider_matches"), list)
+        and isinstance(right.get("provider_matches"), list)
+        and left["provider_matches"] and right["provider_matches"]
+    )
+
+
+def compare_local(
+    local_zip_proof: Path, *,
+    companies: Path, establishments: Path,
+    serial_lifecycle: Path, serial_identity: Path,
+    candidate_lifecycle: Path, candidate_identity: Path,
+) -> dict[str, Any]:
+    """Compare actual snapshots after verifying all SAME-RUN ZIPs on disk.
+
+    Supports November or a later competence. Never compare different months.
+    The caller must execute the candidate reader as a separate, isolated
+    local replay; this checker cannot attest a program run by merely
+    trusting its filename.
+    """
+    report: dict[str, Any] = {
+        "schema": REPORT_SCHEMA,
+        "status": "insufficient_evidence",
+        "reason": "missing_local_exact_input_proof",
+        "zip_files_checked": 0,
+        "semantic_checks": {},
+        "production_activation_authorized": False,
+    }
+    try:
+        evidence = _json_bytes(local_zip_proof.read_bytes())
+        period = evidence.get("reference_period")
+        parties = evidence.get("zip_partitions")
+        if (evidence.get("schema") != "a096-local-replay-input-v1"
+                or evidence.get("input_mode") != "same_exact_local_zip_bytes"
+                or type(evidence.get("zip_files_verified")) is not int
+                or evidence.get("zip_files_verified") != 20
+                or not re.fullmatch(r"20\d{2}-(?:0[1-9]|1[0-2])", str(period))
+                or not SHA.fullmatch(str(evidence.get("release_url_sha256") or ""))
+                or not isinstance(parties, dict)):
+            report["reason"] = "invalid_or_incomplete_zip_capture_manifest"
+            return report
+        for family, root in (
+            ("Empresas", companies), ("Estabelecimentos", establishments),
+        ):
+            records = parties.get(family)
+            if not isinstance(records, list) or len(records) != 10:
+                report["reason"] = "missing_partition_family"
+                return report
+            by_name = {x.get("name"): x for x in records if isinstance(x, dict)}
+            if len(by_name) != 10:
+                report["reason"] = "duplicate_partition_name"
+                return report
+            for i in range(10):
+                name = f"{family}{i}.zip"
+                row = by_name.get(name)
+                if (not isinstance(row, dict)
+                        or type(row.get("size")) is not int or row["size"] <= 0
+                        or not SHA.fullmatch(str(row.get("sha256") or ""))
+                        or not (row.get("etag") or row.get("last_modified"))):
+                    report["reason"] = "invalid_partition_evidence"
+                    return report
+                path = root / name
+                if (not path.is_file() or path.is_symlink()
+                        or path.stat().st_size != row["size"]
+                        or _hash_file(path) != row["sha256"]
+                        or not zipfile.is_zipfile(path)):
+                    report["reason"] = "missing_or_corrupt_local_partition"
+                    return report
+                report["zip_files_checked"] += 1
+        files = {
+            "receita_cnpj_lifecycle": (serial_lifecycle, candidate_lifecycle),
+            "receita_consumer_identity": (serial_identity, candidate_identity),
+        }
+        serial_hashes = evidence.get("serial_snapshot_sha256")
+        if not isinstance(serial_hashes, dict):
+            report["reason"] = "baseline_snapshot_hash_receipts_missing"
+            return report
+        for source, (base_path, candidate_path) in files.items():
+            if (_hash_file(base_path) != serial_hashes.get(source)):
+                report["reason"] = "serial_snapshot_digest_mismatch"
+                return report
+            baseline = _json_bytes(base_path.read_bytes())
+            candidate = _json_bytes(candidate_path.read_bytes())
+            if not _validate_snapshot_pair(baseline, candidate, source, period):
+                report["reason"] = "snapshot_contract_or_population_incompatible"
+                return report
+            differences = _diff_paths(baseline, candidate, source)
+            report["semantic_checks"][source] = {
+                "serial_sha256": _semantic_sha(baseline),
+                "candidate_sha256": _semantic_sha(candidate),
+                "diff_paths_only": differences,
+            }
+        report["status"] = (
+            "different"
+            if any(x["diff_paths_only"] for x in report["semantic_checks"].values())
+            else "equivalent"
+        )
+        report["reason"] = (
+            "semantic_differences"
+            if report["status"] == "different"
+            else "same_exact_zip_set_and_semantic_match"
+        )
+    except (OSError, ValueError, KeyError, TypeError, zipfile.BadZipFile) as exc:
+        report["reason"] = type(exc).__name__
+    return report
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -445,7 +579,30 @@ def main() -> None:
     verify.add_argument("--candidate-identity", type=Path)
     verify.add_argument("--local-zip-proof", type=Path)
     verify.add_argument("--output", type=Path, required=True)
+    local = sub.add_parser("compare-local")
+    local.add_argument("--zip-proof", type=Path, required=True)
+    local.add_argument("--companies", type=Path, required=True)
+    local.add_argument("--establishments", type=Path, required=True)
+    local.add_argument("--serial-lifecycle", type=Path, required=True)
+    local.add_argument("--serial-identity", type=Path, required=True)
+    local.add_argument("--candidate-lifecycle", type=Path, required=True)
+    local.add_argument("--candidate-identity", type=Path, required=True)
+    local.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
+    if args.command == "compare-local":
+        result = compare_local(
+            args.zip_proof, companies=args.companies,
+            establishments=args.establishments,
+            serial_lifecycle=args.serial_lifecycle,
+            serial_identity=args.serial_identity,
+            candidate_lifecycle=args.candidate_lifecycle,
+            candidate_identity=args.candidate_identity,
+        )
+        _write_json(args.output, result)
+        print(json.dumps(result, ensure_ascii=False, sort_keys=True))
+        if result["status"] != "equivalent":
+            raise SystemExit(1)
+        return
     if args.command == "reference":
         try:
             _write_json(args.output, reference_from_archive(args.proof_zip))
