@@ -142,6 +142,8 @@ def _verify_source_rows() -> dict:
     for source in EXPECTED:
         line = _lineage_row(source)
         cache_path = _cache_file(source)
+        if not cache_path.is_file():
+            raise RuntimeError("missing_current_receita_cache_" + source)
         if (
             line.get("build_id") != current_build
             or line.get("state") != "fresh"
@@ -174,7 +176,12 @@ def validate() -> dict:
     proof_path = workspace / "local-input-proof.json"
     _write(proof_path, evidence)
     for source in EXPECTED:
-        shutil.copy2(_cache_file(source), _candidate_file(source))
+        destination = _candidate_file(source)
+        # The original run failed here: the parent "prefetch" directory
+        # was not created before shutil.copy2(). All national acquisitions
+        # had already finished successfully.
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(_cache_file(source), destination)
 
     rows = _receita_events()
     ready = Counter(
@@ -366,6 +373,63 @@ def replay() -> dict:
     }
 
 
+def _safe_diagnostics(stage: str) -> dict:
+    """Structural proof hints only: no CNPJs, URLs, ZIP bytes or source payloads."""
+    observations: dict = {
+        "cache_present": {source: _cache_file(source).is_file()
+                          for source in EXPECTED},
+        "lineage_present": {
+            key: (DERIVED / file).is_file() for key, file in (
+                ("lifecycle", "source_lineage.json"),
+                ("identity", "conduct_source_lineage.json"),
+            )
+        },
+        "snapshot_candidate_present": {source: _candidate_file(source).is_file()
+                                       for source in EXPECTED},
+        "staged_company_receipts": 0,
+        "staged_establishment_receipts": 0,
+        "a09_telemetry_available": False,
+        "prefetch_ready_count": {"empresas": 0, "estabelecimentos": 0},
+        "a094_stored_count": 0,
+        "a094_verified_count": 0,
+        "company_retained_count": 0,
+    }
+    company = _company_root()
+    establishment = _cache_dir()
+    if company is not None:
+        observations["staged_company_receipts"] = sum(
+            1 for i in range(10) if (company / f"Empresas{i}.zip.json").is_file()
+        )
+    if establishment is not None:
+        observations["staged_establishment_receipts"] = sum(
+            1 for i in range(10)
+            if (establishment / f"Estabelecimentos{i}.zip.json").is_file()
+        )
+    try:
+        rows = _receita_events()
+    except (OSError, ValueError, TypeError, RuntimeError):
+        rows = []
+    else:
+        observations["a09_telemetry_available"] = True
+    for row in rows:
+        event, category, state = (
+            row.get("event"), row.get("category"), row.get("state")
+        )
+        if event == "prefetch_ready" and state == "verified":
+            if category in observations["prefetch_ready_count"]:
+                observations["prefetch_ready_count"][category] += 1
+        elif event == "zip_reuse" and category == "estabelecimentos":
+            if state == "stored":
+                observations["a094_stored_count"] += 1
+            elif state == "verified":
+                observations["a094_verified_count"] += 1
+        elif (event == "a096_capture" and category == "empresas"
+              and state == "verified_hardlink"):
+            observations["company_retained_count"] += 1
+    observations["inspection_stage"] = stage
+    return observations
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("stage", choices=("preflight", "validate", "replay"))
@@ -383,6 +447,11 @@ def main() -> None:
             "reason": type(exc).__name__,
             "production_publication_authorized": False,
         }
+    # Always preserve safe, granular evidence even on a failed stage.
+    try:
+        report["diagnostics"] = _safe_diagnostics(args.stage)
+    except (OSError, ValueError, TypeError, RuntimeError):
+        report["diagnostics"] = {"status": "diagnostics_unavailable"}
     _write(args.output, report)
     print(json.dumps(report, ensure_ascii=False, sort_keys=True))
     if report["status"] not in ("verified", "equivalent"):
