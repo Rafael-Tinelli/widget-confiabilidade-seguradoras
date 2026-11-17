@@ -106,7 +106,7 @@ registro de marca ou pontuação é necessária para revisar esta PR.
 A geração histórica de novembro, run
 [`#43941197377`](https://github.com/Rafael-Tinelli/widget-confiabilidade-seguradoras/actions/runs/43941197377),
 tem sua referência em
-[`docs/evidence/a096-november-2026-reference.json`](../evidence/a096-november-2026-reference.json)
+[`docs/evidence/a096-november-2026-reference.json`](evidence/a096-november-2026-reference.json)
 (arquivo dentro de `docs/evidence/`).
 
 Foi extraída **do ZIP real da prova** (artifact ID `14277894275`), não de
