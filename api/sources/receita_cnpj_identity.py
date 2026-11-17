@@ -25,6 +25,7 @@ from api.sources.receita_cnpj_bulk import (
     _propfind,
     discover_latest_release,
 )
+from api.sources.receita_cnpj_a096_retention import capture_company
 from api.sources.receita_cnpj_prefetch import (
     PartitionPrefetch,
     adopt_or_download,
@@ -429,6 +430,10 @@ def build_filtered_identity_snapshot(
                         sess, urljoin(resolved_release.release_url, name), root / name,
                     ),
                     expected=spec_by_name.get(name) if prefetch.enabled else None,
+                )
+                capture_company(
+                    local, name=name, metadata=files["metadata"].get(name),
+                    release=resolved_release,
                 )
                 parse_started = time.perf_counter()
                 scanned = retained = 0
