@@ -24,7 +24,7 @@ from api.sources.receita_cnpj_cache_integrity import (
 from api.sources.receita_cnpj_run_zip_cache import acquire_run_establishment_zip
 from api.sources.receita_cnpj_prefetch import (
     PartitionPrefetch,
-    adopt_staged,
+    adopt_or_download,
     official_partitions,
 )
 from api.sources.receita_cnpj_telemetry import emit, file_category
@@ -523,10 +523,9 @@ def refresh_filtered_lifecycle(
                 local = acquire_run_establishment_zip(
                     release=resolved_release, name=name, metadata=resource,
                     destination=root / name,
-                    download=(
-                        (lambda staged=staged, name=name: adopt_staged(staged, root / name))
-                        if staged is not None else
-                        (lambda url=url, name=name: _download_zip(sess, url, root / name))
+                    download=lambda staged=staged, name=name, url=url: adopt_or_download(
+                        staged, root / name,
+                        lambda: _download_zip(sess, url, root / name),
                     ),
                 )
                 try:
