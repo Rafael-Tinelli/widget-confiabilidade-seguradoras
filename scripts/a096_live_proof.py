@@ -15,7 +15,6 @@ import argparse
 import json
 import os
 import shutil
-import sys
 from collections import Counter
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -375,7 +374,7 @@ def main() -> None:
     try:
         stage = globals()[args.stage]
         report = stage()
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - proof failures are fail-closed and redacted
         # Do not log path-based CNPJ data, external sharing tokens or secrets.
         report = {
             "schema": PREFIX,
