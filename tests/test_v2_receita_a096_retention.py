@@ -95,6 +95,7 @@ def _prepare_full_capture(
         (root / f"{source_id}.json").write_bytes(data)
         (root / f"{source_id}.meta.json").write_text(json.dumps({
             "source_id": source_id, "sha256": _sha(data),
+            "source_url": keep.EXPECTED_SOURCE_URL,
             "fetched_at": "2026-11-16T22:00:00Z",
         }))
     return source_root, conduct_root
@@ -188,3 +189,14 @@ def test_a096_retention_rejects_foreign_release_without_side_effects(
     assert root is not None
     assert not root.exists()
     assert src.read_bytes() == raw
+
+def test_a096_foreign_snapshot_cache_source_cannot_enter_replay(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    source, conduct = _prepare_full_capture(monkeypatch, tmp_path)
+    receipt_path = conduct / "receita_consumer_identity.meta.json"
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    receipt["source_url"] = "https://untrusted.example/data"
+    receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+    with pytest.raises(ValueError, match="snapshot_contract"):
+        keep.local_input_manifest(source_root=source, conduct_root=conduct)
