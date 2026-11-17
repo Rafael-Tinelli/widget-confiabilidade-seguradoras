@@ -34,7 +34,10 @@ from api.v2.build_consumer_gov_receita_identity import (
     target_universe_hash,
     unresolved_provider_hash,
 )
-from api.v2.refresh_receita_lifecycle import refresh_receita_lifecycle
+from api.v2.refresh_receita_lifecycle import (
+    refresh_receita_lifecycle,
+    regulatory_target_universe_hash,
+)
 from scripts.a096_homologation import (
     _diff_paths,
     _hash_file,
@@ -329,7 +332,6 @@ def replay() -> dict:
     entities = list(classification.get("entities") or [])
     if not entities:
         raise RuntimeError("regulatory_universe_missing")
-    from api.v2.refresh_receita_lifecycle import regulatory_target_universe_hash
     primary = _json_bytes(_candidate_file(NOVEMBER_SOURCE).read_bytes())
     if (regulatory_target_universe_hash(entities)
             != (primary.get("meta") or {}).get("target_universe_hash")):
