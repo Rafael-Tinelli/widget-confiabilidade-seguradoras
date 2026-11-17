@@ -15,6 +15,7 @@ from urllib.parse import urljoin
 
 import requests
 
+from api.sources.receita_cnpj_a096_retention import capture_company
 from api.sources.receita_cnpj_bulk import (
     OFFICIAL_CNPJ_SHARE_URL,
     ReceitaOpenDataError,
@@ -25,7 +26,6 @@ from api.sources.receita_cnpj_bulk import (
     _propfind,
     discover_latest_release,
 )
-from api.sources.receita_cnpj_a096_retention import capture_company
 from api.sources.receita_cnpj_prefetch import (
     PartitionPrefetch,
     adopt_or_download,
