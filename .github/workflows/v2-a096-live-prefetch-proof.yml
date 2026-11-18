@@ -1,7 +1,7 @@
 name: V2 A09.6 One-Shot Real Prefetch Proof
 
-# Third isolated operational run: CI 950/950 green. Verify verified serial
-# fallbacks, A09.4 retention and same-input serial replay. No publication.
+# A09.6 isolated replay-verification run after offline replay correction.
+# Verify fallbacks, A09.4 retention and same-input serial replay. No publication.
 # Triggered only when this workflow file changes on the isolated PR branch.
 # It is NOT an upstream workflow of the HostGator publication workflow.
 on:
