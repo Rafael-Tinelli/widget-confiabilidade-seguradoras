@@ -44,7 +44,18 @@ def _physical_inventory(package_dir: Path) -> tuple[set[str], set[str]]:
     Never trust Path.is_file() or rglob('*.json') alone: both would omit
     unlisted files and can dereference symlinks before validation.
     """
-    if package_dir.is_symlink() or not package_dir.is_dir():
+    # current/previous and the public web path intentionally resolve through
+    # symlinks into immutable generations/<build_id> directories. Only that
+    # trusted *root pointer* is allowed; children are always checked with
+    # lstat(follow_symlinks=False) and symlinks inside the package are denied.
+    if package_dir.is_symlink():
+        resolved = package_dir.resolve()
+        if (not resolved.is_dir()
+                or resolved.parent.name != "generations"):
+            raise PublicGenerationInstallError(
+                "public package root symlink is not a generation pointer"
+            )
+    elif not package_dir.is_dir():
         raise PublicGenerationInstallError("public package root is not a real directory")
     files: set[str] = set()
     directories: set[str] = set()
