@@ -169,16 +169,17 @@ def _entry_metrics(
         if score > 5 * counts["satisfactionCount"]:
             raise ConsumerGovWindowError(f"{label}: score exceeds 5-point scale")
         reported_average = stats.get("averageScore")
-        if reported_average is not None:
-            if (type(reported_average) not in (int, float)
-                    or not math.isfinite(reported_average)
-                    or abs(reported_average - round(
-                        score / counts["satisfactionCount"]
-                        if counts["satisfactionCount"] else 0.0, 4
-                    )) > 0.00011):
-                raise ConsumerGovWindowError(
-                    f"{label}: averageScore inconsistent with scoreSum"
-                )
+        if reported_average is not None and (
+            type(reported_average) not in (int, float)
+            or not math.isfinite(reported_average)
+            or abs(reported_average - round(
+                score / counts["satisfactionCount"]
+                if counts["satisfactionCount"] else 0.0, 4
+            )) > 0.00011
+        ):
+            raise ConsumerGovWindowError(
+                f"{label}: averageScore inconsistent with scoreSum"
+            )
         counts["scoreSum"] = float(score)
         metrics[provider] = counts
         lines_kept += total
