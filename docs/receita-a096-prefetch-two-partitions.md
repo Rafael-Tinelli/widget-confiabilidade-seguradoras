@@ -1,8 +1,8 @@
-# A09.6 — Prefetch controlado de duas partições (homologado, não ativado)
+# A09.6 — Prefetch controlado de duas partições (ativação controlada)
 
 ## Situação
 
-**Implementação homologada por prova isolada de 18/11/2026, DESLIGADA por padrão.** O objetivo é
+**Implementação homologada em 18/11/2026; OFF por padrão no código. O workflow canônico de Full Generation ativa o prefetch explicitamente após decisão independente.** O objetivo é
 reduzir o tempo de transferência dos arquivos oficiais da Receita, sem
 modificar ordem de processamento, regras de identificação, Conduta, SUSEP ou
 formação do pacote público.
@@ -209,3 +209,22 @@ retenção ou publicação.
 - [CI #44238347989](https://github.com/Rafael-Tinelli/widget-confiabilidade-seguradoras/actions/runs/44238347989) aprovada no mesmo head.
 - **Decisão:** autorização para integrar o código **sem ativação produtiva**. `RECEITA_A096_PREFETCH` e `RECEITA_A096_RETAIN_ZIPS` permanecem ausentes dos workflows de geração produtiva; nenhuma alteração ao fluxo de publicação do HostGator. Ativação posterior exige decisão independente.
 - A prova de equivalência não constitui medição controlada de redução do tempo de Full Generation em produção; a decisão de ativação deve considerar duração, GitHub Actions e reserva de disco.
+
+
+## Ativação produtiva controlada — 18/11/2026
+
+Após [CI pós-merge da PR #71](https://github.com/Rafael-Tinelli/widget-confiabilidade-seguradoras/actions/runs/44291354852) verde, a autorização de ativação foi dada separadamente da integração do código. Os parágrafos históricos anteriores que registram `sem ativação` refletem a etapa pré-ativação.
+
+Mudança limitada a `.github/workflows/v2-gate4-full-generation-proof.yml`, em `jobs.full-generation-proof.env`:
+
+```yaml
+RECEITA_A096_PREFETCH: "1"
+RECEITA_A096_RETAIN_ZIPS: "0"
+```
+
+- O código continua fail-closed: sem valor exatamente `1`, o prefetch não funciona. No Full Generation canônico, a variável vale `1`; a retenção opcional de ZIPs permanece desabilitada.
+- Nenhuma alteração de Conduta, identificação de CNPJs, comparação, SUSEP, cron do scheduler, `workflow_dispatch`, package manifest ou publicação HostGator.
+- Sem disparo automático de Full Generation por push: o agendamento produtivo atual ou um `workflow_dispatch` explícito iniciam a próxima geração; sua eventual publicação depende do contrato já existente, não desta PR.
+- Limites implementados: duas partições no máximo, ≤4 GiB especulativos, reserva livre adicional ≥4 GiB, validação tamanho/ZIP/SHA local, fallback sequencial e limpeza de temporários.
+- **Rollback:** trocar somente `RECEITA_A096_PREFETCH: "1"` por `"0"` no workflow canônico. A09.4 e os caches compatíveis permanecem intactos; não é necessário restaurar os arquivos nacionais.
+- O sucesso da prova A09.6 não estabelece uma redução percentual garantida da duração da próxima Full Generation. Após a primeira execução produtiva, confrontar os logs A09 de `prefetch_ready`, `prefetch_fallback`, `zip_reuse`, tempos, RSS, disco e origem dos 20 ZIPs com a base histórica para avaliar eficiência real.

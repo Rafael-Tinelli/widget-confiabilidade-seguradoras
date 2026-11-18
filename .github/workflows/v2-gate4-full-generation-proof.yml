@@ -22,6 +22,10 @@ jobs:
       V2_BUILD_ID: v2-gate4-full-${{ github.run_id }}-a${{ github.run_attempt }}
       V2_SOURCE_CACHE_DIR: data/cache/v2/source
       RECEITA_A09_TELEMETRY_PATH: data/derived/v2/receita_a09_events.jsonl
+      # A09.6 national same-input replay equivalent: run #44238341224.
+      # Rollback: set PREFETCH to "0"; serial A09.4 path remains intact.
+      RECEITA_A096_PREFETCH: "1"
+      RECEITA_A096_RETAIN_ZIPS: "0"
       SES_ALLOW_INSECURE_SSL: "0"
       SUSEP_LICENSED_VERIFY_SSL: "1"
       SUSEP_SPECIAL_VERIFY_SSL: "1"
