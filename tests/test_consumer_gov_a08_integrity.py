@@ -113,7 +113,15 @@ def test_a08_missing_required_monthly_counter_is_not_zero(
     tmp_path: Path, field: str,
 ) -> None:
     def corrupt(roots, _agg):
-        del roots[0]["by_name_key_raw"]["seguradora demonstracao"]["statistics"][field]
+        stats = roots[0]["by_name_key_raw"]["seguradora demonstracao"]["statistics"]
+        del stats[field]
+        aliases = {
+            "respondedCount": "responded_claims",
+            "finalizedCount": "finalized_claims",
+            "resolvedCount": "resolved_claims",
+        }
+        if field in aliases:
+            del stats[aliases[field]]
     derived, monthly = _legacy_window(tmp_path, corrupt=corrupt)
     with pytest.raises(ConsumerGovWindowError, match="missing required|scoreSum"):
         load_active_window(derived, monthly, required=3)
@@ -169,8 +177,20 @@ def test_a08_same_complaint_totals_cannot_hide_aggregate_counter_mismatch(
     tmp_path: Path, field: str, value: object,
 ) -> None:
     def corrupt(_roots, aggregate):
-        aggregate["by_name_key_raw"]["seguradora demonstracao"]["statistics"][field] = value
-        # All 15 complaints and one provider are unchanged.
+        stats = aggregate["by_name_key_raw"]["seguradora demonstracao"]["statistics"]
+        stats[field] = value
+        alias = {
+            "respondedCount": "responded_claims",
+            "finalizedCount": "finalized_claims",
+            "resolvedCount": "resolved_claims",
+        }.get(field)
+        if alias:
+            stats[alias] = value
+        if field in ("satisfactionCount", "scoreSum"):
+            stats["averageScore"] = round(
+                stats["scoreSum"] / stats["satisfactionCount"], 4
+            )
+        # A self-consistent but different aggregate must still fail on parity.
     derived, monthly = _legacy_window(tmp_path, corrupt=corrupt)
     with pytest.raises(ConsumerGovWindowError, match="mismatch|inconsistent"):
         load_active_window(derived, monthly, required=3)
