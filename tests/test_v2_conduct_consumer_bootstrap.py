@@ -32,7 +32,14 @@ def _entry(month: str) -> dict:
         "by_name_key_raw": {
             "seguradora teste": {
                 "name": "Seguradora Teste",
-                "statistics": {"complaintsCount": 1},
+                "statistics": {
+                    "complaintsCount": 1, "total_claims": 1,
+                    "respondedCount": 0, "responded_claims": 0,
+                    "finalizedCount": 0, "finalized_claims": 0,
+                    "resolvedCount": 0, "resolved_claims": 0,
+                    "satisfactionCount": 0, "scoreSum": 0.0,
+                    "averageScore": 0.0,
+                },
             }
         },
     }
@@ -70,7 +77,14 @@ def _versioned_core(
         "by_name_key_raw": {
             "seguradora teste": {
                 "name": "Seguradora Teste",
-                "statistics": {"complaintsCount": 12},
+                "statistics": {
+                    "complaintsCount": 12, "total_claims": 12,
+                    "respondedCount": 0, "responded_claims": 0,
+                    "finalizedCount": 0, "finalized_claims": 0,
+                    "resolvedCount": 0, "resolved_claims": 0,
+                    "satisfactionCount": 0, "scoreSum": 0.0,
+                    "averageScore": 0.0,
+                },
             }
         },
     }

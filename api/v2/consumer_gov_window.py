@@ -11,8 +11,8 @@ from __future__ import annotations
 import gzip
 import hashlib
 import json
+import math
 import re
-from collections import Counter
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
@@ -89,7 +89,38 @@ def _object(
     return path
 
 
-def _entry_counts(root: dict[str, Any], *, month: str) -> Counter[str]:
+# Canonical counters and legacy aliases are *the same reported measure*.
+# Missing and malformed values must not be converted to zero. All fields
+# below are emitted by the existing Base Completa monthly aggregator.
+STAT_FIELDS: tuple[tuple[str, str | None], ...] = (
+    ("complaintsCount", "total_claims"),
+    ("respondedCount", "responded_claims"),
+    ("finalizedCount", "finalized_claims"),
+    ("resolvedCount", "resolved_claims"),
+    ("satisfactionCount", None),
+)
+
+
+def _nonnegative_int(value: Any, *, label: str) -> int:
+    if type(value) is not int or value < 0:
+        raise ConsumerGovWindowError(f"{label}: invalid nonnegative integer")
+    return value
+
+
+def _metric(stats: dict[str, Any], key: str, alias: str | None, *, label: str) -> int:
+    names = (key, alias) if alias else (key,)
+    present = [name for name in names if name in stats]
+    if not present:
+        raise ConsumerGovWindowError(f"{label}: missing required {key}")
+    values = [_nonnegative_int(stats[name], label=f"{label}.{name}") for name in present]
+    if len(values) == 2 and values[0] != values[1]:
+        raise ConsumerGovWindowError(f"{label}: conflicting aliases for {key}")
+    return values[0]
+
+
+def _entry_metrics(
+    root: dict[str, Any], *, month: str, monthly: bool,
+) -> dict[str, dict[str, int | float]]:
     entries = (
         root.get("by_name_key_raw")
         or root.get("by_name_key")
@@ -98,16 +129,112 @@ def _entry_counts(root: dict[str, Any], *, month: str) -> Counter[str]:
     )
     if not isinstance(entries, dict) or not entries:
         raise ConsumerGovWindowError(f"{month}: no monthly providers")
-    counts: Counter[str] = Counter()
+    meta = root.get("meta")
+    if not isinstance(meta, dict):
+        raise ConsumerGovWindowError(f"{month}: missing source metadata")
+    if (meta.get("source_family") not in (None, SOURCE_FAMILY)
+            or meta.get("reference_event") not in (None, "abertura")):
+        raise ConsumerGovWindowError(f"{month}: incompatible source family or event")
+    if meta.get("invalid") is True or meta.get("invalid_months"):
+        raise ConsumerGovWindowError(f"{month}: source flagged invalid")
+    # A legacy month is allowed not to DECLARE its temporal event. Absence
+    # must not be interpreted as independent proof that it was opening-based.
+    # A new content-addressed window states its event in the selector itself.
+    metrics: dict[str, dict[str, int | float]] = {}
+    lines_kept = 0
     for provider, entry in entries.items():
-        if not isinstance(entry, dict) or not isinstance(entry.get("statistics"), dict):
-            raise ConsumerGovWindowError(f"{month}: malformed provider statistics")
+        if (not isinstance(provider, str) or not provider
+                or not isinstance(entry, dict)
+                or not isinstance(entry.get("statistics"), dict)):
+            raise ConsumerGovWindowError(f"{month}: invalid provider entry")
         stats = entry["statistics"]
-        value = stats.get("complaintsCount", stats.get("total_claims"))
-        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-            raise ConsumerGovWindowError(f"{month}: invalid complaints for {provider}")
-        counts[str(provider)] += value
-    return counts
+        label = f"{month}:{provider}"
+        counts = {
+            field: _metric(stats, field, alias, label=label)
+            for field, alias in STAT_FIELDS
+        }
+        total = counts["complaintsCount"]
+        if total <= 0:
+            raise ConsumerGovWindowError(f"{label}: complaints must be positive")
+        for field, number in counts.items():
+            if number > total:
+                raise ConsumerGovWindowError(
+                    f"{label}: {field} exceeds complaints"
+                )
+        score = stats.get("scoreSum")
+        if type(score) not in (float, int) or not math.isfinite(score) or score < 0:
+            raise ConsumerGovWindowError(f"{label}: invalid scoreSum")
+        if counts["satisfactionCount"] == 0 and score != 0:
+            raise ConsumerGovWindowError(f"{label}: score without ratings")
+        if score > 5 * counts["satisfactionCount"]:
+            raise ConsumerGovWindowError(f"{label}: score exceeds 5-point scale")
+        reported_average = stats.get("averageScore")
+        if reported_average is not None and (
+            type(reported_average) not in (int, float)
+            or not math.isfinite(reported_average)
+            or abs(reported_average - round(
+                score / counts["satisfactionCount"]
+                if counts["satisfactionCount"] else 0.0, 4
+            )) > 0.00011
+        ):
+            raise ConsumerGovWindowError(
+                f"{label}: averageScore inconsistent with scoreSum"
+            )
+        counts["scoreSum"] = float(score)
+        metrics[provider] = counts
+        lines_kept += total
+
+    if "companies" in meta and _nonnegative_int(
+        meta["companies"], label=f"{month}.companies"
+    ) != len(entries):
+        raise ConsumerGovWindowError(f"{month}: companies metadata mismatch")
+    if monthly:
+        if meta.get("status") not in (None, "ok"):
+            raise ConsumerGovWindowError(f"{month}: month status invalid")
+        if "lines_kept" in meta and _nonnegative_int(
+            meta["lines_kept"], label=f"{month}.lines_kept"
+        ) != lines_kept:
+            raise ConsumerGovWindowError(f"{month}: lines_kept mismatch")
+        if "lines_total" in meta and _nonnegative_int(
+            meta["lines_total"], label=f"{month}.lines_total"
+        ) < lines_kept:
+            raise ConsumerGovWindowError(f"{month}: lines_total below kept")
+    elif meta.get("status") != "ok":
+        raise ConsumerGovWindowError("aggregate status invalid")
+    return metrics
+
+
+def _reconcile_provider_metrics(
+    monthly: list[tuple[str, dict[str, dict[str, int | float]]]],
+    aggregate: dict[str, dict[str, int | float]],
+) -> None:
+    summed: dict[str, dict[str, int | float]] = {}
+    for _, entries in monthly:
+        for provider, stats in entries.items():
+            target = summed.setdefault(
+                provider, {key: 0 for key, _ in STAT_FIELDS} | {"scoreSum": 0.0}
+            )
+            for field in target:
+                target[field] += stats[field]
+    if set(summed) != set(aggregate):
+        raise ConsumerGovWindowError(
+            "aggregate/monthly provider population does not reconcile"
+        )
+    for provider, stats in summed.items():
+        for field, number in stats.items():
+            declared = aggregate[provider][field]
+            if field == "scoreSum":
+                if not math.isclose(
+                    float(number), float(declared), rel_tol=1e-12, abs_tol=1e-7
+                ):
+                    raise ConsumerGovWindowError(
+                        f"aggregate/monthly provider scoreSum mismatch: {provider}"
+                    )
+            elif number != declared:
+                raise ConsumerGovWindowError(
+                    f"aggregate/monthly provider {field} mismatch: {provider}"
+                )
+
 
 
 def load_active_window(
@@ -174,7 +301,7 @@ def load_active_window(
         rows = [None] * required
 
     selected: list[tuple[str, Path, dict[str, Any]]] = []
-    month_counts: Counter[str] = Counter()
+    month_metrics: list[tuple[str, dict[str, dict[str, int | float]]]] = []
     for month, record in zip(months, rows, strict=True):
         if manifest is None:
             path = monthly_dir / f"consumidor_gov_{month}.json.gz"
@@ -198,14 +325,40 @@ def load_active_window(
             or monthly_meta.get("invalid") is True
         ):
             raise ConsumerGovWindowError(f"{month}: invalid monthly metadata")
-        month_counts.update(_entry_counts(monthly, month=month))
+        validated = _entry_metrics(monthly, month=month, monthly=True)
+        if manifest is not None:
+            assert isinstance(record, dict)
+            fields = (
+                ("rows", "lines_total"),
+                ("complaints", "lines_kept"),
+            )
+            for declared_key, source_key in fields:
+                expected = (monthly_meta or {}).get(source_key)
+                # A V2 cache restore may omit these optional sidecar
+                # counters; its *objects* remain source-hashed and validated.
+                # A claimed value must exactly match the source metadata.
+                if declared_key in record and (
+                    expected is None
+                    or _nonnegative_int(
+                        record[declared_key],
+                        label=f"{month}.manifest.{declared_key}",
+                    ) != expected
+                ):
+                    raise ConsumerGovWindowError(
+                        f"{month}: manifest {declared_key} differs from source metadata"
+                    )
+            source_sha = (monthly_meta or {}).get("source_sha256")
+            if ("source_sha256" in record
+                    and (source_sha or record["source_sha256"] not in (None, ""))
+                    and record["source_sha256"] != source_sha):
+                raise ConsumerGovWindowError(
+                    f"{month}: manifest/source SHA mismatch"
+                )
+        month_metrics.append((month, validated))
         selected.append((month, path, monthly))
 
-    aggregate_counts = _entry_counts(aggregate, month="aggregate")
-    if month_counts != aggregate_counts:
-        raise ConsumerGovWindowError(
-            "aggregate/monthly provider complaints do not reconcile"
-        )
+    aggregate_metrics = _entry_metrics(aggregate, month="aggregate", monthly=False)
+    _reconcile_provider_metrics(month_metrics, aggregate_metrics)
     return ActiveConsumerWindow(
         aggregate_path=aggregate_path,
         aggregate=aggregate,

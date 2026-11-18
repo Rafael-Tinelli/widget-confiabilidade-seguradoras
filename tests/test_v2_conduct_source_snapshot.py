@@ -185,7 +185,15 @@ def test_fallback_reselects_exact_v2_snapshot_instead_of_newer_sidecar(
             "by_name_key_raw": {
                 "empresa": {
                     "name": "Empresa",
-                    "statistics": {"complaintsCount": complaints},
+                    "statistics": {
+                        "complaintsCount": complaints,
+                        "total_claims": complaints,
+                        "respondedCount": 0, "responded_claims": 0,
+                        "finalizedCount": 0, "finalized_claims": 0,
+                        "resolvedCount": 0, "resolved_claims": 0,
+                        "satisfactionCount": 0, "scoreSum": 0.0,
+                        "averageScore": 0.0,
+                    },
                 }
             },
         }
@@ -259,9 +267,19 @@ def test_corrupt_v2_restore_never_switches_newer_active_manifest(
 
     def entry(month: str) -> dict:
         return {
-            "meta": {"month": month, "status": "ok", "companies": 1},
+            "meta": {
+                "month": month, "status": "ok", "companies": 1,
+                "lines_total": 1, "lines_kept": 1,
+            },
             "by_name_key_raw": {
-                "empresa": {"name": "Empresa", "statistics": {"complaintsCount": 1}}
+                "empresa": {"name": "Empresa", "statistics": {
+                    "complaintsCount": 1, "total_claims": 1,
+                    "respondedCount": 0, "responded_claims": 0,
+                    "finalizedCount": 0, "finalized_claims": 0,
+                    "resolvedCount": 0, "resolved_claims": 0,
+                    "satisfactionCount": 0, "scoreSum": 0.0,
+                    "averageScore": 0.0,
+                }}
             },
         }
 

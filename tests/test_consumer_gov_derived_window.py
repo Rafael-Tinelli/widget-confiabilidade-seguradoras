@@ -29,11 +29,25 @@ def _root(month: str, *, source_digest: str = "a" * 64) -> dict:
         "by_name_key_raw": {
             "empresa a": {
                 "name": "Empresa A",
-                "statistics": {"complaintsCount": 1},
+                "statistics": {
+                    "complaintsCount": 1, "total_claims": 1,
+                    "respondedCount": 0, "responded_claims": 0,
+                    "finalizedCount": 0, "finalized_claims": 0,
+                    "resolvedCount": 0, "resolved_claims": 0,
+                    "satisfactionCount": 0, "scoreSum": 0.0,
+                    "averageScore": 0.0,
+                },
             },
             "empresa b": {
                 "name": "Empresa B",
-                "statistics": {"complaintsCount": 1},
+                "statistics": {
+                    "complaintsCount": 1, "total_claims": 1,
+                    "respondedCount": 0, "responded_claims": 0,
+                    "finalizedCount": 0, "finalized_claims": 0,
+                    "resolvedCount": 0, "resolved_claims": 0,
+                    "satisfactionCount": 0, "scoreSum": 0.0,
+                    "averageScore": 0.0,
+                },
             },
         },
     }
