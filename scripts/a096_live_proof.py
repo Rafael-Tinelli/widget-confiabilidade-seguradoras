@@ -306,12 +306,42 @@ def _small_official_or_local_downloader(original, family_root: Path, family: str
     return get
 
 
+REPLAY_INPUT_LABELS = frozenset((
+    "classification", "candidate_lifecycle", "candidate_identity",
+    "local_zip_proof", "consumer_eligibility", "consumer_identity",
+))
+
+
+def _require_replay_input(label: str, path: Path) -> Path:
+    """Fail with an allowlisted input label, not an absolute path or ZIP token."""
+    if label not in REPLAY_INPUT_LABELS:
+        raise ValueError("unsupported_replay_input_label")
+    if not path.is_file() or path.is_symlink():
+        raise RuntimeError("missing_replay_input_" + label)
+    return path
+
+
 def replay() -> dict:
     """Replay exactly the retained large ZIPs via the existing serial parsers."""
-    if _candidate_file(NOVEMBER_SOURCE).is_file() is False:
-        raise RuntimeError("live_snapshot_not_preserved")
+    from api.v2.build_consumer_gov_157_experiment import ELIGIBILITY_PATH
+    from api.v2.build_consumer_gov_receita_identity import CONSUMER_IDENTITY_PATH
+
+    # Guard all small replay prerequisites BEFORE opening any large ZIP.
+    _require_replay_input(
+        "candidate_lifecycle", _candidate_file(NOVEMBER_SOURCE)
+    )
+    _require_replay_input(
+        "candidate_identity", _candidate_file(NOVEMBER_CONDUCT)
+    )
+    _require_replay_input(
+        "classification", DERIVED / "source/classification_inventory.json"
+    )
+    _require_replay_input("consumer_eligibility", ELIGIBILITY_PATH)
+    _require_replay_input("consumer_identity", CONSUMER_IDENTITY_PATH)
     workspace = _runner_workspace()
-    proof_path = workspace / "local-input-proof.json"
+    proof_path = _require_replay_input(
+        "local_zip_proof", workspace / "local-input-proof.json"
+    )
     info = _json_bytes(proof_path.read_bytes())
     companies = _company_root()
     establishments = _cache_dir()
@@ -323,11 +353,14 @@ def replay() -> dict:
     if release.period != info["reference_period"]:
         raise RuntimeError("release_changed_before_local_replay")
 
-    # The actual Gate 4 artifact is at derived/v2/entity_classification_inventory.json;
-    # "source/classification_inventory.json" does not exist. Check the exact
-    # CNPJ universe fingerprint against the prefetch snapshot before replay.
+    # The Gate 4 source_snapshot stage explicitly outputs
+    # data/derived/v2/source/classification_inventory.json (NOT the standalone
+    # classification builder's entity_classification_inventory.json).
+    # Check the population fingerprint against the live prefetch snapshot.
     classification = _json_bytes(
-        (DERIVED / "entity_classification_inventory.json").read_bytes()
+        _require_replay_input(
+            "classification", DERIVED / "source/classification_inventory.json"
+        ).read_bytes()
     )
     entities = list(classification.get("entities") or [])
     if not entities:
