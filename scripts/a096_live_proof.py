@@ -340,7 +340,7 @@ def _original_observation_date(primary: dict) -> date:
     if len(days) != 1:
         raise RuntimeError("inconsistent_primary_observation_date")
     observed = next(iter(days))
-    if not isinstance(observed, str) or not re.fullmatch(r"20\\d{2}-\\d{2}-\\d{2}", observed):
+    if not isinstance(observed, str) or not re.fullmatch(r"20\d{2}-\d{2}-\d{2}", observed):
         raise RuntimeError("invalid_primary_observation_date")
     try:
         return date.fromisoformat(observed)
