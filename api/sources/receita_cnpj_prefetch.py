@@ -6,8 +6,11 @@ strictly ordered. Every staged file is verified before use, and an error
 returns control to the existing serial downloader. A09.4 owns storage of
 Estabelecimentos after the ordered consumer adopts a validated staged file.
 
-Set RECEITA_A096_PREFETCH=1 *explicitly* in an isolated proof only.
-No workflow enables this for production or changes publication semantics.
+Default is OFF unless RECEITA_A096_PREFETCH=1 is explicit. The canonical
+Gate 4 Full Generation workflow opted in separately (PR #72); the publisher
+and its source-lineage rules remain unchanged. R1/R2 hardening requires all
+serial routes to validate the same official HTTP metadata, and releases a
+speculative ZIP that an A09.4 cache HIT does not adopt.
 """
 from __future__ import annotations
 
