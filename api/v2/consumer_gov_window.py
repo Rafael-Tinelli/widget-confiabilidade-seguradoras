@@ -334,9 +334,13 @@ def load_active_window(
             )
             for declared_key, source_key in fields:
                 expected = (monthly_meta or {}).get(source_key)
-                if expected is not None and (
-                    _nonnegative_int(
-                        record.get(declared_key),
+                # A V2 cache restore may omit these optional sidecar
+                # counters; its *objects* remain source-hashed and validated.
+                # A claimed value must exactly match the source metadata.
+                if declared_key in record and (
+                    expected is None
+                    or _nonnegative_int(
+                        record[declared_key],
                         label=f"{month}.manifest.{declared_key}",
                     ) != expected
                 ):
@@ -344,7 +348,9 @@ def load_active_window(
                         f"{month}: manifest {declared_key} differs from source metadata"
                     )
             source_sha = (monthly_meta or {}).get("source_sha256")
-            if source_sha and record.get("source_sha256") != source_sha:
+            if "source_sha256" in record and (
+                not source_sha or record["source_sha256"] != source_sha
+            ):
                 raise ConsumerGovWindowError(
                     f"{month}: manifest/source SHA mismatch"
                 )
