@@ -267,7 +267,10 @@ def test_corrupt_v2_restore_never_switches_newer_active_manifest(
 
     def entry(month: str) -> dict:
         return {
-            "meta": {"month": month, "status": "ok", "companies": 1},
+            "meta": {
+                "month": month, "status": "ok", "companies": 1,
+                "lines_total": 1, "lines_kept": 1,
+            },
             "by_name_key_raw": {
                 "empresa": {"name": "Empresa", "statistics": {
                     "complaintsCount": 1, "total_claims": 1,
