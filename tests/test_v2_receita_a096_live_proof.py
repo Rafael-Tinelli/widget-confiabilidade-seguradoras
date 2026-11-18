@@ -7,6 +7,7 @@ proof contract, preventing another 3-hour run with a missing output folder.
 from __future__ import annotations
 
 import json
+from datetime import date
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -69,7 +70,7 @@ def _setup(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
                 "reference_period": "2026-11",
                 "release_fingerprint": "b" * 64,
             },
-            "records": [{"id": 1}],
+            "records": [{"id": 1, "observed_at": "2026-11-17"}],
         }
         name = "source" if source == proof.NOVEMBER_SOURCE else "conduct"
         _write(cache_root / name / (source + ".json"), snap)
@@ -256,8 +257,11 @@ def test_a096_replay_calls_serial_reader_and_checks_same_input_verdict(
 
     monkeypatch.setattr(proof, "refresh_receita_lifecycle", fake_lifecycle)
     monkeypatch.setattr(proof.identity, "build_filtered_identity_snapshot", fake_identity)
+    today = lambda: date(2027, 1, 1)
+    monkeypatch.setattr(proof.bulk, "_today_utc", today)
     monkeypatch.setattr(proof, "compare_local", fake_compare)
     result = proof.replay()
+    assert proof.bulk._today_utc is today  # monkeypatch restored after replay
     assert result["status"] == "equivalent"
     assert result["zip_files_checked"] == 20
     assert result["production_publication_authorized"] is False
@@ -352,3 +356,36 @@ def test_a096_candidate_universe_mismatch_refuses_real_serial_replay(
     monkeypatch.setattr(proof, "_load_inputs", lambda: ([{"cnpj": "12345678000100"}], ["DEMO"]))
     with pytest.raises(RuntimeError, match="regulatory_universe_not_equivalent"):
         proof.replay()
+
+
+
+def test_a096_original_observation_date_is_strict_and_not_discarded() -> None:
+    baseline = {
+        "records": [
+            {"cnpj": "12345678000100", "observed_at": "2026-11-17"},
+            {"cnpj": "87654321000100", "observed_at": "2026-11-17"},
+        ],
+    }
+    assert proof._original_observation_date(baseline) == date(2026, 11, 17)
+    from scripts.a096_homologation import _diff_paths
+    candidate = json.loads(json.dumps(baseline))
+    candidate["records"][0]["observed_at"] = "2026-11-18"
+    assert any("observed_at" in field for field in _diff_paths(
+        baseline, candidate, "receita_cnpj_lifecycle",
+    ))
+
+
+@pytest.mark.parametrize(
+    "records",
+    [
+        [],
+        [{"observed_at": "2026-11-17"}, {"observed_at": "2026-11-18"}],
+        [{"observed_at": "2026-11-17"}, {"observed_at": None}],
+        [{"observed_at": "2026-13-17"}],
+        [{"observed_at": "2026-11-17T00:00:00Z"}],
+        [{"cnpj": "12345678000100"}],
+    ],
+)
+def test_a096_replay_rejects_ambiguous_observation_date(records: list) -> None:
+    with pytest.raises(RuntimeError, match="observation"):
+        proof._original_observation_date({"records": records})
