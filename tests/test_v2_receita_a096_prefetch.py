@@ -360,18 +360,22 @@ def test_a096_end_to_end_lifecycle_identity_and_a094_equivalence(
     ]
 
 
-def test_a096_production_workflows_do_not_enable_flag() -> None:
+def test_a096_canonical_activation_explicit_and_isolated() -> None:
+    """The separately authorized production opt-in is scoped to Gate 4 only."""
     root = Path(".github/workflows")
     canonical = (root / "v2-gate4-full-generation-proof.yml").read_text()
     scheduled = (root / "v2-production-generation-schedule.yml").read_text()
     publish = (root / "v2-hostgator-publication.yml").read_text()
-    assert prefetch.ENV_NAME not in canonical
-    assert prefetch.ENV_NAME not in scheduled
-    assert prefetch.ENV_NAME not in publish
     from api.sources.receita_cnpj_a096_retention import ENV_NAME as retention_flag
-    assert retention_flag not in canonical
-    assert retention_flag not in scheduled
-    assert retention_flag not in publish
+
+    # Exact job-scoped value, not an inert comment or an inherited variable.
+    assert canonical.count(f'      {prefetch.ENV_NAME}: "1"') == 1
+    assert canonical.count(f'      {retention_flag}: "0"') == 1
+    assert canonical.count(prefetch.ENV_NAME) == 1
+    assert canonical.count(retention_flag) == 1
+    for workflow in (scheduled, publish):
+        assert prefetch.ENV_NAME not in workflow
+        assert retention_flag not in workflow
     assert prefetch.MAX_WORKERS == 2
     assert prefetch.MAX_STAGED_BYTES == 4 * 1024**3
 
