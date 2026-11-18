@@ -30,7 +30,7 @@ SAFE_FIELDS = frozenset({
     "reference_period", "release_fingerprint", "fingerprint_method",
     "file_count", "company_partitions", "establishment_partitions",
     "cache_decision", "state", "target_count", "provider_count",
-    "etag_present", "last_modified_present", "zip_valid",
+    "etag_present", "last_modified_present", "zip_valid", "local_sha256",
 })
 
 
