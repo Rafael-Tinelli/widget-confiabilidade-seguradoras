@@ -27,7 +27,9 @@ from api.sources.receita_cnpj_a096_retention import (
     local_input_manifest,
 )
 from api.sources.receita_cnpj_run_zip_cache import _cache_dir
+from api.v2.build_consumer_gov_157_experiment import ELIGIBILITY_PATH
 from api.v2.build_consumer_gov_receita_identity import (
+    CONSUMER_IDENTITY_PATH,
     TARGET_UNIVERSE_HASH_METHOD,
     _cache_key,
     _load_inputs,
@@ -323,9 +325,6 @@ def _require_replay_input(label: str, path: Path) -> Path:
 
 def replay() -> dict:
     """Replay exactly the retained large ZIPs via the existing serial parsers."""
-    from api.v2.build_consumer_gov_157_experiment import ELIGIBILITY_PATH
-    from api.v2.build_consumer_gov_receita_identity import CONSUMER_IDENTITY_PATH
-
     # Guard all small replay prerequisites BEFORE opening any large ZIP.
     _require_replay_input(
         "candidate_lifecycle", _candidate_file(NOVEMBER_SOURCE)
