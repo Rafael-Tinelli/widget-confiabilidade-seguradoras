@@ -21,6 +21,11 @@ from api.sources.receita_cnpj_cache_integrity import (
     FINGERPRINT_METHOD,
     lifecycle_release_fingerprint,
 )
+from api.sources.receita_cnpj_prefetch import (
+    PartitionPrefetch,
+    adopt_or_download,
+    official_partitions,
+)
 from api.sources.receita_cnpj_run_zip_cache import acquire_run_establishment_zip
 from api.sources.receita_cnpj_telemetry import emit, file_category
 from api.utils.identifiers import normalize_cnpj_v2
@@ -492,41 +497,63 @@ def refresh_filtered_lifecycle(
 
         records_by_cnpj: dict[str, dict[str, Any]] = {}
         files_scanned: list[str] = []
-        for name in resolved_release.establishment_files:
-            url = urljoin(resolved_release.release_url, name)
-            resource = next(
-                (item for item in resolved_release.resource_metadata
-                 if item.get("name") == name),
-                None,
+        # A09.6 is strictly opt-in. Invalid metadata means the original
+        # serial path, never skipping any partition.
+        metadata_by_name = {
+            item["name"]: item for item in resolved_release.resource_metadata
+            if isinstance(item, dict) and isinstance(item.get("name"), str)
+        }
+        specs = official_partitions(
+            resolved_release.release_url,
+            resolved_release.establishment_files,
+            metadata_by_name,
+        )
+        with PartitionPrefetch(specs, root=root) as prefetch:
+            spec_by_name = {item.name: item for item in specs or []}
+            paths = (
+                ((spec.name, staged) for spec, staged in prefetch)
+                if specs is not None
+                else ((name, None) for name in resolved_release.establishment_files)
             )
-            local = acquire_run_establishment_zip(
-                release=resolved_release, name=name, metadata=resource,
-                destination=root / name,
-                download=lambda url=url, name=name: _download_zip(sess, url, root / name),
-            )
-            try:
-                rows = extract_target_lifecycle_from_zip(
-                    local,
-                    target_names,
-                    reason_map,
-                    source_url=url,
-                    source_period=resolved_release.period,
-                    observed_at=observed_at,
+            for name, staged in paths:
+                url = urljoin(resolved_release.release_url, name)
+                resource = next(
+                    (item for item in resolved_release.resource_metadata
+                     if item.get("name") == name),
+                    None,
                 )
-                for row in rows:
-                    cnpj = row["cnpj"]
-                    previous = records_by_cnpj.get(cnpj)
-                    if previous and previous != row:
-                        raise ReceitaOpenDataError(
-                            "Conflicting Receita lifecycle observations for "
-                            f"target CNPJ {cnpj}"
-                        )
-                    records_by_cnpj[cnpj] = row
-                files_scanned.append(name)
-                if len(records_by_cnpj) == len(target_names):
-                    break
-            finally:
-                local.unlink(missing_ok=True)
+                local = acquire_run_establishment_zip(
+                    release=resolved_release, name=name, metadata=resource,
+                    destination=root / name,
+                    download=lambda staged=staged, name=name, url=url: adopt_or_download(
+                        staged, root / name,
+                        lambda: _download_zip(sess, url, root / name),
+                        expected=spec_by_name.get(name) if prefetch.enabled else None,
+                    ),
+                )
+                try:
+                    rows = extract_target_lifecycle_from_zip(
+                        local,
+                        target_names,
+                        reason_map,
+                        source_url=url,
+                        source_period=resolved_release.period,
+                        observed_at=observed_at,
+                    )
+                    for row in rows:
+                        cnpj = row["cnpj"]
+                        previous = records_by_cnpj.get(cnpj)
+                        if previous and previous != row:
+                            raise ReceitaOpenDataError(
+                                "Conflicting Receita lifecycle observations for "
+                                f"target CNPJ {cnpj}"
+                            )
+                        records_by_cnpj[cnpj] = row
+                    files_scanned.append(name)
+                    if len(records_by_cnpj) == len(target_names):
+                        break
+                finally:
+                    local.unlink(missing_ok=True)
 
         unresolved = sorted(set(target_names) - set(records_by_cnpj))
         return {

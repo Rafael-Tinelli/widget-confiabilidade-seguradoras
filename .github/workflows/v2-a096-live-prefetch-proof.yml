@@ -1,0 +1,164 @@
+name: V2 A09.6 One-Shot Real Prefetch Proof
+
+# A09.6 isolated replay-verification run after offline replay correction.
+# Verify fallbacks, A09.4 retention and same-input serial replay. No publication.
+# Triggered only when this workflow file changes on the isolated PR branch.
+# It is NOT an upstream workflow of the HostGator publication workflow.
+on:
+  push:
+    branches:
+      - feature/a096-opt-in-two-partition-prefetch
+    paths:
+      - .github/workflows/v2-a096-live-prefetch-proof.yml
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: v2-a096-one-shot-live-proof
+  cancel-in-progress: false
+
+jobs:
+  real-prefetch-and-same-input-replay:
+    if: >-
+      github.repository == 'Rafael-Tinelli/widget-confiabilidade-seguradoras' &&
+      github.ref == 'refs/heads/feature/a096-opt-in-two-partition-prefetch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
+    env:
+      V2_SOURCE_HEAD_SHA: ${{ github.sha }}
+      V2_BUILD_ID: a096-live-${{ github.run_id }}-a${{ github.run_attempt }}
+      V2_SOURCE_CACHE_DIR: data/cache/v2/source
+      RECEITA_A09_TELEMETRY_PATH: data/derived/v2/receita_a09_events.jsonl
+      RECEITA_A096_PREFETCH: "1"
+      RECEITA_A096_RETAIN_ZIPS: "1"
+      SES_ALLOW_INSECURE_SSL: "0"
+      SUSEP_LICENSED_VERIFY_SSL: "1"
+      SUSEP_SPECIAL_VERIFY_SSL: "1"
+      SUSEP_SANDBOX_VERIFY_SSL: "1"
+
+    steps:
+      - name: Checkout exact experimental head (no main mutation)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Block overlap with scheduled or canonical full generation
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          for workflow in v2-gate4-full-generation-proof.yml v2-production-generation-schedule.yml; do
+            active=$(gh api \
+              "repos/$GITHUB_REPOSITORY/actions/workflows/$workflow/runs?per_page=30" \
+              --jq '[.workflow_runs[] | select(.status == "in_progress" or .status == "queued" or .status == "waiting" or .status == "pending")] | length')
+            [[ "$active" == "0" ]] || {
+              echo "::error::Another generation or production scheduler is active. No national download started."
+              exit 1
+            }
+          done
+
+      - name: Restore EXACT November regulatory cache
+        id: source-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: data/cache/v2/source
+          key: v2-gate4-source-${{ runner.os }}-43941197377
+
+      - name: Restore EXACT November Conduct cache
+        id: conduct-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: data/cache/v2/conduct
+          key: v2-gate4-conduct-${{ runner.os }}-43941197377
+
+      - name: Require exact historical baseline before using network
+        env:
+          SOURCE_HIT: ${{ steps.source-cache.outputs.cache-hit }}
+          CONDUCT_HIT: ${{ steps.conduct-cache.outputs.cache-hit }}
+        run: |
+          set -euo pipefail
+          [[ "$SOURCE_HIT" == "true" && "$CONDUCT_HIT" == "true" ]] || {
+            echo "::error::Exact November baseline cache missing; refusing national GETs."
+            exit 1
+          }
+
+      - name: Install frozen project dependency sets
+        run: |
+          set -euo pipefail
+          python -m pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Freeze generation timestamp
+        run: |
+          set -euo pipefail
+          echo "V2_GENERATED_AT=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_ENV"
+
+      - name: Verify November baseline and preserve its filtered snapshots
+        run: |
+          set -euo pipefail
+          python -m scripts.a096_live_proof preflight \
+            --output "$RUNNER_TEMP/a096-preflight.json"
+
+      - name: Force exactly Receita lifecycle and identity current acquisitions
+        run: |
+          set -euo pipefail
+          # Original validated baseline has already been verified and copied to
+          # RUNNER_TEMP. Remove ONLY two restored Receita filtered cache keys.
+          rm -f \
+            data/cache/v2/source/receita_cnpj_lifecycle.json \
+            data/cache/v2/source/receita_cnpj_lifecycle.meta.json \
+            data/cache/v2/conduct/receita_consumer_identity.json \
+            data/cache/v2/conduct/receita_consumer_identity.meta.json \
+            data/derived/v2/receita_cnpj_lifecycle.json \
+            data/derived/v2/receita_consumer_gov_identity.json
+          echo "Ready: all other validated caches remain available."
+
+      - name: Ensure versioned Consumer.gov bootstrap is available
+        run: |
+          set -euo pipefail
+          python -m api.v2.bootstrap_conduct_consumer_cache
+
+      - name: Execute complete Gate 4 DAG with real two-ZIP prefetch (NO PUBLICATION)
+        run: |
+          set -euo pipefail
+          python -m api.v2.gate4_pipeline --run-all > "$RUNNER_TEMP/a096-live-dag.log" 2>&1 || {
+            echo "::error::Experimental DAG failed; last 35 log lines:"
+            tail -n 35 "$RUNNER_TEMP/a096-live-dag.log"
+            exit 1
+          }
+          echo "Full Gate 4 DAG completed inside experimental runner; no deployment."
+          tail -n 12 "$RUNNER_TEMP/a096-live-dag.log"
+
+      - name: Verify 20 national ZIP receipts, real concurrency and A09.4 reuse
+        run: |
+          set -euo pipefail
+          python -m scripts.a096_live_proof validate \
+            --output "$RUNNER_TEMP/a096-live-verified.json"
+
+      - name: Independent serial replay on the same 20 local ZIPs (NO national GET)
+        run: |
+          set -euo pipefail
+          python -m scripts.a096_live_proof replay \
+            --output "$RUNNER_TEMP/a096-same-input-comparison.json"
+
+      - name: Publish ONLY compact diagnostic receipts, never ZIPs or public data
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: a096-real-prefetch-proof-${{ github.run_id }}-a${{ github.run_attempt }}
+          retention-days: 14
+          if-no-files-found: warn
+          path: |
+            ${{ runner.temp }}/a096-preflight.json
+            ${{ runner.temp }}/a096-live-verified.json
+            ${{ runner.temp }}/a096-same-input-comparison.json
+
+      # No actions/cache/save, no git push, no run artifact with Gate 4 publication
+      # name, no HostGator URLs, no ZIP artifacts and no workflow_run trigger.
