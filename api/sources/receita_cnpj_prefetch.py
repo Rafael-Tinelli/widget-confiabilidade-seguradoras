@@ -38,6 +38,8 @@ READ_CHUNK = 1024 * 1024
 OFFICIAL_HOST = "arquivos.receitafederal.gov.br"
 ALLOWED_NAME = re.compile(r"(?:Empresas|Estabelecimentos)(?:0|[1-9]\d*)\.zip\Z")
 SHA256 = re.compile(r"[0-9a-f]{64}\Z")
+ALLOWED_DICTIONARIES = frozenset(("Motivos.zip", "Cnaes.zip", "Naturezas.zip"))
+
 
 
 @dataclass(frozen=True)
@@ -110,6 +112,75 @@ def official_partitions(
     return specs
 
 
+def official_resource(
+    release_url: str, name: str, metadata: dict[str, Any] | None,
+) -> Partition:
+    """Validated contract for EVERY official file, including serial/dictionaries.
+
+    Prefetch eligibility is a separate question: a small valid ZIP must not
+    disable this source-integrity check or permit unverified serial parsing.
+    """
+    parsed = urlsplit(release_url)
+    if parsed.scheme != "https" or parsed.hostname != OFFICIAL_HOST:
+        raise PrefetchRejected("untrusted_official_release_url")
+    if not isinstance(name, str) or not (
+        ALLOWED_NAME.fullmatch(name) or name in ALLOWED_DICTIONARIES
+    ):
+        raise PrefetchRejected("untrusted_official_resource_name")
+    if not isinstance(metadata, dict) or metadata.get("name") != name:
+        raise PrefetchRejected("missing_official_resource_metadata")
+    size = metadata.get("size")
+    etag = metadata.get("etag")
+    modified = metadata.get("last_modified")
+    if (type(size) is not int or size <= 0
+            or not (isinstance(etag, str) and etag.strip()
+                    or isinstance(modified, str) and modified.strip())):
+        raise PrefetchRejected("incomplete_official_resource_metadata")
+    return Partition(
+        name=name, url=urljoin(release_url, name), size=size,
+        etag=etag if isinstance(etag, str) and etag.strip() else None,
+        last_modified=modified if isinstance(modified, str) and modified.strip() else None,
+    )
+
+
+def verify_http_response(response: Any, url: str, expected: Partition | None) -> None:
+    """The SAME transport/source checks for speculative and serial GET.
+
+    A missing official content checksum is never replaced by an invented
+    remote checksum. ETag/Last-Modified are compared only when sent, but
+    final URL, content status, encoding and effective byte count are enforced.
+    """
+    original = urlsplit(url)
+    final = urlsplit(str(getattr(response, "url", "") or ""))
+    if (original.scheme != "https" or original.hostname != OFFICIAL_HOST
+            or final.scheme != "https" or final.hostname != OFFICIAL_HOST):
+        raise PrefetchRejected("nonofficial_http_source_or_redirect")
+    if response.status_code != 200:
+        raise PrefetchRejected("unexpected_http_status")
+    headers = response.headers
+    if headers.get("Content-Range"):
+        raise PrefetchRejected("unexpected_content_range")
+    if str(headers.get("Content-Encoding", "identity")).strip().lower() not in (
+        "", "identity",
+    ):
+        raise PrefetchRejected("unexpected_content_encoding")
+    length = headers.get("Content-Length")
+    if length is not None and (
+        not str(length).isdecimal()
+        or (expected is not None and int(length) != expected.size)
+    ):
+        raise PrefetchRejected("content_length_mismatch")
+    if expected is not None:
+        if url != expected.url:
+            raise PrefetchRejected("unexpected_partition_url")
+        etag = headers.get("ETag")
+        modified = headers.get("Last-Modified")
+        if expected.etag and etag and etag != expected.etag:
+            raise PrefetchRejected("etag_mismatch")
+        if expected.last_modified and modified and modified != expected.last_modified:
+            raise PrefetchRejected("last_modified_mismatch")
+
+
 def _digest(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as stream:
@@ -159,27 +230,7 @@ def _fetch_stage(spec: Partition, root: Path, cancel: threading.Event) -> Staged
                 spec.url, stream=True, allow_redirects=True, timeout=(15, 20),
                 headers={"Accept-Encoding": "identity"},
             ) as response:
-                if response.status_code != 200:
-                    raise PrefetchRejected("prefetch_unexpected_http_status")
-                if (urlsplit(response.url).scheme != "https"
-                        or urlsplit(response.url).hostname != OFFICIAL_HOST):
-                    raise PrefetchRejected("prefetch_redirect_outside_official_host")
-                if response.headers.get("Content-Range"):
-                    raise PrefetchRejected("prefetch_unexpected_content_range")
-                if response.headers.get("Content-Encoding", "identity").strip().lower() not in (
-                    "", "identity",
-                ):
-                    raise PrefetchRejected("prefetch_unexpected_content_encoding")
-                length = response.headers.get("Content-Length")
-                if length is not None and (not length.isdecimal()
-                                           or int(length) != spec.size):
-                    raise PrefetchRejected("prefetch_content_length_mismatch")
-                etag = response.headers.get("ETag")
-                if spec.etag and etag and etag != spec.etag:
-                    raise PrefetchRejected("prefetch_etag_mismatch")
-                modified = response.headers.get("Last-Modified")
-                if spec.last_modified and modified and modified != spec.last_modified:
-                    raise PrefetchRejected("prefetch_last_modified_mismatch")
+                verify_http_response(response, spec.url, spec)
                 with part.open("xb") as stream:
                     for chunk in response.iter_content(chunk_size=READ_CHUNK):
                         if cancel.is_set():
@@ -203,7 +254,7 @@ def _fetch_stage(spec: Partition, root: Path, cancel: threading.Event) -> Staged
             "prefetch_ready", category=category, file_index=index,
             expected_bytes=spec.size, received_bytes=size,
             elapsed_download_s=round(time.perf_counter() - started, 3),
-            state="verified", zip_valid=True,
+            state="verified", zip_valid=True, local_sha256=digest.hexdigest(),
         )
         return Staged(destination, digest.hexdigest())
     except Exception:
@@ -297,10 +348,16 @@ class PartitionPrefetch:
                     category, index = file_category(spec.name)
                     emit("prefetch_fallback", category=category, file_index=index,
                          state="serial")
-            # The canonical serial reader is responsible for each None.
-            yield spec, staged
-            # Called only AFTER ordered consumption of the previous partition.
-            # Never have more than two speculative files staged concurrently.
+            # The consumer may use an A09.4 cache HIT instead of adopting the
+            # staged ZIP. We retain ownership until it is adopted (renamed);
+            # ALWAYS remove any unadopted file before scheduling another one.
+            # Without this finally, warm caches leak staged slots mid-run.
+            try:
+                yield spec, staged
+            finally:
+                if staged is not None:
+                    staged.unlink(missing_ok=True)
+            # Only now may the next speculative slot be reserved.
             self._schedule(i + MAX_WORKERS)
 
     def __exit__(self, _type, _value, _traceback) -> None:
