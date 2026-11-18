@@ -17,6 +17,7 @@ import os
 import re
 import shutil
 from collections import Counter
+from datetime import date
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -323,6 +324,30 @@ def _require_replay_input(label: str, path: Path) -> Path:
     return path
 
 
+def _original_observation_date(primary: dict) -> date:
+    """Reproduce the original record observation date across UTC midnight.
+
+    The official ZIP contents can remain stable while a replay launched after
+    midnight would otherwise change records[].observed_at. This preserves the
+    original data field rather than excluding it from semantic comparison.
+    """
+    records = primary.get("records")
+    if not isinstance(records, list) or not records:
+        raise RuntimeError("missing_primary_observation_records")
+    if not all(isinstance(row, dict) for row in records):
+        raise RuntimeError("invalid_primary_observation_records")
+    days = {row.get("observed_at") for row in records}
+    if len(days) != 1:
+        raise RuntimeError("inconsistent_primary_observation_date")
+    observed = next(iter(days))
+    if not isinstance(observed, str) or not re.fullmatch(r"20\\d{2}-\\d{2}-\\d{2}", observed):
+        raise RuntimeError("invalid_primary_observation_date")
+    try:
+        return date.fromisoformat(observed)
+    except ValueError as exc:
+        raise RuntimeError("invalid_primary_observation_date") from exc
+
+
 def replay() -> dict:
     """Replay exactly the retained large ZIPs via the existing serial parsers."""
     # Guard all small replay prerequisites BEFORE opening any large ZIP.
@@ -368,6 +393,7 @@ def replay() -> dict:
     if (regulatory_target_universe_hash(entities)
             != (primary.get("meta") or {}).get("target_universe_hash")):
         raise RuntimeError("regulatory_universe_not_equivalent_to_primary")
+    observation_date = _original_observation_date(primary)
     consumer_entities, providers = _load_inputs()
     if not consumer_entities or not providers:
         raise RuntimeError("consumer_identity_universe_missing")
@@ -378,6 +404,8 @@ def replay() -> dict:
     os.environ["RECEITA_A096_RETAIN_ZIPS"] = "0"
     original_bulk = bulk._download_zip
     original_identity = identity._download_zip
+    original_today = bulk._today_utc
+    bulk._today_utc = lambda: observation_date
     bulk._download_zip = _small_official_or_local_downloader(
         original_bulk, establishments, "Estabelecimentos"
     )
@@ -408,6 +436,7 @@ def replay() -> dict:
     finally:
         bulk._download_zip = original_bulk
         identity._download_zip = original_identity
+        bulk._today_utc = original_today
 
     if not lifecycle.get("records"):
         raise RuntimeError("local_serial_lifecycle_empty")
