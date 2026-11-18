@@ -12,6 +12,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from api.v2.gate4_pipeline import STAGES
 from scripts import a096_live_proof as proof
 
 
@@ -137,6 +138,64 @@ def test_a096_safe_diagnostics_only_contains_counts_and_presence(
     assert "https" not in str(stats).lower()
 
 
+def _offline_replay_inputs(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    eligibility = tmp_path / "derived/entity_eligibility_inventory.json"
+    consumer = tmp_path / "derived/consumer_gov_identity_experiment.json"
+    _write(eligibility, {"entities": [{"cnpj": "12345678000100"}]})
+    _write(consumer, {"unresolved_providers": [{"provider": "DEMO"}]})
+    monkeypatch.setattr(proof, "ELIGIBILITY_PATH", eligibility)
+    monkeypatch.setattr(proof, "CONSUMER_IDENTITY_PATH", consumer)
+
+
+def test_a096_replay_classification_path_follows_real_gate4_dag() -> None:
+    source = next(stage for stage in STAGES if stage.stage_id == "source_snapshot")
+    expected = "data/derived/v2/source/classification_inventory.json"
+    assert expected in source.outputs
+    assert str(proof.DERIVED / "source/classification_inventory.json") == expected
+    assert "data/derived/v2/entity_classification_inventory.json" not in source.outputs
+
+
+@pytest.mark.parametrize(
+    ("file_label", "missing_name"),
+    [
+        ("classification", "source/classification_inventory.json"),
+        ("candidate_identity", "candidate_identity"),
+        ("consumer_eligibility", "consumer_eligibility"),
+        ("consumer_identity", "consumer_identity"),
+    ],
+)
+def test_a096_replay_fails_before_parsing_if_a_required_input_is_missing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    file_label: str, missing_name: str,
+) -> None:
+    root = _setup(monkeypatch, tmp_path)
+    proof.validate()
+    derived = tmp_path / "derived"
+    _write(
+        derived / "source/classification_inventory.json",
+        {"entities": [{"cnpj": "12345678000100"}]},
+    )
+    monkeypatch.setattr(proof, "DERIVED", derived)
+    _offline_replay_inputs(monkeypatch, tmp_path)
+    if missing_name == "candidate_identity":
+        proof._candidate_file(proof.NOVEMBER_CONDUCT).unlink()
+    elif missing_name == "consumer_eligibility":
+        proof.ELIGIBILITY_PATH.unlink()
+    elif missing_name == "consumer_identity":
+        proof.CONSUMER_IDENTITY_PATH.unlink()
+    else:
+        (derived / missing_name).unlink()
+    monkeypatch.setattr(
+        proof.bulk, "discover_latest_release",
+        lambda: pytest.fail("no network or WebDAV before replay preflight"),
+    )
+    with pytest.raises(RuntimeError, match="missing_replay_input_" + file_label):
+        proof.replay()
+    assert root.joinpath("local-input-proof.json").is_file()
+
+
 def test_a096_replay_calls_serial_reader_and_checks_same_input_verdict(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
@@ -145,7 +204,7 @@ def test_a096_replay_calls_serial_reader_and_checks_same_input_verdict(
     derivative = tmp_path / "derived"
     target_entities = [{"cnpj": "12345678000100", "legal_name": "DEMO"}]
     _write(
-        derivative / "entity_classification_inventory.json",
+        derivative / "source/classification_inventory.json",
         {"entities": target_entities},
     )
     primary = proof._candidate_file(proof.NOVEMBER_SOURCE)
@@ -155,6 +214,7 @@ def test_a096_replay_calls_serial_reader_and_checks_same_input_verdict(
     }
     _write(primary, primary_snapshot)
     monkeypatch.setattr(proof, "DERIVED", derivative)
+    _offline_replay_inputs(monkeypatch, tmp_path)
     monkeypatch.setattr(
         proof.bulk, "discover_latest_release",
         lambda: SimpleNamespace(period="2026-11"),
@@ -280,8 +340,9 @@ def test_a096_candidate_universe_mismatch_refuses_real_serial_replay(
     _write(source, payload)
     derived = tmp_path / "derived"
     monkeypatch.setattr(proof, "DERIVED", derived)
+    _offline_replay_inputs(monkeypatch, tmp_path)
     _write(
-        derived / "entity_classification_inventory.json",
+        derived / "source/classification_inventory.json",
         {"entities": [{"cnpj": "12345678000100"}]},
     )
     monkeypatch.setattr(
