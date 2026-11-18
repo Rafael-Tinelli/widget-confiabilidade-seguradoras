@@ -23,6 +23,7 @@ from api.sources.receita_cnpj_bulk import (
     _configure_official_session,
     _download_zip,
     _first_csv_member,
+    _required_official_resource,
     _propfind,
     discover_latest_release,
 )
@@ -393,8 +394,18 @@ def build_filtered_identity_snapshot(
         dictionaries_started = time.perf_counter()
         cnae_name = str(files["cnaes"])
         nature_name = str(files["legal_natures"])
-        cnae_zip = _download_zip(sess, urljoin(resolved_release.release_url, cnae_name), root / cnae_name)
-        nature_zip = _download_zip(sess, urljoin(resolved_release.release_url, nature_name), root / nature_name)
+        cnae_spec = _required_official_resource(
+            resolved_release.release_url, cnae_name, files["metadata"].get(cnae_name),
+        )
+        nature_spec = _required_official_resource(
+            resolved_release.release_url, nature_name, files["metadata"].get(nature_name),
+        )
+        cnae_zip = _download_zip(
+            sess, cnae_spec.url, root / cnae_name, expected=cnae_spec,
+        )
+        nature_zip = _download_zip(
+            sess, nature_spec.url, root / nature_name, expected=nature_spec,
+        )
         cnae_map = _load_code_map(cnae_zip)
         nature_map = _load_code_map(nature_zip)
         emit(
@@ -417,19 +428,21 @@ def build_filtered_identity_snapshot(
             resolved_release.release_url, files["companies"], files["metadata"],
         )
         with PartitionPrefetch(company_specs, root=root) as prefetch:
-            spec_by_name = {item.name: item for item in company_specs or []}
             paths = (
                 ((spec.name, staged) for spec, staged in prefetch)
                 if company_specs is not None
                 else ((name, None) for name in files["companies"])
             )
             for index, (name, staged) in enumerate(paths):
+                spec = _required_official_resource(
+                    resolved_release.release_url, name, files["metadata"].get(name),
+                )
                 local = adopt_or_download(
                     staged, root / name,
-                    lambda name=name: _download_zip(
-                        sess, urljoin(resolved_release.release_url, name), root / name,
+                    lambda name=name, spec=spec: _download_zip(
+                        sess, spec.url, root / name, expected=spec,
                     ),
-                    expected=spec_by_name.get(name) if prefetch.enabled else None,
+                    expected=spec,
                 )
                 capture_company(
                     local, name=name, metadata=files["metadata"].get(name),
@@ -489,13 +502,16 @@ def build_filtered_identity_snapshot(
         establishment_files_scanned: list[str] = []
 
         for index, name in enumerate(resolved_release.establishment_files):
+            spec = _required_official_resource(
+                resolved_release.release_url, name, files["metadata"].get(name),
+            )
             local = acquire_run_establishment_zip(
                 release=resolved_release,
                 name=name,
                 metadata=files["metadata"].get(name),
                 destination=root / name,
-                download=lambda name=name: _download_zip(
-                    sess, urljoin(resolved_release.release_url, name), root / name,
+                download=lambda name=name, spec=spec: _download_zip(
+                    sess, spec.url, root / name, expected=spec,
                 ),
             )
             parse_started = time.perf_counter()
