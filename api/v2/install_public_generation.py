@@ -6,7 +6,9 @@ import json
 import os
 import re
 import shutil
-from pathlib import Path
+import stat
+import tarfile
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 MANIFEST_NAME = "distribution_manifest.json"
@@ -26,10 +28,82 @@ def _sha256_file(path: Path) -> str:
 
 
 def _safe_relative_path(value: str) -> Path:
-    path = Path(value)
-    if not value or path.is_absolute() or ".." in path.parts:
+    # A manifest is a logical POSIX path list, never a filesystem glob.
+    # Reject alternate spellings, nested manifests and ambiguous separators.
+    path = PurePosixPath(value)
+    if (not value or "\\" in value or path.is_absolute()
+            or path.as_posix() != value or ".." in path.parts
+            or path.name == MANIFEST_NAME):
         raise PublicGenerationInstallError(f"unsafe manifest path: {value!r}")
-    return path
+    return Path(*path.parts)
+
+
+def _physical_inventory(package_dir: Path) -> tuple[set[str], set[str]]:
+    """Inventory EVERY entry without following symlinks, including non-JSON.
+
+    Never trust Path.is_file() or rglob('*.json') alone: both would omit
+    unlisted files and can dereference symlinks before validation.
+    """
+    # current/previous and the public web path intentionally resolve through
+    # symlinks into immutable generations/<build_id> directories. Only that
+    # trusted *root pointer* is allowed; children are always checked with
+    # lstat(follow_symlinks=False) and symlinks inside the package are denied.
+    if package_dir.is_symlink():
+        resolved = package_dir.resolve()
+        if (not resolved.is_dir()
+                or resolved.parent.name != "generations"):
+            raise PublicGenerationInstallError(
+                "public package root symlink is not a generation pointer"
+            )
+    elif not package_dir.is_dir():
+        raise PublicGenerationInstallError("public package root is not a real directory")
+    files: set[str] = set()
+    directories: set[str] = set()
+    pending = [package_dir]
+    while pending:
+        parent = pending.pop()
+        try:
+            with os.scandir(parent) as entries:
+                for entry in entries:
+                    path = Path(entry.path)
+                    name = path.relative_to(package_dir).as_posix()
+                    metadata = entry.stat(follow_symlinks=False)
+                    mode = metadata.st_mode
+                    if stat.S_ISLNK(mode):
+                        raise PublicGenerationInstallError(
+                            f"public package contains symlink: {name}"
+                        )
+                    if stat.S_ISDIR(mode):
+                        directories.add(name)
+                        pending.append(path)
+                    elif stat.S_ISREG(mode):
+                        # A hardlink to a file outside this tree is still a
+                        # regular file to lstat; reject multi-linked inodes too.
+                        if metadata.st_nlink != 1:
+                            raise PublicGenerationInstallError(
+                                f"public package contains hardlink: {name}"
+                            )
+                        files.add(name)
+                    else:
+                        raise PublicGenerationInstallError(
+                            f"public package contains special file: {name}"
+                        )
+        except OSError as exc:
+            raise PublicGenerationInstallError(
+                f"cannot inventory public package: {parent}"
+            ) from exc
+    return files, directories
+
+
+def _expected_directories(files: set[str]) -> set[str]:
+    allowed: set[str] = set()
+    for name in files:
+        parent = PurePosixPath(name).parent
+        while parent != PurePosixPath("."):
+            allowed.add(parent.as_posix())
+            parent = parent.parent
+    return allowed
+
 
 
 def load_manifest(package_dir: Path) -> dict[str, Any]:
@@ -62,6 +136,11 @@ def load_manifest(package_dir: Path) -> dict[str, Any]:
 
 
 def verify_package(package_dir: Path) -> dict[str, Any]:
+    # Inventory first, including the manifest itself and any hidden files.
+    # Every caller (verify/install/reuse/rollback/remote) gets this exact check.
+    physical_files, physical_dirs = _physical_inventory(package_dir)
+    if MANIFEST_NAME not in physical_files:
+        raise PublicGenerationInstallError(f"missing {MANIFEST_NAME}: {package_dir}")
     manifest = load_manifest(package_dir)
     public = (
         manifest.get("public_package")
@@ -103,16 +182,23 @@ def verify_package(package_dir: Path) -> dict[str, Any]:
         package_digest.update(digest.encode("ascii"))
         package_digest.update(b"\0")
 
-    actual_paths = {
-        path.relative_to(package_dir).as_posix()
-        for path in package_dir.rglob("*.json")
-        if path.is_file() and path.name != MANIFEST_NAME
-    }
-    if actual_paths != expected_paths:
-        missing = sorted(expected_paths - actual_paths)
-        extra = sorted(actual_paths - expected_paths)
+    # The only unlisted physical file is the one manifest at package root.
+    # This also rejects non-JSON extras (ZIP/PHP), nested manifests, hidden
+    # files, unlisted empty directories, symlinks and filesystem special types.
+    allowed_files = expected_paths | {MANIFEST_NAME}
+    if physical_files != allowed_files:
+        missing = sorted(allowed_files - physical_files)
+        extra = sorted(physical_files - allowed_files)
         raise PublicGenerationInstallError(
             f"manifest/package file set mismatch: missing={missing}, extra={extra}"
+        )
+    expected_dirs = _expected_directories(allowed_files)
+    if physical_dirs != expected_dirs:
+        extra_dirs = sorted(physical_dirs - expected_dirs)
+        missing_dirs = sorted(expected_dirs - physical_dirs)
+        raise PublicGenerationInstallError(
+            f"manifest/package directory set mismatch: missing={missing_dirs}, "
+            f"extra={extra_dirs}"
         )
 
     expected_count = public.get("files_count")
@@ -123,6 +209,95 @@ def verify_package(package_dir: Path) -> dict[str, Any]:
     expected_package_sha = str(public.get("package_sha256") or "")
     if package_digest.hexdigest() != expected_package_sha:
         raise PublicGenerationInstallError("logical package sha256 mismatch")
+    return manifest
+
+
+def verify_transport_archive(archive_path: Path, package_dir: Path) -> dict[str, Any]:
+    """Prove the tar contains exactly the verified package, byte for byte.
+
+    This validates the ACTUAL upload, not just the directory before tar.
+    The remote installer repeats verify_package after extraction and before
+    touching current/previous. ZIP/PHP, nested manifest, link, special type,
+    duplicate and traversal members must fail closed.
+    """
+    manifest = verify_package(package_dir)
+    rows = manifest["public_package"]["files"]
+    expected = {
+        row["path"]: (row["sha256"], row["bytes"]) for row in rows
+    }
+    expected[MANIFEST_NAME] = (
+        _sha256_file(package_dir / MANIFEST_NAME),
+        (package_dir / MANIFEST_NAME).stat().st_size,
+    )
+    dirs = _expected_directories(set(expected))
+    if archive_path.is_symlink() or not archive_path.is_file():
+        raise PublicGenerationInstallError("transport archive is not a regular file")
+    seen_files: set[str] = set()
+    seen_dirs: set[str] = set()
+    root_seen = False
+    try:
+        with tarfile.open(archive_path, mode="r:gz") as archive:
+            for member in archive:
+                raw = member.name
+                if raw == ".":
+                    if root_seen or not member.isdir():
+                        raise PublicGenerationInstallError("unsafe transport archive root")
+                    root_seen = True
+                    continue
+                name = raw.removeprefix("./")
+                # GNU tar sometimes includes trailing '/' on directory
+                # headers; compare canonical names without that final slash.
+                if member.isdir():
+                    name = name.rstrip("/")
+                normalized = PurePosixPath(name)
+                if (not name or name.startswith("/") or "\\" in name
+                        or ".." in normalized.parts
+                        or normalized.as_posix() != name):
+                    raise PublicGenerationInstallError(
+                        f"unsafe transport archive member: {raw}"
+                    )
+                if member.isdir():
+                    if name in seen_dirs or name not in dirs:
+                        raise PublicGenerationInstallError(
+                            f"unexpected transport archive directory: {raw}"
+                        )
+                    seen_dirs.add(name)
+                elif member.isfile():
+                    if name in seen_files or name not in expected:
+                        raise PublicGenerationInstallError(
+                            f"unexpected transport archive file: {raw}"
+                        )
+                    seen_files.add(name)
+                    digest, expected_bytes = expected[name]
+                    if member.size != expected_bytes:
+                        raise PublicGenerationInstallError(
+                            f"transport archive file size mismatch: {name}"
+                        )
+                    data = archive.extractfile(member)
+                    if data is None:
+                        raise PublicGenerationInstallError(
+                            f"unreadable transport archive file: {name}"
+                        )
+                    actual = hashlib.sha256()
+                    size = 0
+                    with data:
+                        for chunk in iter(lambda data=data: data.read(1024 * 1024), b""):
+                            size += len(chunk)
+                            actual.update(chunk)
+                    if size != expected_bytes or actual.hexdigest() != digest:
+                        raise PublicGenerationInstallError(
+                            f"transport archive content mismatch: {name}"
+                        )
+                else:
+                    raise PublicGenerationInstallError(
+                        f"transport archive contains link or special file: {raw}"
+                    )
+    except (OSError, tarfile.TarError) as exc:
+        raise PublicGenerationInstallError("invalid public transport archive") from exc
+    if seen_files != set(expected) or seen_dirs != dirs:
+        raise PublicGenerationInstallError(
+            "transport archive file/directory set mismatch"
+        )
     return manifest
 
 
@@ -229,6 +404,10 @@ def _parse_args() -> argparse.Namespace:
     verify = subparsers.add_parser("verify")
     verify.add_argument("package_dir", type=Path)
 
+    verify_archive = subparsers.add_parser("verify-archive")
+    verify_archive.add_argument("archive_path", type=Path)
+    verify_archive.add_argument("package_dir", type=Path)
+
     install = subparsers.add_parser("install")
     install.add_argument("package_dir", type=Path)
     install.add_argument("target_root", type=Path)
@@ -244,6 +423,15 @@ def main() -> None:
         manifest = verify_package(args.package_dir)
         result: dict[str, Any] = {
             "action": "verify",
+            "build_id": (manifest.get("build") or {}).get("build_id"),
+            "package_sha256": (manifest.get("public_package") or {}).get(
+                "package_sha256"
+            ),
+        }
+    elif args.command == "verify-archive":
+        manifest = verify_transport_archive(args.archive_path, args.package_dir)
+        result = {
+            "action": "verify-archive",
             "build_id": (manifest.get("build") or {}).get("build_id"),
             "package_sha256": (manifest.get("public_package") or {}).get(
                 "package_sha256"

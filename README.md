@@ -611,6 +611,28 @@ renovação nacional produtiva após a correção; permanecem separadamente
 observador)** e **A01/A08 (pendências metodológicas e contratuais)**.
 Nenhuma nova fonte de Conduta é autorizada por essas correções.
 
+**Pós-auditoria de publicação — Frente 2 (R4), 18/11/2026:**
+a [PR #75](https://github.com/Rafael-Tinelli/widget-confiabilidade-seguradoras/pull/75)
+endurece o instalador e o workflow HostGator. A verificação deixa de
+comparar somente `*.json` e exige que o **conjunto físico inteiro** de
+arquivos corresponda ao manifesto: apenas os JSONs declarados e um
+`distribution_manifest.json` na raiz. Arquivos extras, diretórios
+inesperados, links internos, hardlinks e arquivos especiais são recusados.
+Os ponteiros legítimos `current`/`previous` e o caminho público são
+aceitos somente quando resolvem para um diretório de geração instalada.
+
+Antes do envio, o TAR é verificado por membros, tipos, caminhos,
+duplicatas, tamanhos e SHA-256, incluindo o próprio manifesto; o
+instalador remoto repete a validação do diretório extraído antes de
+alterar os ponteiros. Reuso e rollback também verificam o conjunto
+exato. Os testes locais cobrem ZIP/PHP extras, manifesto em subpasta,
+conteúdo adulterado e preservação dos ponteiros em falhas.
+A correção não altera dados, metodologia, gatilhos de publicação,
+configuração de SSH ou os flags da A09.6. **Nenhuma publicação remota
+decorre da integração.** A verificação do manifesto efetivamente
+servido no HostGator continua sendo uma prova operacional separada.
+**R3 e A01/A08 permanecem pendentes.**
+
 Detalhes de implementação, recuperação e homologação:
 [documentação A09.6](docs/receita-a096-prefetch-two-partitions.md).
 

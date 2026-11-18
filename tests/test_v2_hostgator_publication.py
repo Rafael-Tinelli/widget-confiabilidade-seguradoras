@@ -141,6 +141,40 @@ def test_hostgator_remote_installer_refuses_wrong_expected_package_hash(tmp_path
     assert not (target / "current").exists()
 
 
+
+def test_r4_remote_installer_rejects_non_json_extra_before_any_pointer_change(
+    tmp_path: Path,
+) -> None:
+    """Run the actual HostGator installer locally; no SSH or publication."""
+    source = tmp_path / "source"
+    target = tmp_path / "publication"
+    public_path = tmp_path / "public"
+    os.symlink(target / "current", public_path)
+
+    first = _package(source, "v2-build-1", "one")
+    next_package = _package(source, "v2-build-2", "two")
+    _run_remote_installer(first, target, public_path)
+    assert public_path.resolve().name == "v2-build-1"
+
+    (next_package / "unlisted.php").write_text(
+        "<?php /* inert regression fixture */ ?>", encoding="utf-8"
+    )
+    failure = subprocess.run(
+        [
+            "bash", str(REMOTE_INSTALLER), str(next_package),
+            str(target), str(public_path), next_package.name,
+            _package_sha(next_package), str(PYTHON_INSTALLER.resolve()),
+        ],
+        check=False, capture_output=True, text=True,
+    )
+    assert failure.returncode != 0
+    assert public_path.resolve().name == "v2-build-1"
+    assert verify_package(target / "current")["build"]["build_id"] == "v2-build-1"
+    assert not (target / "previous").exists()
+    assert not (target / "generations" / "v2-build-2").exists()
+
+
+
 def test_publication_workflow_uses_exact_successful_main_generation_only():
     workflow = PUBLICATION_WORKFLOW.read_text(encoding="utf-8")
 
