@@ -145,7 +145,7 @@ def test_a093_full_filtered_identity_parity_on_local_multi_partition_zip(
         "metadata": metadata,
     })
 
-    def download(_session, _url, destination: Path) -> Path:
+    def download(_session, _url, destination: Path, **_kwargs) -> Path:
         destination.write_bytes(payloads[destination.name])
         return destination
 
