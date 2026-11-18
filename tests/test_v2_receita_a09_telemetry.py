@@ -85,8 +85,11 @@ def test_a09_release_fingerprint_is_metadata_not_remote_byte_hash() -> None:
 
 
 class _DownloadResponse:
-    def __init__(self, content: bytes) -> None:
+    def __init__(self, content: bytes, url: str) -> None:
         self.content = content
+        self.url = url
+        self.status_code = 200
+        self.headers = {"Content-Length": str(len(content))}
 
     def __enter__(self):
         return self
@@ -106,11 +109,11 @@ class _RetrySession:
         self.payload = payload
         self.calls = 0
 
-    def get(self, *_args, **_kwargs):
+    def get(self, url, **_kwargs):
         self.calls += 1
         if self.calls == 1:
             raise requests.ConnectionError("temporary transport failure")
-        return _DownloadResponse(self.payload)
+        return _DownloadResponse(self.payload, url)
 
 
 def test_a09_zip_download_emits_retry_wait_and_bytes_without_identifiers(
@@ -122,7 +125,7 @@ def test_a09_zip_download_emits_retry_wait_and_bytes_without_identifiers(
     data = _zip("header;value\n1;2\n")
     session = _RetrySession(data)
     output = bulk._download_zip(
-        session, "https://official.example/Estabelecimentos0.zip",
+        session, "https://arquivos.receitafederal.gov.br/2026-10/Estabelecimentos0.zip",
         tmp_path / "Estabelecimentos0.zip", retries=2,
     )
     assert output.read_bytes() == data
@@ -168,7 +171,7 @@ def test_a09_real_csv_partition_scan_records_counts_and_source_period(
         "legal_natures": "Naturezas.zip",
         "metadata": meta,
     })
-    def download(_sess, _url, destination):
+    def download(_sess, _url, destination, **_kwargs):
         destination.write_bytes(payloads[destination.name])
         return destination
 

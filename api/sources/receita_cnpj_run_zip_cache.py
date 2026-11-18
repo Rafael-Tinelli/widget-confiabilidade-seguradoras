@@ -24,6 +24,10 @@ _BUILD_ID = re.compile(r"[A-Za-z0-9_.-]{1,160}\Z")
 _ESTABLISHMENT = re.compile(r"Estabelecimentos\d+\.zip\Z")
 
 
+class UnverifiedRunZipError(RuntimeError):
+    """A source/cache miss must never expose an unverifiable ZIP to parsers."""
+
+
 def _cache_dir() -> Path | None:
     build_id = os.environ.get("V2_BUILD_ID", "")
     runner_temp = os.environ.get("RUNNER_TEMP", "")
@@ -87,20 +91,35 @@ def acquire_run_establishment_zip(
     destination: Path,
     download: Callable[[], Path],
 ) -> Path:
-    """Use a verified current-run file or perform the unchanged official GET.
+    """Use a verified current-run ZIP or download and verify before parsing.
 
-    A cache error never causes consumption of unchecked bytes: treat it as a
-    miss and invoke the original downloader. Each consumer unlinks only its
-    working path; the run-scoped hard link survives until the runner exits.
+    A cache miss MUST enforce the advertised size/ZIP structure even when the
+    cache directory is absent. Invalid metadata never degrades to unchecked
+    serial consumption. The HTTP origin/revision checks belong to downloader.
     """
     root = _cache_dir()
     resource = _trusted_metadata(name, metadata)
     period = getattr(release, "period", None)
     url = getattr(release, "release_url", None)
-    if (root is None or resource is None or not isinstance(period, str)
+    if resource is None:
+        raise UnverifiedRunZipError("official_establishment_metadata_missing")
+    if (not isinstance(period, str)
             or not re.fullmatch(r"20\d{2}-(?:0[1-9]|1[0-2])", period)
             or not isinstance(url, str) or not url.startswith("https://")):
-        return download()
+        raise UnverifiedRunZipError("official_establishment_release_invalid")
+
+    def _checked_download() -> Path:
+        fetched = download()
+        if not _valid_file(fetched, resource["size"]):
+            fetched.unlink(missing_ok=True)
+            emit("zip_reuse", category="estabelecimentos",
+                 state="rejected", expected_bytes=resource["size"])
+            raise UnverifiedRunZipError("official_establishment_zip_unverifiable")
+        return fetched
+
+    if root is None:
+        # No run cache is available, but source verification is mandatory.
+        return _checked_download()
 
     scope = {
         "schema": "receita-run-establishment-zip-v1",
@@ -134,32 +153,28 @@ def acquire_run_establishment_zip(
 
     # Fail closed on stale metadata, absent bytes, corrupt SHA or a different
     # run. A hit never performs HTTP; a miss still uses the original downloader.
-    fetched = download()
+    fetched = _checked_download()
     try:
-        if _valid_file(fetched, resource["size"]):
-            root.mkdir(parents=True, exist_ok=True)
-            temp_zip = root / (name + ".incoming")
-            temp_meta = root / (name + ".json.incoming")
-            try:
-                temp_zip.unlink(missing_ok=True)
-                _link_or_copy(fetched, temp_zip)
-                sha256 = _sha256(temp_zip)
-                temp_zip.replace(stored_zip)
-                temp_meta.write_text(
-                    json.dumps({**scope, "sha256": sha256}, sort_keys=True) + "\n",
-                    encoding="utf-8",
-                )
-                temp_meta.replace(stored_meta)
-                emit("zip_reuse", category=category, file_index=index,
-                     state="stored", expected_bytes=resource["size"])
-            finally:
-                temp_zip.unlink(missing_ok=True)
-                temp_meta.unlink(missing_ok=True)
-        else:
+        root.mkdir(parents=True, exist_ok=True)
+        temp_zip = root / (name + ".incoming")
+        temp_meta = root / (name + ".json.incoming")
+        try:
+            temp_zip.unlink(missing_ok=True)
+            _link_or_copy(fetched, temp_zip)
+            sha256 = _sha256(temp_zip)
+            temp_zip.replace(stored_zip)
+            temp_meta.write_text(
+                json.dumps({**scope, "sha256": sha256}, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            temp_meta.replace(stored_meta)
             emit("zip_reuse", category=category, file_index=index,
-                 state="unverifiable", expected_bytes=resource["size"])
+                 state="stored", expected_bytes=resource["size"])
+        finally:
+            temp_zip.unlink(missing_ok=True)
+            temp_meta.unlink(missing_ok=True)
     except (OSError, ValueError, TypeError):
-        # Cache maintenance must not mask a valid official acquisition.
+        # A valid source file may proceed even if optional cache storage fails.
         emit("zip_reuse", category=category, file_index=index,
              state="storage_unavailable")
     return fetched

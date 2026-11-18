@@ -104,7 +104,7 @@ def actual_local_replay(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     })
 
     network_attempts: list[str] = []
-    def local_source(_session, url: str, destination: Path) -> Path:
+    def local_source(_session, url: str, destination: Path, **_kwargs) -> Path:
         name = url.rsplit("/", 1)[-1]
         # This is the ORIGINAL downloader being called by the live proof.
         # Every single invocation must read only fixture bytes, no network.

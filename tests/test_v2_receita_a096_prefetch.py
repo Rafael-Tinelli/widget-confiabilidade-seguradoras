@@ -297,7 +297,7 @@ def _run_real_consumers(
     monkeypatch.setattr(prefetch, "_fetch_stage", worker)
     calls = Counter()
 
-    def download(_session, _url, dest: Path):
+    def download(_session, _url, dest: Path, **_kwargs):
         calls[dest.name] += 1
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_bytes(blobs[dest.name])

@@ -596,6 +596,21 @@ O merge, a CI e a prova isolada **não** comprovam que a próxima aquisição
 será mais rápida nem que publicará fontes novas. Não iniciar Full
 Generation adicional só para atualizar este README.
 
+**Pós-auditoria de integridade — Frente 1 (R1/R2), 18/11/2026:**
+a [PR #74](https://github.com/Rafael-Tinelli/widget-confiabilidade-seguradoras/pull/74)
+endurece a aquisição oficial após o achado de que o serial podia
+aceitar ETag/redirect/tamanho rejeitados pelo prefetch e de que uma
+A09.4 com cache preenchido podia acumular ZIPs speculative não adotados.
+A validação de origem e metadados é compartilhada com o downloader
+serial, cache misses de A09.4 não liberam bytes inverificáveis e arquivos
+de staging não adotados são eliminados antes do próximo agendamento.
+A [CI #44390727092](https://github.com/Rafael-Tinelli/widget-confiabilidade-seguradoras/actions/runs/44390727092)
+aprovou **977 testes** com casos adversariais locais. Isso não constitui
+renovação nacional produtiva após a correção; permanecem separadamente
+**R4 (conjunto físico de arquivos publicáveis)**, **R3 (histórico do
+observador)** e **A01/A08 (pendências metodológicas e contratuais)**.
+Nenhuma nova fonte de Conduta é autorizada por essas correções.
+
 Detalhes de implementação, recuperação e homologação:
 [documentação A09.6](docs/receita-a096-prefetch-two-partitions.md).
 

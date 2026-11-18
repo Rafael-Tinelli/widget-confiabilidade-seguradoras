@@ -287,7 +287,7 @@ def validate() -> dict:
 
 
 def _small_official_or_local_downloader(original, family_root: Path, family: str):
-    def get(session, url: str, destination: Path) -> Path:
+    def get(session, url: str, destination: Path, **kwargs) -> Path:
         name = Path(urlsplit(url).path).name
         if name.startswith(("Empresas", "Estabelecimentos")):
             if not name.startswith(family):
@@ -305,7 +305,7 @@ def _small_official_or_local_downloader(original, family_root: Path, family: str
         if name not in ("Motivos.zip", "Cnaes.zip", "Naturezas.zip"):
             raise RuntimeError("unexpected_remote_file_in_local_replay")
         # Only small official dictionaries; never re-download a national ZIP.
-        return original(session, url, destination)
+        return original(session, url, destination, **kwargs)
     return get
 
 
