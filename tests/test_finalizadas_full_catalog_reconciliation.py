@@ -205,7 +205,7 @@ def test_r3_absence_persists_and_reappearance_never_auto_approves(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     previous = _prior(tmp_path / "previous.json")
-    first, first_downloaded = _run(
+    _, first_downloaded = _run(
         tmp_path, monkeypatch, feed=_recent(), previous=previous, name="first",
     )
     assert first_downloaded == [SEP, OCT]
