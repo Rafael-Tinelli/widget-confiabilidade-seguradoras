@@ -356,23 +356,11 @@ jobs:
 
           rm -f -- "$transport_archive" "$connect_log"
           tar -C "$PACKAGE_DIR" -czf "$transport_archive" .
-          python - "$transport_archive" <<'PY'
-          import sys
-          import tarfile
-          from pathlib import PurePosixPath
-
-          archive = sys.argv[1]
-          with tarfile.open(archive, "r:gz") as handle:
-              members = handle.getmembers()
-              if not members:
-                  raise SystemExit("transport archive is empty")
-              for member in members:
-                  path = PurePosixPath(member.name)
-                  if path.is_absolute() or ".." in path.parts:
-                      raise SystemExit(f"unsafe transport archive member: {member.name}")
-                  if member.issym() or member.islnk():
-                      raise SystemExit(f"transport archive contains link: {member.name}")
-          PY
+          # Audit the actual transport bytes, not just the pre-tar directory.
+          # Reject extra ZIP/PHP/JSON, nested manifests, links, special files,
+          # traversal, duplicate members, missing members and hash mismatches.
+          python -m api.v2.install_public_generation verify-archive \
+            "$transport_archive" "$PACKAGE_DIR" >/dev/null
 
           ssh_opts=(
             -i "$SSH_KEY_FILE"
