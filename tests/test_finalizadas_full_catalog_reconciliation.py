@@ -6,6 +6,7 @@ GitHub Actions source restore, HostGator, Gate 4, or national downloads.
 from __future__ import annotations
 
 import csv
+import hashlib
 import io
 import json
 import shutil
@@ -28,7 +29,7 @@ def _entry(month: str, code: str, *, deleted: bool = False, modified: str = "01/
     return {
         "nomeArquivo": f"finalizadas_{month}.zip",
         "codigo": code,
-        "tamanhoArquivo": 3456789,
+        "tamanhoArquivo": len(_archive_bytes(month)),
         "indicadorExclusaoLogica": deleted,
         "dataPublicacao": "01/11/2026",
         "dataAlteracao": modified,
@@ -91,7 +92,7 @@ def _prior(path: Path, *, months: dict[str, dict] | None = None) -> Path:
     return path
 
 
-def _tiny_zip(path: Path, month: str) -> bytes:
+def _archive_bytes(month: str) -> bytes:
     year, mm = month.split("-")
     row = dict.fromkeys(obs.COLUMNS, "")
     row.update({
@@ -102,14 +103,29 @@ def _tiny_zip(path: Path, month: str) -> bytes:
         "situacao": "Finalizada avaliada",
         "avaliacao_reclamacao": "Resolvida",
         "nota_do_consumidor": "5",
+        # Deterministically produce a >1 KiB ZIP to satisfy the real
+        # official-catalog lower bound without lying about its size.
+        "problema": "".join(
+            hashlib.sha256(f"{month}-{i}".encode()).hexdigest()
+            for i in range(60)
+        ),
     })
-    stream = io.StringIO(newline="")
-    writer = csv.DictWriter(stream, fieldnames=obs.COLUMNS, delimiter=";")
+    csv_stream = io.StringIO(newline="")
+    writer = csv.DictWriter(csv_stream, fieldnames=obs.COLUMNS, delimiter=";")
     writer.writeheader()
     writer.writerow(row)
-    with zipfile.ZipFile(path, mode="w", compression=zipfile.ZIP_DEFLATED) as z:
-        z.writestr(f"finalizadas_{month}.csv", stream.getvalue().encode("utf-8-sig"))
-    return path.read_bytes()
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as z:
+        z.writestr(
+            f"finalizadas_{month}.csv", csv_stream.getvalue().encode("utf-8-sig")
+        )
+    return buffer.getvalue()
+
+
+def _tiny_zip(path: Path, month: str) -> bytes:
+    raw = _archive_bytes(month)
+    path.write_bytes(raw)
+    return raw
 
 
 def _run(
@@ -244,7 +260,6 @@ def test_r3_unobserved_withdrawn_pinned_month_relists_outside_window(
     )
     assert downloaded == [SEP, OCT]
     assert first["months"][OLD]["catalog_status"] == "withdrawn"
-    assert first["months"][OLD]["zip_sha256"] if False else True
     assert "zip_sha256" not in first["months"][OLD]
     second, downloaded = _run(
         tmp_path, monkeypatch,
