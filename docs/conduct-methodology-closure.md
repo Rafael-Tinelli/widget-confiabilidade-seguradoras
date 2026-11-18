@@ -256,6 +256,39 @@ Esses números são diagnósticos de uma geração, não ranking nem thresholds 
 
 > Há dados de Conduta, mas não há numerador e denominador comparáveis suficientes para calcular pressão sem inventar atribuições.
 
+## 13.1. Integridade técnica mensal (A08, PR #77)
+
+A [PR #77](https://github.com/Rafael-Tinelli/widget-confiabilidade-seguradoras/pull/77)
+reforça o contrato **de integridade**, sem modificar a fórmula ou a linguagem
+da Conduta:
+
+- `load_active_window()` verifica cada objeto mensal, metadados
+  (`month`, `status`, `companies`, `lines_kept`, `lines_total` quando
+  declarados, família e evento temporal quando declarados), a janela contínua,
+  hashes da seleção imutável e os registros do manifesto atômico.
+- Cada fornecedor precisa apresentar contadores válidos de reclamações,
+  respostas, finalizações, resoluções e avaliações, além de `scoreSum`
+  finito, sem falsos zeros ou aliases divergentes. Soma e média de avaliações
+  são verificadas; **cada medida** é conciliada por fornecedor entre os
+  meses e o agregado, não apenas o total de reclamações.
+- O caminho `consumer_gov_conduct_core` recusa conversões numéricas
+  permissivas. A ausência de estatísticas no acumulador interno de uma
+  entidade ainda não atribuída não representa uma observação negativa;
+  as entradas efetivas devem ser validadas antes do cálculo.
+- Manifestos de recuperação V2 podem não repetir `rows`, `complaints`
+  e `source_sha256`, mas continuam obrigados a fornecer os objetos
+  verificados por hash. Quando tais valores **são declarados** no manifesto,
+  sua divergência do objeto provoca falha antes da ativação.
+- O contrato histórico pode não declarar explicitamente
+  `reference_event`. Essa omissão **não** prova retrospectivamente que a
+  competência do legado foi definida pela abertura. A01 ainda exige prova
+  temporal, populacional e de identidade, e A08 ainda exige comparabilidade
+  metodológica dos numeradores e denominadores na eventual nova família.
+
+A proteção foi testada localmente com corrupção adversarial, seleção
+atômica, fallback V2 e a janela histórica versionada. **Nenhum arquivo
+`finalizadas` é utilizado pela Conduta por causa da PR #77.**
+
 ## 14. Estado do contrato
 
 Fechado:
