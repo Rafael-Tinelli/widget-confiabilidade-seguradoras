@@ -67,7 +67,8 @@ def _physical_inventory(package_dir: Path) -> tuple[set[str], set[str]]:
                 for entry in entries:
                     path = Path(entry.path)
                     name = path.relative_to(package_dir).as_posix()
-                    mode = entry.stat(follow_symlinks=False).st_mode
+                    metadata = entry.stat(follow_symlinks=False)
+                    mode = metadata.st_mode
                     if stat.S_ISLNK(mode):
                         raise PublicGenerationInstallError(
                             f"public package contains symlink: {name}"
@@ -76,6 +77,12 @@ def _physical_inventory(package_dir: Path) -> tuple[set[str], set[str]]:
                         directories.add(name)
                         pending.append(path)
                     elif stat.S_ISREG(mode):
+                        # A hardlink to a file outside this tree is still a
+                        # regular file to lstat; reject multi-linked inodes too.
+                        if metadata.st_nlink != 1:
+                            raise PublicGenerationInstallError(
+                                f"public package contains hardlink: {name}"
+                            )
                         files.add(name)
                     else:
                         raise PublicGenerationInstallError(
