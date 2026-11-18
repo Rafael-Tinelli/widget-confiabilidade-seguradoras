@@ -11,7 +11,6 @@ from collections.abc import Iterable
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-from urllib.parse import urljoin
 
 import requests
 
@@ -23,8 +22,8 @@ from api.sources.receita_cnpj_bulk import (
     _configure_official_session,
     _download_zip,
     _first_csv_member,
-    _required_official_resource,
     _propfind,
+    _required_official_resource,
     discover_latest_release,
 )
 from api.sources.receita_cnpj_prefetch import (
