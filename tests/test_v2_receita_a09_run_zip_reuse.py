@@ -170,8 +170,10 @@ def test_a094_invalid_official_metadata_prevents_reuse(
     calls: list[str] = []
     for i in range(2):
         dest = tmp_path / f"attempt-{i}.zip"
-        _acquire(_release(), bad, dest, _downloader(dest, raw, calls))
-    assert len(calls) == 2
+        with pytest.raises(shared.UnverifiedRunZipError, match="metadata_missing"):
+            _acquire(_release(), bad, dest, _downloader(dest, raw, calls))
+        assert not dest.exists()
+    assert not calls
 
 
 def test_a094_absent_build_scope_disables_reuse(
@@ -197,7 +199,9 @@ def test_a094_wrong_size_is_not_stored(
     calls: list[str] = []
     for i in range(2):
         dest = tmp_path / f"wrong-{i}.zip"
-        _acquire(_release(), wrong, dest, _downloader(dest, raw, calls))
+        with pytest.raises(shared.UnverifiedRunZipError, match="unverifiable"):
+            _acquire(_release(), wrong, dest, _downloader(dest, raw, calls))
+        assert not dest.exists()
     assert len(calls) == 2
 
 
@@ -234,8 +238,8 @@ def test_a094_production_lifecycle_and_identity_reuse_one_official_zip(
         for name, blob in blobs.items()
     }
     release = bulk.ReceitaOpenDataRelease(
-        base_url="https://official.example/",
-        release_url="https://official.example/2026-10/",
+        base_url="https://arquivos.receitafederal.gov.br/index.php/s/token",
+        release_url="https://arquivos.receitafederal.gov.br/public.php/dav/files/token/2026-10/",
         period="2026-10",
         establishment_files=("Estabelecimentos0.zip",),
         resource_metadata=(
@@ -244,7 +248,7 @@ def test_a094_production_lifecycle_and_identity_reuse_one_official_zip(
     )
     calls = Counter()
 
-    def download(_session, _url, destination: Path) -> Path:
+    def download(_session, _url, destination: Path, **_kwargs) -> Path:
         calls[destination.name] += 1
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_bytes(blobs[destination.name])
