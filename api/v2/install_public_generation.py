@@ -226,7 +226,7 @@ def verify_transport_archive(archive_path: Path, package_dir: Path) -> dict[str,
                         raise PublicGenerationInstallError("unsafe transport archive root")
                     root_seen = True
                     continue
-                name = raw[2:] if raw.startswith("./") else raw
+                name = raw.removeprefix("./")
                 # GNU tar sometimes includes trailing '/' on directory
                 # headers; compare canonical names without that final slash.
                 if member.isdir():
@@ -263,7 +263,7 @@ def verify_transport_archive(archive_path: Path, package_dir: Path) -> dict[str,
                     actual = hashlib.sha256()
                     size = 0
                     with data:
-                        for chunk in iter(lambda: data.read(1024 * 1024), b""):
+                        for chunk in iter(lambda data=data: data.read(1024 * 1024), b""):
                             size += len(chunk)
                             actual.update(chunk)
                     if size != expected_bytes or actual.hexdigest() != digest:
