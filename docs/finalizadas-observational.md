@@ -232,6 +232,48 @@ contivesse esses controles. O primeiro ciclo na nova versão fará download
 e reprocessamento quando a fonte oficial estiver disponível. O A05 não
 autoriza promoção para a Conduta e não introduz uma nova origem de dados.
 
+## Frente 3 (R3) — reconciliação integral do catálogo histórico (18/11/2026)
+
+A [PR #76](https://github.com/Rafael-Tinelli/widget-confiabilidade-seguradoras/pull/76)
+corrige a lacuna identificada pela auditoria independente: antes, uma
+competência descoberta automaticamente e herdada do manifesto compacto
+podia permanecer com `catalog_status=listed` depois de desaparecer do
+JSON oficial, caso estivesse fora da janela de dois meses.
+
+**Contrato vigente após integração:**
+
+- Cada execução com **feed oficial validado e recém-consultado** reconcilia
+  **todos os meses históricos** do manifesto autenticado, não apenas os
+  meses de `--latest-months`. Não é necessário baixar ZIPs antigos.
+- A retirada explícita (`indicadorExclusaoLogica`) é registrada como
+  `catalog_status=withdrawn`, inclusive para uma competência histórica
+  descoberta automaticamente e não fixada no catálogo local. A ausência
+  no feed é diferenciada como `catalog_status=absent_from_feed`.
+- Ambas as condições conservam os hashes, a URL original, o último
+  conteúdo efetivamente observado e os metadados históricos, mas marcam
+  `status=requires_manual_review` e `revision=true`, dentro ou fora
+  da janela de reprocessamento. `catalog_checked_at` registra a consulta.
+- Quando a publicação reaparece como `listed`, a observação histórica
+  **não é aprovada automaticamente**. Mudanças de URL, código, tamanho
+  ou datas também são sinalizadas para revisão, mesmo sem novo download.
+  O histórico anterior e as alertas A02/A05/A07 continuam preservados.
+- Se uma publicação fixada havia sido retirada **antes de qualquer ZIP
+  validado** e reaparece fora da janela, permanece com
+  `source_unobserved=true`, `requires_manual_review` e `revision=true`.
+  O contrato de selamento rejeita a declaração de fonte listada e validada
+  quando não há SHA-256 da origem. Nenhum hash fictício é gerado.
+- Sem `--feed-url`, o histórico **não infere retirada**. Se o JSON oficial
+  falha (inclusive HTTP 504 persistente), não se utiliza catálogo antigo
+  como atual; a execução falha sem promover a saída observacional.
+
+A suíte local da PR #76 reproduz retirada, omissão, metadados divergentes,
+persistência de alertas, reaparecimento sem nova aquisição histórica,
+rejeição de selamento enganoso e comportamento transacional diante de
+falha de catálogo. A aprovação da CI não equivale a uma reaquisição oficial
+dos ZIPs nem autoriza usar `finalizadas` na Conduta. **A01/A08 continuam
+bloqueados**, incluindo a necessidade de reconciliação técnica dos contadores
+mensais e equivalência metodológica com a Base Completa.
+
 ## Limitações verificadas na auditoria de 12–13/11/2026
 
 - **Achado histórico A02 corrigido na PR #56 (sujeito a CI e merge):**

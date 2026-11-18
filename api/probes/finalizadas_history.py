@@ -61,12 +61,25 @@ def validate_manifest(path: Path) -> dict:
         if not isinstance(state, dict) or state.get("status") not in ALLOWED_STATUS:
             raise HistoryError(f"Invalid manifest state: {month}")
         source_hash = state.get("zip_sha256")
-        if source_hash is None and (state.get("catalog_status") in
-                                    ("withdrawn", "absent_from_feed")):
+        if source_hash is None and state.get("catalog_status") in (
+            "withdrawn", "absent_from_feed",
+        ):
             if state["status"] != "requires_manual_review":
                 raise HistoryError("Catalog withdrawal without alert")
+        elif source_hash is None and state.get("catalog_status") == "listed":
+            # An old, pinned month can be withdrawn before any ZIP download,
+            # then reappear outside the two-month window. Keep the official
+            # listing visible WITHOUT claiming that unobserved source bytes
+            # were ever validated. The revision must remain actionable.
+            if (state.get("source_unobserved") is not True
+                    or state["status"] != "requires_manual_review"
+                    or state.get("revision") is not True
+                    or month not in manifest["revisions"]):
+                raise HistoryError(f"Unverified listed source without review: {month}")
         elif not isinstance(source_hash, str) or not SHA.fullmatch(source_hash):
             raise HistoryError(f"Missing/invalid source SHA: {month}")
+        if state.get("source_unobserved") is True and source_hash is not None:
+            raise HistoryError(f"Unobserved marker contradicts source hash: {month}")
         if (state["status"] == "requires_manual_review"
                 and month not in manifest["revisions"]
                 and month not in manifest["quality_alerts"]

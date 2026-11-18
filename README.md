@@ -288,6 +288,7 @@ permanece desconhecida, sem imputação.
 | Artefato completo da execução | Evidência experimental, até **30 dias**; artefato parcial de run falho não autentica sucesso. |
 | Histórico compacto de revisões | Manifesto e proveniência autenticada de execução/tentativa/commit, até **90 dias**; lacunas propagam `requires_manual_review` ou bloqueiam a recuperação. |
 | Reuso A06 | `reused_local_verified` somente com catálogo oficial recém-consultado, mesma publicação/metadados, parser, hashes e artefato íntegros, sem revisão pendente, e menos de **7 dias** desde o download real. Caso contrário, baixar novamente e validar. |
+| Histórico R3 (PR #76) | **Todos os meses herdados** são reconciliados com o JSON oficial atual, inclusive fora dos dois mais recentes: retirada explícita, ausência e reaparecimento mantêm pendência de revisão, sem rebaixar alertas ou fingir novo download. Sem feed fresco, não inferir retirada. |
 | Completude A05 | Heurísticas de lacunas de calendário e comparação de metadados/contagens; `population_completeness.status=not_demonstrated`. Integridade ZIP/CSV não certifica a população. |
 | Conduta / Gate 4 / HostGator | **Não consomem `finalizadas`**. Nenhuma incorporação à Conduta foi homologada. |
 
@@ -609,6 +610,8 @@ aprovou **977 testes** com casos adversariais locais. Isso não constitui
 renovação nacional produtiva após a correção; permanecem separadamente
 **R4 (conjunto físico de arquivos publicáveis)**, **R3 (histórico do
 observador)** e **A01/A08 (pendências metodológicas e contratuais)**.
+As PRs #75 e #76 tratam R4 e R3 separadamente, sem autorizar
+a incorporação de `finalizadas` à Conduta.
 Nenhuma nova fonte de Conduta é autorizada por essas correções.
 
 **Pós-auditoria de publicação — Frente 2 (R4), 18/11/2026:**
@@ -631,7 +634,14 @@ A correção não altera dados, metodologia, gatilhos de publicação,
 configuração de SSH ou os flags da A09.6. **Nenhuma publicação remota
 decorre da integração.** A verificação do manifesto efetivamente
 servido no HostGator continua sendo uma prova operacional separada.
-**R3 e A01/A08 permanecem pendentes.**
+**A Frente 3 (R3) foi tratada na
+[PR #76](https://github.com/Rafael-Tinelli/widget-confiabilidade-seguradoras/pull/76)**:
+o histórico inteiro é reconciliado a cada feed atual, preservando
+`catalog_status`, revisão manual, hashes originais e o isolamento da
+produção, sem refazer os downloads antigos. O teste de integração foi feito
+com respostas e ZIPs locais controlados; **a primeira execução real do
+observador após a integração ainda requer conferência da reconciliação**.
+**A01/A08 permanecem pendentes** e bloqueiam a Conduta.
 
 Detalhes de implementação, recuperação e homologação:
 [documentação A09.6](docs/receita-a096-prefetch-two-partitions.md).

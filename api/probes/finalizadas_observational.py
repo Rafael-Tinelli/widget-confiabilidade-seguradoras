@@ -68,6 +68,19 @@ class ObservationalError(RuntimeError):
     """Não promover resultados quando não há evidência suficiente."""
 
 
+class PublicationCatalog(list[dict]):
+    """List-compatible source snapshot, including explicit withdrawn months.
+
+    The official feed may explicitly withdraw an unpinned historical month;
+    such entries must not be offered for download but still inform the
+    reconciliation of an already sealed, older observation.
+    """
+
+    def __init__(self, items: list[dict], *, withdrawn_months: set[str]) -> None:
+        super().__init__(items)
+        self.withdrawn_months = frozenset(withdrawn_months)
+
+
 def utcnow() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
@@ -266,6 +279,7 @@ def read_catalog(path: Path, feed_url: str | None = None,
         known[month] = candidate
 
     discovered: dict[str, dict] = {}
+    withdrawn_months: set[str] = set()
     if feed_url:
         for entry in _fetch_official_feed(feed_url, http or _session()):
             month = entry["month"]
@@ -278,6 +292,8 @@ def read_catalog(path: Path, feed_url: str | None = None,
                     f"Metadados oficiais conflitantes para a mesma competência: {month}"
                 )
             discovered[month] = entry
+            if entry.get("withdrawn"):
+                withdrawn_months.add(month)
         for month, entry in discovered.items():
             pinned = known.get(month)
             if entry.get("withdrawn"):
@@ -302,7 +318,10 @@ def read_catalog(path: Path, feed_url: str | None = None,
 
     if not known:
         raise ObservationalError("Nenhuma publicação oficial conhecida")
-    return [known[m] for m in sorted(known)]
+    return PublicationCatalog(
+        [known[m] for m in sorted(known)],
+        withdrawn_months=withdrawn_months,
+    )
 
 def download_direct(url: str, destination: Path,
                     http: requests.Session | None = None) -> str:
@@ -574,6 +593,70 @@ def _can_reuse(previous: dict, item: dict) -> bool:
     return 0 <= age <= REUSE_MAX_AGE_SECONDS
 
 
+def _reconcile_historical_catalog(
+    manifest: dict, previous: dict[str, dict], publications: list[dict],
+    *, live_feed: bool,
+) -> None:
+    """Reconcile EVERY inherited month against this run's official catalog.
+
+    A01/A08 remain blocked. This modifies only the compact observational
+    provenance: no source ZIP, aggregate or prior source digest is rewritten.
+    A successful official feed is mandatory for absence/withdrawal claims.
+    """
+    if not live_feed:
+        return
+
+    current = {item["month"]: item for item in publications}
+    withdrawn = getattr(publications, "withdrawn_months", frozenset())
+    checked_at = utcnow()
+    for month, prior in previous.items():
+        state = manifest["months"][month]
+        official = current.get(month)
+        catalog_status = (
+            official.get("catalog_status", "listed")
+            if official is not None else (
+                "withdrawn" if month in withdrawn else "absent_from_feed"
+            )
+        )
+        if catalog_status not in ("listed", "withdrawn", "absent_from_feed"):
+            raise ObservationalError("Estado oficial inesperado no histórico")
+
+        state["catalog_status"] = catalog_status
+        state["catalog_checked_at"] = checked_at
+        original_status = prior.get("catalog_status")
+
+        if catalog_status in ("withdrawn", "absent_from_feed"):
+            # Even a month far outside the latest-N download window cannot
+            # retain a false 'listed' assertion. Prior review remains pending.
+            state["status"] = "requires_manual_review"
+            state["revision"] = True
+            continue
+
+        # A previously withdrawn month may be listed again, but the source
+        # is NOT automatically approved merely because it reappeared.
+        changed = original_status in ("withdrawn", "absent_from_feed")
+        for old_key, new_key in (
+            ("source_url", "url"),
+            ("publication_code", "publication_code"),
+            ("announced_bytes", "announced_bytes"),
+            ("published_at", "published_at"),
+            ("modified_at", "modified_at"),
+        ):
+            old, new = prior.get(old_key), official.get(new_key)
+            if old not in (None, "") and new not in (None, "") and old != new:
+                changed = True
+
+        if not state.get("zip_sha256"):
+            # A pinned withdrawn month may have never been downloaded.
+            # Preserve it as an UNOBSERVED source until separately acquired,
+            # even if the official catalog once again lists the month.
+            state["source_unobserved"] = True
+            changed = True
+        if changed:
+            state["status"] = "requires_manual_review"
+            state["revision"] = True
+
+
 def _write_json(path: Path, content: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(prefix=".observational-", dir=path.parent)
@@ -679,6 +762,9 @@ def _produce_observation(args: argparse.Namespace, destination: Path) -> int:
         for state in manifest["months"].values():
             state["status"] = "requires_manual_review"
             state["history_gap"] = True
+    _reconcile_historical_catalog(
+        manifest, previous, publications, live_feed=bool(args.feed_url),
+    )
     # Query and validate the current official catalog FIRST. A 504 or a
     # changed publication must not trigger a needless full-artifact transfer.
     if (args.reuse_dir and args.recovery_report and args.previous_manifest
@@ -770,6 +856,7 @@ def _produce_observation(args: argparse.Namespace, destination: Path) -> int:
             or (previous_hash and previous_hash != download_digest)
             or (previous_code and previous_code != item.get("publication_code"))
             or (previous_url and previous_url != url)
+            or prior.get("catalog_status") in ("withdrawn", "absent_from_feed")
             or (announced and announced != evidence["zip_bytes"])
             or metadata_changed
         )
