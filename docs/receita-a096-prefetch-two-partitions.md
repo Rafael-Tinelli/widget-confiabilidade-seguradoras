@@ -1,8 +1,8 @@
-# A09.6 — Prefetch controlado de duas partições (candidato, não ativado)
+# A09.6 — Prefetch controlado de duas partições (homologado, não ativado)
 
 ## Situação
 
-**Implementação experimental em PR, DESLIGADA por padrão.** O objetivo é
+**Implementação homologada por prova isolada de 18/11/2026, DESLIGADA por padrão.** O objetivo é
 reduzir o tempo de transferência dos arquivos oficiais da Receita, sem
 modificar ordem de processamento, regras de identificação, Conduta, SUSEP ou
 formação do pacote público.
@@ -78,8 +78,9 @@ usou apenas prefixos; **não é homologação de downloads completos**.
 5. Revisão explícita de custos GitHub Actions/tempo, limite de disco
    e política de rollback antes de editar a configuração produtiva.
 
-**Critério de liberação:** todas essas condições documentadas e aceitas.
-Até lá, manter `RECEITA_A096_PREFETCH` ausente na produção.
+**Critério de ativação produtiva futura:** decisão independente, com avaliação
+explícita dos recursos e da reversão. Até essa decisão, manter
+`RECEITA_A096_PREFETCH` ausente na produção.
 
 ## Reversão
 
@@ -128,7 +129,7 @@ foi versionado nem publicado.
 O workflow manual
 `V2 A09.6 November Reference Homologation`
 (`.github/workflows/v2-a096-november-reference.yml`) existe **somente
-para revisão após eventual integração**: exige `REFERENCE`, restaura
+para revisão da referência histórica**: exige `REFERENCE`, restaura
 EXATAMENTE os caches `v2-gate4-source-Linux-43941197377` e
 `v2-gate4-conduct-Linux-43941197377`, sem usar restore-keys, e adquire
 apenas o ZIP de evidências de 1,68 MB **do GitHub**, nunca os ZIPs da Receita.
@@ -194,7 +195,17 @@ campos**, não CNPJs ou valores privados.
 
 **Para outra competência**, a referência de novembro não substitui o
 baseline local; a comparação deve nascer dos mesmos bytes da nova
-aquisição. O mecanismo de retenção e o comparador estão prontos;
-o replay que realmente produz os snapshots candidatos fica como etapa
-de homologação **a ser executada na próxima aquisição necessária**.
-A PR não habilita prefetch, retenção ou publicação.
+aquisição. O mecanismo de retenção e o comparador foram exercitados na prova nacional
+real de 18/11/2026 descrita abaixo. A integração não habilita prefetch,
+retenção ou publicação.
+
+
+## Homologação nacional concluída em 18/11/2026 — autorização de merge, sem ativação
+
+- [Prova isolada #44238341224](https://github.com/Rafael-Tinelli/widget-confiabilidade-seguradoras/actions/runs/44238341224), head `827e4563a26fdd9630cfdcc6600011d6ff0ee56d`, concluiu o Gate 4 experimental, verificou 20/20 ZIPs reais e provou prefetch 10/10 Empresas e 10/10 Estabelecimentos (sem fallback nesta execução).
+- A09.4: 10 ZIPs de Estabelecimentos armazenados e 10 reutilizados/verificados; 10 Empresas capturadas por hardlink temporário. Os ZIPs brutos não foram publicados.
+- Replay independente com parser sequencial original sobre **os mesmos 20 ZIPs reais** terminou `equivalent` (`same_exact_zip_set_and_semantic_match`), sem diferenças semânticas no lifecycle ou na identidade. O relatório comparou hashes e preservou `records[].observed_at` como campo significativo.
+- Artefato de evidências: `a096-real-prefetch-proof-44238341224-a1`, ID `14407163080`, retenção até 02/12/2026. O histórico de novembro/2026 é uma referência separada, não equivale por si só à prova de replay.
+- [CI #44238347989](https://github.com/Rafael-Tinelli/widget-confiabilidade-seguradoras/actions/runs/44238347989) aprovada no mesmo head.
+- **Decisão:** autorização para integrar o código **sem ativação produtiva**. `RECEITA_A096_PREFETCH` e `RECEITA_A096_RETAIN_ZIPS` permanecem ausentes dos workflows de geração produtiva; nenhuma alteração ao fluxo de publicação do HostGator. Ativação posterior exige decisão independente.
+- A prova de equivalência não constitui medição controlada de redução do tempo de Full Generation em produção; a decisão de ativação deve considerar duração, GitHub Actions e reserva de disco.
