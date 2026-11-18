@@ -348,9 +348,9 @@ def load_active_window(
                         f"{month}: manifest {declared_key} differs from source metadata"
                     )
             source_sha = (monthly_meta or {}).get("source_sha256")
-            if "source_sha256" in record and (
-                not source_sha or record["source_sha256"] != source_sha
-            ):
+            if ("source_sha256" in record
+                    and (source_sha or record["source_sha256"] not in (None, ""))
+                    and record["source_sha256"] != source_sha):
                 raise ConsumerGovWindowError(
                     f"{month}: manifest/source SHA mismatch"
                 )
