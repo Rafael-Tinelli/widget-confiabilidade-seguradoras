@@ -329,6 +329,24 @@ o bloqueio metodológico, porém, permanece até apresentação de evidências:
   (`premio_direto` de seguros), sem misturar previdência/capitalização
   ou transferir reclamações por vínculo de marca/grupo.
 
+**Integridade técnica A08 — PR [#77](https://github.com/Rafael-Tinelli/widget-confiabilidade-seguradoras/pull/77):**
+o seletor `load_active_window()` exige agora metadados mensais coerentes,
+contadores íntegros de reclamações, respostas, finalizações, resoluções e
+avaliações, notas finitas e médias consistentes, aliases sem conflito e
+**reconciliação por fornecedor de todas essas medidas com o agregado**.
+Contadores declarados no manifesto atômico devem coincidir com o objeto;
+manifestos recuperados do cache V2 podem omitir contadores opcionais sem
+dispensar a validação do objeto e seu SHA-256. Os leitores de Conduta não
+convertem mais strings, frações, booleanos, negativos e NaN em números
+válidos. A janela histórica de 12 meses e as provas de recuperação são
+testadas sem novos downloads. O contrato admite a ausência do evento
+temporal nos artefatos **legados** sem alegar que isso comprove a data
+de abertura: essa evidência é parte de A01.
+
+**Esse endurecimento não resolve a equivalência metodológica A01 nem
+autoriza a integração de `finalizadas` à Conduta.** A reconciliação entre
+famílias, sujeitos e denominadores permanece uma decisão separada.
+
 Na geração canônica concluída em
 [16/11/2026, run #43941197377](https://github.com/Rafael-Tinelli/widget-confiabilidade-seguradoras/actions/runs/43941197377),
 a janela Consumer.gov publicada era histórico validado
