@@ -68,6 +68,19 @@ class ObservationalError(RuntimeError):
     """Não promover resultados quando não há evidência suficiente."""
 
 
+class PublicationCatalog(list[dict]):
+    """List-compatible source snapshot, including explicit withdrawn months.
+
+    The official feed may explicitly withdraw an unpinned historical month;
+    such entries must not be offered for download but still inform the
+    reconciliation of an already sealed, older observation.
+    """
+
+    def __init__(self, items: list[dict], *, withdrawn_months: set[str]) -> None:
+        super().__init__(items)
+        self.withdrawn_months = frozenset(withdrawn_months)
+
+
 def utcnow() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
@@ -266,6 +279,7 @@ def read_catalog(path: Path, feed_url: str | None = None,
         known[month] = candidate
 
     discovered: dict[str, dict] = {}
+    withdrawn_months: set[str] = set()
     if feed_url:
         for entry in _fetch_official_feed(feed_url, http or _session()):
             month = entry["month"]
@@ -278,6 +292,8 @@ def read_catalog(path: Path, feed_url: str | None = None,
                     f"Metadados oficiais conflitantes para a mesma competência: {month}"
                 )
             discovered[month] = entry
+            if entry.get("withdrawn"):
+                withdrawn_months.add(month)
         for month, entry in discovered.items():
             pinned = known.get(month)
             if entry.get("withdrawn"):
@@ -302,7 +318,10 @@ def read_catalog(path: Path, feed_url: str | None = None,
 
     if not known:
         raise ObservationalError("Nenhuma publicação oficial conhecida")
-    return [known[m] for m in sorted(known)]
+    return PublicationCatalog(
+        [known[m] for m in sorted(known)],
+        withdrawn_months=withdrawn_months,
+    )
 
 def download_direct(url: str, destination: Path,
                     http: requests.Session | None = None) -> str:
@@ -588,13 +607,16 @@ def _reconcile_historical_catalog(
         return
 
     current = {item["month"]: item for item in publications}
+    withdrawn = getattr(publications, "withdrawn_months", frozenset())
     checked_at = utcnow()
     for month, prior in previous.items():
         state = manifest["months"][month]
         official = current.get(month)
         catalog_status = (
             official.get("catalog_status", "listed")
-            if official is not None else "absent_from_feed"
+            if official is not None else (
+                "withdrawn" if month in withdrawn else "absent_from_feed"
+            )
         )
         if catalog_status not in ("listed", "withdrawn", "absent_from_feed"):
             raise ObservationalError("Estado oficial inesperado no histórico")
@@ -834,6 +856,7 @@ def _produce_observation(args: argparse.Namespace, destination: Path) -> int:
             or (previous_hash and previous_hash != download_digest)
             or (previous_code and previous_code != item.get("publication_code"))
             or (previous_url and previous_url != url)
+            or prior.get("catalog_status") in ("withdrawn", "absent_from_feed")
             or (announced and announced != evidence["zip_bytes"])
             or metadata_changed
         )
