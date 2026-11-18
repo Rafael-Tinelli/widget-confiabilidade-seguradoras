@@ -156,7 +156,7 @@ def test_r4_rejects_unlisted_empty_directory(tmp_path: Path) -> None:
         verify_package(package)
 
 
-@pytest.mark.parametrize("kind", ["file_symlink", "directory_symlink", "manifest_symlink", "fifo"])
+@pytest.mark.parametrize("kind", ["file_symlink", "directory_symlink", "manifest_symlink", "hardlink", "fifo"])
 def test_r4_package_rejects_links_and_special_types(
     tmp_path: Path, kind: str,
 ) -> None:
@@ -169,10 +169,22 @@ def test_r4_package_rejects_links_and_special_types(
         real = package / "manifest-real.json"
         (package / "distribution_manifest.json").replace(real)
         (package / "distribution_manifest.json").symlink_to(real)
+    elif kind == "hardlink":
+        os.link(package / "search_index.json", tmp_path / "outside-file.json")
     else:
         os.mkfifo(package / "rogue-pipe")
-    with pytest.raises(PublicGenerationInstallError, match="symlink|special file"):
+    with pytest.raises(PublicGenerationInstallError, match="symlink|hardlink|special file"):
         verify_package(package)
+
+
+def test_r4_untrusted_root_symlink_is_not_a_generation_pointer(
+    tmp_path: Path,
+) -> None:
+    package = _package(tmp_path / "source", "v2-build-r4", "safe")
+    alias = tmp_path / "untrusted-alias"
+    alias.symlink_to(package, target_is_directory=True)
+    with pytest.raises(PublicGenerationInstallError, match="root symlink"):
+        verify_package(alias)
 
 
 def test_r4_installer_rejection_does_not_touch_current_or_previous(
