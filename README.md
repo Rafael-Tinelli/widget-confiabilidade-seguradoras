@@ -11,7 +11,7 @@
 
 Este README é o **contrato operacional corrente do projeto**. Documentos de auditoria e fechamento anteriores continuam válidos como fotografias históricas, mas não devem prevalecer sobre este README nem sobre os closeouts das Fases C e D quando a pergunta for sobre o runtime atual.
 
-Arquitetura e calendários revisados em 12/11/2026 (BRT). As ativações abaixo foram registradas nos closeouts de produção; não substituem a conferência das variáveis, dos runs e do manifesto efetivamente servido (§13.1):
+Arquitetura e calendários revisados em 12/11/2026 (BRT); operação da Receita e do observador atualizada em 18/11/2026 (BRT). As ativações abaixo foram registradas nos closeouts de produção; não substituem a conferência das variáveis, dos runs e do manifesto efetivamente servido (§13.1):
 
 ```text
 MAIN_BRANCH                              main
@@ -29,6 +29,10 @@ GSC                                     OPTIONAL_NOT_CONFIGURED
 COMPLAINT_SOURCE_WATCH                  ACTIVE
 FINALIZADAS_OBSERVER                    DAYS_10_16_11:27_UTC
 FINALIZADAS_CONDUCT_INTEGRATION          NOT_ENABLED
+RECEITA_A096_PREFETCH_FULL_GENERATION      ENABLED_EXPLICITLY_ON_MAIN
+RECEITA_A096_RETAIN_ZIPS                  DISABLED
+RECEITA_A096_REAL_REPLAY                  EQUIVALENT_2026-11-18
+RECEITA_A096_FIRST_PRODUCTION_RUN         NOT_YET_VERIFIED
 HOSTGATOR_CRON                          NONE
 GENERAL_SCORE_ALLOWED                   false
 GENERAL_RANKING_ALLOWED                 false
@@ -44,7 +48,8 @@ Para o estado atual de produção, ler primeiro:
 - `docs/post-cutover-repository-housekeeping.md` — limpeza pós-cutover e autoridade documental atual;
 - `docs/production-frontend-cutover.md` — cutover do frontend R5.3;
 - `ranking-seguradoras/deployment/production-cutover/INSTALLACAO-HOSTGATOR.md` — instalação e rollback.
-- [Aquisição observacional de finalizadas](docs/finalizadas-observational.md) — fonte JSON, layouts, armazenamento, revisões e limites de reutilização.
+- [Aquisição observacional de finalizadas](docs/finalizadas-observational.md) — fonte JSON, layouts, completude, integridade transacional, histórico, revisões e reutilização condicionada.
+- [A09.6 — prefetch de duas partições da Receita](docs/receita-a096-prefetch-two-partitions.md) — implementação, homologação com arquivos reais, ativação produtiva separada e reversão.
 
 Contratos metodológicos e técnicos centrais:
 
@@ -266,23 +271,71 @@ O legado versionado conserva 2025-07 a 2026-06 como janela declarada. Os testes 
 
 O fechamento de Conduta conserva prêmio direto de seguros como exposição operacional, alinhamento mensal e de população, critérios de comparabilidade e satisfação apenas contextual. Não autoriza score geral, remediação inferida ou transferência de reclamações entre marca e seguradora. Ver [contrato de Conduta](docs/conduct-methodology-closure.md).
 
-## 5.2. Observador de finalizadas
+## 5.2. Observador de finalizadas — estado em 18/11/2026
 
-O workflow `.github/workflows/v2-finalizadas-observational.yml` consulta o [JSON oficial de publicações](https://www.consumidor.gov.br/pages/publicacao/externo/publicacoes.json?indicadorTipoPublicacao=2), identifica códigos divulgados e baixa os dois meses mais recentes conhecidos. Não usa HTML, Selenium, cookies do navegador ou IDs adivinhados.
+O workflow `.github/workflows/v2-finalizadas-observational.yml` consulta o
+[JSON oficial de publicações](https://www.consumidor.gov.br/pages/publicacao/externo/publicacoes.json?indicadorTipoPublicacao=2),
+identifica códigos divulgados e baixa os dois meses mais recentes conhecidos.
+Não usa HTML, Selenium, cookies de navegador nem identificadores adivinhados.
+O parser reconhece dois layouts oficiais de 19 colunas e define a competência
+pela **data de finalização**; uma avaliação sem informação de resolução
+permanece desconhecida, sem imputação.
 
-O parser reconhece dois layouts de 19 colunas: português com `S/N` e `snake_case` com `Sim/Não`; valida a competência por **data de finalização**. Ausência de resolução em reclamação avaliada é preservada e sinalizada para revisão, sem imputação.
-
-| Camada | Uso atual |
+| Camada | Contrato vigente |
 |---|---|
-| `.github/finalizadas-publications.json` | URL/hash fixados de outubro/2026; não contém o corpus. |
-| `runner.temp/finalizadas-observational` | ZIPs, agregados experimentais, validações e manifesto temporários. |
-| Artefato `finalizadas-observational-<run>-a<attempt>` | Evidência experimental com retenção de 30 dias; pode conter saídas parciais de run falho. |
-| Manifesto do último sucesso em `main` | Recuperado por tentativa para comparar revisões; **não evita novo download/processamento** e pode estar indisponível. |
-| Conduta / pacote público / HostGator | Não consomem essas saídas. Integração não habilitada. |
+| `.github/finalizadas-publications.json` | Catálogo local e hash de outubro/2026 como referência; não contém o corpus. |
+| `runner.temp/finalizadas-observational` | ZIPs e produtos experimentais em diretório privado, com promoção atômica somente ao final (A07). |
+| Artefato completo da execução | Evidência experimental, até **30 dias**; artefato parcial de run falho não autentica sucesso. |
+| Histórico compacto de revisões | Manifesto e proveniência autenticada de execução/tentativa/commit, até **90 dias**; lacunas propagam `requires_manual_review` ou bloqueiam a recuperação. |
+| Reuso A06 | `reused_local_verified` somente com catálogo oficial recém-consultado, mesma publicação/metadados, parser, hashes e artefato íntegros, sem revisão pendente, e menos de **7 dias** desde o download real. Caso contrário, baixar novamente e validar. |
+| Completude A05 | Heurísticas de lacunas de calendário e comparação de metadados/contagens; `population_completeness.status=not_demonstrated`. Integridade ZIP/CSV não certifica a população. |
+| Conduta / Gate 4 / HostGator | **Não consomem `finalizadas`**. Nenhuma incorporação à Conduta foi homologada. |
 
-Agenda: dias **10 e 16**, **11h27 UTC / 08h27 Brasília**. O horário é uma janela de observação, não garantia de publicação mensal pelo órgão. `workflow_dispatch` também está disponível; qualquer execução continua experimental.
+As PRs [#56](https://github.com/Rafael-Tinelli/widget-confiabilidade-seguradoras/pull/56),
+[#57](https://github.com/Rafael-Tinelli/widget-confiabilidade-seguradoras/pull/57),
+[#58](https://github.com/Rafael-Tinelli/widget-confiabilidade-seguradoras/pull/58),
+[#59](https://github.com/Rafael-Tinelli/widget-confiabilidade-seguradoras/pull/59) e
+[#60](https://github.com/Rafael-Tinelli/widget-confiabilidade-seguradoras/pull/60)
+foram integradas: recuperação de histórico e sinalizações de revisão,
+tolerância delimitada a HTTP 504, staging atômico, reuso validado e
+sinalização de incompletude. **Código integrado não implica que todos os
+cenários reais de reuso, disponibilidade do serviço ou aprovação humana
+estejam homologados.** Não há retenção permanente do corpus.
 
-As próximas etapas são tornar a retenção/reutilização verificável e demonstrar equivalência histórica de população/competência antes de propor integração. Data, tamanho ou código inalterado não provam que o conteúdo remoto permaneceu igual. Detalhes e provas de setembro/outubro: [documentação do observador](docs/finalizadas-observational.md).
+Agenda: dias **10 e 16**, às **11h27 UTC / 08h27 Brasília**.
+`workflow_dispatch` também está disponível. Falha do JSON oficial,
+inclusive HTTP 504 persistente, não autoriza usar catálogo histórico como
+se fosse atual. Setembro/2026 (358.865 linhas totais; 14.116 do segmento)
+e outubro/2026 (414.538; 40.501 do segmento) foram recontados
+experimentalmente na auditoria de 12–13/11. Isso **não** demonstra
+equivalência às exportações da Base Completa nem autoriza atualização
+da Conduta. Consultar a
+[documentação detalhada](docs/finalizadas-observational.md).
+
+## 5.3. Pendências metodológicas A01/A08 — bloqueio preservado
+
+A auditoria independente de 12–13/11/2026 examinou uma `main` histórica,
+anterior às PRs A05–A09. Suas falhas operacionais corrigidas devem ser
+reavaliadas no código **atual**, sem tratá-las automaticamente como abertas;
+o bloqueio metodológico, porém, permanece até apresentação de evidências:
+
+- **A01:** confrontar Base Completa e `finalizadas` na **mesma competência**,
+  identificar população/semântica temporal (abertura versus finalização),
+  reconciliação por fornecedor e identidade, e demonstrar uma janela
+  homogênea de **12 meses consecutivos**.
+- **A08:** reconciliar sujeitos e denominadores da Conduta, especialmente
+  comparabilidade mensal entre reclamações e exposição SUSEP
+  (`premio_direto` de seguros), sem misturar previdência/capitalização
+  ou transferir reclamações por vínculo de marca/grupo.
+
+Na geração canônica concluída em
+[16/11/2026, run #43941197377](https://github.com/Rafael-Tinelli/widget-confiabilidade-seguradoras/actions/runs/43941197377),
+a janela Consumer.gov publicada era histórico validado
+**2025-07 a 2026-06 (`stale`)**. Resultado técnico verde não equivale a
+atualização da fonte de Conduta. A partir de agora, conferir período,
+`freshness_method`, fonte e janela a cada nova geração; não presumir que
+se mantiveram inalterados.
+
 
 ---
 
@@ -479,6 +532,72 @@ Workflows principais:
 ```
 
 A publicação automática também aceita a conclusão bem-sucedida de `V2 Gate 4 Full Generation Proof` em `main`, se `V2_HOSTGATOR_DEPLOY_ENABLED == true`. Portanto, disparar esse workflow não é um ensaio isolado. O observador de `finalizadas` não integra a lista de gatilhos de publicação. O limite de 900s acima é da fonte SUSEP; não é um prazo geral para Consumer.gov ou Receita.
+
+## 10.1. A09 — aquisição e processamento dos dados da Receita Federal
+
+**Estado confirmado em 18/11/2026:** A09.1–A09.6 foram integradas.
+O prefetch da A09.6 foi homologado com ZIPs nacionais reais e **ativado
+separadamente apenas no workflow de Full Generation canônico**.
+Ainda **não há uma execução produtiva desse workflow na `main` após a
+ativação**; seu desempenho efetivo, sua segurança operacional no agendamento
+e o resultado publicado só poderão ser confirmados pelo próximo run.
+
+| Frente | Implementação e evidência |
+|---|---|
+| A09.1 — diagnóstico | [PR #62](https://github.com/Rafael-Tinelli/widget-confiabilidade-seguradoras/pull/62): telemetria de tempos, aquisição, memória, decisões de cache e proveniência. |
+| A09.2 — integridade de cache | [PR #63](https://github.com/Rafael-Tinelli/widget-confiabilidade-seguradoras/pull/63): fingerprint da competência/metadados oficiais da Receita e invalidação coerente. **Não é checksum remoto do conteúdo integral.** |
+| A09.3 — CPU | [PR #64](https://github.com/Rafael-Tinelli/widget-confiabilidade-seguradoras/pull/64): redução de custo de correspondência/filtragem mantendo a semântica. |
+| A09.4 — ZIPs da mesma geração | [PR #65](https://github.com/Rafael-Tinelli/widget-confiabilidade-seguradoras/pull/65): validação e reutilização das dez partições `Estabelecimentos` entre lifecycle e identity; evidência de dez armazenadas e dez verificadas. |
+| A09.5 — sondas HTTP | [PRs #67–#70](https://github.com/Rafael-Tinelli/widget-confiabilidade-seguradoras/pull/69): testes delimitados de 1 versus 2 conexões, incluindo 32 MiB. **Ganhos de vazão observados na sonda não demonstram ganho global do pipeline.** |
+| A09.6 — prefetch delimitado | [PR #71](https://github.com/Rafael-Tinelli/widget-confiabilidade-seguradoras/pull/71): duas partições no máximo, processamento sequencial, staging isolado, validações de transporte/ZIP/SHA-256 local, fallback serial e rollback por flag. |
+| A09.6 — ativação separada | [PR #72](https://github.com/Rafael-Tinelli/widget-confiabilidade-seguradoras/pull/72): somente workflow canônico, documentação e teste de contrato; CI da `main` [#44299157988](https://github.com/Rafael-Tinelli/widget-confiabilidade-seguradoras/actions/runs/44299157988) aprovada. |
+
+**Prova real de equivalência (sem publicação):**
+[run #44238341224](https://github.com/Rafael-Tinelli/widget-confiabilidade-seguradoras/actions/runs/44238341224),
+18/11/2026: Gate 4 experimental concluído, **20/20 ZIPs nacionais
+verificados**, prefetch **10/10 Empresas + 10/10 Estabelecimentos**,
+A09.4 **10/10 armazenados e 10/10 reutilizados**; replay **sequencial
+independente sobre os mesmos 20 ZIPs** emitiu `equivalent`
+(`same_exact_zip_set_and_semantic_match`) para lifecycle e identidade,
+sem diferenças semânticas. Evidência compacta:
+[artifact #14407163080](https://github.com/Rafael-Tinelli/widget-confiabilidade-seguradoras/actions/runs/44238341224/artifacts/14407163080),
+expira em **02/12/2026**; ZIPs brutos não foram publicados nem retidos
+fora do runner.
+
+**Configuração efetivamente versionada em `main`:**
+`.github/workflows/v2-gate4-full-generation-proof.yml`:
+
+```yaml
+RECEITA_A096_PREFETCH: "1"
+RECEITA_A096_RETAIN_ZIPS: "0"
+```
+
+O código permanece opt-in: sem `RECEITA_A096_PREFETCH=1`, usa o
+caminho serial/A09.4. O scheduler, o publicador HostGator, a Conduta,
+as regras de matching e o pacote público não foram modificados pela
+ativação. Recursos: `ThreadPoolExecutor(max_workers=2)`, no máximo
+**4 GiB** em ZIPs especulativos, mais reserva de **4 GiB** de espaço
+livre; sem margem ou integridade suficiente, seguir por aquisição
+sequencial. O SHA-256 dos ZIPs da Receita é **local**, não oficial.
+
+**Reversão:** na configuração do workflow canônico, mudar apenas
+`RECEITA_A096_PREFETCH: "1"` para `"0"` por PR; manter A09.4 e
+os caches. Não exige migração nem restauração do dataset. O comportamento
+do cancelamento, concorrência, reaproveitamento e espaço em disco deve ser
+monitorado em cada nova competência.
+
+**Próxima evidência exigida:** na primeira Full Generation produtiva
+após a ativação, verificar `head_sha`, versão/competência da Receita,
+eventos `prefetch_ready`/`prefetch_fallback` e `zip_reuse`,
+contagem de downloads efetivos, RSS, disco, custo Actions, conclusão
+do Gate 4 e, havendo publicação, encadeamento
+`build_id/source_head_sha/package_sha256` até o manifesto HostGator.
+O merge, a CI e a prova isolada **não** comprovam que a próxima aquisição
+será mais rápida nem que publicará fontes novas. Não iniciar Full
+Generation adicional só para atualizar este README.
+
+Detalhes de implementação, recuperação e homologação:
+[documentação A09.6](docs/receita-a096-prefetch-two-partitions.md).
 
 ---
 
