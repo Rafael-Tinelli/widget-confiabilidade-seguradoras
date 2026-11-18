@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import io
 import re
 import tempfile
@@ -22,9 +23,13 @@ from api.sources.receita_cnpj_cache_integrity import (
     lifecycle_release_fingerprint,
 )
 from api.sources.receita_cnpj_prefetch import (
+    Partition,
     PartitionPrefetch,
+    PrefetchRejected,
     adopt_or_download,
     official_partitions,
+    official_resource,
+    verify_http_response,
 )
 from api.sources.receita_cnpj_run_zip_cache import acquire_run_establishment_zip
 from api.sources.receita_cnpj_telemetry import emit, file_category
@@ -272,13 +277,31 @@ def discover_latest_release(
     )
 
 
+def _required_official_resource(
+    release_url: str, name: str, metadata: dict[str, Any] | None,
+) -> Partition:
+    """Reject missing/mismatched official metadata rather than silently
+    switching off verification when prefetch is unavailable or disabled.
+    """
+    try:
+        return official_resource(release_url, name, metadata)
+    except PrefetchRejected as exc:
+        raise ReceitaOpenDataError(f"Official Receita resource cannot be verified: {exc}") from exc
+
+
 def _download_zip(
     session: requests.Session,
     url: str,
     destination: Path,
     *,
     retries: int = 5,
+    expected: Partition | None = None,
 ) -> Path:
+    """Transport verification shared with prefetch, before promotion/parsing.
+
+    Fail immediately on inconsistent source metadata or unsafe redirect;
+    only transient HTTP/IO failures use bounded serial retries.
+    """
     destination.parent.mkdir(parents=True, exist_ok=True)
     temp = destination.with_suffix(destination.suffix + ".part")
     last_error: Exception | None = None
@@ -289,32 +312,50 @@ def _download_zip(
 
     for attempt in range(retries):
         transferred = 0
+        digest = hashlib.sha256()
         try:
             with session.get(
-                url,
-                timeout=DEFAULT_TIMEOUT,
-                stream=True,
-                allow_redirects=True,
+                url, timeout=DEFAULT_TIMEOUT, stream=True,
+                allow_redirects=True, headers={"Accept-Encoding": "identity"},
             ) as response:
+                # HTTP 5xx remains retriable. Partial responses, foreign
+                # redirects and revision mismatches are integrity failures.
                 response.raise_for_status()
+                verify_http_response(response, url, expected)
                 with temp.open("wb") as handle:
                     for chunk in response.iter_content(chunk_size=8 * 1024 * 1024):
                         if chunk:
                             transferred += len(chunk)
                             total_transferred += len(chunk)
+                            if expected is not None and transferred > expected.size:
+                                raise PrefetchRejected("serial_exceeded_official_size")
+                            digest.update(chunk)
                             handle.write(chunk)
+            if expected is not None and transferred != expected.size:
+                raise PrefetchRejected("serial_size_mismatch")
             if not zipfile.is_zipfile(temp):
-                raise ReceitaOpenDataError(f"Downloaded file is not a valid ZIP: {url}")
+                raise PrefetchRejected("serial_invalid_zip")
             temp.replace(destination)
             emit(
                 "zip_download", category=category, file_index=index,
                 attempts=attempt + 1, retry_wait_s=round(retry_wait, 3),
                 elapsed_download_s=round(time.perf_counter() - started, 3),
-                received_bytes=transferred,
-                transferred_bytes_total=total_transferred,
+                received_bytes=transferred, transferred_bytes_total=total_transferred,
+                expected_bytes=expected.size if expected else None,
+                local_sha256=digest.hexdigest(),
                 zip_valid=True, state="success",
             )
             return destination
+        except PrefetchRejected as exc:
+            temp.unlink(missing_ok=True)
+            emit(
+                "zip_download", category=category, file_index=index,
+                attempts=attempt + 1, elapsed_download_s=round(time.perf_counter() - started, 3),
+                received_bytes=transferred, transferred_bytes_total=total_transferred,
+                expected_bytes=expected.size if expected else None,
+                zip_valid=False, state="rejected",
+            )
+            raise ReceitaOpenDataError(f"Official Receita ZIP failed source validation: {exc}") from exc
         except (requests.RequestException, OSError, ReceitaOpenDataError) as exc:
             last_error = exc
             temp.unlink(missing_ok=True)
@@ -328,10 +369,11 @@ def _download_zip(
         attempts=retries, retry_wait_s=round(retry_wait, 3),
         elapsed_download_s=round(time.perf_counter() - started, 3),
         received_bytes=0, transferred_bytes_total=total_transferred,
+        expected_bytes=expected.size if expected else None,
         zip_valid=False, state="failure",
     )
     raise ReceitaOpenDataError(
-        f"Failed to download official Receita ZIP {url}: {last_error}"
+        f"Failed to download official Receita ZIP: {last_error}"
     )
 
 
@@ -487,10 +529,17 @@ def refresh_filtered_lifecycle(
             resolved_release.release_url,
             resolved_release.reasons_file,
         )
+        metadata_by_name = {
+            item["name"]: item for item in resolved_release.resource_metadata
+            if isinstance(item, dict) and isinstance(item.get("name"), str)
+        }
+        reasons_spec = _required_official_resource(
+            resolved_release.release_url, resolved_release.reasons_file,
+            metadata_by_name.get(resolved_release.reasons_file),
+        )
         reasons_zip = _download_zip(
-            sess,
-            reasons_url,
-            root / resolved_release.reasons_file,
+            sess, reasons_url, root / resolved_release.reasons_file,
+            expected=reasons_spec,
         )
         reason_map = load_reason_map(reasons_zip)
         reasons_zip.unlink(missing_ok=True)
@@ -499,17 +548,12 @@ def refresh_filtered_lifecycle(
         files_scanned: list[str] = []
         # A09.6 is strictly opt-in. Invalid metadata means the original
         # serial path, never skipping any partition.
-        metadata_by_name = {
-            item["name"]: item for item in resolved_release.resource_metadata
-            if isinstance(item, dict) and isinstance(item.get("name"), str)
-        }
         specs = official_partitions(
             resolved_release.release_url,
             resolved_release.establishment_files,
             metadata_by_name,
         )
         with PartitionPrefetch(specs, root=root) as prefetch:
-            spec_by_name = {item.name: item for item in specs or []}
             paths = (
                 ((spec.name, staged) for spec, staged in prefetch)
                 if specs is not None
@@ -522,13 +566,16 @@ def refresh_filtered_lifecycle(
                      if item.get("name") == name),
                     None,
                 )
+                required_spec = _required_official_resource(
+                    resolved_release.release_url, name, resource,
+                )
                 local = acquire_run_establishment_zip(
                     release=resolved_release, name=name, metadata=resource,
                     destination=root / name,
-                    download=lambda staged=staged, name=name, url=url: adopt_or_download(
+                    download=lambda staged=staged, name=name, url=url, spec=required_spec: adopt_or_download(
                         staged, root / name,
-                        lambda: _download_zip(sess, url, root / name),
-                        expected=spec_by_name.get(name) if prefetch.enabled else None,
+                        lambda: _download_zip(sess, url, root / name, expected=spec),
+                        expected=spec,
                     ),
                 )
                 try:
