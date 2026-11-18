@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import collections
+import math
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -16,14 +17,26 @@ TAXONOMY_ROLE = "optional_basecompleta_raw_enrichment"
 
 
 def _int_stat(stats: dict[str, Any], *names: str) -> int:
+    """Optional aliases may be absent only for internally empty evidence.
+
+    Any PRESENT value must be a genuine integer; conflicting aliases,
+    booleans, strings, fractions and negative values are source corruption.
+    """
+    values: list[int] = []
     for name in names:
-        value = stats.get(name)
-        if value not in (None, ""):
-            try:
-                return int(value)
-            except (TypeError, ValueError):
-                continue
-    return 0
+        if name not in stats:
+            continue
+        number = stats[name]
+        if type(number) is not int or number < 0:
+            raise RuntimeError(
+                f"consumer_gov_core_source_invalid: invalid {name}: {number!r}"
+            )
+        values.append(number)
+    if len(values) > 1 and len(set(values)) != 1:
+        raise RuntimeError(
+            f"consumer_gov_core_source_invalid: conflicting aliases: {names}"
+        )
+    return values[0] if values else 0
 
 
 def _required_nonnegative_int_stat(
@@ -31,39 +44,32 @@ def _required_nonnegative_int_stat(
     *names: str,
     field: str,
 ) -> int:
-    """Read a required preserved count without converting missing evidence to zero."""
-    for name in names:
-        if name not in stats:
-            continue
-        value = stats.get(name)
-        if value in (None, ""):
-            continue
-        try:
-            number = int(value)
-        except (TypeError, ValueError) as exc:
-            raise RuntimeError(
-                f"consumer_gov_core_source_invalid: non-integer {field}: {value!r}"
-            ) from exc
-        if number < 0:
-            raise RuntimeError(
-                f"consumer_gov_core_source_invalid: negative {field}: {number}"
-            )
-        return number
-    raise RuntimeError(
-        "consumer_gov_core_source_invalid: required preserved statistic missing: "
-        f"{field}"
-    )
+    """Read required source statistics without casting missing/malformed to zero."""
+    if not any(name in stats for name in names):
+        raise RuntimeError(
+            "consumer_gov_core_source_invalid: required preserved statistic missing: "
+            f"{field}"
+        )
+    return _int_stat(stats, *names)
 
 
 def _float_stat(stats: dict[str, Any], *names: str) -> float:
+    values: list[float] = []
     for name in names:
-        value = stats.get(name)
-        if value not in (None, ""):
-            try:
-                return float(value)
-            except (TypeError, ValueError):
-                continue
-    return 0.0
+        if name not in stats:
+            continue
+        value = stats[name]
+        if (type(value) not in (float, int) or not math.isfinite(value)
+                or value < 0):
+            raise RuntimeError(
+                f"consumer_gov_core_source_invalid: invalid {name}: {value!r}"
+            )
+        values.append(float(value))
+    if len(values) > 1 and len(set(values)) != 1:
+        raise RuntimeError(
+            f"consumer_gov_core_source_invalid: conflicting float aliases: {names}"
+        )
+    return values[0] if values else 0.0
 
 
 def load_monthly_entries(
