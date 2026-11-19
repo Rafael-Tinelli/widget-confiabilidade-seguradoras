@@ -166,8 +166,12 @@ def _entry_metrics(
             raise ConsumerGovWindowError(f"{label}: invalid scoreSum")
         if counts["satisfactionCount"] == 0 and score != 0:
             raise ConsumerGovWindowError(f"{label}: score without ratings")
-        if score > 5 * counts["satisfactionCount"]:
-            raise ConsumerGovWindowError(f"{label}: score exceeds 5-point scale")
+        if (score < counts["satisfactionCount"]
+                or score > 5 * counts["satisfactionCount"]
+                or not math.isclose(score, round(score), rel_tol=0.0, abs_tol=1e-9)):
+            raise ConsumerGovWindowError(
+                f"{label}: scoreSum incompatible with integer 1..5 ratings"
+            )
         reported_average = stats.get("averageScore")
         if reported_average is not None and (
             type(reported_average) not in (int, float)
