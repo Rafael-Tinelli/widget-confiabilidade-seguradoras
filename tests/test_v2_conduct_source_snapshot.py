@@ -407,8 +407,8 @@ def test_valid_cache_without_prior_selector_reseals_after_full_validation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from api import build_consumidor_gov as build
-    from api.v2.consumer_gov_window import WINDOW_MANIFEST, load_active_window
     from api.v2.build_conduct_source_snapshot import _restore_consumer_cache
+    from api.v2.consumer_gov_window import WINDOW_MANIFEST, load_active_window
 
     original = _materialized_fixture(tmp_path)
     derived = tmp_path / "work"
