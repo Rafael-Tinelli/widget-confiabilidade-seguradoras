@@ -840,6 +840,10 @@ def validate_month_csv(
                         raise ConsumerGovSchemaMismatch(
                             f"CSV row {rows} has out-of-range {semantic}: {value!r}"
                         )
+                    if semantic == "score" and not number.is_integer():
+                        raise ConsumerGovSchemaMismatch(
+                            f"CSV row {rows} has fractional score: {value!r}"
+                        )
                 row_month = _month_from_row(row, normalized_keys)
                 if row_month is None:
                     raise ConsumerGovMonthMismatch(
