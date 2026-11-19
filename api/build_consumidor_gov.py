@@ -4,6 +4,7 @@ import csv
 import gzip
 import hashlib
 import json
+import math
 import os
 import re
 import tempfile
@@ -437,8 +438,17 @@ def _aggregate_basecompleta(
     csv_path: Path,
     month: str,
     resource_url: str,
+    *,
+    field_map: dict[str, str] | None = None,
 ) -> dict[str, Any]:
-    """Agrega a Base Completa transacional por nome da empresa."""
+    """Aggregate only columns accepted by the same Base Completa schema.
+
+    Never validate one header alias then count a different literal header.
+    Standalone callers resolve the existing schema once, without a new parser.
+    """
+    if field_map is None:
+        _, _, columns = consumer_gov_direct._detect_csv_format(csv_path)
+        field_map = consumer_gov_direct._resolve_schema(columns)
     target_norm = _norm(TARGET_SEGMENT)
     entries: dict[str, dict[str, Any]] = {}
     display_count: dict[str, dict[str, int]] = {}
@@ -447,19 +457,14 @@ def _aggregate_basecompleta(
 
     for row in _iter_rows(csv_path):
         lines_total += 1
-        if _norm(row.get("Segmento de Mercado", "")) != target_norm:
+        if _norm(row.get(field_map["segment"], "")) != target_norm:
             continue
 
-        name = (
-            row.get("Nome Fantasia")
-            or row.get("Empresa")
-            or row.get("Fornecedor")
-            or ""
-        ).strip()
+        name = (row.get(field_map["provider"]) or "").strip()
         if not name:
             continue
 
-        situation = _norm(row.get("Situação", ""))
+        situation = _norm(row.get(field_map["situation"], ""))
         if "cancelada" in situation:
             continue
 
@@ -499,7 +504,7 @@ def _aggregate_basecompleta(
         stats["complaintsCount"] += 1
         stats["total_claims"] += 1
 
-        if _norm(row.get("Respondida", "")) == "s":
+        if _norm(row.get(field_map["responded"], "")) == "s":
             stats["respondedCount"] += 1
             stats["responded_claims"] += 1
 
@@ -507,16 +512,20 @@ def _aggregate_basecompleta(
             stats["finalizedCount"] += 1
             stats["finalized_claims"] += 1
 
-        if _norm(row.get("Avaliação Reclamação", "")) == "resolvida":
+        if _norm(row.get(field_map["evaluation"], "")) == "resolvida":
             stats["resolvedCount"] += 1
             stats["resolved_claims"] += 1
 
-        score_raw = (row.get("Nota do Consumidor") or "").strip()
+        score_raw = (row.get(field_map["score"]) or "").strip()
         if score_raw:
-            score = _safe_float(score_raw)
-            if score > 0:
-                stats["scoreSum"] += score
-                stats["satisfactionCount"] += 1
+            try:
+                score = float(score_raw.replace(",", "."))
+            except ValueError as exc:
+                raise ValueError(f"{month}: invalid consumer score") from exc
+            if not math.isfinite(score) or score not in (1, 2, 3, 4, 5):
+                raise ValueError(f"{month}: consumer score outside 1..5 integer scale")
+            stats["scoreSum"] += score
+            stats["satisfactionCount"] += 1
 
     for entry in entries.values():
         stats = entry.get("statistics") or {}
@@ -977,7 +986,8 @@ def main(*, require_current: bool = False) -> int:
                     )
 
                 root = _aggregate_basecompleta(
-                    candidate_raw, month=month, resource_url=resource.url
+                    candidate_raw, month=month, resource_url=resource.url,
+                    field_map=validation.field_map,
                 )
                 meta = root["meta"]
                 if meta.get("lines_total") != validation.rows:
