@@ -18,6 +18,8 @@ from api.v2.install_public_generation import (
     rollback_generation,
     verify_package,
     verify_transport_archive,
+    _atomic_symlink,
+    _resolve_link_target,
 )
 
 HEAD = "a" * 40
@@ -304,3 +306,46 @@ def test_r4_rejects_tampered_or_augmented_transport_tar(
                 )
     with pytest.raises(PublicGenerationInstallError):
         verify_transport_archive(transport, package)
+
+
+def test_local_emergency_recovery_uses_existing_verified_pointer_operation(
+    tmp_path: Path,
+) -> None:
+    """Operational rehearsal only; no alteration of the production installer.
+
+    current invalid / previous verified: conventional rollback correctly
+    refuses to bless invalid current; the approved recovery path preflights
+    the target and atomically points current at the already verified prior
+    build, retaining the damaged directory for diagnosis.
+    """
+    source = tmp_path / "source"
+    target = tmp_path / "host-simulation"
+    previous_package = _package(source, "v2-good", "healthy")
+    active_package = _package(source, "v2-bad", "active")
+    install_generation(previous_package, target)
+    install_generation(active_package, target)
+    damaged = _resolve_link_target(target, target / "current")
+    assert damaged is not None
+    (damaged / "rogue.txt").write_text("incident marker", encoding="utf-8")
+    with pytest.raises(PublicGenerationInstallError):
+        rollback_generation(target)
+    with pytest.raises(PublicGenerationInstallError):
+        install_generation(_package(source, "v2-next", "next"), target)
+
+    old_current = _link_name(target / "current")
+    recovered = _resolve_link_target(target, target / "previous")
+    assert recovered is not None
+    assert verify_package(recovered)["build"]["build_id"] == "v2-good"
+    assert recovered.parent == (target / "generations").resolve()
+    _atomic_symlink(target / "current", recovered)
+    assert _link_name(target / "current") == "v2-good"
+    assert verify_package(target / "current")["build"]["build_id"] == "v2-good"
+    assert old_current == "v2-bad"
+    assert (damaged / "rogue.txt").read_text(encoding="utf-8") == "incident marker"
+
+    # Another incident must not switch pointers if both copies fail.
+    (recovered / "another-rogue.txt").write_text("invalid", encoding="utf-8")
+    last_pointer = os.readlink(target / "current")
+    with pytest.raises(PublicGenerationInstallError):
+        verify_package(recovered)
+    assert os.readlink(target / "current") == last_pointer
