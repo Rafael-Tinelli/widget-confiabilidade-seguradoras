@@ -98,7 +98,13 @@ def _materialized_fixture(tmp_path: Path) -> dict:
     }
 
 
-def test_consumer_cache_survives_fresh_workspace_materialization(tmp_path) -> None:
+def test_consumer_cache_survives_fresh_workspace_materialization(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from api import build_consumidor_gov as build
+
+    monkeypatch.setattr(build, "DERIVED_DIR", tmp_path / "work")
+    monkeypatch.setattr(build, "MONTHLY_DIR", tmp_path / "work" / "monthly")
     materialized = _materialized_fixture(tmp_path)
     cache_dir = tmp_path / "cache"
     cached = _cache_consumer_manifest(
