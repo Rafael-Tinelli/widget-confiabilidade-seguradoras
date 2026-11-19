@@ -1,3 +1,4 @@
+import gzip
 import hashlib
 import json
 from pathlib import Path
@@ -40,22 +41,52 @@ def test_consumer_manifest_content_key_ignores_provenance_timestamp() -> None:
 
 
 def _materialized_fixture(tmp_path: Path) -> dict:
+    """Use fully valid, tiny historical-shaped objects, not dummy raw bytes.
+
+    Cache SHA-only tests used to bypass semantic validation by writing
+    arbitrary strings; the recovery contract now checks the entire window.
+    """
+    from api import build_consumidor_gov as build
+
     work = tmp_path / "work"
     aggregate = work / "consumidor_gov_agg.json.gz"
     aggregate.parent.mkdir(parents=True, exist_ok=True)
-    aggregate.write_bytes(b"aggregate")
     months = []
+    roots = []
     for index in range(12):
-        path = work / "monthly" / f"consumidor_gov_2026-{index + 1:02d}.json.gz"
+        month = f"2026-{index + 1:02d}"
+        path = work / "monthly" / f"consumidor_gov_{month}.json.gz"
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(f"month-{index}".encode())
-        months.append(
-            {
-                "month": f"2026-{index + 1:02d}",
-                "path": str(path),
-                "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
-            }
-        )
+        root = {
+            "meta": {
+                "month": month, "status": "ok", "companies": 1,
+                "lines_kept": 1, "lines_total": 1,
+                "source_family": "base_completa", "reference_event": "abertura",
+            },
+            "by_name_key_raw": {
+                "empresa": {
+                    "name": "Empresa",
+                    "statistics": {
+                        "complaintsCount": 1, "total_claims": 1,
+                        "respondedCount": 1, "responded_claims": 1,
+                        "finalizedCount": 1, "finalized_claims": 1,
+                        "resolvedCount": 1, "resolved_claims": 1,
+                        "satisfactionCount": 1, "scoreSum": 4.0,
+                        "averageScore": 4.0,
+                    },
+                },
+            },
+        }
+        roots.append(root)
+        with gzip.open(path, "wt", encoding="utf-8") as handle:
+            json.dump(root, handle)
+        months.append({
+            "month": month,
+            "path": str(path),
+            "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+        })
+    with gzip.open(aggregate, "wt", encoding="utf-8") as handle:
+        json.dump(build._merge_months(roots), handle)
     return {
         "artifact": "v2_consumer_gov_core_source_manifest",
         "version": CONSUMER_MANIFEST_VERSION,
