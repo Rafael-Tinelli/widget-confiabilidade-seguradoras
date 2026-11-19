@@ -104,7 +104,17 @@ def test_aggregate_preserves_legacy_counts_without_replay(tmp_path: Path) -> Non
             "Finalizada;S;Resolvida;5\n"
         ).encode("latin1")
     )
-    result = build._aggregate_basecompleta(path, "2026-06", "https://example.test")
+    # Streaming legacy fixture intentionally omits the seven unrelated
+    # taxonomy fields required by the official acquisition validator.
+    # Explicitly provide its already-known six-column map.
+    mapping = {
+        "segment": "Segmento de Mercado", "provider": "Nome Fantasia",
+        "situation": "Situação", "responded": "Respondida",
+        "evaluation": "Avaliação Reclamação", "score": "Nota do Consumidor",
+    }
+    result = build._aggregate_basecompleta(
+        path, "2026-06", "https://example.test", field_map=mapping,
+    )
     assert result["meta"]["lines_total"] == 5002
     assert result["meta"]["lines_kept"] == 5002
     assert result["meta"]["companies"] == 2

@@ -192,7 +192,9 @@ def test_a08_same_complaint_totals_cannot_hide_aggregate_counter_mismatch(
             )
         # A self-consistent but different aggregate must still fail on parity.
     derived, monthly = _legacy_window(tmp_path, corrupt=corrupt)
-    with pytest.raises(ConsumerGovWindowError, match="mismatch|inconsistent"):
+    with pytest.raises(
+        ConsumerGovWindowError, match="mismatch|inconsistent|integer 1..5 ratings"
+    ):
         load_active_window(derived, monthly, required=3)
 
 

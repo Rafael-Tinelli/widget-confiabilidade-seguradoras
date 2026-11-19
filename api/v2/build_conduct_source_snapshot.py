@@ -245,11 +245,9 @@ def _restore_active_window_from_v2_cache(payload: dict[str, Any]) -> None:
     derived = consumer_gov_build.DERIVED_DIR
     monthly_dir = consumer_gov_build.MONTHLY_DIR
     sidecar = derived / WINDOW_MANIFEST
-    if not sidecar.exists():
-        # The original Git-pinned baseline has no sidecar and is verified by
-        # the established bootstrap and V2 cached-hash contracts.
-        return
-
+    # The initial Git-pinned baseline also has no sidecar. Hash-valid V2
+    # objects must STILL pass the full semantic window contract before any
+    # legacy path can be overwritten or called a validated-cache fallback.
     def restore_object(source_row: dict[str, Any], destination: Path) -> str:
         source = Path(str(source_row.get("path") or ""))
         expected = str(source_row.get("sha256") or "")

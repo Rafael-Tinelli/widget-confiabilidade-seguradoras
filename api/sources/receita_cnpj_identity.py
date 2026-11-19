@@ -36,7 +36,7 @@ from api.sources.receita_cnpj_telemetry import emit, release_fingerprint, utcnow
 from api.utils.identifiers import normalize_cnpj_v2
 from api.utils.name_cleaner import normalize_name_key
 
-COMPANY_FILE_RE = re.compile(r"Empresas\d+\.zip$", re.IGNORECASE)
+COMPANY_FILE_RE = re.compile(r"Empresas([0-9]+)\.zip\Z", re.IGNORECASE)
 CNAE_FILE = "Cnaes.zip"
 LEGAL_NATURE_FILE = "Naturezas.zip"
 
@@ -212,10 +212,16 @@ def _release_files(
     }
     companies = sorted(
         (name for name in files if COMPANY_FILE_RE.fullmatch(name)),
-        key=lambda name: int(re.search(r"(\d+)", name).group(1)),
+        key=lambda name: int(COMPANY_FILE_RE.fullmatch(name).group(1)),
     )
-    if not companies:
-        raise ReceitaOpenDataError("Receita release has no Empresas partitions")
+    # A gap hides company candidates while creating a plausible fingerprint:
+    # the official PROPFIND inventory must cover 0..last without holes.
+    # Do NOT hardcode ten partitions; future official releases may vary.
+    indices = [int(COMPANY_FILE_RE.fullmatch(name).group(1)) for name in companies]
+    if indices != list(range(len(companies))):
+        raise ReceitaOpenDataError(
+            "Receita Empresas partition coverage incomplete or ambiguous"
+        )
     if CNAE_FILE not in files or LEGAL_NATURE_FILE not in files:
         raise ReceitaOpenDataError(
             "Receita release is missing Cnaes.zip or Naturezas.zip required for identity enrichment"
