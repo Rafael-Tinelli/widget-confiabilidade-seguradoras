@@ -153,6 +153,7 @@ def test_receita_incomplete_company_family_rejected_before_fingerprint_or_get(
         identity, "_download_zip",
         lambda *_a, **_kw: pytest.fail("no GET before company inventory validation"),
     )
+    monkeypatch.setattr(identity, "_configure_official_session", lambda _s: None)
     release = SimpleNamespace(
         period="2026-11",
         release_url="https://arquivos.receitafederal.gov.br/public.php/dav/files/token/2026-11/",
