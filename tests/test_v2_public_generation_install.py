@@ -18,8 +18,6 @@ from api.v2.install_public_generation import (
     rollback_generation,
     verify_package,
     verify_transport_archive,
-    _atomic_symlink,
-    _resolve_link_target,
 )
 
 HEAD = "a" * 40
@@ -318,13 +316,15 @@ def test_local_emergency_recovery_uses_existing_verified_pointer_operation(
     the target and atomically points current at the already verified prior
     build, retaining the damaged directory for diagnosis.
     """
+    from api.v2 import install_public_generation as pkg
+
     source = tmp_path / "source"
     target = tmp_path / "host-simulation"
     previous_package = _package(source, "v2-good", "healthy")
     active_package = _package(source, "v2-bad", "active")
     install_generation(previous_package, target)
     install_generation(active_package, target)
-    damaged = _resolve_link_target(target, target / "current")
+    damaged = pkg._resolve_link_target(target, target / "current")
     assert damaged is not None
     (damaged / "rogue.txt").write_text("incident marker", encoding="utf-8")
     with pytest.raises(PublicGenerationInstallError):
@@ -333,11 +333,11 @@ def test_local_emergency_recovery_uses_existing_verified_pointer_operation(
         install_generation(_package(source, "v2-next", "next"), target)
 
     old_current = _link_name(target / "current")
-    recovered = _resolve_link_target(target, target / "previous")
+    recovered = pkg._resolve_link_target(target, target / "previous")
     assert recovered is not None
     assert verify_package(recovered)["build"]["build_id"] == "v2-good"
     assert recovered.parent == (target / "generations").resolve()
-    _atomic_symlink(target / "current", recovered)
+    pkg._atomic_symlink(target / "current", recovered)
     assert _link_name(target / "current") == "v2-good"
     assert verify_package(target / "current")["build"]["build_id"] == "v2-good"
     assert old_current == "v2-bad"
