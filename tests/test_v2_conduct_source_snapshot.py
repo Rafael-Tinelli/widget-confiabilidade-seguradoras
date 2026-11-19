@@ -357,3 +357,72 @@ def test_corrupt_v2_restore_never_switches_newer_active_manifest(
     assert not (derived / "consumidor_gov_agg.json.gz").exists()
     assert not (monthly / "consumidor_gov_2026-01.json.gz").exists()
     assert len(load_active_window(derived, monthly).months) == 12
+
+
+def test_invalid_cache_without_prior_selector_never_overwrites_good_baseline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reproduces the audit's bootstrap gap: bad bytes with valid cache SHA."""
+    from api import build_consumidor_gov as build
+    from api.v2.consumer_gov_window import WINDOW_MANIFEST, load_active_window
+
+    original = _materialized_fixture(tmp_path)
+    derived = tmp_path / "work"
+    monthly = derived / "monthly"
+    monkeypatch.setattr(build, "DERIVED_DIR", derived)
+    monkeypatch.setattr(build, "MONTHLY_DIR", monthly)
+    legacy_paths = [
+        Path(original["aggregate"]["path"]),
+        *(Path(item["path"]) for item in original["months"]),
+    ]
+    prior_hashes = [hashlib.sha256(p.read_bytes()).hexdigest() for p in legacy_paths]
+    assert not (derived / WINDOW_MANIFEST).exists()
+    assert len(load_active_window(derived, monthly).months) == 12
+
+    cached = _cache_consumer_manifest(
+        original, cache_dir=tmp_path / "cache",
+        fetched_at="2026-11-18T23:00:00Z",
+    )
+    bad_month = cached["months"][0]
+    bad_source = Path(bad_month["path"])
+    with gzip.open(bad_source, "rt", encoding="utf-8") as handle:
+        invalid = json.load(handle)
+    invalid["by_name_key_raw"]["empresa"]["statistics"]["responded_claims"] = 0
+    with gzip.open(bad_source, "wt", encoding="utf-8") as handle:
+        json.dump(invalid, handle)
+    # The attacker or partial source may seal the corrupted bytes consistently.
+    # Correct SHA is not a sufficient semantic check.
+    bad_month["sha256"] = hashlib.sha256(bad_source.read_bytes()).hexdigest()
+    receipt = tmp_path / "cache" / "consumer_gov_core_manifest.json"
+    receipt.write_text(json.dumps(cached), encoding="utf-8")
+    from api.v2.build_conduct_source_snapshot import _restore_consumer_cache
+
+    assert _restore_consumer_cache(receipt) is None
+    assert not (derived / WINDOW_MANIFEST).exists()
+    assert [hashlib.sha256(p.read_bytes()).hexdigest() for p in legacy_paths] == prior_hashes
+    assert len(load_active_window(derived, monthly).months) == 12
+
+
+def test_valid_cache_without_prior_selector_reseals_after_full_validation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from api import build_consumidor_gov as build
+    from api.v2.consumer_gov_window import WINDOW_MANIFEST, load_active_window
+    from api.v2.build_conduct_source_snapshot import _restore_consumer_cache
+
+    original = _materialized_fixture(tmp_path)
+    derived = tmp_path / "work"
+    monthly = derived / "monthly"
+    monkeypatch.setattr(build, "DERIVED_DIR", derived)
+    monkeypatch.setattr(build, "MONTHLY_DIR", monthly)
+    cached = _cache_consumer_manifest(
+        original, cache_dir=tmp_path / "cache",
+        fetched_at="2026-11-18T23:00:00Z",
+    )
+    receipt = tmp_path / "cache" / "consumer_gov_core_manifest.json"
+    receipt.write_text(json.dumps(cached), encoding="utf-8")
+    assert not (derived / WINDOW_MANIFEST).exists()
+    result = _restore_consumer_cache(receipt)
+    assert result is not None
+    assert (derived / WINDOW_MANIFEST).is_file()
+    assert load_active_window(derived, monthly).provenance == "atomic_content_manifest"
