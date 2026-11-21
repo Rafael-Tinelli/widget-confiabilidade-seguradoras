@@ -172,3 +172,47 @@ def test_graduated_risk_bearer_context_warns_about_mixed_regulatory_history():
     assert "pode incluir observações anteriores" in bearer["conduct_context"][
         "plain_language"
     ]
+
+
+
+def test_graduated_carrier_canonical_conduct_excludes_earlier_sandbox_months():
+    contract = {
+        "artifact": "v2_public_search_profile_contract",
+        "profiles": [{
+            "profile_id": "brand:loovi",
+            "profile_kind": "brand",
+            "identity": {"name": "Loovi"},
+            "limits": [],
+        }],
+        "search_index": [],
+        "population": {},
+        "publication_policy": {},
+    }
+    market = {
+        "artifact": "v2_market_relationship_conduct_evidence",
+        "brands": [{
+            "brand_id": "brand:loovi",
+            "market_identity": {
+                "identity_state": "verified",
+                "legal_name": "DISTRIBUIDORA EXEMPLO LTDA.",
+                "cnpj": "33333333000133",
+            },
+            "market_identity_conduct_summary": _summary(2),
+            "risk_bearers": [{
+                "profile_id": "entity:fip:001988",
+                "entity_id": "fip:001988",
+                "name": "LTI SEGUROS S.A.",
+                "regulatory_regime": "ordinary",
+                "regulatory_status": "active_licensed",
+                "sandbox_history": {"current_outcome": "graduated_to_ordinary_license"},
+                "conduct_source": "canonical_consumer_gov_conduct_evidence",
+                "conduct_summary": _summary(8),
+            }],
+        }],
+    }
+    out = apply_market_relationship_semantics(contract, market)
+    bearer = out["profiles"][0]["market_relationship_context"]["risk_bearers"][0]
+    assert bearer["conduct_source"] == "canonical_consumer_gov_conduct_evidence"
+    assert bearer["conduct_context"]["metrics"]["complaints"]["value"] == 8
+    assert "histórico anterior" in bearer["conduct_context"]["plain_language"]
+    assert "não entra nessa contagem" in bearer["conduct_context"]["plain_language"]
